@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="?attr/selectableItemBackground">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="12dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp">
+
+        <CheckBox
+            android:id="@+id/cbRow"
+            android:layout_width="40dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="4dp"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp" />
+
+        <!-- Data cells added programmatically -->
+        <LinearLayout
+            android:id="@+id/llCells"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center_vertical" />
+
+        <!-- Action column -->
+        <LinearLayout
+            android:layout_width="210dp"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <ImageButton
+                android:id="@+id/btnRowEdit"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:layout_marginHorizontal="6dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_edit"
+                android:contentDescription="Edit" />
+
+            <ImageButton
+                android:id="@+id/btnRowDelete"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:layout_marginHorizontal="6dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_delete"
+                android:contentDescription="Delete" />
+
+            <ImageButton
+                android:id="@+id/btnRowPrint"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:layout_marginHorizontal="6dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_print"
+                android:contentDescription="Print" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#EEEEEE" />
+
+</LinearLayout>
