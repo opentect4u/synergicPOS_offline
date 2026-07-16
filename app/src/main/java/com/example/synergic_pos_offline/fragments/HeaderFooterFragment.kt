@@ -45,13 +45,18 @@ class HeaderFooterFragment : Fragment() {
 
         rvHeaderFooter.adapter = HeaderFooterAdapter(items) { item ->
             when (item.title) {
-                "Bill Header & Footer" -> requireActivity().supportFragmentManager.beginTransaction()
-                    .replace(R.id.fragment_container, BillHeaderFooterFragment())
-                    .addToBackStack(null)
-                    .commit()
+                "Bill Header & Footer" -> openFragment(BillHeaderFooterFragment())
+                "Bill Header Footer Logo" -> openFragment(BillLogoFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    private fun openFragment(fragment: Fragment) {
+        requireActivity().supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, fragment)
+            .addToBackStack(null)
+            .commit()
     }
 
     data class HeaderFooterItem(

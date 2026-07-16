@@ -46,8 +46,24 @@ class DatabaseSettingsFragment : Fragment() {
         )
 
         rvDatabase.adapter = DatabaseAdapter(items) { item ->
-            Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
+            when (item.title) {
+                "Category/Department" -> openFragment(CategoryDepartmentFragment())
+                "Units" -> openFragment(UnitFragment())
+                "Waiter" -> openFragment(WaiterFragment())
+                "Customers" -> openFragment(CustomerFragment())
+                "Description/Ledger" -> openFragment(DescriptionLedgerFragment())
+                else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
+            }
         }
+
+        ThemeManager.applyTheme(view)
+    }
+
+    private fun openFragment(fragment: Fragment) {
+        requireActivity().supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, fragment)
+            .addToBackStack(null)
+            .commit()
     }
 
     data class DatabaseItem(

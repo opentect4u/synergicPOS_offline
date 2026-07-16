@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.fragments
 
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -10,6 +11,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -19,6 +21,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.google.android.material.card.MaterialCardView
 import com.google.android.material.textfield.TextInputEditText
 
 /** A single table row: a stable [id] plus one string per data column. */
@@ -43,6 +46,15 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     /** Initial rows to display; each row's cells must align with [columns]. */
     abstract fun loadRows(): MutableList<DataRow>
+
+    /** Column index (into [columns]) rendered as an image thumbnail, if any. */
+    open val thumbnailColumn: Int? = null
+
+    /** Supplies the thumbnail bitmap for [row]; null renders a placeholder icon. */
+    open fun loadThumbnail(row: DataRow): Bitmap? = null
+
+    /** Invoked when a row's thumbnail cell is tapped (e.g. to preview it full-size). */
+    open fun onThumbnailClick(row: DataRow) {}
 
     private val allRows = mutableListOf<DataRow>()
     private val shownRows = mutableListOf<DataRow>()
@@ -79,6 +91,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             shownRows,
             columns.size,
             selectedIds,
+            thumbnailColumn,
+            { loadThumbnail(it) },
+            onThumbnailClick = { onThumbnailClick(it) },
             onEdit = { onEditRow(it) },
             onSelectionChanged = { updateSelectionUI() }
         )
@@ -180,6 +195,34 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     protected fun toast(msg: String) =
         Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
 
+    // ---- Row mutation helpers (for subclasses with custom forms) ----------
+
+    /** Snapshot of every row currently backing the table (unfiltered). */
+    protected fun currentRows(): List<DataRow> = allRows.toList()
+
+    /** Appends [row] and refreshes the visible list, keeping the active search. */
+    protected fun addRow(row: DataRow) {
+        allRows.add(row)
+        applyFilter(query)
+    }
+
+    /** Replaces the cells of the row identified by [id], if it still exists. */
+    protected fun updateRow(id: String, cells: List<String>) {
+        val idx = allRows.indexOfFirst { it.id == id }
+        if (idx >= 0) {
+            allRows[idx] = DataRow(id, cells)
+            applyFilter(query)
+        }
+    }
+
+    /** Re-reads the backing data via [loadRows] and refreshes the table. */
+    protected fun reload() {
+        allRows.clear()
+        allRows.addAll(loadRows())
+        selectedIds.clear()
+        applyFilter(query)
+    }
+
     // ---- Actions -----------------------------------------------------------
 
     protected open fun onAddRow() {
@@ -206,7 +249,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     }
 
     protected open fun onBulkDelete() {
-        val count = selectedIds.size
+        val ids = selectedIds.toSet()
+        val count = ids.size
         DialogUtils.showConfirm(
             context = requireContext(),
             title = "Delete Selected",
@@ -216,12 +260,19 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             iconRes = android.R.drawable.ic_menu_delete,
             destructive = true
         ) {
-            allRows.removeAll { selectedIds.contains(it.id) }
+            allRows.removeAll { ids.contains(it.id) }
             selectedIds.clear()
             applyFilter(query)
+            onRowsDeleted(ids)
             toast("Deleted $count record(s)")
         }
     }
+
+    /**
+     * Called after the given row ids have been removed from the in-memory table.
+     * Subclasses backed by a database override this to persist the deletion.
+     */
+    protected open fun onRowsDeleted(ids: Set<String>) {}
 
     protected open fun onBulkPrint() {
         val count = selectedIds.size
@@ -242,6 +293,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         private val rows: List<DataRow>,
         private val columnCount: Int,
         private val selectedIds: MutableSet<String>,
+        private val thumbnailColumn: Int?,
+        private val thumbnailProvider: (DataRow) -> Bitmap?,
+        private val onThumbnailClick: (DataRow) -> Unit,
         private val onEdit: (DataRow) -> Unit,
         private val onSelectionChanged: () -> Unit
     ) : RecyclerView.Adapter<DataTableAdapter.ViewHolder>() {
@@ -263,6 +317,10 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
             holder.llCells.removeAllViews()
             for (i in 0 until columnCount) {
+                if (i == thumbnailColumn) {
+                    holder.llCells.addView(buildThumbnailCell(ctx, row))
+                    continue
+                }
                 val tv = TextView(ctx)
                 tv.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 tv.text = row.cells.getOrNull(i).orEmpty()
@@ -285,6 +343,49 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             }
 
             holder.btnEdit.setOnClickListener { onEdit(row) }
+        }
+
+        /** A weighted table cell holding a rounded 40dp image thumbnail. */
+        private fun buildThumbnailCell(ctx: android.content.Context, row: DataRow): View {
+            val density = ctx.resources.displayMetrics.density
+            val size = (40 * density).toInt()
+
+            val slot = LinearLayout(ctx)
+            slot.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            slot.gravity = Gravity.CENTER_VERTICAL
+            slot.setPadding(0, 0, (8 * density).toInt(), 0)
+
+            val card = MaterialCardView(ctx)
+            card.layoutParams = LinearLayout.LayoutParams(size, size)
+            card.radius = 8 * density
+            card.cardElevation = 0f
+            card.strokeWidth = (1 * density).toInt()
+            card.setStrokeColor(android.graphics.Color.parseColor("#E0E0E0"))
+            card.setCardBackgroundColor(android.graphics.Color.parseColor("#F1F3F4"))
+            card.isClickable = true
+            card.isFocusable = true
+            card.setOnClickListener { onThumbnailClick(row) }
+
+            val iv = ImageView(ctx)
+            iv.layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            val thumb = thumbnailProvider(row)
+            if (thumb != null) {
+                iv.scaleType = ImageView.ScaleType.CENTER_CROP
+                iv.setImageBitmap(thumb)
+            } else {
+                iv.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                val pad = (10 * density).toInt()
+                iv.setPadding(pad, pad, pad, pad)
+                iv.setImageResource(android.R.drawable.ic_menu_gallery)
+                iv.imageTintList = ColorStateList.valueOf(
+                    androidx.core.content.ContextCompat.getColor(ctx, R.color.text_secondary)
+                )
+            }
+            card.addView(iv)
+            slot.addView(card)
+            return slot
         }
 
         override fun getItemCount() = rows.size
