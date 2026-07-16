@@ -24,6 +24,7 @@ class LoginFragment : Fragment() {
     private lateinit var etUsername: TextInputEditText
     private lateinit var etPassword: TextInputEditText
     private lateinit var btnLogin: Button
+    private lateinit var tvRegister: View
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -40,6 +41,7 @@ class LoginFragment : Fragment() {
         etUsername = view.findViewById(R.id.etUsername)
         etPassword = view.findViewById(R.id.etPassword)
         btnLogin = view.findViewById(R.id.btnLogin)
+        tvRegister = view.findViewById(R.id.tvRegister)
 
         setupTextWatchers()
 
@@ -47,6 +49,13 @@ class LoginFragment : Fragment() {
             if (validateInputs()) {
                 performLogin()
             }
+        }
+
+        tvRegister.setOnClickListener {
+            requireActivity().supportFragmentManager.beginTransaction()
+                .replace(R.id.fragment_container, RegistrationFragment())
+                .addToBackStack(null)
+                .commit()
         }
 
         ThemeManager.applyTheme(view)

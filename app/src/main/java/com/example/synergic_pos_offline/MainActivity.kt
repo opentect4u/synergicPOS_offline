@@ -30,6 +30,7 @@ import com.example.synergic_pos_offline.fragments.HeaderFooterFragment
 import com.example.synergic_pos_offline.fragments.InventoryFragment
 import com.example.synergic_pos_offline.fragments.LoginFragment
 import com.example.synergic_pos_offline.fragments.MasterFragment
+import com.example.synergic_pos_offline.fragments.RegistrationFragment
 import com.example.synergic_pos_offline.fragments.ReportsFragment
 import com.example.synergic_pos_offline.fragments.SettingsFragment
 import com.example.synergic_pos_offline.utils.DialogUtils
@@ -78,7 +79,7 @@ class MainActivity : AppCompatActivity() {
         supportFragmentManager.registerFragmentLifecycleCallbacks(
             object : FragmentManager.FragmentLifecycleCallbacks() {
                 override fun onFragmentResumed(fm: FragmentManager, f: Fragment) {
-                    if (f is LoginFragment) {
+                    if (f is LoginFragment || f is RegistrationFragment) {
                         headerBar.visibility = View.GONE
                         drawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
                         if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
