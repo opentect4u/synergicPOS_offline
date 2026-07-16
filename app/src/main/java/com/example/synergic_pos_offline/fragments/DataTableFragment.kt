@@ -9,6 +9,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -29,17 +30,16 @@ interface TitledScreen {
 }
 
 /**
- * Reusable searchable data-table screen. Each row has a selection checkbox; the
- * Delete / Print actions are only enabled for selected rows. A "Select All"
- * checkbox in the header toggles every visible row.
- *
- * Subclass it and override [columns] + [loadRows]; optionally override the
- * action handlers.
+ * Reusable searchable data-table screen. Each row has a selection checkbox.
+ * Global Print and Delete actions appear in a contextual bar when rows are selected.
  */
 abstract class DataTableFragment : Fragment(), TitledScreen {
 
     /** Column headers (checkbox + "Actions" columns are added automatically). */
     abstract val columns: List<String>
+
+    /** Fields shown in the Add/Edit form. Defaults to [columns] if not overridden. */
+    open val formFields: List<String> get() = columns
 
     /** Initial rows to display; each row's cells must align with [columns]. */
     abstract fun loadRows(): MutableList<DataRow>
@@ -55,6 +55,11 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     private lateinit var cbSelectAll: CheckBox
     private var suppressSelectAll = false
 
+    // Selection UI
+    private lateinit var tvSelectionCount: TextView
+    private lateinit var btnGlobalPrint: ImageButton
+    private lateinit var btnGlobalDelete: ImageButton
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
@@ -62,6 +67,10 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        tvSelectionCount = view.findViewById(R.id.tvSelectionCount)
+        btnGlobalPrint = view.findViewById(R.id.btnGlobalPrint)
+        btnGlobalDelete = view.findViewById(R.id.btnGlobalDelete)
 
         rvTable = view.findViewById(R.id.rvTable)
         tvEmpty = view.findViewById(R.id.tvEmpty)
@@ -71,9 +80,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             columns.size,
             selectedIds,
             onEdit = { onEditRow(it) },
-            onDelete = { onDeleteRow(it) },
-            onPrint = { onPrintRow(it) },
-            onSelectionChanged = { syncSelectAll() }
+            onSelectionChanged = { updateSelectionUI() }
         )
         rvTable.layoutManager = LinearLayoutManager(requireContext())
         rvTable.adapter = adapter
@@ -94,6 +101,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         })
 
         view.findViewById<View>(R.id.btnAdd).setOnClickListener { onAddRow() }
+        
+        btnGlobalDelete.setOnClickListener { onBulkDelete() }
+        btnGlobalPrint.setOnClickListener { onBulkPrint() }
 
         ThemeManager.applyTheme(view)
     }
@@ -104,7 +114,6 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         val accent = ThemeManager.getThemeColor(ctx)
         val density = resources.displayMetrics.density
 
-        // Select-All checkbox.
         cbSelectAll = CheckBox(ctx)
         cbSelectAll.layoutParams = LinearLayout.LayoutParams((44 * density).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT)
         cbSelectAll.buttonTintList = ColorStateList.valueOf(accent)
@@ -113,6 +122,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             if (isChecked) shownRows.forEach { selectedIds.add(it.id) }
             else shownRows.forEach { selectedIds.remove(it.id) }
             adapter.notifyDataSetChanged()
+            updateSelectionUI()
         }
         header.addView(cbSelectAll)
 
@@ -126,7 +136,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             header.addView(tv)
         }
         val actions = TextView(ctx)
-        actions.layoutParams = LinearLayout.LayoutParams((210 * density).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT)
+        actions.layoutParams = LinearLayout.LayoutParams((120 * density).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT)
         actions.text = "Actions"
         actions.gravity = Gravity.CENTER
         actions.setTextColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.text_secondary))
@@ -135,8 +145,18 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         header.addView(actions)
     }
 
-    /** Keeps the header "Select All" checkbox in sync with row selection. */
-    private fun syncSelectAll() {
+    private fun updateSelectionUI() {
+        val count = selectedIds.size
+        val hasSelection = count > 0
+
+        tvSelectionCount.text = if (hasSelection) "$count item${if (count > 1) "s" else ""} selected" else "No items selected"
+
+        btnGlobalPrint.isEnabled = hasSelection
+        btnGlobalDelete.isEnabled = hasSelection
+
+        btnGlobalPrint.alpha = if (hasSelection) 1f else 0.35f
+        btnGlobalDelete.alpha = if (hasSelection) 1f else 0.35f
+
         suppressSelectAll = true
         cbSelectAll.isChecked = shownRows.isNotEmpty() && shownRows.all { selectedIds.contains(it.id) }
         suppressSelectAll = false
@@ -154,16 +174,16 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         }
         adapter.notifyDataSetChanged()
         tvEmpty.visibility = if (shownRows.isEmpty()) View.VISIBLE else View.GONE
-        if (::cbSelectAll.isInitialized) syncSelectAll()
+        if (::cbSelectAll.isInitialized) updateSelectionUI()
     }
 
     protected fun toast(msg: String) =
         Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
 
-    // ---- Overridable actions (sensible defaults) ----------------------------
+    // ---- Actions -----------------------------------------------------------
 
     protected open fun onAddRow() {
-        val fields = columns.map { DialogUtils.FormField(it, "") }
+        val fields = formFields.map { DialogUtils.FormField(it, "") }
         DialogUtils.showForm(requireContext(), "Add New", fields, positiveText = "Add") { values ->
             allRows.add(DataRow(System.currentTimeMillis().toString(), values))
             applyFilter(query)
@@ -172,8 +192,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     }
 
     protected open fun onEditRow(row: DataRow) {
-        val fields = columns.mapIndexed { i, col ->
-            DialogUtils.FormField(col, row.cells.getOrNull(i).orEmpty())
+        val fields = formFields.mapIndexed { i, label ->
+            DialogUtils.FormField(label, row.cells.getOrNull(i).orEmpty())
         }
         DialogUtils.showForm(requireContext(), "Edit Record", fields) { values ->
             val idx = allRows.indexOfFirst { it.id == row.id }
@@ -185,34 +205,36 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         }
     }
 
-    protected open fun onPrintRow(row: DataRow) {
+    protected open fun onBulkDelete() {
+        val count = selectedIds.size
         DialogUtils.showConfirm(
             context = requireContext(),
-            title = "Print Record",
-            message = "Do you want to print \"${row.cells.firstOrNull().orEmpty()}\"?",
-            positiveText = "Print",
-            negativeText = "Cancel",
-            iconRes = android.R.drawable.ic_menu_set_as,
-            destructive = false
-        ) {
-            toast("Printing: ${row.cells.firstOrNull().orEmpty()}")
-        }
-    }
-
-    protected open fun onDeleteRow(row: DataRow) {
-        DialogUtils.showConfirm(
-            context = requireContext(),
-            title = "Delete Record",
-            message = "Are you sure you want to delete \"${row.cells.firstOrNull().orEmpty()}\"?",
-            positiveText = "Delete",
+            title = "Delete Selected",
+            message = "Are you sure you want to delete $count selected record(s)?",
+            positiveText = "Delete All",
             negativeText = "Cancel",
             iconRes = android.R.drawable.ic_menu_delete,
             destructive = true
         ) {
-            allRows.remove(row)
-            selectedIds.remove(row.id)
+            allRows.removeAll { selectedIds.contains(it.id) }
+            selectedIds.clear()
             applyFilter(query)
-            toast("Deleted")
+            toast("Deleted $count record(s)")
+        }
+    }
+
+    protected open fun onBulkPrint() {
+        val count = selectedIds.size
+        DialogUtils.showConfirm(
+            context = requireContext(),
+            title = "Print Selected",
+            message = "Do you want to print $count selected record(s)?",
+            positiveText = "Print All",
+            negativeText = "Cancel",
+            iconRes = android.R.drawable.ic_menu_set_as,
+            destructive = false
+        ) {
+            toast("Printing $count record(s)...")
         }
     }
 
@@ -221,8 +243,6 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         private val columnCount: Int,
         private val selectedIds: MutableSet<String>,
         private val onEdit: (DataRow) -> Unit,
-        private val onDelete: (DataRow) -> Unit,
-        private val onPrint: (DataRow) -> Unit,
         private val onSelectionChanged: () -> Unit
     ) : RecyclerView.Adapter<DataTableAdapter.ViewHolder>() {
 
@@ -230,8 +250,6 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             val cbRow: CheckBox = view.findViewById(R.id.cbRow)
             val llCells: LinearLayout = view.findViewById(R.id.llCells)
             val btnEdit: View = view.findViewById(R.id.btnRowEdit)
-            val btnDelete: View = view.findViewById(R.id.btnRowDelete)
-            val btnPrint: View = view.findViewById(R.id.btnRowPrint)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -256,33 +274,17 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
                 holder.llCells.addView(tv)
             }
 
-            val accent = ThemeManager.getThemeColor(ctx)
-            holder.cbRow.buttonTintList = ColorStateList.valueOf(accent)
+            // Apply the dynamic theme to the entire row (Edit button, Checkbox, etc.)
+            ThemeManager.applyTheme(holder.itemView)
 
-            // Bind selection state without firing the listener.
             holder.cbRow.setOnCheckedChangeListener(null)
-            val selected = selectedIds.contains(row.id)
-            holder.cbRow.isChecked = selected
-            setRowEnabled(holder, selected)
+            holder.cbRow.isChecked = selectedIds.contains(row.id)
             holder.cbRow.setOnCheckedChangeListener { _, isChecked ->
                 if (isChecked) selectedIds.add(row.id) else selectedIds.remove(row.id)
-                setRowEnabled(holder, isChecked)
                 onSelectionChanged()
             }
 
-            // Edit is always available; Delete/Print are gated by selection.
             holder.btnEdit.setOnClickListener { onEdit(row) }
-            holder.btnDelete.setOnClickListener { onDelete(row) }
-            holder.btnPrint.setOnClickListener { onPrint(row) }
-        }
-
-        /** Enables/disables (and dims) the Delete + Print buttons. */
-        private fun setRowEnabled(holder: ViewHolder, enabled: Boolean) {
-            holder.btnDelete.isEnabled = enabled
-            holder.btnPrint.isEnabled = enabled
-            val alpha = if (enabled) 1f else 0.35f
-            holder.btnDelete.alpha = alpha
-            holder.btnPrint.alpha = alpha
         }
 
         override fun getItemCount() = rows.size

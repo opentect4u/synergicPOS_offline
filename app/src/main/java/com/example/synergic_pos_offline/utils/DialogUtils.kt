@@ -4,7 +4,10 @@ import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.ViewGroup
+import android.widget.GridLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -69,6 +72,7 @@ object DialogUtils {
         btnNegative.setOnClickListener { dialog.dismiss() }
 
         dialog.show()
+        centerWindow(dialog)
     }
 
     /** A single labelled input field for [showForm]. */
@@ -91,23 +95,35 @@ object DialogUtils {
         val accent = ThemeManager.getThemeColor(context)
 
         view.findViewById<TextView>(R.id.tvFormTitle).text = title
-        val container = view.findViewById<LinearLayout>(R.id.llFields)
+        val grid = view.findViewById<GridLayout>(R.id.glFields)
         val btnPositive = view.findViewById<MaterialButton>(R.id.btnFormPositive)
         val btnNegative = view.findViewById<MaterialButton>(R.id.btnFormNegative)
         btnPositive.text = positiveText
         btnNegative.text = negativeText
 
         val inputs = ArrayList<TextInputEditText>(fields.size)
+        val density = context.resources.displayMetrics.density
+        val margin = (8 * density).toInt()
+
         for (field in fields) {
-            val til = inflater.inflate(R.layout.item_form_field, container, false) as TextInputLayout
+            val til = inflater.inflate(R.layout.item_form_field, grid, false) as TextInputLayout
             til.hint = field.label
+            
+            // Layout params for 2 columns (e.g. 1,2 then 3,4 then 5,6)
+            val params = GridLayout.LayoutParams()
+            params.width = 0
+            params.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+            params.setMargins(margin, 0, margin, margin)
+            til.layoutParams = params
+            
             val et = til.findViewById<TextInputEditText>(R.id.etField)
             et.setText(field.value)
-            container.addView(til)
+            grid.addView(til)
             inputs.add(et)
         }
 
-        ThemeManager.applyTheme(container)
+        ThemeManager.applyTheme(grid)
         btnPositive.backgroundTintList = ColorStateList.valueOf(accent)
         btnNegative.setTextColor(accent)
         btnNegative.strokeColor = ColorStateList.valueOf(accent)
@@ -120,5 +136,14 @@ object DialogUtils {
         btnNegative.setOnClickListener { dialog.dismiss() }
 
         dialog.show()
+        centerWindow(dialog)
+    }
+
+    /** Shrinks the dialog window to its content so the card is centered. */
+    private fun centerWindow(dialog: AlertDialog) {
+        dialog.window?.apply {
+            setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.CENTER)
+        }
     }
 }

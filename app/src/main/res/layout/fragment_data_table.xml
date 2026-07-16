@@ -12,33 +12,65 @@
         android:orientation="vertical"
         android:padding="12dp">
 
-        <!-- Search row -->
+        <!-- Search row (Always visible) -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilSearch"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Search"
+            app:startIconDrawable="@android:drawable/ic_menu_search"
+            app:boxCornerRadiusTopStart="12dp"
+            app:boxCornerRadiusTopEnd="12dp"
+            app:boxCornerRadiusBottomStart="12dp"
+            app:boxCornerRadiusBottomEnd="12dp">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etSearch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="text"
+                android:imeOptions="actionSearch"
+                android:maxLines="1" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <!-- Selection Action Row (Always visible, enabled dynamically) -->
         <LinearLayout
+            android:id="@+id/llActionRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:gravity="center_vertical"
+            android:layout_marginTop="8dp"
+            android:paddingHorizontal="4dp">
 
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/tilSearch"
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                android:layout_width="match_parent"
+            <TextView
+                android:id="@+id/tvSelectionCount"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:hint="Search"
-                app:startIconDrawable="@android:drawable/ic_menu_search"
-                app:boxCornerRadiusTopStart="12dp"
-                app:boxCornerRadiusTopEnd="12dp"
-                app:boxCornerRadiusBottomStart="12dp"
-                app:boxCornerRadiusBottomEnd="12dp">
+                android:layout_weight="1"
+                android:text="No items selected"
+                android:textSize="14sp"
+                android:textColor="@color/text_secondary" />
 
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etSearch"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="text"
-                    android:imeOptions="actionSearch"
-                    android:maxLines="1" />
-            </com.google.android.material.textfield.TextInputLayout>
+            <ImageButton
+                android:id="@+id/btnGlobalPrint"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_print"
+                app:tint="@color/primary_blue"
+                android:contentDescription="Print Selected" />
+
+            <ImageButton
+                android:id="@+id/btnGlobalDelete"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_delete"
+                app:tint="@color/menu_delete_icon"
+                android:contentDescription="Delete Selected" />
         </LinearLayout>
 
         <!-- Table card -->
@@ -46,7 +78,7 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="8dp"
             app:cardCornerRadius="16dp"
             app:cardElevation="2dp"
             app:cardBackgroundColor="@color/white">
@@ -56,7 +88,7 @@
                 android:layout_height="match_parent"
                 android:orientation="vertical">
 
-                <!-- Column header (built dynamically) -->
+                <!-- Column header -->
                 <LinearLayout
                     android:id="@+id/llTableHeader"
                     android:layout_width="match_parent"

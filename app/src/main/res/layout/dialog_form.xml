@@ -9,7 +9,7 @@
     app:cardBackgroundColor="@color/white">
 
     <LinearLayout
-        android:layout_width="340dp"
+        android:layout_width="500dp"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center"
@@ -30,14 +30,17 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="20dp"
+            android:maxHeight="450dp"
             android:fillViewport="true"
-            android:scrollbars="none">
+            android:scrollbars="vertical">
 
-            <LinearLayout
-                android:id="@+id/llFields"
+            <GridLayout
+                android:id="@+id/glFields"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical" />
+                android:columnCount="2"
+                android:alignmentMode="alignMargins"
+                android:columnOrderPreserved="false" />
         </ScrollView>
 
         <LinearLayout
@@ -58,7 +61,7 @@
                 android:id="@+id/btnFormPositive"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
+                android:layout_marginStart="24dp"
                 android:text="Save"
                 android:textColor="@color/white"
                 app:cornerRadius="12dp" />
