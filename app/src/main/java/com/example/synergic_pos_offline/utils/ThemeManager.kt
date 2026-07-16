@@ -88,7 +88,8 @@ object ThemeManager {
             // the logo keep their own colors.
             is ImageView -> if (name == "btnBack" || name == "btnMenu" ||
                 name == "btnTheme" || name == "ivChevron" ||
-                name == "btnRowEdit" || name == "btnRowDelete" || name == "btnRowPrint") {
+                name == "btnRowEdit" || name == "btnRowDelete" || name == "btnRowPrint" ||
+                name == "btnGlobalPrint" || name == "btnGlobalDelete") {
                 view.imageTintList = tint
             }
 

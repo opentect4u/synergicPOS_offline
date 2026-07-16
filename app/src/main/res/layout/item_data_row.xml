@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -34,43 +35,25 @@
 
         <!-- Action column -->
         <LinearLayout
-            android:layout_width="210dp"
+            android:layout_width="120dp"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center">
 
-            <ImageButton
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnRowEdit"
-                android:layout_width="46dp"
-                android:layout_height="46dp"
-                android:padding="8dp"
-                android:scaleType="fitCenter"
-                android:layout_marginHorizontal="6dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_edit"
-                android:contentDescription="Edit" />
+                style="@style/Widget.MaterialComponents.Button"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:text="Edit"
+                android:textSize="13sp"
+                android:textColor="@color/white"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                app:cornerRadius="8dp"
+                app:paddingStart="12dp"
+                app:paddingEnd="12dp" />
 
-            <ImageButton
-                android:id="@+id/btnRowDelete"
-                android:layout_width="46dp"
-                android:layout_height="46dp"
-                android:padding="8dp"
-                android:scaleType="fitCenter"
-                android:layout_marginHorizontal="6dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_delete"
-                android:contentDescription="Delete" />
-
-            <ImageButton
-                android:id="@+id/btnRowPrint"
-                android:layout_width="46dp"
-                android:layout_height="46dp"
-                android:padding="8dp"
-                android:scaleType="fitCenter"
-                android:layout_marginHorizontal="6dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_print"
-                android:contentDescription="Print" />
         </LinearLayout>
     </LinearLayout>
 

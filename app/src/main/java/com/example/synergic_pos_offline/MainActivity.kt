@@ -25,6 +25,7 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.example.synergic_pos_offline.fragments.BillHeaderFooterFragment
 import com.example.synergic_pos_offline.fragments.DatabaseSettingsFragment
 import com.example.synergic_pos_offline.fragments.HeaderFooterFragment
 import com.example.synergic_pos_offline.fragments.InventoryFragment
@@ -267,6 +268,7 @@ class MainActivity : AppCompatActivity() {
             "Stock & Inventory" -> navigateTo(InventoryFragment())
             "Reports" -> navigateTo(ReportsFragment())
             "Header & Footer" -> navigateTo(HeaderFooterFragment())
+            "Bill Header & Footer" -> navigateTo(BillHeaderFooterFragment())
             "Database Settings" -> navigateTo(DatabaseSettingsFragment())
             else -> Toast.makeText(this, "Opening $title...", Toast.LENGTH_SHORT).show()
         }
