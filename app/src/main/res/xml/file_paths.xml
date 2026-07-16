@@ -5,4 +5,7 @@
     <cache-path
         name="camera_images"
         path="camera/" />
+<paths>
+    <!-- Temp file the camera app writes the captured product photo into. -->
+    <cache-path name="captures" path="." />
 </paths>

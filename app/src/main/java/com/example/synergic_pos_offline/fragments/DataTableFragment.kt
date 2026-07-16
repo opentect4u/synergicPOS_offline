@@ -2,6 +2,9 @@ package com.example.synergic_pos_offline.fragments
 
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -15,6 +18,8 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -22,10 +27,33 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 
-/** A single table row: a stable [id] plus one string per data column. */
-data class DataRow(val id: String, val cells: List<String>)
+/** Largest edge, in px, decoded for the full-size image preview. */
+private const val PREVIEW_PX = 1200
+
+/** Decodes only as many pixels as needed, so large image BLOBs stay cheap to show. */
+private fun decodeSampledBitmap(bytes: ByteArray, targetPx: Int): Bitmap? = try {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    var sample = 1
+    while (bounds.outWidth / sample > targetPx || bounds.outHeight / sample > targetPx) {
+        sample *= 2
+    }
+    BitmapFactory.decodeByteArray(
+        bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }
+    )
+} catch (_: Exception) {
+    null
+}
+
+/**
+ * A single table row: a stable [id] plus one string per data column.
+ * [thumbnail] is optional encoded image bytes shown as a round preview before the
+ * first cell (only when the screen sets [DataTableFragment.showsThumbnails]).
+ */
+data class DataRow(val id: String, val cells: List<String>, val thumbnail: ByteArray? = null)
 
 /** Lets a fragment supply its own title to the global header. */
 interface TitledScreen {
@@ -43,6 +71,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     /** Fields shown in the Add/Edit form. Defaults to [columns] if not overridden. */
     open val formFields: List<String> get() = columns
+
+    /** Set true to reserve a leading round thumbnail column fed by [DataRow.thumbnail]. */
+    open val showsThumbnails: Boolean get() = false
 
     /** Initial rows to display; each row's cells must align with [columns]. */
     abstract fun loadRows(): MutableList<DataRow>
@@ -94,7 +125,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             thumbnailColumn,
             { loadThumbnail(it) },
             onThumbnailClick = { onThumbnailClick(it) },
+            showsThumbnails,
             onEdit = { onEditRow(it) },
+            onThumbClick = { showImagePreview(it) },
             onSelectionChanged = { updateSelectionUI() }
         )
         rvTable.layoutManager = LinearLayoutManager(requireContext())
@@ -140,6 +173,13 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             updateSelectionUI()
         }
         header.addView(cbSelectAll)
+
+        // Keep the header aligned with the rows' leading thumbnail (40dp + 10dp margin).
+        if (showsThumbnails) {
+            val spacer = View(ctx)
+            spacer.layoutParams = LinearLayout.LayoutParams((50 * density).toInt(), 1)
+            header.addView(spacer)
+        }
 
         for (col in columns) {
             val tv = TextView(ctx)
@@ -217,6 +257,28 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     /** Re-reads the backing data via [loadRows] and refreshes the table. */
     protected fun reload() {
+    /** Opens the row's image full size. Called when a row thumbnail is tapped. */
+    private fun showImagePreview(row: DataRow) {
+        val bitmap = row.thumbnail?.let { decodeSampledBitmap(it, PREVIEW_PX) } ?: return
+        val view = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_image_preview, null)
+        val dialog = AlertDialog.Builder(requireContext()).setView(view).create()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        view.findViewById<TextView>(R.id.tvPreviewTitle).text =
+            row.cells.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Image"
+        view.findViewById<android.widget.ImageView>(R.id.ivPreview).setImageBitmap(bitmap)
+        view.findViewById<MaterialButton>(R.id.btnPreviewClose).apply {
+            backgroundTintList = ColorStateList.valueOf(ThemeManager.getThemeColor(requireContext()))
+            setOnClickListener { dialog.dismiss() }
+        }
+        dialog.show()
+    }
+
+    /** Ids of the currently ticked rows, for subclasses that persist bulk actions. */
+    protected val selectedRowIds: Set<String> get() = selectedIds.toSet()
+
+    /** Re-runs [loadRows] and repaints the table, keeping the current search filter. */
+    protected fun refreshRows() {
         allRows.clear()
         allRows.addAll(loadRows())
         selectedIds.clear()
@@ -296,12 +358,15 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         private val thumbnailColumn: Int?,
         private val thumbnailProvider: (DataRow) -> Bitmap?,
         private val onThumbnailClick: (DataRow) -> Unit,
+        private val showsThumbnails: Boolean,
         private val onEdit: (DataRow) -> Unit,
+        private val onThumbClick: (DataRow) -> Unit,
         private val onSelectionChanged: () -> Unit
     ) : RecyclerView.Adapter<DataTableAdapter.ViewHolder>() {
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val cbRow: CheckBox = view.findViewById(R.id.cbRow)
+            val ivThumb: android.widget.ImageView = view.findViewById(R.id.ivRowThumb)
             val llCells: LinearLayout = view.findViewById(R.id.llCells)
             val btnEdit: View = view.findViewById(R.id.btnRowEdit)
         }
@@ -314,6 +379,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val row = rows[position]
             val ctx = holder.itemView.context
+
+            bindThumbnail(holder, row, ctx)
 
             holder.llCells.removeAllViews()
             for (i in 0 until columnCount) {
@@ -386,8 +453,36 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             card.addView(iv)
             slot.addView(card)
             return slot
+        /** Shows the row's image as a circle, or a plain placeholder circle when absent. */
+        private fun bindThumbnail(holder: ViewHolder, row: DataRow, ctx: android.content.Context) {
+            if (!showsThumbnails) {
+                holder.ivThumb.visibility = View.GONE
+                return
+            }
+            holder.ivThumb.visibility = View.VISIBLE
+
+            val bitmap = row.thumbnail?.let { decodeSampledBitmap(it, THUMB_PX) }
+            if (bitmap == null) {
+                holder.ivThumb.setImageDrawable(null)
+                holder.ivThumb.setBackgroundResource(R.drawable.bg_thumb_placeholder)
+                holder.ivThumb.isClickable = false
+                holder.ivThumb.setOnClickListener(null)
+            } else {
+                holder.ivThumb.background = null
+                holder.ivThumb.setImageDrawable(
+                    RoundedBitmapDrawableFactory.create(ctx.resources, bitmap).apply {
+                        isCircular = true
+                    }
+                )
+                // Only rows that actually have an image open the preview.
+                holder.ivThumb.setOnClickListener { onThumbClick(row) }
+            }
         }
 
         override fun getItemCount() = rows.size
+
+        private companion object {
+            const val THUMB_PX = 120
+        }
     }
 }

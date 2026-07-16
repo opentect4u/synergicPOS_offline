@@ -52,11 +52,19 @@ class DatabaseSettingsFragment : Fragment() {
                 "Waiter" -> openFragment(WaiterFragment())
                 "Customers" -> openFragment(CustomerFragment())
                 "Description/Ledger" -> openFragment(DescriptionLedgerFragment())
+                "Products" -> openFragment(ProductsFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             }
         }
 
         ThemeManager.applyTheme(view)
+    }
+
+    private fun openFragment(fragment: Fragment) {
+        requireActivity().supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, fragment)
+            .addToBackStack(null)
+            .commit()
     }
 
     private fun openFragment(fragment: Fragment) {
