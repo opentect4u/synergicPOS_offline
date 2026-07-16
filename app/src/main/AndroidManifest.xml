@@ -28,6 +28,7 @@
             </intent-filter>
         </activity>
 
+        <!-- Shares camera-capture temp files with the system camera app. -->
         <!-- Lets the camera app write captured product photos into our cache dir. -->
         <provider
             android:name="androidx.core.content.FileProvider"
