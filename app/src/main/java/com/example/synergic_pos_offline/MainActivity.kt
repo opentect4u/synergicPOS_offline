@@ -31,6 +31,7 @@ import com.example.synergic_pos_offline.fragments.HeaderFooterFragment
 import com.example.synergic_pos_offline.fragments.InventoryFragment
 import com.example.synergic_pos_offline.fragments.LoginFragment
 import com.example.synergic_pos_offline.fragments.MasterFragment
+import com.example.synergic_pos_offline.fragments.ProductsFragment
 import com.example.synergic_pos_offline.fragments.RegistrationFragment
 import com.example.synergic_pos_offline.fragments.ReportsFragment
 import com.example.synergic_pos_offline.fragments.SettingsFragment
@@ -270,6 +271,7 @@ class MainActivity : AppCompatActivity() {
             "Header & Footer" -> navigateTo(HeaderFooterFragment())
             "Bill Header & Footer" -> navigateTo(BillHeaderFooterFragment())
             "Database Settings" -> navigateTo(DatabaseSettingsFragment())
+            "Products" -> navigateTo(ProductsFragment())
             else -> Toast.makeText(this, "Opening $title...", Toast.LENGTH_SHORT).show()
         }
     }

@@ -5,4 +5,5 @@
     <string name="password">Password</string>
     <string name="login_successful">Login Successful</string>
     <string name="please_enter_credentials">Please enter credentials</string>
+    <string name="registering">Registering…</string>
 </resources>
