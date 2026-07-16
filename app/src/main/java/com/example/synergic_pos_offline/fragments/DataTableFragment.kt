@@ -257,6 +257,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     /** Re-reads the backing data via [loadRows] and refreshes the table. */
     protected fun reload() {
+        refreshRows()
+    }
     /** Opens the row's image full size. Called when a row thumbnail is tapped. */
     private fun showImagePreview(row: DataRow) {
         val bitmap = row.thumbnail?.let { decodeSampledBitmap(it, PREVIEW_PX) } ?: return
@@ -264,7 +266,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         val dialog = AlertDialog.Builder(requireContext()).setView(view).create()
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
-        view.findViewById<TextView>(R.id.tvPreviewTitle).text =
+        view.findViewById<TextView>(R.id.tvPreviewName).text =
             row.cells.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Image"
         view.findViewById<android.widget.ImageView>(R.id.ivPreview).setImageBitmap(bitmap)
         view.findViewById<MaterialButton>(R.id.btnPreviewClose).apply {
@@ -453,6 +455,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             card.addView(iv)
             slot.addView(card)
             return slot
+        }
         /** Shows the row's image as a circle, or a plain placeholder circle when absent. */
         private fun bindThumbnail(holder: ViewHolder, row: DataRow, ctx: android.content.Context) {
             if (!showsThumbnails) {

@@ -67,13 +67,6 @@ class DatabaseSettingsFragment : Fragment() {
             .commit()
     }
 
-    private fun openFragment(fragment: Fragment) {
-        requireActivity().supportFragmentManager.beginTransaction()
-            .replace(R.id.fragment_container, fragment)
-            .addToBackStack(null)
-            .commit()
-    }
-
     data class DatabaseItem(
         val title: String,
         val iconRes: Int,
