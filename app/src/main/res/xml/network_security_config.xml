@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+      Allow plain HTTP to local/LAN servers whose IP varies per deployment.
+      HTTPS is still used wherever the server offers it; this only relaxes the
+      cleartext restriction so http:// LAN endpoints (e.g. the registration/auth
+      server) are reachable without whitelisting each IP.
+    -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
