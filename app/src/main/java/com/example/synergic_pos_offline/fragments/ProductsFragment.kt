@@ -157,7 +157,7 @@ class ProductsFragment : DataTableFragment() {
     private fun showProductDialog(productId: Int?) {
         val context = requireContext()
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_product_form, null)
-        val dialog = AlertDialog.Builder(context).setView(view).create()
+        val dialog = AlertDialog.Builder(context).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         // Reset per-dialog image state.

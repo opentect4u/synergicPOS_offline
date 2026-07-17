@@ -101,7 +101,7 @@ class CategoryDepartmentFragment : DataTableFragment() {
         val accent = ThemeManager.getThemeColor(ctx)
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_image_preview, null)
-        val dialog = AlertDialog.Builder(ctx).setView(view).create()
+        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val iv = view.findViewById<ImageView>(R.id.ivPreview)
@@ -140,7 +140,7 @@ class CategoryDepartmentFragment : DataTableFragment() {
         val accent = ThemeManager.getThemeColor(ctx)
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_category_department, null)
-        val dialog = AlertDialog.Builder(ctx).setView(view).create()
+        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
@@ -217,7 +217,9 @@ class CategoryDepartmentFragment : DataTableFragment() {
             .setItems(arrayOf("Take Photo", "Choose from Gallery")) { _, which ->
                 if (which == 0) launchCamera() else pickGallery.launch("image/*")
             }
-            .show()
+            .setNegativeButton("Cancel", null)
+            .create()
+            .also { it.setCanceledOnTouchOutside(false); it.show() }
     }
 
     private fun launchCamera() {

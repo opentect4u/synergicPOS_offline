@@ -53,6 +53,7 @@ class MasterFragment : Fragment() {
     private fun handleAction(title: String) {
         when (title) {
             "Header & Footer" -> openFragment(HeaderFooterFragment())
+            "User Management" -> openFragment(UserManagementFragment())
             "Database Settings" -> openFragment(DatabaseSettingsFragment())
             else -> Toast.makeText(requireContext(), "Opening $title...", Toast.LENGTH_SHORT).show()
         }

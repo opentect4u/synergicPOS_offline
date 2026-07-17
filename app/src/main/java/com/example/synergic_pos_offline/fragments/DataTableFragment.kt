@@ -28,6 +28,7 @@ import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.TextInputEditText
 
 /** Largest edge, in px, decoded for the full-size image preview. */
@@ -87,6 +88,12 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     /** Invoked when a row's thumbnail cell is tapped (e.g. to preview it full-size). */
     open fun onThumbnailClick(row: DataRow) {}
 
+    /** Column index (into [columns]) rendered as an inline ON/OFF switch, if any. */
+    open val switchColumn: Int? = null
+
+    /** Invoked when a row's inline switch is toggled. Persist + reflect the new state. */
+    open fun onSwitchToggled(row: DataRow, isOn: Boolean) {}
+
     private val allRows = mutableListOf<DataRow>()
     private val shownRows = mutableListOf<DataRow>()
     private val selectedIds = linkedSetOf<String>()
@@ -126,6 +133,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             { loadThumbnail(it) },
             onThumbnailClick = { onThumbnailClick(it) },
             showsThumbnails,
+            switchColumn,
+            onSwitchToggled = { row, isOn -> onSwitchToggled(row, isOn) },
             onEdit = { onEditRow(it) },
             onThumbClick = { showImagePreview(it) },
             onSelectionChanged = { updateSelectionUI() }
@@ -263,7 +272,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     private fun showImagePreview(row: DataRow) {
         val bitmap = row.thumbnail?.let { decodeSampledBitmap(it, PREVIEW_PX) } ?: return
         val view = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_image_preview, null)
-        val dialog = AlertDialog.Builder(requireContext()).setView(view).create()
+        val dialog = AlertDialog.Builder(requireContext()).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         view.findViewById<TextView>(R.id.tvPreviewName).text =
@@ -361,6 +370,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         private val thumbnailProvider: (DataRow) -> Bitmap?,
         private val onThumbnailClick: (DataRow) -> Unit,
         private val showsThumbnails: Boolean,
+        private val switchColumn: Int?,
+        private val onSwitchToggled: (DataRow, Boolean) -> Unit,
         private val onEdit: (DataRow) -> Unit,
         private val onThumbClick: (DataRow) -> Unit,
         private val onSelectionChanged: () -> Unit
@@ -388,6 +399,10 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             for (i in 0 until columnCount) {
                 if (i == thumbnailColumn) {
                     holder.llCells.addView(buildThumbnailCell(ctx, row))
+                    continue
+                }
+                if (i == switchColumn) {
+                    holder.llCells.addView(buildSwitchCell(ctx, row, i))
                     continue
                 }
                 val tv = TextView(ctx)
@@ -456,6 +471,22 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             slot.addView(card)
             return slot
         }
+        /** A weighted table cell holding an inline ON/OFF switch driven by cell text. */
+        private fun buildSwitchCell(ctx: android.content.Context, row: DataRow, col: Int): View {
+            val slot = LinearLayout(ctx)
+            slot.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            slot.gravity = Gravity.CENTER_VERTICAL
+
+            val sw = SwitchMaterial(ctx)
+            val on = row.cells.getOrNull(col)?.lowercase() in ON_VALUES
+            sw.setOnCheckedChangeListener(null)
+            sw.isChecked = on
+            sw.thumbTintList = ColorStateList.valueOf(ThemeManager.getThemeColor(ctx))
+            sw.setOnCheckedChangeListener { _, checked -> onSwitchToggled(row, checked) }
+            slot.addView(sw)
+            return slot
+        }
+
         /** Shows the row's image as a circle, or a plain placeholder circle when absent. */
         private fun bindThumbnail(holder: ViewHolder, row: DataRow, ctx: android.content.Context) {
             if (!showsThumbnails) {
@@ -486,6 +517,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
         private companion object {
             const val THUMB_PX = 120
+            /** Cell values (lowercased) that render the inline switch as ON. */
+            val ON_VALUES = setOf("on", "enabled", "yes", "active", "true")
         }
     }
 }

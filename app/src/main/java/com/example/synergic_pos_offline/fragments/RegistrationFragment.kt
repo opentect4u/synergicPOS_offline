@@ -251,7 +251,8 @@ class RegistrationFragment : Fragment() {
             .setTitle(if (result.error != null) "Request Failed" else "Registration Failed")
             .setMessage(message)
             .setPositiveButton("OK", null)
-            .show()
+            .create()
+            .also { it.setCanceledOnTouchOutside(false); it.show() }
     }
 
     /** Uses the server's message when present, otherwise a friendly default. */

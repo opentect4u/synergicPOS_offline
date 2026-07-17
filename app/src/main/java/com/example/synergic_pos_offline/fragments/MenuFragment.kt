@@ -39,6 +39,7 @@ class MenuFragment : Fragment() {
             MenuItem("Settings", android.R.drawable.ic_menu_preferences, R.color.menu_settings, R.color.menu_settings_icon),
             MenuItem("Stock & Inventory", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon),
             MenuItem("Sale", android.R.drawable.ic_menu_add, R.color.menu_sale, R.color.menu_sale_icon),
+            MenuItem("Bill", android.R.drawable.ic_menu_agenda, R.color.menu_report, R.color.menu_report_icon),
             MenuItem("Sale Return", android.R.drawable.ic_menu_revert, R.color.menu_delete, R.color.menu_delete_icon),
             MenuItem("Advance Payment", android.R.drawable.ic_menu_today, R.color.menu_sale, R.color.menu_sale_icon),
             MenuItem("Duplicate Bill", android.R.drawable.ic_menu_today, R.color.menu_master, R.color.menu_master_icon),
@@ -58,6 +59,7 @@ class MenuFragment : Fragment() {
             "Settings" -> openFragment(SettingsFragment())
             "Stock & Inventory" -> openFragment(InventoryFragment())
             "Reports" -> openFragment(ReportsFragment())
+            "Bill" -> openFragment(BillFragment())
             else -> Toast.makeText(requireContext(), "Opening $title...", Toast.LENGTH_SHORT).show()
         }
     }

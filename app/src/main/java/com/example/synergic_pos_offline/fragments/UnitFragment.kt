@@ -67,7 +67,7 @@ class UnitFragment : DataTableFragment() {
         val accent = ThemeManager.getThemeColor(ctx)
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_unit, null)
-        val dialog = AlertDialog.Builder(ctx).setView(view).create()
+        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
