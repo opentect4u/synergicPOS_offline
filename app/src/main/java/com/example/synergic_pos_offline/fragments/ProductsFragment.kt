@@ -39,7 +39,7 @@ class ProductsFragment : DataTableFragment() {
 
     override val screenTitle = "Products"
 
-    override val columns = listOf("Name", "HSN Code", "Barcode", "Category")
+    override val columns = listOf("S.No", "Name", "HSN Code", "Barcode", "Category")
 
     /** Products show their image as a round preview before the name. */
     override val showsThumbnails = true
@@ -77,7 +77,7 @@ class ProductsFragment : DataTableFragment() {
             FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
             LEFT JOIN ${DatabaseHelper.Tables.MD_CATEGORY} c ON c.id = p.category_id
             WHERE p.store_id = ?
-            ORDER BY p.product_name COLLATE NOCASE
+            ORDER BY p.id DESC
         """.trimIndent()
 
         db.rawQuery(sql, arrayOf(storeId().toString())).use { cursor ->
@@ -86,6 +86,7 @@ class ProductsFragment : DataTableFragment() {
                     DataRow(
                         id = cursor.getInt(0).toString(),
                         cells = listOf(
+                            cursor.getInt(0).toString(),
                             cursor.getString(1).orEmpty(),
                             cursor.getString(2).orEmpty(),
                             cursor.getString(3).orEmpty(),
