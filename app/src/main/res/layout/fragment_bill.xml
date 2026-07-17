@@ -1,0 +1,305 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_light">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none">
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="360dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="28dp"
+            app:cardCornerRadius="6dp"
+            app:cardElevation="6dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="22dp">
+
+                <!-- Store name -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="JAI HANUMAN"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="18sp"
+                    android:textColor="#111111" />
+
+                <!-- Date | Time -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="4dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="17-07-2026"
+                        android:gravity="center"
+                        android:fontFamily="monospace"
+                        android:textSize="13sp"
+                        android:textColor="#333333" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="13:18"
+                        android:fontFamily="monospace"
+                        android:textSize="13sp"
+                        android:textColor="#333333" />
+                </LinearLayout>
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Bill no / Name -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="BILL NO: 3"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="NAME  : SOMNATH"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Items header -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="3.4"
+                        android:text="SR.NO ITEM"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2"
+                        android:text="QTY"
+                        android:gravity="center"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2"
+                        android:text="PRICE"
+                        android:gravity="end"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2.2"
+                        android:text="AMOUNT"
+                        android:gravity="end"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
+                </LinearLayout>
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Items -->
+                <LinearLayout
+                    android:id="@+id/llItems"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Tax header -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="2dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2"
+                        android:text="TAX%"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2"
+                        android:text="B.AMT"
+                        android:gravity="center"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2"
+                        android:text="SGST"
+                        android:gravity="center"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2"
+                        android:text="CGST"
+                        android:gravity="center"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2.2"
+                        android:text="TOTAL"
+                        android:gravity="end"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
+                </LinearLayout>
+
+                <!-- Tax row 1 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="8dp">
+
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
+                        android:text="5.00%" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
+                        android:text="770.00" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
+                        android:text="19.25" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
+                        android:text="19.25" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2.2"
+                        android:text="808.50" android:gravity="end" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
+                </LinearLayout>
+
+                <!-- Tax row 2 (MISC) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="4dp">
+
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
+                        android:text="MISC" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
+                        android:text="@20%" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
+                        android:text=":" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
+                        android:text="" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2.2"
+                        android:text="154.00" android:gravity="end" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
+                </LinearLayout>
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Grand total -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="4dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="G.TOT.:"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="18sp"
+                        android:textColor="#111111" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="RS"
+                        android:gravity="start"
+                        android:paddingStart="12dp"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="18sp"
+                        android:textColor="#111111" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="962.50"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="22sp"
+                        android:textColor="#111111" />
+                </LinearLayout>
+
+                <TextView style="@style/BillDashLine" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="Thank you, visit again!"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textColor="#555555" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </ScrollView>
+</FrameLayout>

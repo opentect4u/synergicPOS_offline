@@ -32,6 +32,15 @@ class BillHeaderFooterFragment : DataTableFragment() {
     // Table columns. Cell layout per row: [text, section, font, status].
     override val columns = listOf("Text", "Section", "Font", "Status")
 
+    // The Status column renders as an inline ON/OFF switch.
+    override val switchColumn: Int? = COL_STATUS
+
+    private companion object {
+        const val COL_STATUS = 3
+        const val MAX_PER_SECTION = 10
+        const val MAX_TEXT_LEN = 32
+    }
+
     private val dao: BillHeaderFooterDao by lazy { BillHeaderFooterDao(requireContext()) }
 
     /** Full entries keyed by rowKey ("H12"/"F3"), for edit prefill. */
@@ -69,13 +78,25 @@ class BillHeaderFooterFragment : DataTableFragment() {
         dao.delete(ids)
     }
 
+    /** Inline row switch flips the enabled flag directly, without opening the form. */
+    override fun onSwitchToggled(row: DataRow, isOn: Boolean) {
+        dao.setEnabled(row.id, isOn)
+        entryCache[row.id]?.let { entryCache[row.id] = it.copy(enabled = isOn) }
+        val cells = row.cells.toMutableList()
+        if (COL_STATUS < cells.size) cells[COL_STATUS] = if (isOn) "Enabled" else "Disabled"
+        updateRow(row.id, cells)
+    }
+
+    private fun sectionWord(section: Section): String =
+        if (section == Section.HEADER) "headers" else "footers"
+
     private fun showEntryDialog(row: DataRow?) {
         val ctx = requireContext()
         val accent = ThemeManager.getThemeColor(ctx)
         val existing = row?.let { entryCache[it.id] }
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_bill_header_footer, null)
-        val dialog = AlertDialog.Builder(ctx).setView(view).create()
+        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
@@ -122,12 +143,20 @@ class BillHeaderFooterFragment : DataTableFragment() {
             val enabled = swEnabled.isChecked
 
             if (existing == null) {
+                if (dao.count(section) >= MAX_PER_SECTION) {
+                    toast("Maximum $MAX_PER_SECTION ${sectionWord(section)} allowed")
+                    return@setOnClickListener
+                }
                 val key = dao.insert(section, text, font, bold, enabled)
                 if (key == null) { toast("Save failed"); return@setOnClickListener }
                 dialog.dismiss()
                 reload()
                 toast("Added")
             } else if (section != existing.section) {
+                if (dao.count(section) >= MAX_PER_SECTION) {
+                    toast("Maximum $MAX_PER_SECTION ${sectionWord(section)} allowed")
+                    return@setOnClickListener
+                }
                 // Section changed => the row moves tables: delete + re-insert.
                 dao.delete(listOf(existing.rowKey))
                 dao.insert(section, text, font, bold, enabled)

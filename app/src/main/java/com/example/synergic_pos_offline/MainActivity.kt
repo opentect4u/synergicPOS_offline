@@ -26,8 +26,12 @@ import androidx.fragment.app.FragmentManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.fragments.BillHeaderFooterFragment
+import com.example.synergic_pos_offline.fragments.BillLogoFragment
+import com.example.synergic_pos_offline.fragments.CategoryDepartmentFragment
+import com.example.synergic_pos_offline.fragments.CustomerFragment
 import com.example.synergic_pos_offline.fragments.CategoryProductsFragment
 import com.example.synergic_pos_offline.fragments.DatabaseSettingsFragment
+import com.example.synergic_pos_offline.fragments.DescriptionLedgerFragment
 import com.example.synergic_pos_offline.fragments.HeaderFooterFragment
 import com.example.synergic_pos_offline.fragments.InventoryFragment
 import com.example.synergic_pos_offline.fragments.ItemwiseSearchFragment
@@ -38,6 +42,9 @@ import com.example.synergic_pos_offline.fragments.RegistrationFragment
 import com.example.synergic_pos_offline.fragments.ReportsFragment
 import com.example.synergic_pos_offline.fragments.SalesFragment
 import com.example.synergic_pos_offline.fragments.SettingsFragment
+import com.example.synergic_pos_offline.fragments.UnitFragment
+import com.example.synergic_pos_offline.fragments.UserManagementFragment
+import com.example.synergic_pos_offline.fragments.WaiterFragment
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThemeManager
@@ -275,9 +282,16 @@ class MainActivity : AppCompatActivity() {
             "Reports" -> navigateTo(ReportsFragment())
             "Sale" -> navigateTo(SalesFragment())
             "Header & Footer" -> navigateTo(HeaderFooterFragment())
+            "User Management" -> navigateTo(UserManagementFragment())
             "Bill Header & Footer" -> navigateTo(BillHeaderFooterFragment())
+            "Bill Header Footer Logo" -> navigateTo(BillLogoFragment())
             "Database Settings" -> navigateTo(DatabaseSettingsFragment())
+            "Category/Department" -> navigateTo(CategoryDepartmentFragment())
             "Products" -> navigateTo(ProductsFragment())
+            "Customers" -> navigateTo(CustomerFragment())
+            "Description/Ledger" -> navigateTo(DescriptionLedgerFragment())
+            "Units" -> navigateTo(UnitFragment())
+            "Waiter" -> navigateTo(WaiterFragment())
             else -> Toast.makeText(this, "Opening $title...", Toast.LENGTH_SHORT).show()
         }
     }

@@ -33,10 +33,11 @@ object DialogUtils {
         negativeText: String = "Cancel",
         iconRes: Int? = null,
         destructive: Boolean = false,
+        onCancel: () -> Unit = {},
         onConfirm: () -> Unit
     ) {
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_common, null)
-        val dialog = AlertDialog.Builder(context).setView(view).create()
+        val dialog = AlertDialog.Builder(context).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val accent = ThemeManager.getThemeColor(context)
@@ -69,7 +70,12 @@ object DialogUtils {
             dialog.dismiss()
             onConfirm()
         }
-        btnNegative.setOnClickListener { dialog.dismiss() }
+        btnNegative.setOnClickListener {
+            dialog.dismiss()
+            onCancel()
+        }
+        // Back-press / outside-tap counts as a cancel too.
+        dialog.setOnCancelListener { onCancel() }
 
         dialog.show()
         centerWindow(dialog)
@@ -89,7 +95,7 @@ object DialogUtils {
     ) {
         val inflater = LayoutInflater.from(context)
         val view = inflater.inflate(R.layout.dialog_form, null)
-        val dialog = AlertDialog.Builder(context).setView(view).create()
+        val dialog = AlertDialog.Builder(context).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val accent = ThemeManager.getThemeColor(context)

@@ -112,6 +112,23 @@ class BillHeaderFooterDao(context: Context) {
         return helper.writableDatabase.update(cfg.table, values, "id = ?", arrayOf(id.toString()))
     }
 
+    /** Toggles the enabled flag for the line identified by [rowKey]. */
+    fun setEnabled(rowKey: String, enabled: Boolean): Int {
+        val (section, id) = parseKey(rowKey) ?: return 0
+        val values = ContentValues().apply { put("is_enabled", if (enabled) 1 else 0) }
+        return helper.writableDatabase.update(config(section).table, values, "id = ?", arrayOf(id.toString()))
+    }
+
+    /** Number of BILL lines currently in a section (used to cap at 10). */
+    fun count(section: Section): Int {
+        val cfg = config(section)
+        helper.readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM ${cfg.table} WHERE ${cfg.typeCol} = 'BILL'", null
+        ).use { c ->
+            return if (c.moveToFirst()) c.getInt(0) else 0
+        }
+    }
+
     /** Deletes every line named in [rowKeys], across both tables. */
     fun delete(rowKeys: Collection<String>) {
         val db = helper.writableDatabase
