@@ -26,14 +26,17 @@ import androidx.fragment.app.FragmentManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.fragments.BillHeaderFooterFragment
+import com.example.synergic_pos_offline.fragments.CategoryProductsFragment
 import com.example.synergic_pos_offline.fragments.DatabaseSettingsFragment
 import com.example.synergic_pos_offline.fragments.HeaderFooterFragment
 import com.example.synergic_pos_offline.fragments.InventoryFragment
+import com.example.synergic_pos_offline.fragments.ItemwiseSearchFragment
 import com.example.synergic_pos_offline.fragments.LoginFragment
 import com.example.synergic_pos_offline.fragments.MasterFragment
 import com.example.synergic_pos_offline.fragments.ProductsFragment
 import com.example.synergic_pos_offline.fragments.RegistrationFragment
 import com.example.synergic_pos_offline.fragments.ReportsFragment
+import com.example.synergic_pos_offline.fragments.SalesFragment
 import com.example.synergic_pos_offline.fragments.SettingsFragment
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.SessionManager
@@ -124,6 +127,8 @@ class MainActivity : AppCompatActivity() {
         is SettingsFragment -> "Settings"
         is InventoryFragment -> "Stock & Inventory"
         is ReportsFragment -> "Reports"
+        is SalesFragment -> "Sales"
+        is ItemwiseSearchFragment -> "Item Search"
         is HeaderFooterFragment -> "Header & Footer"
         is DatabaseSettingsFragment -> "Database Settings"
         else -> "Synergic POS"
@@ -268,6 +273,7 @@ class MainActivity : AppCompatActivity() {
             "Settings" -> navigateTo(SettingsFragment())
             "Stock & Inventory" -> navigateTo(InventoryFragment())
             "Reports" -> navigateTo(ReportsFragment())
+            "Sale" -> navigateTo(SalesFragment())
             "Header & Footer" -> navigateTo(HeaderFooterFragment())
             "Bill Header & Footer" -> navigateTo(BillHeaderFooterFragment())
             "Database Settings" -> navigateTo(DatabaseSettingsFragment())

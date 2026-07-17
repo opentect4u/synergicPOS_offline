@@ -58,6 +58,7 @@ class MenuFragment : Fragment() {
             "Settings" -> openFragment(SettingsFragment())
             "Stock & Inventory" -> openFragment(InventoryFragment())
             "Reports" -> openFragment(ReportsFragment())
+            "Sale" -> openFragment(SalesFragment())
             else -> Toast.makeText(requireContext(), "Opening $title...", Toast.LENGTH_SHORT).show()
         }
     }

@@ -12,7 +12,7 @@ import java.net.URL
 object ApiClient {
 
     /** Base URL of the admin/auth server. Update here when the server address changes. */
-    const val BASE_URL = "http://192.168.1.57:3008"
+    const val BASE_URL = "https://webbackend.synergicpos.in"
 
     const val PATH_REGISTER = "/admin/reg_user"
     const val PATH_CHECK_USER = "/admin/check_user"
