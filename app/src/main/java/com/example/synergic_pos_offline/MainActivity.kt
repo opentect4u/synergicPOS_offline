@@ -37,6 +37,7 @@ import com.example.synergic_pos_offline.fragments.InventoryFragment
 import com.example.synergic_pos_offline.fragments.ItemwiseSearchFragment
 import com.example.synergic_pos_offline.fragments.LoginFragment
 import com.example.synergic_pos_offline.fragments.MasterFragment
+import com.example.synergic_pos_offline.fragments.PosBillingFragment
 import com.example.synergic_pos_offline.fragments.ProductsFragment
 import com.example.synergic_pos_offline.fragments.RegistrationFragment
 import com.example.synergic_pos_offline.fragments.ReportsFragment
@@ -282,6 +283,7 @@ class MainActivity : AppCompatActivity() {
             "Reports" -> navigateTo(ReportsFragment())
             "Sale" -> navigateTo(SalesFragment())
             "Header & Footer" -> navigateTo(HeaderFooterFragment())
+            "Sale" -> navigateTo(PosBillingFragment())
             "User Management" -> navigateTo(UserManagementFragment())
             "Bill Header & Footer" -> navigateTo(BillHeaderFooterFragment())
             "Bill Header Footer Logo" -> navigateTo(BillLogoFragment())

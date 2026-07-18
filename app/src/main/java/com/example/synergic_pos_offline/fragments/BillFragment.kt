@@ -45,6 +45,20 @@ class BillFragment : Fragment(), TitledScreen {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // Fill the header from the selected bill, when provided.
+        arguments?.let { args ->
+            args.getString(ARG_BILL_NO)?.let {
+                view.findViewById<TextView>(R.id.tvBillNo).text = "BILL NO: $it"
+            }
+            args.getString(ARG_NAME)?.let {
+                view.findViewById<TextView>(R.id.tvName).text = "NAME  : $it"
+            }
+            args.getString(ARG_DATE)?.let { view.findViewById<TextView>(R.id.tvDate).text = it }
+            args.getString(ARG_TIME)?.let { view.findViewById<TextView>(R.id.tvTime).text = it }
+            args.getString(ARG_TOTAL)?.let { view.findViewById<TextView>(R.id.tvGrandTotal).text = it }
+        }
+
         val llItems = view.findViewById<LinearLayout>(R.id.llItems)
         sampleItems.forEach { llItems.addView(buildItemRow(it)) }
     }
@@ -75,5 +89,26 @@ class BillFragment : Fragment(), TitledScreen {
         row.addView(cell(item.price, 2f, Gravity.END))
         row.addView(cell(item.amount, 2.2f, Gravity.END))
         return row
+    }
+
+    companion object {
+        private const val ARG_BILL_NO = "bill_no"
+        private const val ARG_NAME = "name"
+        private const val ARG_DATE = "date"
+        private const val ARG_TIME = "time"
+        private const val ARG_TOTAL = "total"
+
+        /** Opens the receipt pre-filled with the given bill's header. */
+        fun newInstance(
+            billNo: String, name: String, date: String, time: String, total: String
+        ): BillFragment = BillFragment().apply {
+            arguments = Bundle().apply {
+                putString(ARG_BILL_NO, billNo)
+                putString(ARG_NAME, name)
+                putString(ARG_DATE, date)
+                putString(ARG_TIME, time)
+                putString(ARG_TOTAL, total)
+            }
+        }
     }
 }
