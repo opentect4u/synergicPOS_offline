@@ -34,13 +34,29 @@
             android:fillViewport="true"
             android:scrollbars="vertical">
 
-            <GridLayout
-                android:id="@+id/glFields"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:columnCount="2"
-                android:alignmentMode="alignMargins"
-                android:columnOrderPreserved="false" />
+                android:orientation="vertical">
+
+                <GridLayout
+                    android:id="@+id/glFields"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:columnCount="2"
+                    android:alignmentMode="alignMargins"
+                    android:columnOrderPreserved="true"
+                    android:useDefaultMargins="false" />
+
+                <LinearLayout
+                    android:id="@+id/llSuggestions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/pos_hint_bg" />
+            </LinearLayout>
         </com.example.synergic_pos_offline.utils.MaxHeightScrollView>
 
         <LinearLayout

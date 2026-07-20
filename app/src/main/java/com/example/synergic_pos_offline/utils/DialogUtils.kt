@@ -82,7 +82,14 @@ object DialogUtils {
     }
 
     /** A single labelled input field for [showForm]. */
-    data class FormField(val label: String, val value: String)
+    data class FormField(
+        val label: String,
+        val value: String,
+        val isTextArea: Boolean = false,
+        val spanColumns: Int = 1,
+        val inputType: String = "text",
+        val maxLength: Int = -1
+    )
 
     /** Shows a reusable form dialog for Adding or Editing records. */
     fun showForm(
@@ -91,6 +98,7 @@ object DialogUtils {
         fields: List<FormField>,
         positiveText: String = "Save",
         negativeText: String = "Cancel",
+        mandatoryFields: List<Int> = emptyList(),
         onSave: (List<String>) -> Unit
     ) {
         val inflater = LayoutInflater.from(context)
@@ -111,23 +119,70 @@ object DialogUtils {
         val density = context.resources.displayMetrics.density
         val margin = (8 * density).toInt()
 
+        var currentRow = 0
+        var currentColumn = 0
+        val colsPerRow = 2
+
         for (field in fields) {
-            val til = inflater.inflate(R.layout.item_form_field, grid, false) as TextInputLayout
+            val til = inflater.inflate(R.layout.item_form_field, null, false) as TextInputLayout
             til.hint = field.label
-            
-            // Layout params for 2 columns (e.g. 1,2 then 3,4 then 5,6)
-            val params = GridLayout.LayoutParams()
-            params.width = 0
-            params.height = ViewGroup.LayoutParams.WRAP_CONTENT
-            params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-            params.setMargins(margin, 0, margin, margin)
+
+            // Calculate row and column based on spanning
+            if (currentColumn > 0 && field.spanColumns > 1) {
+                currentRow++
+                currentColumn = 0
+            } else if (currentColumn + field.spanColumns > colsPerRow) {
+                currentRow++
+                currentColumn = 0
+            }
+
+            // Layout params for 2 columns with spanning support
+            val params = GridLayout.LayoutParams().apply {
+                rowSpec = GridLayout.spec(currentRow)
+                columnSpec = GridLayout.spec(currentColumn, field.spanColumns.coerceAtMost(2), 1f)
+                width = 0
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
+                setMargins(margin, margin / 2, margin, margin / 2)
+            }
             til.layoutParams = params
-            
+
             val et = til.findViewById<TextInputEditText>(R.id.etField)
             et.setText(field.value)
-            grid.addView(til)
+
+            // Apply input type
+            when (field.inputType) {
+                "phone" -> et.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                "number" -> et.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                "email" -> et.inputType = android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+                else -> et.inputType = android.text.InputType.TYPE_CLASS_TEXT
+            }
+
+            // Apply max length if specified
+            if (field.maxLength > 0) {
+                val filters = arrayOf(android.text.InputFilter.LengthFilter(field.maxLength))
+                et.filters = filters
+            }
+
+            // Set textarea properties if needed
+            if (field.isTextArea) {
+                et.minLines = 3
+                et.maxLines = 5
+                et.isSingleLine = false
+            }
+
+            grid.addView(til, params)
             inputs.add(et)
+
+            // Update position for next field
+            currentColumn += field.spanColumns
+            if (currentColumn >= colsPerRow) {
+                currentRow++
+                currentColumn = 0
+            }
         }
+
+        // Configure grid layout column widths
+        grid.columnCount = 2
 
         ThemeManager.applyTheme(grid)
         btnPositive.backgroundTintList = ColorStateList.valueOf(accent)
@@ -136,6 +191,38 @@ object DialogUtils {
 
         btnPositive.setOnClickListener {
             val values = inputs.map { it.text?.toString()?.trim().orEmpty() }
+
+            // Validate mandatory fields
+            val missingFields = mandatoryFields.filter { index ->
+                index < values.size && values[index].isEmpty()
+            }
+
+            if (missingFields.isNotEmpty()) {
+                val missingFieldNames = missingFields.mapNotNull { index ->
+                    if (index < fields.size) fields[index].label else null
+                }.joinToString(", ")
+                android.widget.Toast.makeText(
+                    context,
+                    "Missing required fields: $missingFieldNames",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+                return@setOnClickListener
+            }
+
+            // Validate phone number fields
+            for (index in fields.indices) {
+                if (fields[index].inputType == "phone" && values[index].isNotEmpty()) {
+                    if (values[index].length != 10 || !values[index].all { it.isDigit() }) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "${fields[index].label} must be exactly 10 digits",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        return@setOnClickListener
+                    }
+                }
+            }
+
             dialog.dismiss()
             onSave(values)
         }

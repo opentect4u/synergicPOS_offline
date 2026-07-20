@@ -390,8 +390,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
         CheckoutSession.lines = cart.map {
             CheckoutSession.Line(it.product.name, it.product.sku, it.product.price, it.qty)
         }.toMutableList()
-        CheckoutSession.discountPercent = discountPercent
-        CheckoutSession.couponApplied = couponApplied
         CheckoutSession.customerName = customerName
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_container, PosCheckoutFragment())
