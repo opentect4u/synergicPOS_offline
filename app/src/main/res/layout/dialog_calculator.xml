@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="18dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Calculator"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_main" />
+
+    <!-- Display -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="end"
+        android:layout_marginTop="12dp"
+        android:padding="16dp"
+        android:background="@drawable/pos_hint_bg">
+
+        <TextView
+            android:id="@+id/tvExpr"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text=""
+            android:maxLines="1"
+            android:ellipsize="start"
+            android:fontFamily="monospace"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary" />
+
+        <TextView
+            android:id="@+id/tvDisplay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:text="0"
+            android:maxLines="1"
+            android:ellipsize="start"
+            android:fontFamily="monospace"
+            android:textSize="34sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_main" />
+    </LinearLayout>
+
+    <!-- Keypad -->
+    <GridLayout
+        android:id="@+id/gridKeys"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:columnCount="4"
+        android:rowCount="5"
+        android:useDefaultMargins="false" />
+
+    <!-- Footer -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end"
+        android:layout_marginTop="14dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCalcClose"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="46dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minHeight="0dp"
+            android:text="Close"
+            app:cornerRadius="10dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCalcUse"
+            android:layout_width="wrap_content"
+            android:layout_height="46dp"
+            android:layout_marginStart="10dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minHeight="0dp"
+            android:text="Add as item"
+            android:textColor="@color/white"
+            app:cornerRadius="10dp" />
+    </LinearLayout>
+</LinearLayout>

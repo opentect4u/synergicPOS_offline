@@ -110,6 +110,10 @@ object DialogUtils {
 
         view.findViewById<TextView>(R.id.tvFormTitle).text = title
         val grid = view.findViewById<GridLayout>(R.id.glFields)
+        
+        // Dynamic column count: 1 if only one field, 2 for more.
+        grid.columnCount = if (fields.size == 1) 1 else 2
+        
         val btnPositive = view.findViewById<MaterialButton>(R.id.btnFormPositive)
         val btnNegative = view.findViewById<MaterialButton>(R.id.btnFormNegative)
         btnPositive.text = positiveText
@@ -144,6 +148,20 @@ object DialogUtils {
                 height = ViewGroup.LayoutParams.WRAP_CONTENT
                 setMargins(margin, margin / 2, margin, margin / 2)
             }
+        fields.forEachIndexed { index, field ->
+            val til = inflater.inflate(R.layout.item_form_field, grid, false) as TextInputLayout
+            til.hint = field.label
+            
+            val params = GridLayout.LayoutParams()
+            
+            // Determine column span.
+            val isFullWidth = fields.size == 1 || (index == fields.lastIndex && fields.size % 2 != 0)
+            val span = if (isFullWidth) grid.columnCount else 1
+            
+            params.width = 0 // Will be handled by weight
+            params.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, span, 1f)
+            params.setMargins(margin, 0, margin, margin)
             til.layoutParams = params
 
             val et = til.findViewById<TextInputEditText>(R.id.etField)

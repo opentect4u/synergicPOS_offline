@@ -15,6 +15,7 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -45,7 +46,24 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private data class Product(
         val id: String, val name: String, val sku: String,
-        val category: String, val price: Double, val stock: String = "ok"
+        val category: String, val price: Double, val stock: String = "ok",
+        val hsn: String = "0000", val gst: Double = 0.0, val unit: String = "pcs"
+    ) {
+        val cgst: Double get() = gst / 2.0
+        val sgst: Double get() = gst / 2.0
+    }
+
+    /** HSN code, GST% and selling unit by category (used to enrich the catalog). */
+    private data class TaxInfo(val hsn: String, val gst: Double, val unit: String)
+
+    private val taxByCategory = mapOf(
+        "Produce" to TaxInfo("0708", 0.0, "kg"),
+        "Dairy" to TaxInfo("0401", 5.0, "pcs"),
+        "Bakery" to TaxInfo("1905", 5.0, "pcs"),
+        "Frozen" to TaxInfo("2106", 18.0, "pcs"),
+        "Beverages" to TaxInfo("2202", 18.0, "pcs"),
+        "Snacks" to TaxInfo("2106", 12.0, "pcs"),
+        "Household" to TaxInfo("3402", 18.0, "pcs")
     )
 
     private data class CartLine(val product: Product, var qty: Int)
@@ -79,7 +97,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
         Product("p21", "Paper Towels 6pk", "7003", "Household", 6.99),
         Product("p22", "Dish Soap", "7014", "Household", 2.49),
         Product("p23", "Trash Bags 30ct", "7029", "Household", 5.49, "out")
-    )
+    ).map { p ->
+        // Enrich each catalog entry with its category's HSN / GST / unit.
+        val t = taxByCategory[p.category]
+        if (t != null) p.copy(hsn = t.hsn, gst = t.gst, unit = t.unit) else p
+    }
 
     // ---- State -------------------------------------------------------------
 
@@ -88,6 +110,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private var discountPercent = 0
     private var couponApplied = false
     private var customerName: String? = null
+    private var customerPhone: String? = null
+    private var lastAddedId: String? = null
     private val cart = mutableListOf<CartLine>()
     private val heldOrders = mutableListOf<Held>()
 
@@ -106,6 +130,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private lateinit var tvDiscountAmt: TextView
     private lateinit var tvTax: TextView
     private lateinit var tvTotal: TextView
+    private lateinit var tvItemCount: TextView
     private lateinit var tvNoProducts: TextView
     private lateinit var tvClock: TextView
     private lateinit var btnHeld: MaterialButton
@@ -133,6 +158,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvDiscountAmt = view.findViewById(R.id.tvDiscountAmt)
         tvTax = view.findViewById(R.id.tvTax)
         tvTotal = view.findViewById(R.id.tvTotal)
+        tvItemCount = view.findViewById(R.id.tvItemCount)
         tvNoProducts = view.findViewById(R.id.tvNoProducts)
         tvClock = view.findViewById(R.id.tvClock)
         btnHeld = view.findViewById(R.id.btnHeld)
@@ -166,6 +192,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
         cartAdapter = CartAdapter()
         rvCart.adapter = cartAdapter
 
+        val btnJumpTop = view.findViewById<MaterialButton>(R.id.btnJumpTop)
+        btnJumpTop.setOnClickListener { rvCart.smoothScrollToPosition(0) }
+        
+        rvCart.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                val firstVisible = (recyclerView.layoutManager as LinearLayoutManager).findFirstVisibleItemPosition()
+                btnJumpTop.visibility = if (firstVisible > 0) View.VISIBLE else View.GONE
+            }
+        })
+
         // Responsive cart width. Tablets (the target: 10" / 15") get the wide
         // order ticket from the design; phones shrink it so it never dominates.
         val cartPanel = view.findViewById<View>(R.id.cartPanel)
@@ -188,22 +224,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
         })
 
         // Buttons — actions
-        val btnEnterPrice = view.findViewById<MaterialButton>(R.id.btnEnterPrice)
+        val btnCalculator = view.findViewById<MaterialButton>(R.id.btnCalculator)
         val btnCustomer = view.findViewById<MaterialButton>(R.id.btnCustomer)
-        val btnApplyCoupon = view.findViewById<MaterialButton>(R.id.btnApplyCoupon)
         val btnHold = view.findViewById<MaterialButton>(R.id.btnHold)
-        btnEnterPrice.setOnClickListener { showPriceDialog() }
+        btnCalculator.setOnClickListener { showCalculatorDialog() }
         btnCustomer.setOnClickListener { showCustomerDialog() }
         btnAddCustomer.setOnClickListener { showCustomerDialog() }
-        view.findViewById<ImageButton>(R.id.btnRemoveCust).setOnClickListener { setCustomer(null) }
-        btnApplyCoupon.setOnClickListener {
-            applyCoupon(view.findViewById<TextInputEditText>(R.id.etCoupon).text?.toString().orEmpty())
-        }
+        view.findViewById<ImageButton>(R.id.btnRemoveCust).setOnClickListener { setCustomer(null, null) }
         btnHeld.setOnClickListener { showHeldDialog() }
         btnHold.setOnClickListener { onHold() }
         btnCharge.setOnClickListener { onCheckout() }
 
-        setCustomer(null)
+        setCustomer(null, null)
         updateHeldButton()
         applyFilter()
         updateTotals()
@@ -211,7 +243,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // Theme everything, THEN restore each button's intended look
         ThemeManager.applyTheme(view)
         
-        listOf(btnHeld, btnEnterPrice, btnCustomer, btnApplyCoupon, btnHold).forEach { styleOutlined(it, accent) }
+        listOf(btnHeld, btnCalculator, btnCustomer, btnHold).forEach { styleOutlined(it, accent) }
         
         // "+ Add loyalty customer" is a borderless text button.
         btnAddCustomer.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
@@ -253,19 +285,128 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvNoProducts.visibility = if (shownProducts.isEmpty()) View.VISIBLE else View.GONE
     }
 
-    private fun addToCart(p: Product) {
+    /** Adds [qty] units of [p] at [rate]. Merges with an existing line only when
+     *  the same product is already in the cart at the same rate. */
+    private fun addToCart(p: Product, qty: Int, rate: Double) {
         if (p.stock == "out") { toast("${p.name} is out of stock"); return }
-        val line = cart.firstOrNull { it.product.id == p.id }
-        if (line != null) line.qty++ else cart.add(CartLine(p, 1))
+        val priced = if (rate == p.price) p else p.copy(price = rate)
+        
+        // Find existing line at the SAME rate
+        val existingIndex = cart.indexOfFirst { it.product.id == p.id && it.product.price == rate }
+        
+        if (existingIndex != -1) {
+            val line = cart.removeAt(existingIndex)
+            line.qty += qty
+            cart.add(0, line)
+        } else {
+            cart.add(0, CartLine(priced, qty))
+        }
+        
+        lastAddedId = p.id
+        cartAdapter.notifyDataSetChanged()
+        
+        // Scroll to top to show the most recent item
+        view?.findViewById<RecyclerView>(R.id.rvCart)?.scrollToPosition(0)
+
+        updateTotals()
+    }
+
+    /**
+     * Popup showing the product's details (HSN / GST / CGST / SGST) with editable
+     * rate and quantity. When [editIndex] points at a cart line, the dialog edits
+     * that line in place; otherwise it adds a new line.
+     */
+    private fun showProductDialog(p: Product, editIndex: Int = -1) {
+        if (editIndex < 0 && p.stock == "out") { toast("${p.name} is out of stock"); return }
+        val editing = editIndex in cart.indices
+        val accent = ThemeManager.getThemeColor(requireContext())
+        val view = layoutInflater.inflate(R.layout.dialog_product_entry, null)
+
+        fun pct(v: Double) = (if (v % 1.0 == 0.0) v.toInt().toString() else v.toString()) + "%"
+
+        view.findViewById<TextView>(R.id.tvDialogTitle).text = p.name
+        view.findViewById<TextView>(R.id.tvDialogCategory).text = p.category
+        view.findViewById<TextView>(R.id.tvDetSku).text = p.sku
+        view.findViewById<TextView>(R.id.tvDetHsn).text = p.hsn
+        view.findViewById<TextView>(R.id.tvDetUnit).text = p.unit
+        view.findViewById<TextView>(R.id.tvDetMrp).text = money(p.price)
+        view.findViewById<TextView>(R.id.tvDetGst).text = pct(p.gst)
+        view.findViewById<TextView>(R.id.tvDetCgst).text = pct(p.cgst)
+        view.findViewById<TextView>(R.id.tvDetSgst).text = pct(p.sgst)
+        view.findViewById<TextView>(R.id.tvCgstLabel).text = "CGST (${pct(p.cgst)})"
+        view.findViewById<TextView>(R.id.tvSgstLabel).text = "SGST (${pct(p.sgst)})"
+
+        val etRate = view.findViewById<TextInputEditText>(R.id.etRate)
+        val etQty = view.findViewById<TextInputEditText>(R.id.etQty)
+        val tvTaxable = view.findViewById<TextView>(R.id.tvTaxable)
+        val tvCgstAmt = view.findViewById<TextView>(R.id.tvCgstAmt)
+        val tvSgstAmt = view.findViewById<TextView>(R.id.tvSgstAmt)
+        val tvAmount = view.findViewById<TextView>(R.id.tvLineAmount)
+        val startRate = if (editing) cart[editIndex].product.price else p.price
+        val startQty = if (editing) cart[editIndex].qty else 1
+        etRate.setText(String.format("%.2f", startRate))
+        etQty.setText(startQty.toString())
+
+        fun refreshAmount() {
+            val rate = etRate.text?.toString()?.toDoubleOrNull() ?: 0.0
+            val qty = etQty.text?.toString()?.toIntOrNull() ?: 0
+            val taxable = rate * qty
+            val cgst = taxable * p.cgst / 100.0
+            val sgst = taxable * p.sgst / 100.0
+            tvTaxable.text = money(taxable)
+            tvCgstAmt.text = money(cgst)
+            tvSgstAmt.text = money(sgst)
+            tvAmount.text = money(taxable + cgst + sgst)
+        }
+        etRate.addTextChangedListener(simpleWatcher { refreshAmount() })
+        etQty.addTextChangedListener(simpleWatcher { refreshAmount() })
+        refreshAmount()
+
+        val dialog = AlertDialog.Builder(requireContext())
+            .setView(view)
+            .create()
+        dialog.setCanceledOnTouchOutside(false)
+
+        val btnCancel = view.findViewById<MaterialButton>(R.id.btnDialogCancel)
+        val btnAdd = view.findViewById<MaterialButton>(R.id.btnDialogAdd)
+        btnAdd.text = if (editing) "Update" else "Add to cart"
+        styleOutlined(btnCancel, accent)
+        btnAdd.backgroundTintList = ColorStateList.valueOf(accent)
+        btnAdd.setTextColor(Color.WHITE)
+
+        btnCancel.setOnClickListener { dialog.dismiss() }
+        btnAdd.setOnClickListener {
+            val rate = etRate.text?.toString()?.toDoubleOrNull()
+            val qty = etQty.text?.toString()?.toIntOrNull()
+            when {
+                rate == null || rate <= 0 -> toast("Enter a valid rate")
+                qty == null || qty <= 0 -> toast("Enter a valid quantity")
+                editing -> { updateCartLine(editIndex, qty, rate); dialog.dismiss() }
+                else -> { addToCart(p, qty, rate); dialog.dismiss() }
+            }
+        }
+        dialog.show()
+    }
+
+    /** Replaces a cart line's rate and quantity (from the edit dialog). */
+    private fun updateCartLine(index: Int, qty: Int, rate: Double) {
+        if (index !in cart.indices) return
+        val base = cart[index].product
+        val priced = if (rate == base.price) base else base.copy(price = rate)
+        cart[index] = CartLine(priced, qty)
         cartAdapter.notifyDataSetChanged()
         updateTotals()
     }
 
     private fun changeQty(pos: Int, delta: Int) {
         if (pos !in cart.indices) return
-        val line = cart[pos]
+        val line = cart.removeAt(pos)
         line.qty += delta
-        if (line.qty <= 0) cart.removeAt(pos)
+        if (line.qty > 0) {
+            cart.add(0, line)
+            lastAddedId = line.product.id
+            view?.findViewById<RecyclerView>(R.id.rvCart)?.scrollToPosition(0)
+        }
         cartAdapter.notifyDataSetChanged()
         updateTotals()
     }
@@ -279,54 +420,193 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     // ---- Customer / coupon / price dialogs ---------------------------------
 
-    private fun setCustomer(name: String?) {
+    private fun setCustomer(name: String?, phone: String? = null) {
         customerName = name
-        if (name == null) {
+        customerPhone = phone
+        if (name == null && phone == null) {
             btnAddCustomer.visibility = View.VISIBLE
             llCustomerInfo.visibility = View.GONE
         } else {
             btnAddCustomer.visibility = View.GONE
             llCustomerInfo.visibility = View.VISIBLE
-            tvCustName.text = name
-            tvCustSub.text = "340 pts"
+            tvCustName.text = name ?: "Guest"
+            tvCustSub.text = phone ?: "No phone"
         }
     }
 
     private fun showCustomerDialog() {
-        val input = EditText(requireContext()).apply {
-            hint = "Phone or loyalty ID"
-            inputType = InputType.TYPE_CLASS_PHONE
-        }
-        AlertDialog.Builder(requireContext())
-            .setTitle("Loyalty customer")
-            .setView(padded(input))
-            .setPositiveButton("Look up") { _, _ ->
-                if (input.text.toString().isNotBlank()) setCustomer("Alex Rivera")
-            }
-            .setNegativeButton("Cancel", null)
-            .create()
-            .also { it.setCanceledOnTouchOutside(false); it.show() }
-    }
-
-    private fun showPriceDialog() {
-        val input = EditText(requireContext()).apply {
-            hint = "0.00"
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-        AlertDialog.Builder(requireContext())
-            .setTitle("Enter price")
-            .setView(padded(input))
-            .setPositiveButton("Add to cart") { _, _ ->
-                val price = input.text.toString().toDoubleOrNull()
-                if (price != null && price > 0) {
-                    cart.add(CartLine(Product("M${System.currentTimeMillis()}", "Manual Item", "----", "All", price), 1))
-                    cartAdapter.notifyDataSetChanged()
-                    updateTotals()
+        DialogUtils.showForm(
+            context = requireContext(),
+            title = "Add Customer",
+            fields = listOf(DialogUtils.FormField("Customer Phone No", customerPhone ?: "")),
+            positiveText = "Look up",
+            onSave = { values ->
+                val phone = values[0]
+                if (phone.isNotBlank()) {
+                    // Mock: If phone is entered, identifying as Alex Rivera
+                    setCustomer("Alex Rivera", phone)
                 }
             }
-            .setNegativeButton("Cancel", null)
-            .create()
-            .also { it.setCanceledOnTouchOutside(false); it.show() }
+        )
+    }
+
+    /** On-screen calculator. The computed value can be added to the cart as a
+     *  manual-priced item. */
+    private fun showCalculatorDialog() {
+        val accent = ThemeManager.getThemeColor(requireContext())
+        val view = layoutInflater.inflate(R.layout.dialog_calculator, null)
+        val tvDisplay = view.findViewById<TextView>(R.id.tvDisplay)
+        val tvExpr = view.findViewById<TextView>(R.id.tvExpr)
+        val grid = view.findViewById<android.widget.GridLayout>(R.id.gridKeys)
+        val density = resources.displayMetrics.density
+
+        var expr = ""            // working expression, using display symbols
+        var justEvaluated = false
+
+        fun render() { tvDisplay.text = if (expr.isEmpty()) "0" else expr }
+
+        fun press(key: String) {
+            when (key) {
+                "C" -> { expr = ""; tvExpr.text = "" }
+                "⌫" -> if (expr.isNotEmpty()) expr = expr.dropLast(1)
+                "=" -> {
+                    val result = evalExpression(expr)
+                    if (result != null) {
+                        tvExpr.text = "$expr ="
+                        expr = trimNumber(result)
+                        justEvaluated = true
+                    } else toast("Invalid expression")
+                }
+                "+", "−", "×", "÷" -> {
+                    if (expr.isEmpty()) return
+                    justEvaluated = false
+                    // Replace a trailing operator instead of stacking them.
+                    expr = if (expr.last() in "+−×÷") expr.dropLast(1) + key else expr + key
+                }
+                "%" -> if (expr.isNotEmpty()) { expr += "%"; justEvaluated = false }
+                else -> {   // digits, "00", "."
+                    if (justEvaluated && key != ".") { expr = ""; justEvaluated = false }
+                    expr += key
+                }
+            }
+            render()
+        }
+
+        val keys = listOf(
+            "C", "⌫", "%", "÷",
+            "7", "8", "9", "×",
+            "4", "5", "6", "−",
+            "1", "2", "3", "+",
+            "0", "00", ".", "="
+        )
+        grid.post {
+            val cell = (grid.width - (3 * 8 * density).toInt()) / 4
+            keys.forEach { key ->
+                val b = MaterialButton(requireContext(), null,
+                    com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    text = key
+                    textSize = 18f
+                    insetTop = 0; insetBottom = 0; minHeight = 0
+                    cornerRadius = (10 * density).toInt()
+                    val emphasise = key in listOf("÷", "×", "−", "+", "=")
+                    if (key == "=") {
+                        backgroundTintList = ColorStateList.valueOf(accent); setTextColor(Color.WHITE)
+                    } else {
+                        backgroundTintList = ColorStateList.valueOf(Color.WHITE)
+                        setTextColor(if (emphasise) accent else ContextCompat.getColor(context, R.color.text_main))
+                        strokeColor = ColorStateList.valueOf(accent)
+                        strokeWidth = (density * 1f).toInt()
+                    }
+                    setOnClickListener { press(key) }
+                }
+                val lp = android.widget.GridLayout.LayoutParams().apply {
+                    width = cell
+                    height = (54 * density).toInt()
+                    setMargins((4 * density).toInt(), (4 * density).toInt(), (4 * density).toInt(), (4 * density).toInt())
+                }
+                grid.addView(b, lp)
+            }
+        }
+        render()
+
+        val dialog = AlertDialog.Builder(requireContext()).setView(view).create()
+        dialog.setCanceledOnTouchOutside(false)
+
+        val btnClose = view.findViewById<MaterialButton>(R.id.btnCalcClose)
+        val btnUse = view.findViewById<MaterialButton>(R.id.btnCalcUse)
+        styleOutlined(btnClose, accent)
+        btnUse.backgroundTintList = ColorStateList.valueOf(accent)
+        btnUse.setTextColor(Color.WHITE)
+
+        btnClose.setOnClickListener { dialog.dismiss() }
+        btnUse.setOnClickListener {
+            val value = evalExpression(expr) ?: expr.toDoubleOrNull()
+            if (value != null && value > 0) {
+                cart.add(CartLine(Product("M${System.currentTimeMillis()}", "Manual Item", "----", "All", value), 1))
+                cartAdapter.notifyDataSetChanged()
+                updateTotals()
+                dialog.dismiss()
+            } else toast("Enter a valid amount")
+        }
+        dialog.show()
+    }
+
+    /** Formats a result without a trailing ".0" for whole numbers. */
+    private fun trimNumber(v: Double): String =
+        if (v % 1.0 == 0.0) v.toLong().toString() else String.format("%.4f", v).trimEnd('0').trimEnd('.')
+
+    /** Evaluates a flat +−×÷% expression (display symbols). Returns null if invalid. */
+    private fun evalExpression(raw: String): Double? {
+        if (raw.isBlank()) return null
+        val normalized = raw.replace('×', '*').replace('÷', '/').replace('−', '-')
+        // Tokenize into numbers and operators; '%' turns the preceding number into /100.
+        val tokens = mutableListOf<String>()
+        val num = StringBuilder()
+        for (c in normalized) {
+            when (c) {
+                in '0'..'9', '.' -> num.append(c)
+                '%' -> { if (num.isEmpty()) return null; num.append("*0.01_pct") }
+                '+', '-', '*', '/' -> {
+                    if (num.isEmpty()) {
+                        // allow a leading unary minus
+                        if (c == '-' && tokens.isEmpty()) { num.append('-'); continue }
+                        return null
+                    }
+                    tokens.add(resolvePct(num.toString()) ?: return null); num.clear()
+                    tokens.add(c.toString())
+                }
+                else -> return null
+            }
+        }
+        if (num.isEmpty()) return null
+        tokens.add(resolvePct(num.toString()) ?: return null)
+
+        // Two-pass: * and / first, then + and -.
+        val pass1 = mutableListOf<String>()
+        var i = 0
+        while (i < tokens.size) {
+            val t = tokens[i]
+            if (t == "*" || t == "/") {
+                val a = pass1.removeAt(pass1.size - 1).toDouble()
+                val b = tokens[i + 1].toDouble()
+                pass1.add((if (t == "*") a * b else if (b == 0.0) return null else a / b).toString())
+                i += 2
+            } else { pass1.add(t); i++ }
+        }
+        var acc = pass1[0].toDouble()
+        var j = 1
+        while (j < pass1.size) {
+            val op = pass1[j]; val b = pass1[j + 1].toDouble()
+            acc = if (op == "+") acc + b else acc - b
+            j += 2
+        }
+        return acc
+    }
+
+    private fun resolvePct(token: String): String? {
+        if (!token.contains("*0.01_pct")) return token.toDoubleOrNull()?.toString()
+        val base = token.replace("*0.01_pct", "").toDoubleOrNull() ?: return null
+        return (base * 0.01).toString()
     }
 
     private fun applyCoupon(code: String) {
@@ -391,6 +671,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             CheckoutSession.Line(it.product.name, it.product.sku, it.product.price, it.qty)
         }.toMutableList()
         CheckoutSession.customerName = customerName
+        CheckoutSession.customerPhone = customerPhone
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_container, PosCheckoutFragment())
             .addToBackStack(null)
@@ -401,8 +682,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         cart.clear()
         discountPercent = 0
         couponApplied = false
+        lastAddedId = null
         tvCouponMsg.visibility = View.GONE
-        setCustomer(null)
+        setCustomer(null, null)
         cartAdapter.notifyDataSetChanged()
         updateTotals()
     }
@@ -424,6 +706,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private fun updateTotals() {
         tvCartEmpty.visibility = if (cart.isEmpty()) View.VISIBLE else View.GONE
+        
+        val totalQty = cart.sumOf { it.qty }
+        tvItemCount.text = "$totalQty item${if (totalQty != 1) "s" else ""}"
+
         tvSubtotal.text = money(subtotal())
         tvDiscountLabel.text = "Discount (${totalPct()}%)"
         tvDiscountAmt.text = "- ${money(discountAmt())}"
@@ -506,13 +792,32 @@ class PosBillingFragment : Fragment(), TitledScreen {
             holder.name.text = p.name
             holder.price.text = money(p.price)
             holder.sku.text = p.sku
+            
             when (p.stock) {
-                "low" -> { holder.stock.visibility = View.VISIBLE; holder.stock.text = "Low stock" }
-                "out" -> { holder.stock.visibility = View.VISIBLE; holder.stock.text = "Out of stock" }
+                "low" -> {
+                    holder.stock.visibility = View.VISIBLE
+                    holder.stock.text = "Low stock"
+                    val shape = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = 8 * holder.itemView.resources.displayMetrics.density
+                        setColor(Color.parseColor("#F9AB00")) // Amber
+                    }
+                    holder.stock.background = shape
+                    holder.stock.setTextColor(Color.WHITE)
+                }
+                "out" -> {
+                    holder.stock.visibility = View.VISIBLE
+                    holder.stock.text = "Out of stock"
+                    val shape = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = 8 * holder.itemView.resources.displayMetrics.density
+                        setColor(Color.parseColor("#D93025")) // Red
+                    }
+                    holder.stock.background = shape
+                    holder.stock.setTextColor(Color.WHITE)
+                }
                 else -> holder.stock.visibility = View.GONE
             }
             holder.itemView.alpha = if (p.stock == "out") 0.5f else 1f
-            holder.itemView.setOnClickListener { addToCart(p) }
+            holder.itemView.setOnClickListener { showProductDialog(p) }
         }
 
         override fun getItemCount() = shownProducts.size
@@ -527,6 +832,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             val minus: ImageButton = view.findViewById(R.id.btnMinus)
             val plus: ImageButton = view.findViewById(R.id.btnPlus)
             val remove: ImageButton = view.findViewById(R.id.btnRemoveLine)
+            val marker: View = view.findViewById(R.id.vNewMarker)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -536,13 +842,28 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         override fun onBindViewHolder(holder: VH, position: Int) {
             val line = cart[position]
+            val accent = ThemeManager.getThemeColor(holder.itemView.context)
+            
             holder.name.text = line.product.name
             holder.each.text = "${money(line.product.price)} each"
             holder.qty.text = line.qty.toString()
             holder.total.text = money(line.product.price * line.qty)
+            
+            // Show marker for the most recently added/updated item
+            if (line.product.id == lastAddedId) {
+                holder.marker.visibility = View.VISIBLE
+                holder.marker.setBackgroundColor(accent)
+            } else {
+                holder.marker.visibility = View.INVISIBLE
+            }
+
             holder.minus.setOnClickListener { changeQty(holder.adapterPosition, -1) }
             holder.plus.setOnClickListener { changeQty(holder.adapterPosition, +1) }
             holder.remove.setOnClickListener { removeLine(holder.adapterPosition) }
+            holder.itemView.setOnClickListener {
+                val pos = holder.adapterPosition
+                if (pos in cart.indices) showProductDialog(cart[pos].product, pos)
+            }
         }
 
         override fun getItemCount() = cart.size
