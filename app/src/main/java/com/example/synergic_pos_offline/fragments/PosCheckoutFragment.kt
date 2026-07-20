@@ -8,10 +8,10 @@ import android.os.Handler
 import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
-import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.GridLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -23,18 +23,16 @@ import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.min
 
 /** In-process hand-off of the current sale from billing to checkout. */
 object CheckoutSession {
     data class Line(val name: String, val sku: String, var price: Double, var qty: Int)
 
     var lines: MutableList<Line> = mutableListOf()
-    var discountPercent: Int = 0
-    var couponApplied: Boolean = false
     var customerName: String? = null
     var customerPhone: String? = null
     var orderNo: Int = 1042
@@ -50,18 +48,21 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Checkout"
 
-    private enum class Method { CASH, CARD, WALLET, SPLIT }
-    private enum class Receipt { PRINT, EMAIL, SMS, NONE }
+    private enum class Method { CASH, CREDIT, CARD, ONLINE }
+    private data class Held(val label: String, val lines: List<CheckoutSession.Line>)
 
     // Working copy of the sale (edits here don't touch billing).
     private val lines = CheckoutSession.lines.map { it.copy() }.toMutableList()
-    private var discountPercent = CheckoutSession.discountPercent
-    private var couponApplied = CheckoutSession.couponApplied
+    private val heldOrders = mutableListOf<Held>()
 
     private var editMode = true
     private var method = Method.CASH
-    private var receipt = Receipt.PRINT
     private var accent = 0
+
+    private var creditCustomerName = ""
+    private var creditCustomerPhone = ""
+    private var creditCustomerAddress = ""
+    private var creditCustomerGstin = ""
 
     private lateinit var root: View
     private val clockHandler = Handler(Looper.getMainLooper())
@@ -91,47 +92,39 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             requireActivity().supportFragmentManager.popBackStack()
         }
 
+        id<MaterialButton>(R.id.btnHold).setOnClickListener { onHold() }
+        id<MaterialButton>(R.id.btnHeld).setOnClickListener { showHeldDialog() }
+
         // Accent bars
         id<View>(R.id.barLeftTotal).setBackgroundColor(accent)
         id<View>(R.id.barAmountDue).setBackgroundColor(accent)
 
         // Mode toggle
-        id<MaterialButton>(R.id.btnModeEdit).setOnClickListener { setMode(true) }
+        id<MaterialButton>(R.id.btnModeEdit).setOnClickListener {
+            requireActivity().supportFragmentManager.popBackStack()
+        }
         id<MaterialButton>(R.id.btnModeReceipt).setOnClickListener { setMode(false) }
 
         // Add line
         id<MaterialButton>(R.id.btnAddLine).setOnClickListener { addLine() }
-        // Coupon / discount
-        id<MaterialButton>(R.id.btnApplyCoupon).setOnClickListener {
-            applyCoupon(id<TextInputEditText>(R.id.etCoupon).text?.toString().orEmpty())
-        }
-        id<TextInputEditText>(R.id.etDiscount).addTextChangedListener(watcher {
-            discountPercent = (it.toIntOrNull() ?: 0).coerceIn(0, 100); refreshTotals()
-        })
 
         // Payment mode tiles
         id<MaterialButton>(R.id.btnCash).setOnClickListener { setMethod(Method.CASH) }
+        id<MaterialButton>(R.id.btnCredit).setOnClickListener { setMethod(Method.CREDIT) }
         id<MaterialButton>(R.id.btnCard).setOnClickListener { setMethod(Method.CARD) }
-        id<MaterialButton>(R.id.btnWallet).setOnClickListener { setMethod(Method.WALLET) }
-        id<MaterialButton>(R.id.btnSplit).setOnClickListener { setMethod(Method.SPLIT) }
+        id<MaterialButton>(R.id.btnOnline).setOnClickListener { setMethod(Method.ONLINE) }
 
         // Cash inputs
         id<TextInputEditText>(R.id.etCash).addTextChangedListener(watcher { refreshTotals() })
-        id<TextInputEditText>(R.id.etSplitCash).addTextChangedListener(watcher { refreshTotals() })
-        id<TextInputEditText>(R.id.etSplitCard).addTextChangedListener(watcher { refreshTotals() })
-        id<MaterialButton>(R.id.btnExact).setOnClickListener { id<TextInputEditText>(R.id.etCash).setText(fmtPlain(total())) }
-        id<MaterialButton>(R.id.btn20).setOnClickListener { id<TextInputEditText>(R.id.etCash).setText("20") }
-        id<MaterialButton>(R.id.btn50).setOnClickListener { id<TextInputEditText>(R.id.etCash).setText("50") }
-        id<MaterialButton>(R.id.btn100).setOnClickListener { id<TextInputEditText>(R.id.etCash).setText("100") }
 
-        // Receipt delivery
-        id<MaterialButton>(R.id.btnRcPrint).setOnClickListener { setReceipt(Receipt.PRINT) }
-        id<MaterialButton>(R.id.btnRcEmail).setOnClickListener { setReceipt(Receipt.EMAIL) }
-        id<MaterialButton>(R.id.btnRcSms).setOnClickListener { setReceipt(Receipt.SMS) }
-        id<MaterialButton>(R.id.btnRcNone).setOnClickListener { setReceipt(Receipt.NONE) }
+        // Credit inputs
+        id<TextInputEditText>(R.id.etCredit).addTextChangedListener(watcher { refreshTotals() })
 
         // Complete
         id<MaterialButton>(R.id.btnComplete).setOnClickListener { complete() }
+
+        // Apply styles to payment buttons BEFORE theme to avoid conflicts
+        applyTileStyles()
 
         // Theme everything
         ThemeManager.applyTheme(view)
@@ -139,7 +132,11 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // Toggles and selection states: Manually override the global theme for the ACTIVE button.
         setMode(editMode)
         applyTileStyles()
-        setReceipt(receipt)
+        updateHeldButton()
+
+        // Render items and calculate totals
+        renderItems()
+        refreshTotals()
 
         clockRunnable = object : Runnable {
             override fun run() {
@@ -160,24 +157,12 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     private fun renderItems() {
         val ll = id<LinearLayout>(R.id.llItems)
         ll.removeAllViews()
-        lines.forEachIndexed { index, line ->
+        lines.forEach { line ->
             val row = layoutInflater.inflate(R.layout.item_checkout_line, ll, false)
-            row.findViewById<TextView>(R.id.tvLineNo).text = (index + 1).toString().padStart(2, '0')
             row.findViewById<TextView>(R.id.tvName).text = line.name
-            row.findViewById<TextView>(R.id.tvSku).text = "SKU ${line.sku}"
-            row.findViewById<TextView>(R.id.tvUnitPrice).text = money(line.price)
-            row.findViewById<TextView>(R.id.tvQty).text = line.qty.toString()
-            row.findViewById<TextView>(R.id.tvAmount).text = money(line.price * line.qty)
-            row.findViewById<ImageButton>(R.id.btnMinus).setOnClickListener {
-                line.qty--; if (line.qty <= 0) lines.remove(line); renderItems(); refreshTotals()
-            }
-            row.findViewById<ImageButton>(R.id.btnPlus).setOnClickListener {
-                line.qty++; renderItems(); refreshTotals()
-            }
-            row.findViewById<ImageButton>(R.id.btnRemove).setOnClickListener {
-                lines.remove(line); renderItems(); refreshTotals()
-            }
-            // Theme the line item buttons
+            row.findViewById<TextView>(R.id.tvQty).text = "Qty: ${line.qty}"
+            row.findViewById<TextView>(R.id.tvPrice).text = money(line.price * line.qty)
+
             ThemeManager.applyTheme(row)
             ll.addView(row)
         }
@@ -193,17 +178,6 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         renderItems(); refreshTotals()
     }
 
-    private fun applyCoupon(code: String) {
-        val msg = id<TextView>(R.id.tvCouponMsg)
-        when {
-            code.trim().uppercase() == "SAVE10" -> {
-                couponApplied = true; msg.visibility = View.VISIBLE; msg.text = "SAVE10 applied — 10% off"
-            }
-            code.isBlank() -> msg.visibility = View.GONE
-            else -> { couponApplied = false; msg.visibility = View.VISIBLE; msg.text = "Invalid code" }
-        }
-        refreshTotals()
-    }
 
     // ---- Mode / method / receipt selection --------------------------------
 
@@ -226,33 +200,32 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     private fun setMethod(m: Method) {
         method = m
         id<View>(R.id.sectionCash).visibility = if (m == Method.CASH) View.VISIBLE else View.GONE
+        id<View>(R.id.sectionCredit).visibility = if (m == Method.CREDIT) View.VISIBLE else View.GONE
         id<View>(R.id.sectionTerminal).visibility =
-            if (m == Method.CARD || m == Method.WALLET) View.VISIBLE else View.GONE
-        id<View>(R.id.sectionSplit).visibility = if (m == Method.SPLIT) View.VISIBLE else View.GONE
+            if (m == Method.CARD) View.VISIBLE else View.GONE
+        id<View>(R.id.sectionOnline).visibility = if (m == Method.ONLINE) View.VISIBLE else View.GONE
         val title = titleFor(m)
-        id<TextView>(R.id.tvTerminalTitle).text = "$title terminal connected"
-        id<TextView>(R.id.tvTerminalMsg).text =
-            "Present $title on the reader for ${money(total())}, then confirm below."
+
+        if (m == Method.CARD) {
+            id<TextView>(R.id.tvTerminalTitle).text = "$title terminal connected"
+            id<TextView>(R.id.tvTerminalMsg).text =
+                "Present $title on the reader for ${money(total())}, then confirm below."
+        }
+
         id<TextView>(R.id.tvPayingBy).text = "Paying by $title"
         applyTileStyles()
         refreshTotals()
-    }
 
-    private fun setReceipt(r: Receipt) {
-        receipt = r
-        listOf(
-            R.id.btnRcPrint to Receipt.PRINT, R.id.btnRcEmail to Receipt.EMAIL,
-            R.id.btnRcSms to Receipt.SMS, R.id.btnRcNone to Receipt.NONE
-        ).forEach { (bId, value) ->
-            val b = id<MaterialButton>(bId)
-            if (value == r) styleFilled(b) else styleOutlined(b)
+        if (m == Method.CREDIT) {
+            showCreditCustomerDialog()
         }
     }
 
+
     private fun applyTileStyles() {
         listOf(
-            R.id.btnCash to Method.CASH, R.id.btnCard to Method.CARD,
-            R.id.btnWallet to Method.WALLET, R.id.btnSplit to Method.SPLIT
+            R.id.btnCash to Method.CASH, R.id.btnCredit to Method.CREDIT,
+            R.id.btnCard to Method.CARD, R.id.btnOnline to Method.ONLINE
         ).forEach { (bId, value) ->
             val b = id<MaterialButton>(bId)
             if (value == method) {
@@ -265,7 +238,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
     // ---- Totals ------------------------------------------------------------
 
-    private fun totalPct() = min(100, discountPercent + if (couponApplied) 10 else 0)
+    private fun totalPct() = 0
     private fun subtotal() = lines.sumOf { it.price * it.qty }
     private fun discountAmt() = subtotal() * totalPct() / 100.0
     private fun taxAmt() = (subtotal() - discountAmt()).coerceAtLeast(0.0) * 0.05
@@ -280,26 +253,21 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         id<TextView>(R.id.tvLeftTotal).text = money(total())
         id<TextView>(R.id.tvAmountDue).text = money(total())
 
+        // Update item count
+        val itemCount = lines.sumOf { it.qty }
+        id<TextView>(R.id.tvItemCount).text = "Items: $itemCount"
+
         // Cash change
         val tendered = id<TextInputEditText>(R.id.etCash).text?.toString()?.toDoubleOrNull() ?: 0.0
         id<TextView>(R.id.tvChange).text = money((tendered - total()).coerceAtLeast(0.0))
 
-        // Split remaining
-        val sc = id<TextInputEditText>(R.id.etSplitCash).text?.toString()?.toDoubleOrNull() ?: 0.0
-        val sd = id<TextInputEditText>(R.id.etSplitCard).text?.toString()?.toDoubleOrNull() ?: 0.0
-        val remaining = total() - sc - sd
-        id<TextView>(R.id.tvSplitStatus).text = when {
-            remaining > 0.001 -> "Remaining to cover"
-            remaining < -0.001 -> "Over the total"
-            else -> "Fully covered"
-        }
-        id<TextView>(R.id.tvSplitRemaining).text =
-            (if (remaining < -0.001) "+" else "") + money(kotlin.math.abs(remaining))
+        // Credit balance due
+        val creditPaid = id<TextInputEditText>(R.id.etCredit).text?.toString()?.toDoubleOrNull() ?: 0.0
+        id<TextView>(R.id.tvBalanceDue).text = money((total() - creditPaid).coerceAtLeast(0.0))
 
         // Complete enabled?
         val can = total() > 0 && when (method) {
             Method.CASH -> tendered >= total() - 0.001
-            Method.SPLIT -> sc + sd >= total() - 0.001
             else -> true
         }
         val btn = id<MaterialButton>(R.id.btnComplete)
@@ -372,31 +340,248 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         )
     }
 
+    // ---- Hold / Resume held orders ------------------------------------------
+
+    private fun onHold() {
+        if (lines.isEmpty()) { toast("Cart is empty"); return }
+        heldOrders.add(Held("Sale #${heldOrders.size + 1}", lines.map { it.copy() }))
+        lines.clear()
+        renderItems()
+        refreshTotals()
+        updateHeldButton()
+        toast("Sale put on hold")
+    }
+
+    private fun showHeldDialog() {
+        if (heldOrders.isEmpty()) { toast("No sales on hold"); return }
+        val labels = heldOrders.map { h ->
+            "${h.label} · ${h.lines.sumOf { it.qty }} items · ${money(h.lines.sumOf { it.price * it.qty })}"
+        }.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("Held orders")
+            .setItems(labels) { _, which -> resumeHeld(which) }
+            .setNegativeButton("Cancel", null)
+            .create()
+            .also { it.setCanceledOnTouchOutside(false); it.show() }
+    }
+
+    private fun resumeHeld(index: Int) {
+        val h = heldOrders.removeAt(index)
+        lines.clear()
+        lines.addAll(h.lines.map { it.copy() })
+        renderItems()
+        refreshTotals()
+        updateHeldButton()
+        toast("Sale resumed")
+    }
+
+    private fun updateHeldButton() {
+        id<MaterialButton>(R.id.btnHeld).text = "Held (${heldOrders.size})"
+    }
+
+    // ---- Credit Customer Information ----------------------------------------
+
+    private fun showCreditCustomerDialog() {
+        val ctx = requireContext()
+        val inflater = LayoutInflater.from(ctx)
+        val view = inflater.inflate(R.layout.dialog_form, null)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx).setView(view).create().also {
+            it.setCanceledOnTouchOutside(false)
+        }
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+
+        val accent = ThemeManager.getThemeColor(ctx)
+        val grid = view.findViewById<GridLayout>(R.id.glFields)
+        val btnPositive = view.findViewById<MaterialButton>(R.id.btnFormPositive)
+        val btnNegative = view.findViewById<MaterialButton>(R.id.btnFormNegative)
+
+        view.findViewById<TextView>(R.id.tvFormTitle).text = "Credit Sale - Customer Details"
+        btnPositive.text = "Save"
+        btnNegative.text = "Cancel"
+
+        val density = ctx.resources.displayMetrics.density
+        val margin = (8 * density).toInt()
+        val inputs = mutableListOf<TextInputEditText>()
+
+        // Phone field (first)
+        var tilPhone = inflater.inflate(R.layout.item_form_field, null, false) as TextInputLayout
+        tilPhone.hint = "Phone Number"
+        tilPhone.layoutParams = GridLayout.LayoutParams().apply {
+            rowSpec = GridLayout.spec(0)
+            columnSpec = GridLayout.spec(0, 2, 1f)
+            width = 0
+            height = ViewGroup.LayoutParams.WRAP_CONTENT
+            setMargins(margin, margin / 2, margin, margin / 2)
+        }
+        val etPhone = tilPhone.findViewById<TextInputEditText>(R.id.etField)
+        etPhone.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        etPhone.filters = arrayOf(android.text.InputFilter.LengthFilter(10))
+        etPhone.setText(creditCustomerPhone)
+        grid.addView(tilPhone)
+        inputs.add(etPhone)
+
+        // Name field
+        var tilName = inflater.inflate(R.layout.item_form_field, null, false) as TextInputLayout
+        tilName.hint = "Customer Name"
+        tilName.layoutParams = GridLayout.LayoutParams().apply {
+            rowSpec = GridLayout.spec(1)
+            columnSpec = GridLayout.spec(0, 1, 1f)
+            width = 0
+            height = ViewGroup.LayoutParams.WRAP_CONTENT
+            setMargins(margin, margin / 2, margin, margin / 2)
+        }
+        val etName = tilName.findViewById<TextInputEditText>(R.id.etField)
+        etName.setText(creditCustomerName)
+        grid.addView(tilName)
+        inputs.add(etName)
+
+        // Address field
+        var tilAddress = inflater.inflate(R.layout.item_form_field, null, false) as TextInputLayout
+        tilAddress.hint = "Address"
+        tilAddress.layoutParams = GridLayout.LayoutParams().apply {
+            rowSpec = GridLayout.spec(2)
+            columnSpec = GridLayout.spec(0, 2, 1f)
+            width = 0
+            height = ViewGroup.LayoutParams.WRAP_CONTENT
+            setMargins(margin, margin / 2, margin, margin / 2)
+        }
+        val etAddress = tilAddress.findViewById<TextInputEditText>(R.id.etField)
+        etAddress.setText(creditCustomerAddress)
+        etAddress.minLines = 3
+        etAddress.maxLines = 5
+        etAddress.isSingleLine = false
+        grid.addView(tilAddress)
+        inputs.add(etAddress)
+
+        // GSTIN field
+        var tilGstin = inflater.inflate(R.layout.item_form_field, null, false) as TextInputLayout
+        tilGstin.hint = "GSTIN"
+        tilGstin.layoutParams = GridLayout.LayoutParams().apply {
+            rowSpec = GridLayout.spec(3)
+            columnSpec = GridLayout.spec(0, 2, 1f)
+            width = 0
+            height = ViewGroup.LayoutParams.WRAP_CONTENT
+            setMargins(margin, margin / 2, margin, margin / 2)
+        }
+        val etGstin = tilGstin.findViewById<TextInputEditText>(R.id.etField)
+        etGstin.setText(creditCustomerGstin)
+        grid.addView(tilGstin)
+        inputs.add(etGstin)
+
+        // Phone autocomplete with suggestions
+        val customerDao = com.example.synergic_pos_offline.database.CustomerDao(ctx)
+        val suggestionsContainer = view.findViewById<LinearLayout>(R.id.llSuggestions)
+
+        etPhone.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val query = s?.toString() ?: ""
+                if (query.length >= 3 && query.all { it.isDigit() }) {
+                    val allCustomers = customerDao.getAll()
+                    val suggestions = allCustomers.filter { it.phone.startsWith(query) }
+
+                    if (suggestions.isNotEmpty()) {
+                        suggestionsContainer.removeAllViews()
+                        suggestionsContainer.visibility = View.VISIBLE
+
+                        suggestions.take(5).forEach { customer ->
+                            val suggestionView = android.widget.TextView(ctx).apply {
+                                text = "${customer.name} - ${customer.phone}"
+                                textSize = 12f
+                                setTextColor(android.graphics.Color.parseColor("#333333"))
+                                setPadding(16, 12, 16, 12)
+                                setBackgroundColor(android.graphics.Color.parseColor("#F5F5F5"))
+                                layoutParams = LinearLayout.LayoutParams(
+                                    LinearLayout.LayoutParams.MATCH_PARENT,
+                                    LinearLayout.LayoutParams.WRAP_CONTENT
+                                )
+                                setOnClickListener {
+                                    etPhone.setText(customer.phone)
+                                    etName.setText(customer.name)
+                                    etAddress.setText(customer.address)
+                                    etGstin.setText(customer.gstin)
+                                    suggestionsContainer.visibility = View.GONE
+                                }
+                            }
+                            suggestionsContainer.addView(suggestionView)
+                        }
+                    } else {
+                        suggestionsContainer.visibility = View.GONE
+                    }
+                } else {
+                    suggestionsContainer.visibility = View.GONE
+                }
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        ThemeManager.applyTheme(grid)
+        btnPositive.backgroundTintList = android.content.res.ColorStateList.valueOf(accent)
+        btnNegative.setTextColor(accent)
+        btnNegative.strokeColor = android.content.res.ColorStateList.valueOf(accent)
+
+        btnPositive.setOnClickListener {
+            val phone = inputs[0].text?.toString()?.trim() ?: ""
+            if (phone.isEmpty() || phone.length != 10 || !phone.all { it.isDigit() }) {
+                toast("Phone number must be exactly 10 digits")
+                return@setOnClickListener
+            }
+
+            creditCustomerPhone = phone
+            creditCustomerName = inputs[1].text?.toString()?.trim() ?: ""
+            creditCustomerAddress = inputs[2].text?.toString()?.trim() ?: ""
+            creditCustomerGstin = inputs[3].text?.toString()?.trim() ?: ""
+
+            updateHeaderWithCustomer()
+            dialog.dismiss()
+            toast("Customer details saved")
+        }
+
+        btnNegative.setOnClickListener { dialog.dismiss() }
+
+        dialog.show()
+        val window = dialog.window
+        window?.setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        window?.setGravity(android.view.Gravity.CENTER)
+    }
+
+    private fun updateHeaderWithCustomer() {
+        id<TextView>(R.id.tvCustName).text = if (creditCustomerName.isNotEmpty()) creditCustomerName else "Guest"
+        id<TextView>(R.id.tvCustSub).text = if (creditCustomerPhone.isNotEmpty()) creditCustomerPhone else "Walk-in"
+        id<TextView>(R.id.tvCustInitials).text = (if (creditCustomerName.isNotEmpty()) creditCustomerName else "Guest")
+            .split(" ")
+            .mapNotNull { it.firstOrNull()?.uppercase() }
+            .take(2)
+            .joinToString("")
+    }
+
     // ---- Helpers -----------------------------------------------------------
 
     private fun titleFor(m: Method) = when (m) {
-        Method.CASH -> "Cash"; Method.CARD -> "Card"; Method.WALLET -> "Wallet"; Method.SPLIT -> "Split"
+        Method.CASH -> "Cash"
+        Method.CREDIT -> "Credit"
+        Method.CARD -> "Card"
+        Method.ONLINE -> "Online"
     }
 
     private fun styleFilled(btn: MaterialButton) {
-        btn.backgroundTintList = ColorStateList.valueOf(accent)
+        btn.setBackgroundColor(accent)
         btn.setTextColor(Color.WHITE)
-        btn.strokeColor = ColorStateList.valueOf(accent)
-        btn.iconTint = ColorStateList.valueOf(Color.WHITE)
-        btn.cornerRadius = (resources.displayMetrics.density * 12).toInt() // Match dialog corner radius
         btn.strokeWidth = 0
+        btn.iconTint = ColorStateList.valueOf(Color.WHITE)
+        btn.cornerRadius = (resources.displayMetrics.density * 12).toInt()
     }
 
     /** Restores an outlined button's white fill + accent border/text/icon. */
     private fun styleOutlined(btn: MaterialButton) {
-        // White background, theme-coloured text + border (matching dialog cancel style).
-        btn.backgroundTintList = ColorStateList.valueOf(Color.WHITE)
+        btn.setBackgroundColor(Color.WHITE)
         btn.setTextColor(accent)
+        btn.setStrokeColorResource(android.R.color.transparent)
         btn.strokeColor = ColorStateList.valueOf(accent)
-        btn.strokeWidth = (resources.displayMetrics.density * 1.5f).toInt()
+        btn.strokeWidth = (resources.displayMetrics.density * 2f).toInt()
         btn.iconTint = ColorStateList.valueOf(accent)
         btn.rippleColor = ColorStateList.valueOf(accent).withAlpha(30)
-        btn.cornerRadius = (resources.displayMetrics.density * 12).toInt() // Match dialog corner radius
+        btn.cornerRadius = (resources.displayMetrics.density * 12).toInt()
     }
 
     private fun money(v: Double) = "₹" + String.format("%.2f", v)
