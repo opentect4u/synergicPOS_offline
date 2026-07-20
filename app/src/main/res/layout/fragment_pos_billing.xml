@@ -146,29 +146,29 @@
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.button.MaterialButton
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:minHeight="0dp"
-                    android:id="@+id/btnEnterPrice"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="52dp"
-                    android:layout_marginStart="10dp"
-                    android:text="Enter Price"
-                    app:icon="@android:drawable/ic_dialog_dialer"
-                    app:cornerRadius="12dp" />
-
-                <com.google.android.material.button.MaterialButton
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:minHeight="0dp"
                     android:id="@+id/btnCustomer"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="wrap_content"
                     android:layout_height="52dp"
                     android:layout_marginStart="10dp"
-                    android:text="Customer"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minHeight="0dp"
+                    android:text="Add Customer"
                     app:icon="@android:drawable/ic_menu_myplaces"
+                    app:cornerRadius="12dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCalculator"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="52dp"
+                    android:layout_marginStart="10dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minHeight="0dp"
+                    android:text="Calculator"
+                    app:icon="@android:drawable/ic_dialog_dialer"
                     app:cornerRadius="12dp" />
             </LinearLayout>
 
@@ -275,6 +275,16 @@
                         android:textColor="@color/text_main" />
                 </LinearLayout>
 
+                <!-- Total Item Count -->
+                <TextView
+                    android:id="@+id/tvItemCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0 items"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary"
+                    android:layout_marginTop="2dp" />
+
                 <!-- Customer -->
                 <com.google.android.material.button.MaterialButton
             android:insetTop="0dp"
@@ -310,7 +320,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Customer"
-                            android:textSize="13sp"
+                            android:textSize="17sp"
                             android:textStyle="bold"
                             android:textColor="@color/text_main" />
 
@@ -319,7 +329,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="340 pts"
-                            android:textSize="11sp"
+                            android:textSize="14sp"
                             android:textColor="@color/text_secondary" />
                     </LinearLayout>
 
@@ -346,10 +356,28 @@
                     android:id="@+id/rvCart"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:paddingHorizontal="16dp"
+                    android:paddingHorizontal="8dp"
                     android:clipToPadding="false"
                     android:scrollbars="vertical"
                     tools:listitem="@layout/item_pos_cart_line" />
+
+                <!-- Floating Scroll Marker / Jump to Top -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnJumpTop"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_gravity="top|center_horizontal"
+                    android:layout_marginTop="8dp"
+                    android:text="Show Newest"
+                    android:textSize="10sp"
+                    android:visibility="gone"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    app:cornerRadius="16dp"
+                    app:icon="@android:drawable/ic_menu_upload"
+                    app:iconSize="12dp"
+                    app:backgroundTint="@color/primary_blue"
+                    android:textColor="@color/white" />
 
                 <TextView
                     android:id="@+id/tvCartEmpty"
@@ -372,7 +400,7 @@
                 android:paddingTop="12dp"
                 android:paddingBottom="8dp">
 
-                <!-- Coupon + discount -->
+                <!-- Discount row -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -380,44 +408,11 @@
                     android:gravity="center_vertical">
 
                     <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/tilCoupon"
-                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:hint="Coupon code"
-                        app:boxCornerRadiusTopStart="10dp"
-                        app:boxCornerRadiusTopEnd="10dp"
-                        app:boxCornerRadiusBottomStart="10dp"
-                        app:boxCornerRadiusBottomEnd="10dp">
-
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/etCoupon"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:inputType="textCapCharacters"
-                            android:maxLines="1" />
-                    </com.google.android.material.textfield.TextInputLayout>
-
-                    <com.google.android.material.button.MaterialButton
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:minHeight="0dp"
-                        android:id="@+id/btnApplyCoupon"
-                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="44dp"
-                        android:layout_marginStart="8dp"
-                        android:text="Apply"
-                        app:cornerRadius="10dp" />
-
-                    <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilDiscount"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
-                        android:layout_width="72dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:hint="Disc"
+                        android:hint="Discount"
                         app:suffixText="%"
                         app:boxCornerRadiusTopStart="10dp"
                         app:boxCornerRadiusTopEnd="10dp"

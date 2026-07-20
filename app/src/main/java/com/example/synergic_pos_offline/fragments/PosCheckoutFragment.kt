@@ -36,6 +36,7 @@ object CheckoutSession {
     var discountPercent: Int = 0
     var couponApplied: Boolean = false
     var customerName: String? = null
+    var customerPhone: String? = null
     var orderNo: Int = 1042
 }
 
@@ -81,8 +82,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // Header
         id<TextView>(R.id.tvOrder).text = "#${CheckoutSession.orderNo}"
         id<TextView>(R.id.tvCustName).text = CheckoutSession.customerName ?: "Guest"
-        id<TextView>(R.id.tvCustSub).text =
-            if (CheckoutSession.customerName != null) "340 pts · Loyalty" else "Walk-in"
+        id<TextView>(R.id.tvCustSub).text = CheckoutSession.customerPhone ?: "Walk-in"
         id<TextView>(R.id.tvCustInitials).text =
             (CheckoutSession.customerName ?: "Guest").split(" ")
                 .mapNotNull { it.firstOrNull()?.uppercase() }.take(2).joinToString("")
