@@ -19,6 +19,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
@@ -351,16 +352,24 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             val t = id<TextInputEditText>(R.id.etCash).text?.toString()?.toDoubleOrNull() ?: 0.0
             " · Change ${money((t - total()).coerceAtLeast(0.0))}"
         } else ""
-        AlertDialog.Builder(requireContext())
-            .setTitle("Checkout complete")
-            .setMessage("Order #${CheckoutSession.orderNo} · Charged ${money(total())} via $method$change")
-            .setPositiveButton("Start new sale") { _, _ ->
+
+        DialogUtils.showConfirm(
+            context = requireContext(),
+            title = "Checkout complete",
+            message = "Bill No: #${CheckoutSession.orderNo}",
+            positiveText = "Start new sale",
+            negativeText = "Reprint",
+            iconRes = R.drawable.ic_check,
+            onConfirm = {
                 CheckoutSession.orderNo++
+                // Signal to the billing fragment to clear its state for a new sale
+                parentFragmentManager.setFragmentResult("request_new_sale", Bundle())
                 requireActivity().supportFragmentManager.popBackStack()
+            },
+            onCancel = {
+                toast("Reprinting bill #${CheckoutSession.orderNo}...")
             }
-            .setCancelable(false)
-            .create()
-            .also { it.setCanceledOnTouchOutside(false); it.show() }
+        )
     }
 
     // ---- Helpers -----------------------------------------------------------

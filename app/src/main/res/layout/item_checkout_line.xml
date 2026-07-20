@@ -52,7 +52,7 @@
             android:id="@+id/tvUnitPrice"
             android:layout_width="72dp"
             android:layout_height="wrap_content"
-            android:text="$0.00"
+            android:text="₹0.00"
             android:gravity="end"
             android:fontFamily="monospace"
             android:textSize="13sp"
@@ -70,7 +70,7 @@
                 android:layout_width="32dp"
                 android:layout_height="32dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@android:drawable/ic_media_previous"
+                android:src="@drawable/ic_minus"
                 app:tint="@color/text_secondary"
                 android:contentDescription="Decrease" />
 
@@ -89,7 +89,7 @@
                 android:layout_width="32dp"
                 android:layout_height="32dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@android:drawable/ic_input_add"
+                android:src="@drawable/ic_add"
                 app:tint="@color/text_secondary"
                 android:contentDescription="Increase" />
         </LinearLayout>
@@ -99,7 +99,7 @@
             android:layout_width="72dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="6dp"
-            android:text="$0.00"
+            android:text="₹0.00"
             android:gravity="end"
             android:textStyle="bold"
             android:textSize="15sp"

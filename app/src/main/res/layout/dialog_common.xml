@@ -9,7 +9,7 @@
     app:cardBackgroundColor="@color/white">
 
     <LinearLayout
-        android:layout_width="320dp"
+        android:layout_width="380dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
         android:orientation="vertical"
@@ -55,18 +55,26 @@
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnDialogNegative"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_weight="1"
                 android:text="Cancel"
+                android:textAllCaps="false"
+                android:maxLines="1"
+                android:ellipsize="end"
                 app:cornerRadius="12dp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnDialogPositive"
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_weight="1"
                 android:layout_marginStart="12dp"
                 android:text="Confirm"
                 android:textColor="@color/white"
+                android:textAllCaps="false"
+                android:maxLines="1"
+                android:ellipsize="end"
                 app:cornerRadius="12dp" />
 
         </LinearLayout>

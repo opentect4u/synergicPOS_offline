@@ -20,6 +20,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
@@ -220,6 +221,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
         btnCharge.backgroundTintList = ColorStateList.valueOf(accent)
         btnCharge.setTextColor(Color.WHITE)
         btnCharge.strokeWidth = 0
+
+        // Listen for "New Sale" request from Checkout screen
+        parentFragmentManager.setFragmentResultListener("request_new_sale", viewLifecycleOwner) { _, _ ->
+            clearSale()
+        }
 
         clockRunnable = object : Runnable {
             override fun run() {
@@ -428,7 +434,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         btnCharge.text = "Checkout ${money(computeTotal())}"
     }
 
-    private fun money(v: Double): String = "$" + String.format("%.2f", v)
+    private fun money(v: Double): String = "₹" + String.format("%.2f", v)
 
     private fun toast(msg: String) =
         android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_SHORT).show()
