@@ -127,27 +127,6 @@ object DialogUtils {
         var currentColumn = 0
         val colsPerRow = 2
 
-        for (field in fields) {
-            val til = inflater.inflate(R.layout.item_form_field, null, false) as TextInputLayout
-            til.hint = field.label
-
-            // Calculate row and column based on spanning
-            if (currentColumn > 0 && field.spanColumns > 1) {
-                currentRow++
-                currentColumn = 0
-            } else if (currentColumn + field.spanColumns > colsPerRow) {
-                currentRow++
-                currentColumn = 0
-            }
-
-            // Layout params for 2 columns with spanning support
-            val params = GridLayout.LayoutParams().apply {
-                rowSpec = GridLayout.spec(currentRow)
-                columnSpec = GridLayout.spec(currentColumn, field.spanColumns.coerceAtMost(2), 1f)
-                width = 0
-                height = ViewGroup.LayoutParams.WRAP_CONTENT
-                setMargins(margin, margin / 2, margin, margin / 2)
-            }
         fields.forEachIndexed { index, field ->
             val til = inflater.inflate(R.layout.item_form_field, grid, false) as TextInputLayout
             til.hint = field.label
@@ -198,9 +177,6 @@ object DialogUtils {
                 currentColumn = 0
             }
         }
-
-        // Configure grid layout column widths
-        grid.columnCount = 2
 
         ThemeManager.applyTheme(grid)
         btnPositive.backgroundTintList = ColorStateList.valueOf(accent)
