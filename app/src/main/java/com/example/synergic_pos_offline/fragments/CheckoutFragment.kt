@@ -1,7 +1,9 @@
 package com.example.synergic_pos_offline.fragments
 
 import android.content.ContentValues
+import android.content.res.ColorStateList
 import android.database.Cursor
+import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.text.Editable
@@ -20,6 +22,7 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.utils.CartManager
 import com.example.synergic_pos_offline.utils.SessionManager
+import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import java.text.SimpleDateFormat
@@ -80,6 +83,8 @@ class CheckoutFragment : Fragment(), TitledScreen {
         setupPaymentMethodButtons()
         setupActionButtons()
         updateTotalCalculations()
+
+        ThemeManager.applyTheme(view)
     }
 
     private fun setupCheckoutItems() {
@@ -147,17 +152,35 @@ class CheckoutFragment : Fragment(), TitledScreen {
     }
 
     private fun selectPaymentMethod(method: String, button: MaterialButton) {
+        val accent = ThemeManager.getThemeColor(requireContext())
         selectedPaymentMethod = method
-        btnPaymentCash.backgroundTintList = null
-        btnPaymentCard.backgroundTintList = null
-        btnPaymentUPI.backgroundTintList = null
+        
+        // Reset all to outlined style (white background, accent border)
+        listOf(btnPaymentCash, btnPaymentCard, btnPaymentUPI).forEach { btn ->
+            btn.backgroundTintList = ColorStateList.valueOf(Color.WHITE)
+            btn.setTextColor(accent)
+            btn.strokeColor = ColorStateList.valueOf(accent)
+            btn.strokeWidth = (resources.displayMetrics.density * 1.2f).toInt()
+            btn.cornerRadius = (resources.displayMetrics.density * 12).toInt()
+        }
 
-        button.setBackgroundColor(requireContext().getColor(android.R.color.darker_gray))
-
+        // Highlight selected
+        button.backgroundTintList = ColorStateList.valueOf(accent)
+        button.setTextColor(Color.WHITE)
+        
         tvSelectedPayment.text = "Selected: $method"
     }
 
     private fun setupActionButtons() {
+        val accent = ThemeManager.getThemeColor(requireContext())
+        
+        // Cancel button: White background, accent border
+        btnCancel.backgroundTintList = ColorStateList.valueOf(Color.WHITE)
+        btnCancel.setTextColor(accent)
+        btnCancel.strokeColor = ColorStateList.valueOf(accent)
+        btnCancel.strokeWidth = (resources.displayMetrics.density * 1.2f).toInt()
+        btnCancel.cornerRadius = (resources.displayMetrics.density * 12).toInt()
+
         btnCancel.setOnClickListener { requireActivity().onBackPressed() }
         btnSaveOrder.setOnClickListener { saveOrder() }
     }

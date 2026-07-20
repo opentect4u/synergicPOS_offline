@@ -16,27 +16,14 @@ import com.google.android.material.textfield.TextInputLayout
 
 /**
  * Central store + applier for the app's dynamic accent color.
- *
- * The chosen color is persisted in SharedPreferences and applied at runtime by
- * walking a view tree ([applyTheme]) and re-tinting every "primary colored"
- * piece of chrome, identified by its resource-entry name so no per-screen
- * bookkeeping is required.
  */
 object ThemeManager {
     private const val PREF_NAME = "theme_prefs"
     private const val KEY_THEME_COLOR = "theme_color"
     const val DEFAULT_COLOR = "#008181"
 
-    /** Preset palette shown in the color picker. */
     val PALETTE = listOf(
-        "#008181", // Teal (default)
-        "#1A73E8", // Blue
-        "#1E8E3E", // Green
-        "#D93025", // Red
-        "#F9AB00", // Amber
-        "#8E24AA", // Purple
-        "#455A64", // Blue Grey
-        "#000000"  // Black
+        "#008181", "#1A73E8", "#1E8E3E", "#D93025", "#F9AB00", "#8E24AA", "#455A64", "#000000"
     )
 
     private fun getPrefs(context: Context): SharedPreferences =
@@ -51,7 +38,6 @@ object ThemeManager {
         return Color.parseColor(colorHex)
     }
 
-    /** Applies the current theme color to [root] and all of its descendants. */
     fun applyTheme(root: View) {
         applyRecursive(root, getThemeColor(root.context))
     }
@@ -72,54 +58,82 @@ object ThemeManager {
         } else null
 
         when (view) {
-            // Filled buttons (login, admin actions) take the accent as background.
-            is MaterialButton -> view.backgroundTintList = tint
+            is MaterialButton -> {
+                // Determine if this button should be Outlined (White bg, colored border) 
+                // or Filled (colored bg, white text).
+                if (isSecondary(name)) {
+                    // Outlined style matching Dialog Cancel button
+                    view.backgroundTintList = ColorStateList.valueOf(Color.WHITE)
+                    view.setTextColor(color)
+                    view.strokeColor = tint
+                    view.strokeWidth = (view.resources.displayMetrics.density * 1.5f).toInt()
+                    view.iconTint = tint
+                } else {
+                    // Primary Filled style
+                    view.backgroundTintList = tint
+                    view.setTextColor(Color.WHITE)
+                    view.strokeWidth = 0
+                    view.iconTint = ColorStateList.valueOf(Color.WHITE)
+                }
+                // Ensure rounded corners match the dialog design (12dp)
+                view.cornerRadius = (view.resources.displayMetrics.density * 12).toInt()
+            }
 
-            // Floating action buttons (Add New, etc.) also follow the theme.
             is FloatingActionButton -> view.backgroundTintList = tint
 
-            // Checkboxes (Select All, Row Selection) also follow the theme.
             is CheckBox -> view.buttonTintList = tint
 
-            // Outlined text fields: focused stroke, floating hint, icons & cursor.
             is TextInputLayout -> themeTextInput(view, color, tint)
 
-            // Only the navigation icons follow the accent; menu-card icons and
-            // the logo keep their own colors.
             is ImageView -> if (name == "btnBack" || name == "btnMenu" ||
                 name == "btnTheme" || name == "ivChevron" ||
                 name == "btnRowEdit" || name == "btnRowDelete" || name == "btnRowPrint" ||
-                name == "btnGlobalPrint" || name == "btnGlobalDelete") {
+                name == "btnGlobalPrint" || name == "btnGlobalDelete" ||
+                name == "btnPlus" || name == "btnMinus" || name == "btnRemoveLine" || name == "btnRemove") {
                 view.imageTintList = tint
             }
 
-            // Page titles (tv*Header) and accent links follow the accent.
-            is TextView -> if (name != null && (name.endsWith("Header") || name == "tvForgot")) {
-                view.setTextColor(color)
+            is TextView -> if (name != null) {
+                if (name.endsWith("Header") || name == "tvForgot" || name == "tvSelectionCount") {
+                    view.setTextColor(color)
+                } else if (name == "tvGrandTotal" || name == "tvTotal" || name == "tvLeftTotal" || name == "tvAmountDue") {
+                    // These are on dark teal backgrounds, so keep them white
+                    view.setTextColor(Color.WHITE)
+                }
             }
         }
 
-        // Solid accent panels (drawer header, etc.).
-        if (name == "sidebarHeader") {
+        // Solid accent panels
+        if (name == "sidebarHeader" || name == "barTotal" || name == "barLeftTotal" || name == "barAmountDue") {
             view.setBackgroundColor(color)
         }
     }
 
+    private fun isSecondary(name: String?): Boolean {
+        if (name == null) return false
+        val low = name.lowercase()
+        return low.contains("cancel") || 
+               low.contains("negative") || 
+               low.contains("back") ||
+               low.contains("add") ||
+               low.contains("apply") ||
+               low.contains("exact") ||
+               low.contains("btn20") || low.contains("btn50") || low.contains("btn100") ||
+               low.contains("receipt") ||
+               low.contains("card") || low.contains("wallet") || low.contains("split") ||
+               low.contains("hold")
+    }
+
     private fun themeTextInput(input: TextInputLayout, color: Int, tint: ColorStateList) {
-        // Focused stroke uses the accent; idle stroke stays a neutral grey.
         val strokeStates = ColorStateList(
-            arrayOf(
-                intArrayOf(android.R.attr.state_focused),
-                intArrayOf(-android.R.attr.state_focused)
-            ),
+            arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf(-android.R.attr.state_focused)),
             intArrayOf(color, Color.parseColor("#B0B0B0"))
         )
         input.setBoxStrokeColorStateList(strokeStates)
-        input.hintTextColor = tint          // floating label when focused
-        input.setStartIconTintList(tint)     // leading icon (user / lock)
-        input.setEndIconTintList(tint)       // password toggle
+        input.hintTextColor = tint
+        input.setStartIconTintList(tint)
+        input.setEndIconTintList(tint)
 
-        // Blinking caret color (API 29+).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             input.editText?.textCursorDrawable?.let { it.setTint(color) }
         }
