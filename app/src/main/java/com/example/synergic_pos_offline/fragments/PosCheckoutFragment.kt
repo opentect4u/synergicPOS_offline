@@ -608,7 +608,10 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     private fun printBill(receiptNo: Long) {
         if (receiptNo <= 0) return
 
-        val config = ThermalPrinter.savedConfig(requireContext())
+        // The BILL slot in md_printer is the source of truth (its paper width scales
+        // the print); fall back to the legacy saved config only if it is unset.
+        val config = ThermalPrinter.configForPurpose(requireContext(), "BILL")
+            ?: ThermalPrinter.savedConfig(requireContext())
         if (config == null) {
             // No printer set up yet - ask for it, then print once it is saved.
             PrinterSetup.show(requireContext()) { saved -> sendToPrinter(receiptNo, saved) }
@@ -618,7 +621,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     }
 
     private fun sendToPrinter(receiptNo: Long, config: ThermalPrinter.Config) {
-        val capture = BillReceiptRenderer(requireContext()).renderToBitmap(receiptNo)
+        val capture = BillReceiptRenderer(requireContext()).renderToBitmap(receiptNo, config.paperDots)
         if (capture == null) {
             toast("Could not render the receipt")
             return

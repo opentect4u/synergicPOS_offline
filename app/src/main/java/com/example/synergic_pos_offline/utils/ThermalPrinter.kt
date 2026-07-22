@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.example.synergic_pos_offline.database.AppSettingsDao
+import com.example.synergic_pos_offline.database.PrinterDao
 import java.util.concurrent.Executors
 import print.Print
 
@@ -65,9 +66,19 @@ object ThermalPrinter {
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
-    /** Paper width is held in mm - what the operator knows - and derived to dots. */
-    data class Config(val ip: String, val port: Int, val paperMm: Int) {
+    /**
+     * A printer to send to. [address] is an IP for WIFI/LAN or a device MAC for
+     * BLUETOOTH; [connection] selects which transport is opened. Paper width is held
+     * in mm - what the operator knows - and derived to dots.
+     */
+    data class Config(
+        val ip: String,
+        val port: Int,
+        val paperMm: Int,
+        val connection: String = "WIFI"
+    ) {
         val paperDots: Int get() = dotsForMm(paperMm)
+        val isBluetooth: Boolean get() = connection.equals("BLUETOOTH", ignoreCase = true)
     }
 
     sealed class Result {
@@ -93,13 +104,21 @@ object ThermalPrinter {
         // The bitmap belongs to a view that may be gone by the time the worker
         // runs, so take a copy the printer thread owns outright.
         val copy = receipt.copy(Bitmap.Config.ARGB_8888, false)
+        PrintLog.d(
+            context, TAG,
+            "==== print job: connection=${config.connection} address=${config.ip} " +
+                "port=${config.port} paperMm=${config.paperMm} paperDots=${config.paperDots} " +
+                "bitmap=${receipt.width}x${receipt.height} ===="
+        )
         worker.execute {
             val result = runCatching { sendWithRetry(context, copy, config) }
                 .getOrElse { e ->
                     Log.e(TAG, "Printing failed", e)
+                    PrintLog.d(context, TAG, "EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
                     Result.Failure(e.message ?: "Could not reach the printer")
                 }
             copy.recycle()
+            PrintLog.d(context, TAG, "job finished: $result")
             main.post { onResult(result) }
         }
     }
@@ -125,11 +144,13 @@ object ThermalPrinter {
     private fun sendWithRetry(context: Context, receipt: Bitmap, config: Config): Result {
         var last: Result = Result.Failure("Cannot reach printer at ${config.ip}:${config.port}")
         repeat(JOB_ATTEMPTS) { attempt ->
+            PrintLog.d(context, TAG, "attempt ${attempt + 1}/$JOB_ATTEMPTS")
             val outcome = runJob(context, receipt, config)
             if (!outcome.retryable) return outcome.result
             last = outcome.result
             if (attempt < JOB_ATTEMPTS - 1) {
                 Log.w(TAG, "Print attempt ${attempt + 1} failed, retrying: ${outcome.result}")
+                PrintLog.d(context, TAG, "attempt ${attempt + 1} retryable failure: ${outcome.result} - retrying")
                 Thread.sleep(RETRY_BACKOFF_MS * (attempt + 1))
             }
         }
@@ -142,14 +163,27 @@ object ThermalPrinter {
         // one dangling, and these modules serve a single client: the stale socket
         // locks every later job out until the printer times it out on its own.
         runCatching { Print.PortClose() }
+        PrintLog.d(context, TAG, "closed any previous port")
 
-        // "WiFi,<ip>,<port>" is the SDK's port descriptor; 0 means connected.
-        // The close below must cover this too: a failed open can still leave a
-        // half-open socket behind, so each retry would wedge the printer further.
+        // Open the transport the printer is set to; 0 means connected. Bluetooth
+        // takes the device MAC (the SDK prepends "Bluetooth,"); WiFi/LAN take the
+        // "WiFi,<ip>,<port>" descriptor. The close below must cover this too: a failed
+        // open can still leave a half-open connection behind, so each retry would
+        // wedge the printer further.
         try {
-            if (Print.PortOpen(context, "WiFi,${config.ip},${config.port}") != 0) {
+            PrintLog.d(
+                context, TAG,
+                if (config.isBluetooth) "opening Bluetooth port to ${config.ip}"
+                else "opening WiFi port to ${config.ip}:${config.port}"
+            )
+            val opened =
+                if (config.isBluetooth) Print.portOpenBT(context, config.ip)
+                else Print.PortOpen(context, "WiFi,${config.ip},${config.port}")
+            PrintLog.d(context, TAG, "port open result=$opened (0 = connected)")
+            if (opened != 0) {
+                val where = if (config.isBluetooth) config.ip else "${config.ip}:${config.port}"
                 return Attempt(
-                    Result.Failure("Cannot reach printer at ${config.ip}:${config.port}"),
+                    Result.Failure("Cannot reach printer at $where"),
                     retryable = true
                 )
             }
@@ -161,8 +195,10 @@ object ThermalPrinter {
             try {
                 Print.Initialize()
                 Print.SetPrintDensity(DENSITY)
+                PrintLog.d(context, TAG, "handshake ok (Initialize + SetPrintDensity)")
             } catch (e: Exception) {
                 Log.w(TAG, "Printer refused the handshake", e)
+                PrintLog.d(context, TAG, "handshake FAILED: ${e.javaClass.simpleName}: ${e.message}")
                 return Attempt(
                     Result.Failure(e.message ?: "Printer refused the connection"),
                     retryable = true
@@ -176,7 +212,9 @@ object ThermalPrinter {
             // Scaled to the head width: sending a wider bitmap prints a cropped
             // receipt rather than a resized one.
             val scaled = scaleToPaper(receipt, config.paperDots)
+            PrintLog.d(context, TAG, "sending bitmap ${scaled.width}x${scaled.height} (paperDots=${config.paperDots})")
             val printed = Print.PrintBitmap(scaled, 0, 0)
+            PrintLog.d(context, TAG, "PrintBitmap returned $printed (>=0 expected)")
             if (scaled !== receipt) scaled.recycle()
 
             // Past here the receipt is on the wire: report what happened, never retry.
@@ -185,18 +223,28 @@ object ThermalPrinter {
             }
 
             Print.PrintAndFeed(FEED_AFTER_PRINT)
+            PrintLog.d(context, TAG, "fed $FEED_AFTER_PRINT dots")
 
             // Not every unit has a cutter fitted, and one without it should still
             // produce the receipt rather than fail the job over a tear-off.
             runCatching { Print.CutPaper(PARTIAL_CUT) }
-                .onFailure { Log.w(TAG, "Printer did not cut", it) }
+                .onSuccess { PrintLog.d(context, TAG, "cut paper") }
+                .onFailure {
+                    Log.w(TAG, "Printer did not cut", it)
+                    PrintLog.d(context, TAG, "cut FAILED (no cutter, or not supported): ${it.message}")
+                }
 
             // A receipt raster is hundreds of KB, and closing the socket while it is
             // still in flight loses the tail. A status reply only comes back once the
             // printer has drained what it was sent, so it doubles as the drain wait.
+            PrintLog.d(context, TAG, "awaiting drain / status (up to ${DRAIN_ATTEMPTS * DRAIN_INTERVAL_MS}ms)")
             val after = awaitDrain()
+            PrintLog.d(context, TAG, "drain result status=$after (null = printer never answered)")
             if (after != null) {
-                faultOf(after)?.let { return Attempt(Result.Failure(it), retryable = false) }
+                faultOf(after)?.let {
+                    PrintLog.d(context, TAG, "printer reported fault: $it")
+                    return Attempt(Result.Failure(it), retryable = false)
+                }
                 return Attempt(Result.Success, retryable = false)
             }
             // Nothing answered, so the receipt was sent but never acknowledged.
@@ -204,6 +252,7 @@ object ThermalPrinter {
         } finally {
             // Always release the socket, including when the job threw part-way.
             runCatching { Print.PortClose() }
+            PrintLog.d(context, TAG, "port closed")
         }
     }
 
@@ -265,6 +314,22 @@ object ThermalPrinter {
 
     private const val DEFAULT_PORT = 9100
     private const val DEFAULT_PAPER_MM = 80
+
+    /**
+     * The printer configured for a purpose (BILL / KOT / OTHERS) in md_printer,
+     * or null when that slot has no address yet. The saved paper width flows through
+     * here, so a slip prints scaled to whatever width that printer is set to.
+     */
+    fun configForPurpose(context: Context, purpose: String): Config? {
+        val printer = PrinterDao(context).get(purpose) ?: return null
+        val address = printer.ip?.takeIf { it.isNotBlank() } ?: return null
+        return Config(
+            ip = address,
+            port = DEFAULT_PORT,
+            paperMm = printer.paperMm ?: DEFAULT_PAPER_MM,
+            connection = printer.type.uppercase()
+        )
+    }
 
     /** The saved printer, or null when none has been set up yet. */
     fun savedConfig(context: Context): Config? {

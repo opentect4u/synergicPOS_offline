@@ -27,7 +27,6 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillDao
 import com.example.synergic_pos_offline.database.CategoryDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
-import com.example.synergic_pos_offline.utils.CustomerCardDialog
 import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.GstCalculator
@@ -159,6 +158,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private lateinit var tvCustSub: TextView
     private lateinit var tvCouponMsg: TextView
     private lateinit var btnCustomerInfo: ImageButton
+
+    // Auto-prompts for the customer once, the first time this screen is shown after
+    // arriving from "Sale". The same fragment instance is reused when checkout pops
+    // back here, so this flag keeps the dialog from reopening on that return.
+    private var promptedForCustomer = false
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -323,6 +327,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
             updateTotals()
             toast("Bill restored")
         }
+
+        // First arrival from "Sale": prompt to add a customer. Guarded so it opens
+        // only on entry and never when checkout returns to this screen (a completed
+        // sale returns via the startFreshSale path above, which already returns).
+        if (!promptedForCustomer) {
+            promptedForCustomer = true
+            showCustomerDialog()
+        }
+
         updateHeldButton()
         updateOrderNo()
     }
@@ -550,6 +563,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 DialogUtils.FormField("Phone Number", customerPhone ?: "", inputType = "phone", maxLength = 10)
             ),
             positiveText = "Add",
+            showNegative = false,
             mandatoryFields = listOf(0),
             onSave = { values ->
                 val phone = values[0].trim()
@@ -584,7 +598,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
                                     "balance" to cursor.getDouble(9)
                                 )
 
-                                showCustomerResult(customerData!!, phone, isNew = false)
+                                // Attach the found customer to the sale directly, no
+                                // intermediate confirmation card.
+                                setCustomer(customerName.ifEmpty { null }, phone, customerData)
                             } else {
                                 // Customer not found - insert new customer into database
                                 try {
@@ -603,15 +619,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
                                     }
                                     val result = db.insert("md_customers", null, values)
                                     if (result > 0) {
-                                        showCustomerResult(
+                                        // Attach the newly-created customer to the sale
+                                        // directly, no intermediate confirmation card.
+                                        setCustomer(
+                                            null, phone,
                                             mapOf(
                                                 "id" to result, "name" to "", "phone" to phone,
                                                 "address" to "", "gstin" to "", "dob" to "", "dom" to "",
                                                 "credit_enabled" to false,
                                                 "credit_limit" to 0.0, "balance" to 0.0
-                                            ),
-                                            phone, isNew = true
+                                            )
                                         )
+                                        toast("New customer saved against $phone")
                                     } else {
                                         toast("Could not create the customer")
                                     }
@@ -627,39 +646,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 }
             }
         )
-    }
-
-    /**
-     * The result of a phone lookup, shown as a card rather than a toast. Nothing is
-     * attached to the sale until it is confirmed.
-     *
-     * @param isNew the phone had no match and a record was just created for it
-     */
-    private fun showCustomerResult(data: Map<String, Any?>, phone: String, isNew: Boolean) {
-        val name = (data["name"] as? String).orEmpty().trim()
-        CustomerCardDialog.show(
-            context = requireContext(),
-            inflater = layoutInflater,
-            customer = CustomerCardDialog.Customer(
-                name = name,
-                phone = phone,
-                address = (data["address"] as? String).orEmpty(),
-                gstin = (data["gstin"] as? String).orEmpty(),
-                dob = (data["dob"] as? String).orEmpty(),
-                dom = (data["dom"] as? String).orEmpty(),
-                creditEnabled = (data["credit_enabled"] as? Boolean) ?: false,
-                creditLimit = (data["credit_limit"] as? Double) ?: 0.0,
-                balance = (data["balance"] as? Double) ?: 0.0
-            ),
-            status = if (isNew) "NEW CUSTOMER CREATED" else "CUSTOMER FOUND",
-            confirmText = "Add to sale",
-            note = if (isNew) {
-                "Saved against $phone. Add their name and address in " +
-                    "Masters › Customers when there is time."
-            } else null
-        ) {
-            setCustomer(name.ifEmpty { null }, phone, data)
-        }
     }
 
     private fun showCustomerInfoPopover(ctx: android.content.Context, customer: Map<String, Any?>) {

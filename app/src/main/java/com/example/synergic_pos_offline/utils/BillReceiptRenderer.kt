@@ -22,8 +22,20 @@ import java.util.Locale
 /** Longest edge decoded for a receipt logo; the slots cap well below this. */
 private const val LOGO_PX = 480
 
-/** Width the receipt card is laid out at, matching fragment_bill.xml. */
+/** Width the receipt card is laid out at for 80mm paper, matching fragment_bill.xml. */
 private const val CARD_WIDTH_DP = 360
+
+/** Printable dots on 80mm paper - the reference [CARD_WIDTH_DP] was designed for. */
+private const val REFERENCE_PAPER_DOTS = 576
+
+/**
+ * Below this, the item/tax rows switch from fixed weighted columns to single
+ * full-width lines. A weighted column narrow enough to be smaller than one number
+ * forces Android to hard-wrap mid-digit (e.g. "350.0" / "0"); a single line gets the
+ * whole card's width and only ever wraps at a space, never inside a number. 58mm
+ * (384 dots) falls under this; 80mm (576) and up keep the original column table.
+ */
+private const val NARROW_PAPER_DOTS = 450
 
 /**
  * Fills a receipt layout from the bill tables.
@@ -66,25 +78,29 @@ class BillReceiptRenderer(private val ctx: Context) {
     }
 
     /**
-     * Renders the bill to a bitmap without it ever being shown.
+     * Renders the bill to a bitmap without it ever being shown, laid out for a printer
+     * whose head is [paperDots] wide (defaults to 80mm).
      *
-     * The card is detached from the inflated hierarchy and measured on its own: it
-     * is a fixed 360dp wide but unbounded in height, and left inside the scrolling
-     * parent it would measure to the height of a screen that does not exist here.
+     * The card is detached from the inflated hierarchy and measured on its own,
+     * unbounded in height. Its width scales with the paper rather than being fixed, so
+     * the printer scales every paper size by the same factor: a 58mm slip prints at the
+     * same font size as an 80mm one and simply wraps more text, instead of coming out
+     * as a shrunk 80mm.
      *
      * @return null if the bill could not be rendered, so a caller does not print blank paper
      */
-    fun renderToBitmap(receiptNo: Long): Bitmap? = runCatching {
+    fun renderToBitmap(receiptNo: Long, paperDots: Int = REFERENCE_PAPER_DOTS): Bitmap? = runCatching {
         val root = LayoutInflater.from(ctx).inflate(R.layout.fragment_bill, null, false)
 
         // The print button floats over the receipt and would be drawn onto the paper.
         root.findViewById<View>(R.id.btnPrintBill)?.visibility = View.GONE
-        populate(root, receiptNo)
+        populate(root, receiptNo, paperDots)
 
         val card = root.findViewById<View>(R.id.cardReceipt) ?: return null
         (card.parent as? ViewGroup)?.removeView(card)
 
-        val widthPx = (CARD_WIDTH_DP * ctx.resources.displayMetrics.density).toInt()
+        val widthDp = CARD_WIDTH_DP.toDouble() * paperDots / REFERENCE_PAPER_DOTS
+        val widthPx = (widthDp * ctx.resources.displayMetrics.density).toInt().coerceAtLeast(1)
         card.measure(
             View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
@@ -98,8 +114,15 @@ class BillReceiptRenderer(private val ctx: Context) {
         null
     }
 
-    /** Fills an already-inflated receipt layout in place, for the on-screen bill. */
-    fun populate(view: View, receiptNo: Long) {
+    /**
+     * Fills an already-inflated receipt layout in place, for the on-screen bill.
+     *
+     * [paperDots] chooses the item/tax row style: the default (80mm's width) keeps
+     * the usual column table, unchanged from before. Pass the printer's actual
+     * [paperDots] when this is heading to a printer, so a narrow paper switches to
+     * full-width lines - see [NARROW_PAPER_DOTS].
+     */
+    fun populate(view: View, receiptNo: Long, paperDots: Int = REFERENCE_PAPER_DOTS) {
         try {
             val db = DatabaseHelper.getInstance(ctx).readableDatabase
 
@@ -178,10 +201,11 @@ class BillReceiptRenderer(private val ctx: Context) {
             if (time.isNotEmpty()) view.findViewById<TextView>(R.id.tvTime).text = time
 
             // Line items, plus the totals summed from those same lines.
+            val narrow = paperDots < NARROW_PAPER_DOTS
             val (items, lineTotals) = loadItems(db, receiptNo)
             val llItems = view.findViewById<LinearLayout>(R.id.llItems)
             llItems.removeAllViews()
-            items.forEach { llItems.addView(buildItemRow(it)) }
+            items.forEach { llItems.addView(if (narrow) buildItemRowNarrow(it) else buildItemRow(it)) }
 
             val totals = lineTotals.copy(discount = discount)
 
@@ -190,14 +214,14 @@ class BillReceiptRenderer(private val ctx: Context) {
             llTaxRows.removeAllViews()
             if (totals.base > 0 && totals.tax > 0) {
                 val rate = totals.tax / totals.base * 100.0
+                val rateText = String.format(Locale.US, "%.2f%%", rate)
+                val bAmt = money(totals.base)
+                val sgst = money(totals.sgst)
+                val cgst = money(totals.cgst)
+                val total = money(totals.grandTotal)
                 llTaxRows.addView(
-                    buildTaxRow(
-                        rate = String.format(Locale.US, "%.2f%%", rate),
-                        bAmt = money(totals.base),
-                        sgst = money(totals.sgst),
-                        cgst = money(totals.cgst),
-                        total = money(totals.grandTotal)
-                    )
+                    if (narrow) buildTaxRowNarrow(rateText, bAmt, sgst, cgst, total)
+                    else buildTaxRow(rateText, bAmt, sgst, cgst, total)
                 )
             }
 
@@ -481,6 +505,50 @@ class BillReceiptRenderer(private val ctx: Context) {
         row.addView(cell(cgst, 2f, Gravity.CENTER))
         row.addView(cell(total, 2.2f, Gravity.END))
         return row
+    }
+
+    /**
+     * Item row for narrow paper: name on its own line, quantity/price/amount on the
+     * next as one plain string. Each line gets the card's full width and wraps only
+     * at a space if it must - never mid-number, unlike the fixed-width columns
+     * [buildItemRow] uses (safe on 80mm, where there is room to spare).
+     */
+    private fun buildItemRowNarrow(item: BillItem): View {
+        val container = narrowContainer()
+        container.addView(narrowLine("${item.sr}. ${item.name}"))
+        container.addView(narrowLine("  ${item.qty} x ${item.price} = ${item.amount}"))
+        return container
+    }
+
+    /** Tax block for narrow paper: same values as [buildTaxRow], as full-width lines. */
+    private fun buildTaxRowNarrow(rate: String, bAmt: String, sgst: String, cgst: String, total: String): View {
+        val container = narrowContainer()
+        container.addView(narrowLine("GST $rate   Taxable $bAmt"))
+        container.addView(narrowLine("CGST $cgst   SGST $sgst"))
+        container.addView(narrowLine("TOTAL TAX $total"))
+        return container
+    }
+
+    private fun narrowContainer(): LinearLayout {
+        val density = ctx.resources.displayMetrics.density
+        return LinearLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, (6 * density).toInt(), 0, (6 * density).toInt())
+        }
+    }
+
+    private fun narrowLine(text: String): TextView = TextView(ctx).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        this.text = text
+        gravity = Gravity.START
+        typeface = Typeface.MONOSPACE
+        textSize = 12.5f
+        setTextColor(0xFF222222.toInt())
     }
 
     private fun baseRow(): LinearLayout {
