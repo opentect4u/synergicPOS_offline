@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_light"
+    android:scrollbars="none">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="14dp">
+
+        <!-- ============ AMOUNTS ============ -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView android:id="@+id/tvAmountsHeader"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="BILL AMOUNTS" android:textSize="12sp" android:letterSpacing="0.08"
+                    android:textStyle="bold" android:textColor="@color/primary_blue" />
+
+                <!-- Round Off -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Round Off" />
+                        <TextView style="@style/BillSettingSub" android:text="Round off the final bill amount and show the round-off value" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swRoundOff" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Amount in words -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Amount in words" />
+                        <TextView style="@style/BillSettingSub" android:text="Show the total amount in words on the bill" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swAmountWords" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- HSN code -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="HSN Code" />
+                        <TextView style="@style/BillSettingSub" android:text="Show HSN code in the bill" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swHsn" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Two copy bill -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Two copy bill" />
+                        <TextView style="@style/BillSettingSub" android:text="Print two copies of every bill" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swTwoCopy" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ============ BILL NUMBERING ============ -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView android:id="@+id/tvNumberingHeader"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="BILL NUMBERING" android:textSize="12sp" android:letterSpacing="0.08"
+                    android:textStyle="bold" android:textColor="@color/primary_blue" />
+
+                <!-- Set Bill No. -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Set Bill No." />
+                        <TextView style="@style/BillSettingSub" android:text="Start number of the bill (default 0). If bills already exist, changing this erases all previous bills." />
+                        <TextView
+                            android:id="@+id/tvBillNoPreview"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text="Next bill no.: 1"
+                            android:textStyle="bold"
+                            android:textSize="14sp"
+                            android:textColor="@color/text_main" />
+                    </LinearLayout>
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="110dp"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:hint="Start"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etStartBillNo"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:gravity="end"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Reset Bill No. -->
+                <TextView style="@style/BillSettingTitle" android:text="Reset Bill No."
+                    android:layout_marginTop="14dp" />
+                <TextView style="@style/BillSettingSub"
+                    android:text="When the bill number should reset to 1" />
+
+                <RadioGroup
+                    android:id="@+id/rgReset"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="6dp">
+
+                    <RadioButton android:id="@+id/rbContinue" style="@style/BillSettingRadio"
+                        android:text="Continue — continue bill no. serially (default)" />
+                    <RadioButton android:id="@+id/rbDaily" style="@style/BillSettingRadio"
+                        android:text="Daily — reset to 1 every day" />
+                    <RadioButton android:id="@+id/rbMonthly" style="@style/BillSettingRadio"
+                        android:text="Monthly — reset to 1 every month" />
+                    <RadioButton android:id="@+id/rbYearly" style="@style/BillSettingRadio"
+                        android:text="Yearly — reset to 1 every year" />
+                </RadioGroup>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Bill No. Character -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Bill No. Character" />
+                        <TextView style="@style/BillSettingSub" android:text="Allow characters (max 3) before every bill no." />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swBillNoChar" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/tilPrefix"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:hint="Prefix characters (max 3)"
+                    android:visibility="gone"
+                    app:counterEnabled="true"
+                    app:counterMaxLength="3"
+                    app:boxCornerRadiusTopStart="12dp"
+                    app:boxCornerRadiusTopEnd="12dp"
+                    app:boxCornerRadiusBottomStart="12dp"
+                    app:boxCornerRadiusBottomEnd="12dp">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etPrefix"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textCapCharacters"
+                        android:maxLength="3"
+                        android:maxLines="1" />
+                </com.google.android.material.textfield.TextInputLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSaveSettings"
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:layout_marginTop="16dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minHeight="0dp"
+            android:text="Save Settings"
+            android:textSize="16sp"
+            android:textColor="@color/white"
+            app:cornerRadius="12dp" />
+
+    </LinearLayout>
+</ScrollView>

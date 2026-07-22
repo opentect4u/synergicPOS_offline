@@ -43,6 +43,10 @@ import com.example.synergic_pos_offline.fragments.RegistrationFragment
 import com.example.synergic_pos_offline.fragments.ReportsFragment
 import com.example.synergic_pos_offline.fragments.SalesFragment
 import com.example.synergic_pos_offline.fragments.SettingsFragment
+import com.example.synergic_pos_offline.fragments.BillSettingsFragment
+import com.example.synergic_pos_offline.fragments.GeneralSettingsFragment
+import com.example.synergic_pos_offline.fragments.TaxSettingsFragment
+import com.example.synergic_pos_offline.fragments.AppSettingsFragment
 import com.example.synergic_pos_offline.fragments.UnitFragment
 import com.example.synergic_pos_offline.fragments.UserManagementFragment
 import com.example.synergic_pos_offline.fragments.WaiterFragment
@@ -279,6 +283,10 @@ class MainActivity : AppCompatActivity() {
         when (title) {
             "Master" -> navigateTo(MasterFragment())
             "Settings" -> navigateTo(SettingsFragment())
+            "General Settings" -> navigateTo(GeneralSettingsFragment())
+            "Bill Settings" -> navigateTo(BillSettingsFragment())
+            "Tax Settings" -> navigateTo(TaxSettingsFragment())
+            "App Settings" -> navigateTo(AppSettingsFragment())
             "Stock & Inventory" -> navigateTo(InventoryFragment())
             "Reports" -> navigateTo(ReportsFragment())
             "Sale" -> navigateTo(SalesFragment())

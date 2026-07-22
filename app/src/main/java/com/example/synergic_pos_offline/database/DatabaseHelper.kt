@@ -17,6 +17,23 @@ class DatabaseHelper private constructor(context: Context) :
         db.setForeignKeyConstraintsEnabled(true)
     }
 
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        // Non-destructive migrations for existing databases (no version bump / data loss).
+        addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
+    }
+
+    /** Adds [column] to [table] if it isn't already present, leaving data intact. */
+    private fun addColumnIfMissing(db: SQLiteDatabase, table: String, column: String, type: String) {
+        val exists = db.rawQuery("PRAGMA table_info($table)", null).use { c ->
+            val nameIdx = c.getColumnIndex("name")
+            generateSequence { if (c.moveToNext()) c.getString(nameIdx) else null }.any { it == column }
+        }
+        if (!exists) {
+            db.execSQL("ALTER TABLE $table ADD COLUMN $column $type")
+        }
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         // Master tables
         db.execSQL(SQL_CREATE_MD_REGISTRATION)
@@ -120,7 +137,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 6
 
         @Volatile
         private var instance: DatabaseHelper? = null
@@ -370,6 +387,7 @@ class DatabaseHelper private constructor(context: Context) :
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 store_id INTEGER,
                 outlet_id INTEGER,
+                device_id TEXT,
                 setting_name TEXT,
                 setting_value TEXT,
                 setting_type TEXT CHECK(setting_type IN ('G','B','T','I','A')),

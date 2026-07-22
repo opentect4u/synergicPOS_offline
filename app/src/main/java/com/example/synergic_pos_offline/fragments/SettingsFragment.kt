@@ -45,8 +45,23 @@ class SettingsFragment : Fragment() {
         )
 
         rvSettings.adapter = SettingsAdapter(settingsItems) { item ->
-            Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
+            val fragment: Fragment? = when (item.title) {
+                "General Settings" -> GeneralSettingsFragment()
+                "Bill Settings" -> BillSettingsFragment()
+                "Tax Settings" -> TaxSettingsFragment()
+                "App Settings" -> AppSettingsFragment()
+                else -> null
+            }
+            if (fragment != null) openFragment(fragment)
+            else Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun openFragment(fragment: Fragment) {
+        requireActivity().supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, fragment)
+            .addToBackStack(null)
+            .commit()
     }
 
     data class SettingsItem(

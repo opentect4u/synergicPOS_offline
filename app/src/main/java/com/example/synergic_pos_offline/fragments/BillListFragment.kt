@@ -111,12 +111,10 @@ class BillListFragment : Fragment(), TitledScreen {
         etFromDate.setOnClickListener { pickDate(isFrom = true) }
         etToDate.setOnClickListener { pickDate(isFrom = false) }
 
-        // Date-range dropdown
+        // Date-range dropdown (menu style: always show every option)
         val actRange = view.findViewById<MaterialAutoCompleteTextView>(R.id.actRange)
         val ranges = Range.values()
-        actRange.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, ranges.map { it.label })
-        )
+        actRange.setAdapter(NoFilterAdapter(requireContext(), ranges.map { it.label }))
         actRange.setText(range.label, false)
         actRange.setOnItemClickListener { _, _, pos, _ ->
             range = ranges[pos]
@@ -124,12 +122,10 @@ class BillListFragment : Fragment(), TitledScreen {
             refresh()
         }
 
-        // Sort dropdown
+        // Sort dropdown (menu style: always show every option)
         val actSort = view.findViewById<MaterialAutoCompleteTextView>(R.id.actSort)
         val sorts = Sort.values()
-        actSort.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, sorts.map { it.label })
-        )
+        actSort.setAdapter(NoFilterAdapter(requireContext(), sorts.map { it.label }))
         actSort.setText(sort.label, false)
         actSort.setOnItemClickListener { _, _, pos, _ ->
             sort = sorts[pos]
@@ -194,13 +190,17 @@ class BillListFragment : Fragment(), TitledScreen {
         }
 
         val item = itemQuery.trim()
+        // A text/item search is a "find anywhere" action, so it looks across the
+        // whole history and ignores the selected date period.
+        val searching = q.isNotEmpty() || item.isNotEmpty()
+
         val bills = allBills.filter { b ->
             val matchesText = q.isEmpty() ||
                 b.billNo.contains(q, true) || b.name.contains(q, true) ||
                 b.date.contains(q, true) || b.time.contains(q, true) ||
                 b.total.contains(q, true)
             val d = parseDate(b.date)
-            val matchesRange = when {
+            val matchesRange = searching || when {
                 cutoff != null -> d != null && !d.before(cutoff)
                 from != null || to != null ->
                     d != null && (from == null || !d.before(from)) && (to == null || !d.after(to))
@@ -261,6 +261,25 @@ class BillListFragment : Fragment(), TitledScreen {
             .commit()
     }
 
+    /**
+     * ArrayAdapter for menu-style dropdowns that never filters its options, so the
+     * full list is shown every time — even after an item is selected. (A plain
+     * ArrayAdapter filters by the field's current text, which would otherwise leave
+     * only the already-selected option visible.)
+     */
+    private class NoFilterAdapter(context: android.content.Context, items: List<String>) :
+        ArrayAdapter<String>(context, android.R.layout.simple_list_item_1, items.toList()) {
+
+        private val all = items.toList()
+        private val passthrough = object : android.widget.Filter() {
+            override fun performFiltering(constraint: CharSequence?) =
+                FilterResults().apply { values = all; count = all.size }
+            override fun publishResults(constraint: CharSequence?, results: FilterResults?) = notifyDataSetChanged()
+        }
+
+        override fun getFilter(): android.widget.Filter = passthrough
+    }
+
     private inner class BillAdapter(
         private val items: List<BillDao.Bill>,
         private val onView: (BillDao.Bill) -> Unit
@@ -268,9 +287,10 @@ class BillListFragment : Fragment(), TitledScreen {
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val tvBillNo: TextView = view.findViewById(R.id.tvRowBillNo)
-            val tvAmount: TextView = view.findViewById(R.id.tvRowAmount)
             val tvName: TextView = view.findViewById(R.id.tvRowName)
-            val tvDateTime: TextView = view.findViewById(R.id.tvRowDateTime)
+            val tvDate: TextView = view.findViewById(R.id.tvRowDate)
+            val tvTime: TextView = view.findViewById(R.id.tvRowTime)
+            val tvAmount: TextView = view.findViewById(R.id.tvRowAmount)
             val btnView: MaterialButton = view.findViewById(R.id.btnViewBill)
         }
 
@@ -281,10 +301,11 @@ class BillListFragment : Fragment(), TitledScreen {
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val bill = items[position]
-            holder.tvBillNo.text = "Bill No: ${bill.billNo}"
-            holder.tvAmount.text = "₹ ${bill.total}"
+            holder.tvBillNo.text = bill.billNo
             holder.tvName.text = bill.name
-            holder.tvDateTime.text = "${bill.date}  ${bill.time}"
+            holder.tvDate.text = bill.date
+            holder.tvTime.text = bill.time
+            holder.tvAmount.text = "₹ ${bill.total}"
 
             val accent = ThemeManager.getThemeColor(holder.itemView.context)
             holder.btnView.setTextColor(accent)

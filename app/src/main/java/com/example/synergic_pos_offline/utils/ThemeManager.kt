@@ -9,9 +9,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.ImageView
+import android.widget.RadioButton
 import android.widget.TextView
+import androidx.core.graphics.ColorUtils
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.TextInputLayout
 
 /**
@@ -80,6 +83,22 @@ object ThemeManager {
             }
 
             is FloatingActionButton -> view.backgroundTintList = tint
+
+            // Switch: accent thumb + translucent accent track when ON, grey when OFF.
+            is SwitchMaterial -> {
+                val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf(-android.R.attr.state_checked))
+                view.thumbTintList = ColorStateList(states, intArrayOf(color, Color.parseColor("#FAFAFA")))
+                view.trackTintList = ColorStateList(
+                    states,
+                    intArrayOf(ColorUtils.setAlphaComponent(color, 0x66), Color.parseColor("#C4C4C4"))
+                )
+            }
+
+            // RadioButton (must precede TextView since it is a TextView subclass).
+            is RadioButton -> {
+                val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf(-android.R.attr.state_checked))
+                view.buttonTintList = ColorStateList(states, intArrayOf(color, Color.parseColor("#888888")))
+            }
 
             is CheckBox -> view.buttonTintList = tint
 

@@ -118,6 +118,27 @@ class UserDao(context: Context) {
         return helper.writableDatabase.update(table, values, "id=?", arrayOf(id.toString()))
     }
 
+    /** Row id of the user with the given login [userId], or null if none. */
+    fun idOf(userId: String): Long? {
+        helper.readableDatabase.query(
+            table, arrayOf("id"), "user_id=?", arrayOf(userId), null, null, null, "1"
+        ).use { c -> if (c.moveToFirst()) return c.getLong(0) }
+        return null
+    }
+
+    /** Verifies [password] against the stored bcrypt hash for login [userId]. */
+    fun verifyPassword(userId: String, password: String): Boolean {
+        helper.readableDatabase.query(
+            table, arrayOf("password"), "user_id=?", arrayOf(userId), null, null, null, "1"
+        ).use { c ->
+            if (!c.moveToFirst()) return false
+            val hash = c.getString(0) ?: return false
+            return try {
+                BCrypt.verifyer().verify(password.toCharArray(), hash).verified
+            } catch (_: Exception) { false }
+        }
+    }
+
     /** Sets a new password for the user [id]. */
     fun resetPassword(id: Long, newPassword: String): Int {
         val values = ContentValues().apply {
