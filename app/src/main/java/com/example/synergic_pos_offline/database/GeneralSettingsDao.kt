@@ -33,7 +33,8 @@ class GeneralSettingsDao(context: Context) {
     data class GeneralSettings(
         val mode: Mode = Mode.GROCERY,
         val saleReturn: Boolean = false,
-        val saleReturnDays: Int = 0
+        val saleReturnDays: Int = 0,
+        val lastBillStatus: Boolean = false
     )
 
     /** Reads every general setting for the current store, applying defaults. */
@@ -43,7 +44,8 @@ class GeneralSettingsDao(context: Context) {
         return GeneralSettings(
             mode = Mode.fromStored(m[KEY_MODE]) ?: d.mode,
             saleReturn = m[KEY_SALE_RETURN]?.toBool() ?: d.saleReturn,
-            saleReturnDays = m[KEY_SALE_RETURN_DAYS]?.toIntOrNull() ?: d.saleReturnDays
+            saleReturnDays = m[KEY_SALE_RETURN_DAYS]?.toIntOrNull() ?: d.saleReturnDays,
+            lastBillStatus = m[KEY_LAST_BILL_STATUS]?.toBool() ?: d.lastBillStatus
         )
     }
 
@@ -53,6 +55,7 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_MODE, s.mode.code)
         put(KEY_SALE_RETURN, s.saleReturn.b())
         put(KEY_SALE_RETURN_DAYS, if (s.saleReturn) s.saleReturnDays.toString() else "0")
+        put(KEY_LAST_BILL_STATUS, s.lastBillStatus.b())
     }
 
     // ---- Low-level key/value access ----------------------------------------
@@ -127,5 +130,6 @@ class GeneralSettingsDao(context: Context) {
         const val KEY_MODE = "Mode"
         const val KEY_SALE_RETURN = "Sale Return"
         const val KEY_SALE_RETURN_DAYS = "Sale Return Days"
+        const val KEY_LAST_BILL_STATUS = "Last Bill Status"
     }
 }

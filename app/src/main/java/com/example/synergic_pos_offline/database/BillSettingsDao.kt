@@ -30,6 +30,44 @@ class BillSettingsDao(context: Context) {
         }
     }
 
+    /** Which customer details are captured/printed on a bill. Persisted as [code] 1-5. */
+    enum class CustomerDetails(val code: Int, val label: String) {
+        ONLY_MOBILE(1, "Only mobile no."),
+        MOBILE_NAME(2, "Mobile no. & name"),
+        MOBILE_NAME_GSTIN(3, "Mobile no., Name & GSTIN"),
+        ONLY_NAME(4, "Only Name"),
+        ONLY_GSTIN(5, "Only GSTIN");
+
+        companion object {
+            /** Accepts the stored code (1-5) or the display label. */
+            fun fromStored(value: String?): CustomerDetails? = value?.let { v ->
+                values().firstOrNull { it.code.toString() == v || it.label.equals(v, true) }
+            }
+        }
+    }
+
+    /** Font size of the total amount on the bill. Persisted as [code] (R / B). */
+    enum class FontSize(val code: String, val label: String) {
+        REGULAR("R", "Regular"), BIG("B", "Big");
+        companion object {
+            /** Accepts the stored code (R/B) or the display label. */
+            fun fromStored(value: String?): FontSize? = value?.let { v ->
+                values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
+            }
+        }
+    }
+
+    /** Layout format of the printed bill. Persisted as [code] (N / C / T). */
+    enum class BillFormat(val code: String, val label: String) {
+        NORMAL("N", "Normal"), CLUBBED("C", "Clubbed"), TAX_WISE_SHORT("T", "Tax wise short");
+        companion object {
+            /** Accepts the stored code (N/C/T) or the display label. */
+            fun fromStored(value: String?): BillFormat? = value?.let { v ->
+                values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
+            }
+        }
+    }
+
     /** The full set of bill settings with sensible defaults. */
     data class BillSettings(
         val roundOff: Boolean = false,
@@ -39,7 +77,11 @@ class BillSettingsDao(context: Context) {
         val resetMode: ResetMode = ResetMode.CONTINUE,
         val billNoCharEnabled: Boolean = false,
         val billNoCharPrefix: String = "",
-        val hsnCode: Boolean = false
+        val hsnCode: Boolean = false,
+        val customerDetails: CustomerDetails = CustomerDetails.ONLY_MOBILE,
+        val customerAddressPrinting: Boolean = false,
+        val totalAmountFontSize: FontSize = FontSize.REGULAR,
+        val billFormat: BillFormat = BillFormat.NORMAL
     )
 
     /** Reads every bill setting for the current store, applying defaults. */
@@ -54,7 +96,11 @@ class BillSettingsDao(context: Context) {
             resetMode = ResetMode.fromCode(map[KEY_RESET_MODE]) ?: d.resetMode,
             billNoCharEnabled = map[KEY_CHAR_ENABLED]?.toBool() ?: d.billNoCharEnabled,
             billNoCharPrefix = map[KEY_CHAR_PREFIX] ?: d.billNoCharPrefix,
-            hsnCode = map[KEY_HSN_CODE]?.toBool() ?: d.hsnCode
+            hsnCode = map[KEY_HSN_CODE]?.toBool() ?: d.hsnCode,
+            customerDetails = CustomerDetails.fromStored(map[KEY_CUSTOMER_DETAILS]) ?: d.customerDetails,
+            customerAddressPrinting = map[KEY_CUSTOMER_ADDRESS_PRINTING]?.toBool() ?: d.customerAddressPrinting,
+            totalAmountFontSize = FontSize.fromStored(map[KEY_TOTAL_FONT_SIZE]) ?: d.totalAmountFontSize,
+            billFormat = BillFormat.fromStored(map[KEY_BILL_FORMAT]) ?: d.billFormat
         )
     }
 
@@ -69,6 +115,10 @@ class BillSettingsDao(context: Context) {
         put(KEY_CHAR_ENABLED, if (s.billNoCharEnabled) "1" else "0")
         put(KEY_CHAR_PREFIX, s.billNoCharPrefix.take(3))
         put(KEY_HSN_CODE, if (s.hsnCode) "1" else "0")
+        put(KEY_CUSTOMER_DETAILS, s.customerDetails.code.toString())
+        put(KEY_CUSTOMER_ADDRESS_PRINTING, if (s.customerAddressPrinting) "1" else "0")
+        put(KEY_TOTAL_FONT_SIZE, s.totalAmountFontSize.code)
+        put(KEY_BILL_FORMAT, s.billFormat.code)
     }
 
     /** True if any bill exists (used to warn before changing the start bill no). */
@@ -176,5 +226,9 @@ class BillSettingsDao(context: Context) {
         const val KEY_CHAR_ENABLED = "Bill No Char Enabled"
         const val KEY_CHAR_PREFIX = "Bill No Char Prefix"
         const val KEY_HSN_CODE = "Bill Hsn Code"
+        const val KEY_CUSTOMER_DETAILS = "Customer Details"
+        const val KEY_CUSTOMER_ADDRESS_PRINTING = "Customer Address Printing"
+        const val KEY_TOTAL_FONT_SIZE = "Total Amount Font Size"
+        const val KEY_BILL_FORMAT = "Bill Format"
     }
 }

@@ -38,6 +38,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swSaleReturn: SwitchMaterial
     private lateinit var llSaleReturnDays: View
     private lateinit var etSaleReturnDays: TextInputEditText
+    private lateinit var swLastBillStatus: SwitchMaterial
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -51,8 +52,10 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         swSaleReturn = view.findViewById(R.id.swSaleReturn)
         llSaleReturnDays = view.findViewById(R.id.llSaleReturnDays)
         etSaleReturnDays = view.findViewById(R.id.etSaleReturnDays)
+        swLastBillStatus = view.findViewById(R.id.swLastBillStatus)
 
         val s = dao.load()
+        swLastBillStatus.isChecked = s.lastBillStatus
 
         // Mode dropdown (always shows every option). Displays labels; stores G / R.
         actMode.setAdapter(NoFilterAdapter(requireContext(), Mode.values().map { it.label }))
@@ -77,7 +80,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 GeneralSettings(
                     mode = mode,
                     saleReturn = swSaleReturn.isChecked,
-                    saleReturnDays = days
+                    saleReturnDays = days,
+                    lastBillStatus = swLastBillStatus.isChecked
                 )
             )
             DialogUtils.showSuccess(

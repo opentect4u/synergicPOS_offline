@@ -7,6 +7,7 @@ import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
@@ -15,11 +16,15 @@ import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillSettingsDao
 import com.example.synergic_pos_offline.database.BillSettingsDao.BillSettings
+import com.example.synergic_pos_offline.database.BillSettingsDao.BillFormat
+import com.example.synergic_pos_offline.database.BillSettingsDao.CustomerDetails
+import com.example.synergic_pos_offline.database.BillSettingsDao.FontSize
 import com.example.synergic_pos_offline.database.BillSettingsDao.ResetMode
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 
@@ -44,6 +49,10 @@ class BillSettingsFragment : Fragment(), TitledScreen {
     private lateinit var tilPrefix: TextInputLayout
     private lateinit var etPrefix: TextInputEditText
     private lateinit var tvPreview: TextView
+    private lateinit var actCustomerDetails: MaterialAutoCompleteTextView
+    private lateinit var swCustomerAddress: SwitchMaterial
+    private lateinit var actTotalFontSize: MaterialAutoCompleteTextView
+    private lateinit var actBillFormat: MaterialAutoCompleteTextView
 
     /** The start number that was persisted when the screen opened. */
     private var savedStartNo = 0
@@ -66,6 +75,21 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         tilPrefix = view.findViewById(R.id.tilPrefix)
         etPrefix = view.findViewById(R.id.etPrefix)
         tvPreview = view.findViewById(R.id.tvBillNoPreview)
+        actCustomerDetails = view.findViewById(R.id.actCustomerDetails)
+        swCustomerAddress = view.findViewById(R.id.swCustomerAddress)
+        actTotalFontSize = view.findViewById(R.id.actTotalFontSize)
+        actBillFormat = view.findViewById(R.id.actBillFormat)
+
+        // Dropdowns (always show every option).
+        actCustomerDetails.setAdapter(
+            NoFilterAdapter(requireContext(), CustomerDetails.values().map { it.label })
+        )
+        actTotalFontSize.setAdapter(
+            NoFilterAdapter(requireContext(), FontSize.values().map { it.label })
+        )
+        actBillFormat.setAdapter(
+            NoFilterAdapter(requireContext(), BillFormat.values().map { it.label })
+        )
 
         bind(dao.load())
 
@@ -106,6 +130,10 @@ class BillSettingsFragment : Fragment(), TitledScreen {
                 ResetMode.CONTINUE -> R.id.rbContinue
             }
         )
+        actCustomerDetails.setText(s.customerDetails.label, false)
+        swCustomerAddress.isChecked = s.customerAddressPrinting
+        actTotalFontSize.setText(s.totalAmountFontSize.label, false)
+        actBillFormat.setText(s.billFormat.label, false)
         updatePreview()
     }
 
@@ -122,7 +150,11 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         },
         billNoCharEnabled = swBillNoChar.isChecked,
         billNoCharPrefix = etPrefix.text?.toString()?.trim().orEmpty().take(3),
-        hsnCode = swHsn.isChecked
+        hsnCode = swHsn.isChecked,
+        customerDetails = CustomerDetails.fromStored(actCustomerDetails.text?.toString()) ?: CustomerDetails.ONLY_MOBILE,
+        customerAddressPrinting = swCustomerAddress.isChecked,
+        totalAmountFontSize = FontSize.fromStored(actTotalFontSize.text?.toString()) ?: FontSize.REGULAR,
+        billFormat = BillFormat.fromStored(actBillFormat.text?.toString()) ?: BillFormat.NORMAL
     )
 
     /** Shows what the next bill number will look like with the current inputs. */
@@ -162,5 +194,19 @@ class BillSettingsFragment : Fragment(), TitledScreen {
             title = "Saved",
             message = "Bill settings saved successfully."
         )
+    }
+
+    /** Dropdown adapter that never filters, so the full option list always shows. */
+    private class NoFilterAdapter(context: android.content.Context, items: List<String>) :
+        ArrayAdapter<String>(context, android.R.layout.simple_list_item_1, items.toList()) {
+
+        private val all = items.toList()
+        private val passthrough = object : android.widget.Filter() {
+            override fun performFiltering(constraint: CharSequence?) =
+                FilterResults().apply { values = all; count = all.size }
+            override fun publishResults(constraint: CharSequence?, results: FilterResults?) = notifyDataSetChanged()
+        }
+
+        override fun getFilter(): android.widget.Filter = passthrough
     }
 }

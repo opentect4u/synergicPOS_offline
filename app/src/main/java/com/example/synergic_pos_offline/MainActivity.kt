@@ -342,7 +342,7 @@ class MainActivity : AppCompatActivity() {
                 TreeNode("General Settings"),
                 TreeNode("Bill Settings"),
                 TreeNode("Tax Settings"),
-                TreeNode("Inventory & Stock Settings"),
+               // TreeNode("Inventory & Stock Settings"),
                 TreeNode("App Settings")
             )),
             TreeNode("Stock & Inventory", listOf(

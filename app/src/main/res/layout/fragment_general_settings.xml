@@ -164,6 +164,18 @@
                         </com.google.android.material.textfield.TextInputLayout>
                     </LinearLayout>
                 </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Last Bill Status -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Last Bill Status" />
+                        <TextView style="@style/BillSettingSub" android:text="Show the last bill status on the billing screen" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swLastBillStatus" style="@style/BillSettingSwitch" />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

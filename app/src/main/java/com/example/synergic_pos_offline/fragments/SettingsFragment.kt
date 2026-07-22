@@ -40,7 +40,7 @@ class SettingsFragment : Fragment() {
             SettingsItem("General Settings", android.R.drawable.ic_menu_preferences, R.color.menu_settings, R.color.menu_settings_icon),
             SettingsItem("Bill Settings", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon),
             SettingsItem("Tax Settings", android.R.drawable.ic_menu_sort_by_size, R.color.menu_report, R.color.menu_report_icon),
-            SettingsItem("Inventory & Stock Settings", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon),
+           // SettingsItem("Inventory & Stock Settings", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon),
             SettingsItem("App Settings", android.R.drawable.ic_menu_manage, R.color.menu_sale, R.color.menu_sale_icon)
         )
 
