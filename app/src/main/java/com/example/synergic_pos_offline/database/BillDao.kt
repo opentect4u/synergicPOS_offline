@@ -14,9 +14,7 @@ import java.util.Locale
  * Data-access layer that generates a completed sale, writing atomically to
  * [DatabaseHelper.Tables.TD_BILLS], [DatabaseHelper.Tables.TD_BILL_ITEMS] and
  * [DatabaseHelper.Tables.TD_PAYMENTS].
-import android.content.Context
-import java.text.SimpleDateFormat
-import java.util.Locale
+ */
 
 /**
  * Read access to the bill history stored in [DatabaseHelper.Tables.TD_BILLS],

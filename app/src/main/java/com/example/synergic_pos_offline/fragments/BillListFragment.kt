@@ -13,16 +13,8 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
-import com.example.synergic_pos_offline.database.DatabaseHelper
-import com.example.synergic_pos_offline.utils.ThemeManager
-import com.google.android.material.button.MaterialButton
-import java.text.SimpleDateFormat
-import java.util.Locale
-
-/**
- * Item-wise list of bills, loaded from [DatabaseHelper.Tables.TD_BILLS]. Each row
- * has a "View" button that opens the receipt preview ([BillFragment]) for that bill.
 import com.example.synergic_pos_offline.database.BillDao
+import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -40,26 +32,12 @@ class BillListFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Bills"
 
-    /** One bill summary row. */
-    private data class Bill(
-        val billNo: String,
-        val name: String,
-        val date: String,
-        val time: String,
-        val total: String,
-        val receiptNo: Long
-    )
-
-    private val bills = mutableListOf<Bill>()
-
     private lateinit var rv: RecyclerView
     private lateinit var tvEmpty: TextView
     private val dao by lazy { BillDao(requireContext()) }
     private var allBills: List<BillDao.Bill> = emptyList()
     private var actItem: MaterialAutoCompleteTextView? = null
 
-    private lateinit var rv: RecyclerView
-    private lateinit var tvEmpty: TextView
     private var query = ""
     private var itemQuery = ""
     private var minAmount: Double? = null
@@ -105,10 +83,6 @@ class BillListFragment : Fragment(), TitledScreen {
         tvEmpty = view.findViewById(R.id.tvEmpty)
 
         rv.layoutManager = LinearLayoutManager(requireContext())
-        rv.adapter = BillAdapter(bills) { openBill(it) }
-
-        loadBills()
-        rv.layoutManager = LinearLayoutManager(requireContext())
 
         // Status radio group: Active bills (default) vs Cancelled.
         val accent = ThemeManager.getThemeColor(requireContext())
@@ -128,7 +102,6 @@ class BillListFragment : Fragment(), TitledScreen {
         view.findViewById<TextInputEditText>(R.id.etMaxAmount).onChange { maxAmount = it.toDoubleOrNull() }
 
         // Item filter: type an item name to show every bill that contains it.
-        // The dropdown just suggests existing items; free typing also works.
         actItem = view.findViewById<MaterialAutoCompleteTextView>(R.id.actItem).apply {
             onChange { itemQuery = it }
         }
@@ -169,111 +142,7 @@ class BillListFragment : Fragment(), TitledScreen {
 
     override fun onResume() {
         super.onResume()
-        loadBills()
-    }
-
-    private fun loadBills() {
-        bills.clear()
-        try {
-            val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
-            val storeId = storeId()
-
-            // Bills are saved with the registration store_id (see BillDao). Filter by
-            // it when known; otherwise show all bills so nothing is silently hidden.
-            val sql = buildString {
-                append("SELECT b.bill_number, b.bill_date_time, b.bill_date, b.net_amount, b.receipt_no, b.customer_id ")
-                append("FROM ${DatabaseHelper.Tables.TD_BILLS} b ")
-                if (storeId != null) append("WHERE b.store_id = ? ")
-                append("ORDER BY b.receipt_no DESC LIMIT 50")
-            }
-            val args = if (storeId != null) arrayOf(storeId.toString()) else null
-
-            db.rawQuery(sql, args).use { c ->
-                while (c.moveToNext()) {
-                    val billNumber = c.getString(0) ?: c.getInt(4).toString()
-                    val dateTime = c.getString(1) ?: c.getString(2) ?: ""
-                    val amount = c.getDouble(3)
-                    val receiptNo = c.getLong(4)
-                    val customerId = if (c.isNull(5)) null else c.getLong(5)
-
-                    val (date, time) = splitDateTime(dateTime)
-                    val name = customerName(db, customerId, receiptNo)
-
-                    bills.add(
-                        Bill(
-                            billNo = billNumber,
-                            name = name,
-                            date = date,
-                            time = time,
-                            total = String.format(Locale.US, "%,.2f", amount),
-                            receiptNo = receiptNo
-                        )
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("BillList", "Error loading bills", e)
-        }
-
-        rv.adapter?.notifyDataSetChanged()
-        tvEmpty.visibility = if (bills.isEmpty()) View.VISIBLE else View.GONE
-        rv.visibility = if (bills.isEmpty()) View.GONE else View.VISIBLE
-    }
-
-    /** Resolves the display name: customer master first, then the payment record. */
-    private fun customerName(
-        db: android.database.sqlite.SQLiteDatabase,
-        customerId: Long?,
-        receiptNo: Long
-    ): String {
-        if (customerId != null) {
-            db.query(
-                DatabaseHelper.Tables.MD_CUSTOMERS, arrayOf("customer_name"),
-                "id=?", arrayOf(customerId.toString()), null, null, null, "1"
-            ).use { c ->
-                if (c.moveToFirst()) {
-                    val n = c.getString(0)
-                    if (!n.isNullOrBlank()) return n
-                }
-            }
-        }
-        db.query(
-            DatabaseHelper.Tables.TD_PAYMENTS, arrayOf("cust_name"),
-            "bill_id=?", arrayOf(receiptNo.toString()), null, null, "id ASC", "1"
-        ).use { c ->
-            if (c.moveToFirst()) {
-                val n = c.getString(0)
-                if (!n.isNullOrBlank()) return n
-            }
-        }
-        return "Guest"
-    }
-
-    /** Splits "yyyy-MM-dd HH:mm:ss" into ("dd-MM-yyyy", "HH:mm"). */
-    private fun splitDateTime(value: String): Pair<String, String> {
-        return try {
-            val parsed = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(value)
-            if (parsed != null) {
-                SimpleDateFormat("dd-MM-yyyy", Locale.US).format(parsed) to
-                    SimpleDateFormat("HH:mm", Locale.US).format(parsed)
-            } else value to ""
-        } catch (_: Exception) {
-            value to ""
-        }
-    }
-
-    /** Store id as saved on bills — read from md_registration (same as BillDao). */
-    private fun storeId(): Long? {
-        val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
-        db.query(
-            DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
-            null, null, null, null, "store_id ASC", "1"
-        ).use { c ->
-            if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0)
-        }
-        return null
-        // Reflect any bills added since the screen was last shown.
-        if (::rv.isInitialized) reload()
+        reload()
     }
 
     /** Loads bills from the database, refreshes item suggestions, then re-filters. */
@@ -325,7 +194,7 @@ class BillListFragment : Fragment(), TitledScreen {
         }
 
         val item = itemQuery.trim()
-        val bills = allBills.filter { b ->
+        val filtered = allBills.filter { b ->
             val matchesText = q.isEmpty() ||
                 b.billNo.contains(q, true) || b.name.contains(q, true) ||
                 b.date.contains(q, true) || b.time.contains(q, true) ||
@@ -345,10 +214,10 @@ class BillListFragment : Fragment(), TitledScreen {
         }
 
         val sorted = when (sort) {
-            Sort.DATE_DESC -> bills.sortedByDescending { sortMillis(it) }
-            Sort.DATE_ASC -> bills.sortedBy { sortMillis(it) }
-            Sort.AMOUNT_DESC -> bills.sortedByDescending { it.amount }
-            Sort.AMOUNT_ASC -> bills.sortedBy { it.amount }
+            Sort.DATE_DESC -> filtered.sortedByDescending { sortMillis(it) }
+            Sort.DATE_ASC -> filtered.sortedBy { sortMillis(it) }
+            Sort.AMOUNT_DESC -> filtered.sortedByDescending { it.amount }
+            Sort.AMOUNT_ASC -> filtered.sortedBy { it.amount }
         }
 
         rv.adapter = BillAdapter(sorted) { openBill(it) }
