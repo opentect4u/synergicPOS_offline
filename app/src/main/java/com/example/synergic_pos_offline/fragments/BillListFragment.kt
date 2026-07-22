@@ -10,12 +10,15 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 /**
- * Item-wise list of bills. Each row has a "View" button that opens the
- * already-designed receipt preview ([BillFragment]) for that bill.
+ * Item-wise list of bills, loaded from [DatabaseHelper.Tables.TD_BILLS]. Each row
+ * has a "View" button that opens the receipt preview ([BillFragment]) for that bill.
  */
 class BillListFragment : Fragment(), TitledScreen {
 
@@ -27,14 +30,14 @@ class BillListFragment : Fragment(), TitledScreen {
         val name: String,
         val date: String,
         val time: String,
-        val total: String
+        val total: String,
+        val receiptNo: Long
     )
 
-    private val sampleBills = listOf(
-        Bill("3", "SOMNATH", "17-07-2026", "13:18", "962.50"),
-        Bill("2", "RAKESH KUMAR", "17-07-2026", "12:47", "540.00"),
-        Bill("1", "PRIYA SHARMA", "16-07-2026", "20:05", "1,285.75")
-    )
+    private val bills = mutableListOf<Bill>()
+
+    private lateinit var rv: RecyclerView
+    private lateinit var tvEmpty: TextView
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -44,19 +47,127 @@ class BillListFragment : Fragment(), TitledScreen {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        val rv = view.findViewById<RecyclerView>(R.id.rvBills)
-        val tvEmpty = view.findViewById<TextView>(R.id.tvEmpty)
+        rv = view.findViewById(R.id.rvBills)
+        tvEmpty = view.findViewById(R.id.tvEmpty)
 
         rv.layoutManager = LinearLayoutManager(requireContext())
-        rv.adapter = BillAdapter(sampleBills) { openBill(it) }
-        tvEmpty.visibility = if (sampleBills.isEmpty()) View.VISIBLE else View.GONE
+        rv.adapter = BillAdapter(bills) { openBill(it) }
+
+        loadBills()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        loadBills()
+    }
+
+    private fun loadBills() {
+        bills.clear()
+        try {
+            val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+            val storeId = storeId()
+
+            // Bills are saved with the registration store_id (see BillDao). Filter by
+            // it when known; otherwise show all bills so nothing is silently hidden.
+            val sql = buildString {
+                append("SELECT b.bill_number, b.bill_date_time, b.bill_date, b.net_amount, b.receipt_no, b.customer_id ")
+                append("FROM ${DatabaseHelper.Tables.TD_BILLS} b ")
+                if (storeId != null) append("WHERE b.store_id = ? ")
+                append("ORDER BY b.receipt_no DESC LIMIT 50")
+            }
+            val args = if (storeId != null) arrayOf(storeId.toString()) else null
+
+            db.rawQuery(sql, args).use { c ->
+                while (c.moveToNext()) {
+                    val billNumber = c.getString(0) ?: c.getInt(4).toString()
+                    val dateTime = c.getString(1) ?: c.getString(2) ?: ""
+                    val amount = c.getDouble(3)
+                    val receiptNo = c.getLong(4)
+                    val customerId = if (c.isNull(5)) null else c.getLong(5)
+
+                    val (date, time) = splitDateTime(dateTime)
+                    val name = customerName(db, customerId, receiptNo)
+
+                    bills.add(
+                        Bill(
+                            billNo = billNumber,
+                            name = name,
+                            date = date,
+                            time = time,
+                            total = String.format(Locale.US, "%,.2f", amount),
+                            receiptNo = receiptNo
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BillList", "Error loading bills", e)
+        }
+
+        rv.adapter?.notifyDataSetChanged()
+        tvEmpty.visibility = if (bills.isEmpty()) View.VISIBLE else View.GONE
+        rv.visibility = if (bills.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    /** Resolves the display name: customer master first, then the payment record. */
+    private fun customerName(
+        db: android.database.sqlite.SQLiteDatabase,
+        customerId: Long?,
+        receiptNo: Long
+    ): String {
+        if (customerId != null) {
+            db.query(
+                DatabaseHelper.Tables.MD_CUSTOMERS, arrayOf("customer_name"),
+                "id=?", arrayOf(customerId.toString()), null, null, null, "1"
+            ).use { c ->
+                if (c.moveToFirst()) {
+                    val n = c.getString(0)
+                    if (!n.isNullOrBlank()) return n
+                }
+            }
+        }
+        db.query(
+            DatabaseHelper.Tables.TD_PAYMENTS, arrayOf("cust_name"),
+            "bill_id=?", arrayOf(receiptNo.toString()), null, null, "id ASC", "1"
+        ).use { c ->
+            if (c.moveToFirst()) {
+                val n = c.getString(0)
+                if (!n.isNullOrBlank()) return n
+            }
+        }
+        return "Guest"
+    }
+
+    /** Splits "yyyy-MM-dd HH:mm:ss" into ("dd-MM-yyyy", "HH:mm"). */
+    private fun splitDateTime(value: String): Pair<String, String> {
+        return try {
+            val parsed = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(value)
+            if (parsed != null) {
+                SimpleDateFormat("dd-MM-yyyy", Locale.US).format(parsed) to
+                    SimpleDateFormat("HH:mm", Locale.US).format(parsed)
+            } else value to ""
+        } catch (_: Exception) {
+            value to ""
+        }
+    }
+
+    /** Store id as saved on bills — read from md_registration (same as BillDao). */
+    private fun storeId(): Long? {
+        val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+        db.query(
+            DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
+            null, null, null, null, "store_id ASC", "1"
+        ).use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0)
+        }
+        return null
     }
 
     private fun openBill(bill: Bill) {
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(
                 R.id.fragment_container,
-                BillFragment.newInstance(bill.billNo, bill.name, bill.date, bill.time, bill.total)
+                BillFragment.newInstance(bill.billNo, bill.name, bill.date, bill.time, bill.total, bill.receiptNo)
             )
             .addToBackStack(null)
             .commit()

@@ -84,6 +84,35 @@ class CategoryDao(context: Context) {
         return helper.writableDatabase.delete(table, "id IN ($placeholders)", args)
     }
 
+    /**
+     * Names of the given categories that products are still filed under. Deleting
+     * one is refused by the foreign key on md_products.category_id, so this lets the
+     * caller say which category is holding things up instead of failing blindly.
+     */
+    fun namesInUse(ids: Collection<Long>): List<String> {
+        if (ids.isEmpty()) return emptyList()
+        val placeholders = ids.joinToString(",") { "?" }
+        val args = ids.map { it.toString() }.toTypedArray()
+        val names = mutableListOf<String>()
+        helper.readableDatabase.rawQuery(
+            """
+            SELECT c.category_name FROM $table c
+            WHERE c.id IN ($placeholders)
+              AND EXISTS (
+                  SELECT 1 FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
+                  WHERE p.category_id = c.id
+              )
+            ORDER BY c.category_name COLLATE NOCASE
+            """.trimIndent(),
+            args
+        ).use { c ->
+            while (c.moveToNext()) {
+                names.add(c.getString(0)?.takeIf { it.isNotBlank() } ?: "Unnamed")
+            }
+        }
+        return names
+    }
+
     /** The largest existing id, or null when the table is empty. */
     fun lastId(): Long? {
         helper.readableDatabase.rawQuery("SELECT MAX(id) FROM $table", null).use { c ->

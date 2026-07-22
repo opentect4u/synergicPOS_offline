@@ -95,6 +95,16 @@ class CategoryDepartmentFragment : DataTableFragment() {
         dao.delete(ids.mapNotNull { it.toLongOrNull() })
     }
 
+    /** A category still holding products cannot be removed - name the offenders. */
+    override fun deleteBlockedReason(ids: Set<String>): String? {
+        val inUse = dao.namesInUse(ids.mapNotNull { it.toLongOrNull() })
+        return when {
+            inUse.isEmpty() -> null
+            inUse.size == 1 -> "\"${inUse.first()}\" still has products. Move or delete them first."
+            else -> "${inUse.size} categories still have products: ${inUse.joinToString(", ")}"
+        }
+    }
+
     /** Opens a large preview of the row's stored image. */
     override fun onThumbnailClick(row: DataRow) {
         val ctx = requireContext()

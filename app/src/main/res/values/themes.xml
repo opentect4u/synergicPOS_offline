@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.Synergic_POS_Offline" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <style name="Theme.Synergic_POS_Offline" parent="Theme.MaterialComponents.Light.NoActionBar">
         <!-- Primary brand color. -->
         <item name="colorPrimary">@color/primary_blue</item>
         <item name="colorPrimaryVariant">@color/primary_dark</item>

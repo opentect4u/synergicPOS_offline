@@ -46,6 +46,7 @@ import com.example.synergic_pos_offline.fragments.SettingsFragment
 import com.example.synergic_pos_offline.fragments.UnitFragment
 import com.example.synergic_pos_offline.fragments.UserManagementFragment
 import com.example.synergic_pos_offline.fragments.WaiterFragment
+import com.example.synergic_pos_offline.utils.DatabaseSeeder
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThemeManager
@@ -64,8 +65,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvHeaderSubtitle: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The UI is designed light-only (hardcoded white backgrounds). Force day
+        // mode so uncolored EditText input text stays dark and remains visible.
+        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
+            androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
+        )
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        // Fill the master tables with demo data on first run (idempotent: only
+        // ever fills empty tables, never overwrites hand-entered rows).
+        Thread { DatabaseSeeder.seedIfEmpty(applicationContext) }.start()
 
         drawerLayout = findViewById(R.id.drawerLayout)
         rvSidebar = findViewById(R.id.rvSidebar)
