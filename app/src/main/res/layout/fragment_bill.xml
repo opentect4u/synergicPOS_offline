@@ -12,6 +12,7 @@
         android:scrollbars="none">
 
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardReceipt"
             android:layout_width="360dp"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
@@ -28,8 +29,21 @@
                 android:paddingHorizontal="20dp"
                 android:paddingVertical="22dp">
 
+                <!-- Header logo (md_logos BILL_HEADER), hidden when none is set -->
+                <ImageView
+                    android:id="@+id/ivBillHeaderLogo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxHeight="76dp"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:layout_marginBottom="8dp"
+                    android:contentDescription="Store logo"
+                    android:visibility="gone" />
+
                 <!-- Store name -->
                 <TextView
+                    android:id="@+id/tvStoreName"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="JAI HANUMAN"
@@ -38,6 +52,46 @@
                     android:textStyle="bold"
                     android:textSize="18sp"
                     android:textColor="#111111" />
+
+                <!-- Store address / phone / GSTIN, hidden individually when unset -->
+                <TextView
+                    android:id="@+id/tvStoreAddress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvStorePhone"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvStoreGstin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="11sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <!-- Configurable header lines (md_headers) -->
+                <LinearLayout
+                    android:id="@+id/llBillHeaderLines"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
 
                 <!-- Date | Time -->
                 <LinearLayout
@@ -87,6 +141,15 @@
                     android:fontFamily="monospace"
                     android:textSize="13sp"
                     android:textColor="#222222" />
+
+                <TextView
+                    android:id="@+id/tvCustGstin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
 
                 <TextView style="@style/BillDashLine" />
 
@@ -213,42 +276,40 @@
                         android:textColor="#222222" />
                 </LinearLayout>
 
-                <!-- Tax row 1 -->
+                <!-- Tax rows (built dynamically from the bill) -->
                 <LinearLayout
+                    android:id="@+id/llTaxRows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="8dp" />
+
+                <!-- Round off, shown only when the bill carries one -->
+                <LinearLayout
+                    android:id="@+id/llRoundOff"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:layout_marginTop="8dp">
+                    android:layout_marginTop="6dp"
+                    android:visibility="gone">
 
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
-                        android:text="5.00%" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
-                        android:text="770.00" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
-                        android:text="19.25" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
-                        android:text="19.25" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2.2"
-                        android:text="808.50" android:gravity="end" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
-                </LinearLayout>
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="ROUND OFF"
+                        android:fontFamily="monospace"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
 
-                <!-- Tax row 2 (MISC) -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginTop="4dp">
-
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
-                        android:text="MISC" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
-                        android:text="@20%" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
-                        android:text=":" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2"
-                        android:text="" android:gravity="center" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="2.2"
-                        android:text="154.00" android:gravity="end" android:fontFamily="monospace" android:textSize="12sp" android:textColor="#333333" />
+                    <TextView
+                        android:id="@+id/tvRoundOff"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0.00"
+                        android:fontFamily="monospace"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
                 </LinearLayout>
 
                 <TextView style="@style/BillDashLine" />
@@ -264,18 +325,16 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="G.TOT.:"
+                        android:text="Grand Total:"
                         android:fontFamily="monospace"
                         android:textStyle="bold"
                         android:textSize="18sp"
                         android:textColor="#111111" />
 
                     <TextView
-                        android:layout_width="0dp"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="RS"
-                        android:gravity="start"
+                        android:text="₹"
                         android:paddingStart="12dp"
                         android:fontFamily="monospace"
                         android:textStyle="bold"
@@ -283,10 +342,14 @@
                         android:textColor="#111111" />
 
                     <TextView
-                        android:id="@+id/tvGrandTotal"
-                        android:layout_width="wrap_content"
+                        android:id="@+id/tvBillGrandTotal"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:paddingStart="4dp"
                         android:text="962.50"
+                        android:gravity="start"
+                        android:maxLines="1"
                         android:fontFamily="monospace"
                         android:textStyle="bold"
                         android:textSize="22sp"
@@ -295,11 +358,62 @@
 
                 <TextView style="@style/BillDashLine" />
 
+                <!-- Amount in words -->
+                <TextView
+                    android:id="@+id/tvAmountWords"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:lineSpacingExtra="2dp"
+                    android:textColor="#333333"
+                    android:visibility="gone" />
+
+                <!-- Payment mode, one row per payment recorded against the bill -->
+                <LinearLayout
+                    android:id="@+id/llBillPayment"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <!-- Who rang the sale up -->
+                <TextView
+                    android:id="@+id/tvBillCreatedBy"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Created by: ---"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textColor="#222222" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Configurable footer lines (md_footers) -->
+                <LinearLayout
+                    android:id="@+id/llBillFooterLines"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <!-- Footer logo (md_logos BILL_FOOTER), hidden when none is set -->
+                <ImageView
+                    android:id="@+id/ivBillFooterLogo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxHeight="56dp"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:layout_marginTop="8dp"
+                    android:contentDescription="Footer logo"
+                    android:visibility="gone" />
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:text="Thank you, visit again!"
+                    android:text=""
                     android:gravity="center"
                     android:fontFamily="monospace"
                     android:textSize="12sp"
@@ -307,4 +421,21 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
     </ScrollView>
+
+    <!-- Floats over the receipt so it stays reachable while the bill scrolls -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnPrintBill"
+        android:layout_width="wrap_content"
+        android:layout_height="46dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="16dp"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
+        android:minHeight="0dp"
+        android:text="Print"
+        android:textColor="@color/white"
+        app:icon="@drawable/ic_print"
+        app:iconTint="@color/white"
+        app:cornerRadius="12dp"
+        app:elevation="4dp" />
 </FrameLayout>

@@ -58,6 +58,34 @@ class CustomerDao(context: Context) {
         return list
     }
 
+    /** The customer registered against [phone], or null when there is no match. */
+    fun findByPhone(phone: String?): Customer? {
+        if (phone.isNullOrBlank()) return null
+        helper.readableDatabase.query(
+            table,
+            arrayOf(
+                "id", "customer_name", "customer_address", "phone_number", "gstin",
+                "credit_enabled", "credit_limit", "credit_days", "balance_amount"
+            ),
+            "phone_number = ?", arrayOf(phone.trim()), null, null, "id ASC", "1"
+        ).use { c ->
+            if (c.moveToFirst()) {
+                return Customer(
+                    id = c.getLong(0),
+                    name = c.getString(1).orEmpty(),
+                    address = c.getString(2).orEmpty(),
+                    phone = c.getString(3).orEmpty(),
+                    gstin = c.getString(4).orEmpty(),
+                    creditEnabled = c.getInt(5) == 1,
+                    creditLimit = c.getDouble(6),
+                    creditDays = c.getInt(7),
+                    balance = c.getDouble(8)
+                )
+            }
+        }
+        return null
+    }
+
     /** Inserts a new customer and returns its new row id (or -1 on failure). */
     fun insert(customer: Customer): Long {
         return helper.writableDatabase.insert(table, null, customer.toValues(isNew = true))

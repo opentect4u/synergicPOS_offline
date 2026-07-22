@@ -58,7 +58,10 @@
 
                 <LinearLayout style="@style/PosHeaderCell">
                     <TextView style="@style/PosHeaderLabel" android:text="Cashier" />
-                    <TextView style="@style/PosHeaderValue" android:text="Priya Nair" />
+                    <TextView
+                        android:id="@+id/tvCashierName"
+                        style="@style/PosHeaderValue"
+                        android:text="Priya Nair" />
                 </LinearLayout>
                 <View android:layout_width="1dp" android:layout_height="match_parent" android:background="#EEEEEE" />
 
@@ -70,7 +73,7 @@
 
                 <LinearLayout style="@style/PosHeaderCell">
                     <TextView style="@style/PosHeaderLabel" android:text="Order" />
-                    <TextView android:id="@+id/tvHeaderOrder" style="@style/PosHeaderValue" android:text="#1042" />
+                    <TextView android:id="@+id/tvHeaderOrder" style="@style/PosHeaderValue" android:text="INV-000001" />
                 </LinearLayout>
             </LinearLayout>
         </HorizontalScrollView>
@@ -85,6 +88,19 @@
             android:text="13:18"
             android:textSize="14sp"
             android:textColor="@color/text_secondary" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCalculator"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginEnd="8dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minHeight="0dp"
+            android:text="Calculator"
+            app:icon="@android:drawable/ic_dialog_dialer"
+            app:cornerRadius="10dp" />
 
         <com.google.android.material.button.MaterialButton
             android:insetTop="0dp"
@@ -123,6 +139,19 @@
                 android:gravity="center_vertical"
                 android:padding="12dp">
 
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCustomer"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="52dp"
+                    android:layout_marginEnd="10dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minHeight="0dp"
+                    android:text="Add Customer"
+                    app:icon="@android:drawable/ic_menu_myplaces"
+                    app:cornerRadius="12dp" />
+
                 <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/tilSearch"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
@@ -144,32 +173,6 @@
                         android:imeOptions="actionSearch"
                         android:maxLines="1" />
                 </com.google.android.material.textfield.TextInputLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnCustomer"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="52dp"
-                    android:layout_marginStart="10dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:minHeight="0dp"
-                    android:text="Add Customer"
-                    app:icon="@android:drawable/ic_menu_myplaces"
-                    app:cornerRadius="12dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnCalculator"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="52dp"
-                    android:layout_marginStart="10dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:minHeight="0dp"
-                    android:text="Calculator"
-                    app:icon="@android:drawable/ic_dialog_dialer"
-                    app:cornerRadius="12dp" />
             </LinearLayout>
 
             <!-- Category tab strip -->
@@ -269,7 +272,7 @@
                         android:id="@+id/tvOrderNo"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="#1042"
+                        android:text="INV-000001"
                         android:textSize="18sp"
                         android:textStyle="bold"
                         android:textColor="@color/text_main" />
@@ -294,8 +297,9 @@
                     style="@style/Widget.MaterialComponents.Button.TextButton"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:paddingHorizontal="0dp"
+                    android:layout_marginTop="12dp"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="8dp"
                     android:text="+ Add loyalty customer"
                     android:textSize="13sp"
                     app:rippleColor="@android:color/transparent" />
@@ -315,14 +319,32 @@
                         android:layout_weight="1"
                         android:orientation="vertical">
 
-                        <TextView
-                            android:id="@+id/tvCustName"
+                        <LinearLayout
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Customer"
-                            android:textSize="17sp"
-                            android:textStyle="bold"
-                            android:textColor="@color/text_main" />
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical">
+
+                            <TextView
+                                android:id="@+id/tvCustName"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Customer"
+                                android:textSize="17sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/text_main" />
+
+                            <ImageButton
+                                android:id="@+id/btnCustomerInfo"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="6dp"
+                                android:background="?attr/selectableItemBackgroundBorderless"
+                                android:src="@android:drawable/ic_menu_info_details"
+                                app:tint="@color/primary_blue"
+                                android:contentDescription="Customer details"
+                                android:visibility="gone" />
+                        </LinearLayout>
 
                         <TextView
                             android:id="@+id/tvCustSub"
@@ -469,8 +491,23 @@
                     android:layout_marginTop="4dp">
 
                     <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                        android:text="Tax (5%)" android:textSize="13sp" android:textColor="@color/text_secondary" />
+                        android:text="GST" android:textSize="13sp" android:textColor="@color/text_secondary" />
                     <TextView android:id="@+id/tvTax" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="₹ 0.00" android:textSize="13sp" android:textColor="@color/text_main" />
+                </LinearLayout>
+
+                <!-- Round off, shown only when the bill needs one -->
+                <LinearLayout
+                    android:id="@+id/rowBillingRoundOff"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="4dp"
+                    android:visibility="gone">
+
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="Round off" android:textSize="13sp" android:textColor="@color/text_secondary" />
+                    <TextView android:id="@+id/tvBillingRoundOff" android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="₹ 0.00" android:textSize="13sp" android:textColor="@color/text_main" />
                 </LinearLayout>
             </LinearLayout>

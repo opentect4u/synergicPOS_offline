@@ -2,6 +2,7 @@ package com.example.synergic_pos_offline.fragments
 
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -13,6 +14,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
@@ -21,7 +24,16 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.BillDao
+import com.example.synergic_pos_offline.database.CategoryDao
+import com.example.synergic_pos_offline.database.DatabaseHelper
+import com.example.synergic_pos_offline.utils.CustomerCardDialog
+import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.DialogUtils
+import com.example.synergic_pos_offline.utils.GstCalculator
+import com.example.synergic_pos_offline.utils.ProductEntryDialog
+import com.example.synergic_pos_offline.utils.ImageUtils
+import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
@@ -30,6 +42,12 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
+
+/**
+ * Longest edge decoded for a product tile photo. Larger than a list thumbnail
+ * because the tile crops the image across the full card width.
+ */
+private const val PHOTO_PX = 320
 
 /**
  * Point-of-sale billing terminal, faithfully modelled on the shared design:
@@ -44,76 +62,73 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     // ---- Catalog (from the shared design) ----------------------------------
 
+    /**
+     * [cgst] and [sgst] are the per-product rates read from md_product_rates. They
+     * are held separately rather than split from a single GST figure - the master
+     * allows them to differ, so halving a combined rate would misreport both.
+     */
     private data class Product(
         val id: String, val name: String, val sku: String,
-        val category: String, val price: Double, val stock: String = "ok",
-        val hsn: String = "0000", val gst: Double = 0.0, val unit: String = "pcs"
+        val category: String, val categoryId: Long, val price: Double, val stock: String = "ok",
+        val hsn: String = "0000", val cgst: Double = 0.0, val sgst: Double = 0.0,
+        val unit: String = "pcs"
     ) {
-        val cgst: Double get() = gst / 2.0
-        val sgst: Double get() = gst / 2.0
+        /** Combined rate, for display only. */
+        val gst: Double get() = cgst + sgst
     }
-
-    /** HSN code, GST% and selling unit by category (used to enrich the catalog). */
-    private data class TaxInfo(val hsn: String, val gst: Double, val unit: String)
-
-    private val taxByCategory = mapOf(
-        "Produce" to TaxInfo("0708", 0.0, "kg"),
-        "Dairy" to TaxInfo("0401", 5.0, "pcs"),
-        "Bakery" to TaxInfo("1905", 5.0, "pcs"),
-        "Frozen" to TaxInfo("2106", 18.0, "pcs"),
-        "Beverages" to TaxInfo("2202", 18.0, "pcs"),
-        "Snacks" to TaxInfo("2106", 12.0, "pcs"),
-        "Household" to TaxInfo("3402", 18.0, "pcs")
-    )
 
     private data class CartLine(val product: Product, var qty: Int)
-    private data class Held(val label: String, val lines: List<CartLine>, val discount: Int, val coupon: Boolean)
-
-    private val categories = listOf(
-        "All", "Produce", "Dairy", "Bakery", "Frozen", "Beverages", "Snacks", "Household"
+    private fun CartLine.toSessionLine() = CheckoutSession.Line(
+        product.name, product.sku, product.price, qty,
+        product.id.toLongOrNull(), product.cgst, product.sgst
     )
 
-    private val menu = listOf(
-        Product("p1", "Bananas (lb)", "4011", "Produce", 0.59),
-        Product("p2", "Roma Tomatoes (lb)", "4087", "Produce", 1.29),
-        Product("p3", "Avocado", "4225", "Produce", 1.25, "low"),
-        Product("p4", "Red Onion (lb)", "4082", "Produce", 0.99),
-        Product("p5", "Whole Milk 1 Gal", "1101", "Dairy", 3.79),
-        Product("p6", "Large Eggs, Dozen", "1102", "Dairy", 2.99),
-        Product("p7", "Cheddar Block 8oz", "1140", "Dairy", 4.49),
-        Product("p8", "Salted Butter", "1155", "Dairy", 3.99, "out"),
-        Product("p9", "White Bread Loaf", "2001", "Bakery", 2.49),
-        Product("p10", "Bagels 6pk", "2015", "Bakery", 3.29),
-        Product("p11", "Croissants 4pk", "2022", "Bakery", 4.99, "low"),
-        Product("p12", "Pepperoni Pizza", "3010", "Frozen", 5.49),
-        Product("p13", "Vanilla Ice Cream", "3044", "Frozen", 4.29),
-        Product("p14", "Mixed Vegetables", "3067", "Frozen", 2.19),
-        Product("p15", "Orange Juice 64oz", "5002", "Beverages", 3.49),
-        Product("p16", "Cola 12pk Cans", "5019", "Beverages", 5.99),
-        Product("p17", "Sparkling Water", "5033", "Beverages", 1.19, "low"),
-        Product("p18", "Potato Chips", "6004", "Snacks", 3.29),
-        Product("p19", "Pretzel Twists", "6011", "Snacks", 2.79),
-        Product("p20", "Trail Mix", "6028", "Snacks", 4.49, "low"),
-        Product("p21", "Paper Towels 6pk", "7003", "Household", 6.99),
-        Product("p22", "Dish Soap", "7014", "Household", 2.49),
-        Product("p23", "Trash Bags 30ct", "7029", "Household", 5.49, "out")
-    ).map { p ->
-        // Enrich each catalog entry with its category's HSN / GST / unit.
-        val t = taxByCategory[p.category]
-        if (t != null) p.copy(hsn = t.hsn, gst = t.gst, unit = t.unit) else p
+    /**
+     * Rebuilds a cart line from a held one. The catalogue is consulted first so the
+     * restored line keeps its category, HSN and unit; a line held from the checkout
+     * screen may name a product that is no longer listed, so what the held bill
+     * itself recorded is used as the fallback.
+     */
+    private fun CheckoutSession.Line.toCartLine(): CartLine {
+        val fromMenu = menu.firstOrNull { it.id == productId?.toString() }
+            ?: menu.firstOrNull { it.sku.isNotEmpty() && it.sku == sku }
+        val product = fromMenu?.copy(price = price) ?: Product(
+            id = productId?.toString() ?: "",
+            name = name, sku = sku, category = "", categoryId = 0L,
+            price = price, cgst = cgstRate, sgst = sgstRate
+        )
+        return CartLine(product, qty)
     }
+
+    private fun CheckoutSession.HeldBill.toCartLines(): List<CartLine> = lines.map { it.toCartLine() }
+
+    private data class CategoryItem(val id: Long, val name: String)
+
+    private val categories = mutableListOf("All")
+    private val categoryItems = mutableListOf<CategoryItem>()
+    private val menu = mutableListOf<Product>()
+
+    /** Product photos, decoded once per catalogue load and keyed by product id. */
+    private val photoCache = mutableMapOf<String, android.graphics.Bitmap>()
 
     // ---- State -------------------------------------------------------------
 
     private var activeCategory = "All"
+    private var activeCategoryId: Long? = null
     private var query = ""
     private var discountPercent = 0
     private var couponApplied = false
     private var customerName: String? = null
     private var customerPhone: String? = null
+    private var currentCustomerData: Map<String, Any?>? = null
     private var lastAddedId: String? = null
     private val cart = mutableListOf<CartLine>()
-    private val heldOrders = mutableListOf<Held>()
+    /**
+     * Held sales live on [CheckoutSession] rather than in this fragment, so the
+     * billing and checkout screens are looking at one list. A local copy here would
+     * only be seen by this screen, and would not survive the fragment being recreated.
+     */
+    private val heldOrders: MutableList<CheckoutSession.HeldBill> get() = CheckoutSession.heldOrders
 
     private val shownProducts = mutableListOf<Product>()
     private lateinit var productAdapter: ProductAdapter
@@ -133,6 +148,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private lateinit var tvItemCount: TextView
     private lateinit var tvNoProducts: TextView
     private lateinit var tvClock: TextView
+    private lateinit var tvOrderNo: TextView
+    private lateinit var tvHeaderOrder: TextView
+    private lateinit var tvCashierName: TextView
     private lateinit var btnHeld: MaterialButton
     private lateinit var btnCharge: MaterialButton
     private lateinit var btnAddCustomer: MaterialButton
@@ -140,6 +158,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private lateinit var tvCustName: TextView
     private lateinit var tvCustSub: TextView
     private lateinit var tvCouponMsg: TextView
+    private lateinit var btnCustomerInfo: ImageButton
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -161,6 +180,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvItemCount = view.findViewById(R.id.tvItemCount)
         tvNoProducts = view.findViewById(R.id.tvNoProducts)
         tvClock = view.findViewById(R.id.tvClock)
+        tvOrderNo = view.findViewById(R.id.tvOrderNo)
+        tvHeaderOrder = view.findViewById(R.id.tvHeaderOrder)
+        tvCashierName = view.findViewById(R.id.tvCashierName)
         btnHeld = view.findViewById(R.id.btnHeld)
         btnCharge = view.findViewById(R.id.btnCharge)
         btnAddCustomer = view.findViewById(R.id.btnAddCustomer)
@@ -168,6 +190,17 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvCustName = view.findViewById(R.id.tvCustName)
         tvCustSub = view.findViewById(R.id.tvCustSub)
         tvCouponMsg = view.findViewById(R.id.tvCouponMsg)
+        btnCustomerInfo = view.findViewById(R.id.btnCustomerInfo)
+
+        // Set cashier name from logged-in user
+        tvCashierName.text = SessionManager.currentUser?.userId ?: "Guest"
+
+        // Customer info button click listener
+        btnCustomerInfo.setOnClickListener {
+            if (currentCustomerData != null) {
+                showCustomerInfoPopover(ctx, currentCustomerData!!)
+            }
+        }
 
         // Categories (underline tabs)
         val rvCategories = view.findViewById<RecyclerView>(R.id.rvCategories)
@@ -236,6 +269,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         btnCharge.setOnClickListener { onCheckout() }
 
         setCustomer(null, null)
+        loadCategoriesAndProducts()
         updateHeldButton()
         applyFilter()
         updateTotals()
@@ -254,11 +288,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
         btnCharge.setTextColor(Color.WHITE)
         btnCharge.strokeWidth = 0
 
-        // Listen for "New Sale" request from Checkout screen
-        parentFragmentManager.setFragmentResultListener("request_new_sale", viewLifecycleOwner) { _, _ ->
-            clearSale()
-        }
-
         clockRunnable = object : Runnable {
             override fun run() {
                 tvClock.text = SimpleDateFormat("HH:mm", Locale.US).format(Date())
@@ -268,6 +297,47 @@ class PosBillingFragment : Fragment(), TitledScreen {
         clockRunnable.run()
     }
 
+    override fun onResume() {
+        super.onResume()
+
+        // A sale just completed and the operator asked for another one.
+        if (CheckoutSession.startFreshSale) {
+            CheckoutSession.startFreshSale = false
+            startNewSale()
+            return
+        }
+
+        // Check if there's a restored bill from checkout
+        if (CheckoutSession.restoredBill != null) {
+            val restoredBill = CheckoutSession.restoredBill!!
+            CheckoutSession.restoredBill = null
+
+            // Restore the bill to cart. Going through the catalogue keeps each line's
+            // GST rates - rebuilding a bare Product here would silently zero them.
+            cart.clear()
+            cart.addAll(restoredBill.toCartLines())
+
+            discountPercent = restoredBill.discount
+            couponApplied = restoredBill.coupon
+            cartAdapter.notifyDataSetChanged()
+            updateTotals()
+            toast("Bill restored")
+        }
+        updateHeldButton()
+        updateOrderNo()
+    }
+
+    /**
+     * Shows the number the next completed sale will carry, in the top header and on
+     * the sale panel. Re-read on resume so it moves on after a bill is saved, rather
+     * than repeating the one just printed.
+     */
+    private fun updateOrderNo() {
+        val next = runCatching { BillDao(requireContext()).nextBillNumber() }.getOrDefault("")
+        tvOrderNo.text = next
+        tvHeaderOrder.text = next
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         clockHandler.removeCallbacks(clockRunnable)
@@ -275,10 +345,95 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     // ---- Filtering / cart --------------------------------------------------
 
+    private fun loadCategoriesAndProducts() {
+        val categoryDao = CategoryDao(requireContext())
+        val dbCategories = categoryDao.getAll()
+
+        categories.clear()
+        categories.add("All")
+        categoryItems.clear()
+
+        for (cat in dbCategories) {
+            categories.add(cat.name)
+            categoryItems.add(CategoryItem(cat.id, cat.name))
+        }
+
+        categoryAdapter.notifyDataSetChanged()
+
+        // Load products from hardcoded list but map to database categories
+        // In a real scenario, this would query md_products from database
+        // For now, maintaining the existing product list structure
+        loadProductsFromDatabase()
+    }
+
+    private fun loadProductsFromDatabase() {
+        menu.clear()
+        val helper = DatabaseHelper.getInstance(requireContext())
+        val db = helper.readableDatabase
+
+        // Query products with their rates
+        photoCache.clear()
+        db.query(
+            "md_products",
+            arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id", "gst_rate",
+                "product_image"),
+            null, null, null, null, "product_name ASC"
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val productId = cursor.getLong(0).toString()
+                val productName = cursor.getString(1) ?: ""
+                val barcode = cursor.getString(2) ?: ""
+                val hsn = cursor.getString(3) ?: "0000"
+                val categoryId = cursor.getLong(4)
+                // The slab on the product is the master; CGST and SGST are half each.
+                val gstRate = cursor.getDouble(5)
+
+                // Decoded once here rather than on every bind: the grid rebinds on
+                // each filter keystroke, and decoding a JPEG per tile would stutter.
+                if (!cursor.isNull(6)) {
+                    cursor.getBlob(6)
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let { ImageUtils.decodeThumb(it, PHOTO_PX) }
+                        ?.let { photoCache[productId] = it }
+                }
+
+                // Get the category name
+                val categoryName = categoryItems.find { it.id == categoryId }?.name ?: ""
+
+                // Query the product's selling rate
+                db.query(
+                    "md_product_rates",
+                    arrayOf("rate_1"),
+                    "product_id = ?",
+                    arrayOf(productId),
+                    null, null, null, "1"
+                ).use { rateCursor ->
+                    val price = if (rateCursor.moveToFirst()) rateCursor.getDouble(0) else 0.0
+                    val cgst = gstRate / 2.0
+                    val sgst = gstRate / 2.0
+
+                    // Create product with database values
+                    val product = Product(
+                        id = productId,
+                        name = productName,
+                        sku = barcode,
+                        category = categoryName,
+                        categoryId = categoryId,
+                        price = price,
+                        hsn = hsn,
+                        cgst = cgst,
+                        sgst = sgst
+                    )
+                    menu.add(product)
+                }
+            }
+        }
+    }
+
     private fun applyFilter() {
         shownProducts.clear()
         shownProducts.addAll(menu.filter { p ->
-            (activeCategory == "All" || p.category == activeCategory) &&
+            (activeCategory == "All" || p.categoryId == activeCategoryId) &&
                 (query.isEmpty() || p.name.contains(query, true) || p.sku.contains(query))
         })
         productAdapter.notifyDataSetChanged()
@@ -319,74 +474,23 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun showProductDialog(p: Product, editIndex: Int = -1) {
         if (editIndex < 0 && p.stock == "out") { toast("${p.name} is out of stock"); return }
         val editing = editIndex in cart.indices
-        val accent = ThemeManager.getThemeColor(requireContext())
-        val view = layoutInflater.inflate(R.layout.dialog_product_entry, null)
 
-        fun pct(v: Double) = (if (v % 1.0 == 0.0) v.toInt().toString() else v.toString()) + "%"
-
-        view.findViewById<TextView>(R.id.tvDialogTitle).text = p.name
-        view.findViewById<TextView>(R.id.tvDialogCategory).text = p.category
-        view.findViewById<TextView>(R.id.tvDetSku).text = p.sku
-        view.findViewById<TextView>(R.id.tvDetHsn).text = p.hsn
-        view.findViewById<TextView>(R.id.tvDetUnit).text = p.unit
-        view.findViewById<TextView>(R.id.tvDetMrp).text = money(p.price)
-        view.findViewById<TextView>(R.id.tvDetGst).text = pct(p.gst)
-        view.findViewById<TextView>(R.id.tvDetCgst).text = pct(p.cgst)
-        view.findViewById<TextView>(R.id.tvDetSgst).text = pct(p.sgst)
-        view.findViewById<TextView>(R.id.tvCgstLabel).text = "CGST (${pct(p.cgst)})"
-        view.findViewById<TextView>(R.id.tvSgstLabel).text = "SGST (${pct(p.sgst)})"
-
-        val etRate = view.findViewById<TextInputEditText>(R.id.etRate)
-        val etQty = view.findViewById<TextInputEditText>(R.id.etQty)
-        val tvTaxable = view.findViewById<TextView>(R.id.tvTaxable)
-        val tvCgstAmt = view.findViewById<TextView>(R.id.tvCgstAmt)
-        val tvSgstAmt = view.findViewById<TextView>(R.id.tvSgstAmt)
-        val tvAmount = view.findViewById<TextView>(R.id.tvLineAmount)
-        val startRate = if (editing) cart[editIndex].product.price else p.price
-        val startQty = if (editing) cart[editIndex].qty else 1
-        etRate.setText(String.format("%.2f", startRate))
-        etQty.setText(startQty.toString())
-
-        fun refreshAmount() {
-            val rate = etRate.text?.toString()?.toDoubleOrNull() ?: 0.0
-            val qty = etQty.text?.toString()?.toIntOrNull() ?: 0
-            val taxable = rate * qty
-            val cgst = taxable * p.cgst / 100.0
-            val sgst = taxable * p.sgst / 100.0
-            tvTaxable.text = money(taxable)
-            tvCgstAmt.text = money(cgst)
-            tvSgstAmt.text = money(sgst)
-            tvAmount.text = money(taxable + cgst + sgst)
+        ProductEntryDialog.show(
+            context = requireContext(),
+            inflater = layoutInflater,
+            product = p.toDialogProduct(),
+            startRate = if (editing) cart[editIndex].product.price else p.price,
+            startQty = if (editing) cart[editIndex].qty else 1,
+            confirmLabel = if (editing) "Update" else "Add to cart"
+        ) { qty, rate ->
+            if (editing) updateCartLine(editIndex, qty, rate) else addToCart(p, qty, rate)
         }
-        etRate.addTextChangedListener(simpleWatcher { refreshAmount() })
-        etQty.addTextChangedListener(simpleWatcher { refreshAmount() })
-        refreshAmount()
-
-        val dialog = AlertDialog.Builder(requireContext())
-            .setView(view)
-            .create()
-        dialog.setCanceledOnTouchOutside(false)
-
-        val btnCancel = view.findViewById<MaterialButton>(R.id.btnDialogCancel)
-        val btnAdd = view.findViewById<MaterialButton>(R.id.btnDialogAdd)
-        btnAdd.text = if (editing) "Update" else "Add to cart"
-        styleOutlined(btnCancel, accent)
-        btnAdd.backgroundTintList = ColorStateList.valueOf(accent)
-        btnAdd.setTextColor(Color.WHITE)
-
-        btnCancel.setOnClickListener { dialog.dismiss() }
-        btnAdd.setOnClickListener {
-            val rate = etRate.text?.toString()?.toDoubleOrNull()
-            val qty = etQty.text?.toString()?.toIntOrNull()
-            when {
-                rate == null || rate <= 0 -> toast("Enter a valid rate")
-                qty == null || qty <= 0 -> toast("Enter a valid quantity")
-                editing -> { updateCartLine(editIndex, qty, rate); dialog.dismiss() }
-                else -> { addToCart(p, qty, rate); dialog.dismiss() }
-            }
-        }
-        dialog.show()
     }
+
+    private fun Product.toDialogProduct() = ProductEntryDialog.Product(
+        id = id, name = name, sku = sku, category = category,
+        price = price, hsn = hsn, unit = unit, cgst = cgst, sgst = sgst
+    )
 
     /** Replaces a cart line's rate and quantity (from the edit dialog). */
     private fun updateCartLine(index: Int, qty: Int, rate: Double) {
@@ -420,17 +524,21 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     // ---- Customer / coupon / price dialogs ---------------------------------
 
-    private fun setCustomer(name: String?, phone: String? = null) {
+    private fun setCustomer(name: String?, phone: String? = null, customerData: Map<String, Any?>? = null) {
         customerName = name
         customerPhone = phone
+        currentCustomerData = customerData
         if (name == null && phone == null) {
             btnAddCustomer.visibility = View.VISIBLE
             llCustomerInfo.visibility = View.GONE
+            currentCustomerData = null
         } else {
             btnAddCustomer.visibility = View.GONE
             llCustomerInfo.visibility = View.VISIBLE
-            tvCustName.text = name ?: "Guest"
+            tvCustName.text = name ?: "Customer"
             tvCustSub.text = phone ?: "No phone"
+            // Show info button only if we have actual customer data (not default "Customer")
+            btnCustomerInfo.visibility = if (customerData != null) View.VISIBLE else View.GONE
         }
     }
 
@@ -438,20 +546,165 @@ class PosBillingFragment : Fragment(), TitledScreen {
         DialogUtils.showForm(
             context = requireContext(),
             title = "Add Customer",
-            fields = listOf(DialogUtils.FormField("Customer Phone No", customerPhone ?: "")),
-            positiveText = "Look up",
+            fields = listOf(
+                DialogUtils.FormField("Phone Number", customerPhone ?: "", inputType = "phone", maxLength = 10)
+            ),
+            positiveText = "Add",
+            mandatoryFields = listOf(0),
             onSave = { values ->
-                val phone = values[0]
-                if (phone.isNotBlank()) {
-                    // Mock: If phone is entered, identifying as Alex Rivera
-                    setCustomer("Alex Rivera", phone)
+                val phone = values[0].trim()
+                if (phone.isNotEmpty() && phone.length == 10) {
+                    val ctx = requireContext()
+                    var customerName = "Guest"
+                    var customerData: Map<String, Any?>? = null
+
+                    try {
+                        val helper = DatabaseHelper.getInstance(ctx)
+                        val db = helper.readableDatabase
+
+                        db.query(
+                            "md_customers",
+                            arrayOf("id", "customer_name", "phone_number", "customer_address", "gstin", "dob", "dom", "credit_enabled", "credit_limit", "balance_amount"),
+                            "phone_number = ?",
+                            arrayOf(phone),
+                            null, null, null
+                        ).use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                customerName = cursor.getString(1) ?: "Customer"
+                                customerData = mapOf(
+                                    "id" to cursor.getLong(0),
+                                    "name" to customerName,
+                                    "phone" to (cursor.getString(2) ?: ""),
+                                    "address" to (cursor.getString(3) ?: ""),
+                                    "gstin" to (cursor.getString(4) ?: ""),
+                                    "dob" to (cursor.getString(5) ?: ""),
+                                    "dom" to (cursor.getString(6) ?: ""),
+                                    "credit_enabled" to (cursor.getInt(7) != 0),
+                                    "credit_limit" to cursor.getDouble(8),
+                                    "balance" to cursor.getDouble(9)
+                                )
+
+                                showCustomerResult(customerData!!, phone, isNew = false)
+                            } else {
+                                // Customer not found - insert new customer into database
+                                try {
+                                    val values = android.content.ContentValues().apply {
+                                        put("phone_number", phone)
+                                        put("customer_name", "")
+                                        put("customer_address", "")
+                                        put("gstin", "")
+                                        put("dob", "")
+                                        put("dom", "")
+                                        put("credit_enabled", 0)
+                                        put("credit_limit", 0.0)
+                                        put("balance_amount", 0.0)
+                                        put("created_by", SessionManager.currentUser?.userId ?: "System")
+                                        put("created_at", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()))
+                                    }
+                                    val result = db.insert("md_customers", null, values)
+                                    if (result > 0) {
+                                        showCustomerResult(
+                                            mapOf(
+                                                "id" to result, "name" to "", "phone" to phone,
+                                                "address" to "", "gstin" to "", "dob" to "", "dom" to "",
+                                                "credit_enabled" to false,
+                                                "credit_limit" to 0.0, "balance" to 0.0
+                                            ),
+                                            phone, isNew = true
+                                        )
+                                    } else {
+                                        toast("Could not create the customer")
+                                    }
+                                } catch (e: Exception) {
+                                    android.util.Log.e("PosBillingFragment", "Customer lookup failed", e)
+                                    toast("Could not create the customer")
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        setCustomer(null, phone, null)
+                    }
                 }
             }
         )
     }
 
-    /** On-screen calculator. The computed value can be added to the cart as a
-     *  manual-priced item. */
+    /**
+     * The result of a phone lookup, shown as a card rather than a toast. Nothing is
+     * attached to the sale until it is confirmed.
+     *
+     * @param isNew the phone had no match and a record was just created for it
+     */
+    private fun showCustomerResult(data: Map<String, Any?>, phone: String, isNew: Boolean) {
+        val name = (data["name"] as? String).orEmpty().trim()
+        CustomerCardDialog.show(
+            context = requireContext(),
+            inflater = layoutInflater,
+            customer = CustomerCardDialog.Customer(
+                name = name,
+                phone = phone,
+                address = (data["address"] as? String).orEmpty(),
+                gstin = (data["gstin"] as? String).orEmpty(),
+                dob = (data["dob"] as? String).orEmpty(),
+                dom = (data["dom"] as? String).orEmpty(),
+                creditEnabled = (data["credit_enabled"] as? Boolean) ?: false,
+                creditLimit = (data["credit_limit"] as? Double) ?: 0.0,
+                balance = (data["balance"] as? Double) ?: 0.0
+            ),
+            status = if (isNew) "NEW CUSTOMER CREATED" else "CUSTOMER FOUND",
+            confirmText = "Add to sale",
+            note = if (isNew) {
+                "Saved against $phone. Add their name and address in " +
+                    "Masters › Customers when there is time."
+            } else null
+        ) {
+            setCustomer(name.ifEmpty { null }, phone, data)
+        }
+    }
+
+    private fun showCustomerInfoPopover(ctx: android.content.Context, customer: Map<String, Any?>) {
+        val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_common, null)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+
+        val accent = ThemeManager.getThemeColor(ctx)
+        val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
+        val tvMessage = view.findViewById<TextView>(R.id.tvDialogMessage)
+        val btnNegative = view.findViewById<MaterialButton>(R.id.btnDialogNegative)
+        val ivIcon = view.findViewById<ImageView>(R.id.ivDialogIcon)
+
+        tvTitle.text = customer["name"].toString()
+
+        val infoText = """
+            Phone: ${customer["phone"]}
+            Address: ${customer["address"]}
+            GSTIN: ${customer["gstin"]}
+            DOB: ${customer["dob"]}
+            DOM: ${customer["dom"]}
+            Credit Enabled: ${if (customer["credit_enabled"] == true) "Yes" else "No"}
+            Credit Limit: ₹${customer["credit_limit"]}
+            Balance: ₹${customer["balance"]}
+        """.trimIndent()
+
+        tvMessage.text = infoText
+        btnNegative.text = "Close"
+        btnNegative.setTextColor(accent)
+        btnNegative.strokeColor = android.content.res.ColorStateList.valueOf(accent)
+        view.findViewById<MaterialButton>(R.id.btnDialogPositive).visibility = View.GONE
+        ivIcon.visibility = View.GONE
+
+        btnNegative.setOnClickListener { dialog.dismiss() }
+
+        dialog.show()
+        val window = dialog.window
+        window?.setLayout(
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        window?.setGravity(android.view.Gravity.CENTER)
+    }
+
+    /** On-screen calculator. Just for calculations, does not add items to cart. */
     private fun showCalculatorDialog() {
         val accent = ThemeManager.getThemeColor(requireContext())
         val view = layoutInflater.inflate(R.layout.dialog_calculator, null)
@@ -533,21 +786,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         dialog.setCanceledOnTouchOutside(false)
 
         val btnClose = view.findViewById<MaterialButton>(R.id.btnCalcClose)
-        val btnUse = view.findViewById<MaterialButton>(R.id.btnCalcUse)
         styleOutlined(btnClose, accent)
-        btnUse.backgroundTintList = ColorStateList.valueOf(accent)
-        btnUse.setTextColor(Color.WHITE)
 
         btnClose.setOnClickListener { dialog.dismiss() }
-        btnUse.setOnClickListener {
-            val value = evalExpression(expr) ?: expr.toDoubleOrNull()
-            if (value != null && value > 0) {
-                cart.add(CartLine(Product("M${System.currentTimeMillis()}", "Manual Item", "----", "All", value), 1))
-                cartAdapter.notifyDataSetChanged()
-                updateTotals()
-                dialog.dismiss()
-            } else toast("Enter a valid amount")
-        }
         dialog.show()
     }
 
@@ -630,8 +871,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private fun onHold() {
         if (cart.isEmpty()) { toast("Cart is empty"); return }
+        // Only one bill can be held at a time - replace existing if present
+        heldOrders.clear()
         heldOrders.add(
-            Held("Sale #${heldOrders.size + 1}", cart.map { CartLine(it.product, it.qty) }, discountPercent, couponApplied)
+            CheckoutSession.HeldBill(
+                "Sale #1", cart.map { it.toSessionLine() }, discountPercent, couponApplied
+            )
         )
         clearSale()
         updateHeldButton()
@@ -640,21 +885,95 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private fun showHeldDialog() {
         if (heldOrders.isEmpty()) { toast("No sales on hold"); return }
-        val labels = heldOrders.map { h ->
-            "${h.label} · ${h.lines.sumOf { it.qty }} items · ${money(totalOf(h.lines, h.discount, h.coupon))}"
-        }.toTypedArray()
-        AlertDialog.Builder(requireContext())
-            .setTitle("Held orders")
-            .setItems(labels) { _, which -> resumeHeld(which) }
-            .setNegativeButton("Close", null)
-            .create()
-            .also { it.setCanceledOnTouchOutside(false); it.show() }
+
+        if (heldOrders.size == 1) {
+            // Only one held bill - show details directly
+            showHeldBillDetails(0)
+        } else {
+            // Multiple held bills - show as list
+            val labels = heldOrders.mapIndexed { index, h ->
+                "${h.label} · ${h.lines.sumOf { it.qty }} items · " +
+                    money(totalOf(h.toCartLines(), h.discount, h.coupon))
+            }.toTypedArray()
+
+            AlertDialog.Builder(requireContext())
+                .setTitle("Held orders")
+                .setSingleChoiceItems(labels, -1) { dialog, which ->
+                    dialog.dismiss()
+                    showHeldBillDetails(which)
+                }
+                .setNegativeButton("Close", null)
+                .create()
+                .also { it.setCanceledOnTouchOutside(false); it.show() }
+        }
+    }
+
+    private fun showHeldBillDetails(index: Int) {
+        val heldBill = heldOrders[index]
+        val heldLines = heldBill.toCartLines()
+        val ctx = requireContext()
+        val accent = ThemeManager.getThemeColor(ctx)
+
+        // Build bill details text
+        val gross = heldLines.sumOf { it.product.price * it.qty }
+        val discountAmt = gross * heldBill.discount / 100.0
+        val billDetails = StringBuilder().apply {
+            append("${heldBill.label}\n\n")
+            append("ITEMS:\n")
+            heldLines.forEach { line ->
+                append("${line.product.name}\n")
+                append("  Qty: ${line.qty} × ${money(line.product.price)} = ${money(line.product.price * line.qty)}\n")
+            }
+            append("\nSubtotal: ${money(gross)}\n")
+            if (heldBill.discount > 0) {
+                append("Discount (${heldBill.discount}%): -${money(discountAmt)}\n")
+            }
+            append("Tax: ${money(taxOf(heldLines, heldBill.discount))}\n")
+            append("\nTOTAL: ${money(totalOf(heldLines, heldBill.discount, heldBill.coupon))}")
+        }.toString()
+
+        val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_common, null)
+        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+
+        val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
+        val tvMessage = view.findViewById<TextView>(R.id.tvDialogMessage)
+        val btnPositive = view.findViewById<MaterialButton>(R.id.btnDialogPositive)
+        val btnNegative = view.findViewById<MaterialButton>(R.id.btnDialogNegative)
+        val ivIcon = view.findViewById<ImageView>(R.id.ivDialogIcon)
+
+        tvTitle.text = "Held Bill"
+        tvMessage.text = billDetails
+
+        btnPositive.text = "Restore Held Bill"
+        btnNegative.text = "OK"
+        btnPositive.backgroundTintList = ColorStateList.valueOf(accent)
+        btnNegative.setTextColor(accent)
+        btnNegative.strokeColor = ColorStateList.valueOf(accent)
+        ivIcon.visibility = View.GONE
+
+        btnPositive.setOnClickListener {
+            resumeHeld(index)
+            dialog.dismiss()
+        }
+
+        btnNegative.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        dialog.show()
+        val window = dialog.window
+        window?.setLayout(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        window?.setGravity(android.view.Gravity.CENTER)
     }
 
     private fun resumeHeld(index: Int) {
         val h = heldOrders.removeAt(index)
         cart.clear()
-        cart.addAll(h.lines.map { CartLine(it.product, it.qty) })
+        cart.addAll(h.toCartLines())
         discountPercent = h.discount
         couponApplied = h.coupon
         cartAdapter.notifyDataSetChanged()
@@ -666,16 +985,61 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private fun onCheckout() {
         if (cart.isEmpty()) { toast("Cart is empty"); return }
+
+        // Every bill is raised against a customer. The phone is what identifies one,
+        // and is present whether the record was matched or created on the spot, so a
+        // blank here means nothing was attached. Open the lookup rather than just
+        // refusing, so the block can be cleared without hunting for the button.
+        if (customerPhone.isNullOrBlank()) {
+            toast("Add a customer to continue")
+            showCustomerDialog()
+            return
+        }
+
         // Hand the current sale to the checkout screen.
         CheckoutSession.lines = cart.map {
-            CheckoutSession.Line(it.product.name, it.product.sku, it.product.price, it.qty)
+            CheckoutSession.Line(
+                it.product.name, it.product.sku, it.product.price, it.qty,
+                it.product.id.toLongOrNull(), it.product.cgst, it.product.sgst
+            )
         }.toMutableList()
         CheckoutSession.customerName = customerName
         CheckoutSession.customerPhone = customerPhone
+        CheckoutSession.customerId = currentCustomerData?.get("id") as? Long
+        // heldOrders needs no copying: both screens read the one list on the session.
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_container, PosCheckoutFragment())
             .addToBackStack(null)
             .commit()
+    }
+
+    /**
+     * Resets the screen for the next customer after a completed sale.
+     *
+     * Beyond emptying the cart, this reloads the catalogue and its photos and puts
+     * the browsing state back to "All". The fragment survives while checkout sits on
+     * top of it, so [query] and [activeCategory] would otherwise still be holding
+     * the last sale's filter while the search box - rebuilt with the view - looks
+     * empty, leaving most of the grid mysteriously missing.
+     *
+     * Held sales are deliberately untouched: they live on [CheckoutSession] and a
+     * bill parked earlier is still parked.
+     */
+    private fun startNewSale() {
+        clearSale()
+
+        query = ""
+        view?.findViewById<TextInputEditText>(R.id.etSearch)?.setText("")
+        activeCategory = "All"
+        activeCategoryId = null
+
+        // Re-read the masters so anything edited mid-sale shows up, photos included.
+        loadCategoriesAndProducts()
+
+        applyFilter()
+        updateHeldButton()
+        updateOrderNo()
+        view?.findViewById<RecyclerView>(R.id.rvProducts)?.scrollToPosition(0)
     }
 
     private fun clearSale() {
@@ -694,14 +1058,35 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun totalPct() = min(100, discountPercent + if (couponApplied) 10 else 0)
     private fun subtotal(): Double = cart.sumOf { it.product.price * it.qty }
     private fun discountAmt(): Double = subtotal() * totalPct() / 100.0
-    private fun taxAmt(): Double = (subtotal() - discountAmt()).coerceAtLeast(0.0) * 0.05
-    private fun computeTotal(): Double = (subtotal() - discountAmt()).coerceAtLeast(0.0) + taxAmt()
+    private fun taxAmt(): Double = taxOf(cart, totalPct())
 
+    /** Taxed value before rounding; what the round-off line is measured against. */
+    private fun taxedTotal(): Double =
+        (subtotal() - discountAmt()).coerceAtLeast(0.0) + taxAmt()
+
+    private fun roundOffAmt(): Double = BillRounding.roundOff(taxedTotal())
+
+    /** Rounded to whole rupees, so this screen quotes what checkout will charge. */
+    private fun computeTotal(): Double = BillRounding.payable(taxedTotal())
+
+    /**
+     * GST across the cart, charged at each product's own CGST+SGST rate rather than
+     * one blanket rate. The discount is a whole-bill percentage, so it is applied to
+     * each line before that line is taxed - tax follows what is actually charged.
+     */
+    private fun taxOf(lines: List<CartLine>, discountPct: Int): Double =
+        lines.sumOf { line ->
+            val taxable = GstCalculator.taxableValue(line.product.price, line.qty, discountPct)
+            GstCalculator.taxAmount(taxable, line.product.cgst) +
+                GstCalculator.taxAmount(taxable, line.product.sgst)
+        }
+
+    /** Rounded total of an arbitrary set of lines, used for held-bill summaries. */
     private fun totalOf(lines: List<CartLine>, disc: Int, coupon: Boolean): Double {
         val sub = lines.sumOf { it.product.price * it.qty }
         val pct = min(100, disc + if (coupon) 10 else 0)
         val afterDisc = (sub - sub * pct / 100.0).coerceAtLeast(0.0)
-        return afterDisc + afterDisc * 0.05
+        return BillRounding.payable(afterDisc + taxOf(lines, pct))
     }
 
     private fun updateTotals() {
@@ -714,6 +1099,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvDiscountLabel.text = "Discount (${totalPct()}%)"
         tvDiscountAmt.text = "- ${money(discountAmt())}"
         tvTax.text = money(taxAmt())
+
+        val roundOff = roundOffAmt()
+        view?.findViewById<View>(R.id.rowBillingRoundOff)?.visibility =
+            if (kotlin.math.abs(roundOff) > 0.001) {
+                view?.findViewById<TextView>(R.id.tvBillingRoundOff)?.text =
+                    (if (roundOff > 0) "+ " else "- ") + money(kotlin.math.abs(roundOff))
+                View.VISIBLE
+            } else View.GONE
+
         tvTotal.text = money(computeTotal())
         btnCharge.text = "Checkout ${money(computeTotal())}"
     }
@@ -766,6 +1160,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             holder.underline.setBackgroundColor(if (selected) accent else Color.TRANSPARENT)
             holder.itemView.setOnClickListener {
                 activeCategory = cat
+                activeCategoryId = if (cat == "All") null else categoryItems.find { it.name == cat }?.id
                 notifyDataSetChanged()
                 applyFilter()
             }
@@ -780,6 +1175,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             val price: TextView = view.findViewById(R.id.tvPrice)
             val sku: TextView = view.findViewById(R.id.tvSku)
             val stock: TextView = view.findViewById(R.id.tvStock)
+            val photo: android.widget.ImageView = view.findViewById(R.id.ivProductPhoto)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -792,7 +1188,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
             holder.name.text = p.name
             holder.price.text = money(p.price)
             holder.sku.text = p.sku
-            
+
+            // Views are recycled, so a product without a photo must clear the tile
+            // rather than inherit the previous one's.
+            val photo = photoCache[p.id]
+            if (photo != null) {
+                holder.photo.setImageBitmap(photo)
+                holder.photo.visibility = View.VISIBLE
+            } else {
+                holder.photo.setImageDrawable(null)
+                holder.photo.visibility = View.GONE
+            }
+
             when (p.stock) {
                 "low" -> {
                     holder.stock.visibility = View.VISIBLE

@@ -298,7 +298,30 @@
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
-                <!-- Row: CGST | SGST -->
+                <!-- Row: GST slab | (CGST and SGST are derived from it below) -->
+                <LinearLayout style="@style/ProductFormRow">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilGst"
+                        style="@style/ProductFormDropdown"
+                        android:layout_marginEnd="8dp"
+                        android:hint="GST Slab (%)">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/actGst"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+                </LinearLayout>
+
+                <!-- Row: CGST | SGST - always half the slab each, so both are read-only -->
                 <LinearLayout style="@style/ProductFormRow">
 
                     <com.google.android.material.textfield.TextInputLayout
@@ -311,7 +334,10 @@
                             android:id="@+id/etCgst"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:inputType="numberDecimal"
+                            android:inputType="none"
+                            android:focusable="false"
+                            android:clickable="false"
+                            android:cursorVisible="false"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
 
@@ -325,7 +351,10 @@
                             android:id="@+id/etSgst"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:inputType="numberDecimal"
+                            android:inputType="none"
+                            android:focusable="false"
+                            android:clickable="false"
+                            android:cursorVisible="false"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>

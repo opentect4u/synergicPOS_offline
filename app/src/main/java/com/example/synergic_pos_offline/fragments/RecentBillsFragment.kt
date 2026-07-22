@@ -10,7 +10,6 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.DatabaseHelper
-import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThemeManager
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -83,27 +82,44 @@ class RecentBillsFragment : Fragment(), TitledScreen {
             }
 
             // Check bills for this store
-            val storeCountSql = """
-                SELECT COUNT(*) FROM ${DatabaseHelper.Tables.TD_BILLS} WHERE store_id = ?
-            """.trimIndent()
-            db.rawQuery(storeCountSql, arrayOf(storeId.toString())).use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val storeBills = cursor.getInt(0)
-                    android.util.Log.d("RecentBills", "Bills for store $storeId: $storeBills")
+            if (storeId != null) {
+                val storeCountSql = """
+                    SELECT COUNT(*) FROM ${DatabaseHelper.Tables.TD_BILLS} WHERE store_id = ?
+                """.trimIndent()
+                db.rawQuery(storeCountSql, arrayOf(storeId.toString())).use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val storeBills = cursor.getInt(0)
+                        android.util.Log.d("RecentBills", "Bills for store $storeId: $storeBills")
+                    }
                 }
             }
 
-            val sql = """
-                SELECT b.bill_number, b.bill_date, b.net_amount, b.receipt_no
-                FROM ${DatabaseHelper.Tables.TD_BILLS} b
-                WHERE b.store_id = ?
-                ORDER BY b.bill_date DESC
-                LIMIT 20
-            """.trimIndent()
+            // Bills are saved with the registration store_id (see BillDao). Filter by
+            // that when known; otherwise show all bills so nothing is silently hidden.
+            val sql: String
+            val args: Array<String>?
+            if (storeId != null) {
+                sql = """
+                    SELECT b.bill_number, b.bill_date, b.net_amount, b.receipt_no
+                    FROM ${DatabaseHelper.Tables.TD_BILLS} b
+                    WHERE b.store_id = ?
+                    ORDER BY b.receipt_no DESC
+                    LIMIT 20
+                """.trimIndent()
+                args = arrayOf(storeId.toString())
+            } else {
+                sql = """
+                    SELECT b.bill_number, b.bill_date, b.net_amount, b.receipt_no
+                    FROM ${DatabaseHelper.Tables.TD_BILLS} b
+                    ORDER BY b.receipt_no DESC
+                    LIMIT 20
+                """.trimIndent()
+                args = null
+            }
 
             android.util.Log.d("RecentBills", "Executing query with store_id: $storeId")
 
-            db.rawQuery(sql, arrayOf(storeId.toString())).use { cursor ->
+            db.rawQuery(sql, args).use { cursor ->
                 android.util.Log.d("RecentBills", "Query returned ${cursor.count} rows")
                 while (cursor.moveToNext()) {
                     val billNumber = cursor.getString(0)
@@ -165,7 +181,17 @@ class RecentBillsFragment : Fragment(), TitledScreen {
         }
     }
 
-    private fun storeId(): Int = SessionManager.currentUser?.storeId ?: 0
+    /** Store id as saved on bills — read from md_registration (same as BillDao). */
+    private fun storeId(): Long? {
+        val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+        db.query(
+            DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
+            null, null, null, null, "store_id ASC", "1"
+        ).use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0)
+        }
+        return null
+    }
 
     private inner class BillsAdapter(
         private val items: List<BillSummary>
