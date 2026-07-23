@@ -287,7 +287,7 @@ object DatabaseSeeder {
         if (!exists) {
             val values = ContentValues().apply {
                 put("store_id", 1)
-                put("store_name", "FRESHMART")
+                put("store_name", "Test")
                 put("address", "128 Market Street, Sector 5")
                 put("phone_no", "555-0100")
                 put("store_gstin", "27AABCF1234M1Z9")

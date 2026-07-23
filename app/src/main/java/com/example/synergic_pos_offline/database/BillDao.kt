@@ -277,6 +277,31 @@ class BillDao(context: Context) {
         return 1L
     }
 
+    /** The most recent bill's number (e.g. "INV-000009"), or null if none exist yet. */
+    fun lastBillNumber(): String? {
+        helper.readableDatabase.rawQuery(
+            """
+            SELECT bill_number, receipt_no FROM ${DatabaseHelper.Tables.TD_BILLS}
+            ORDER BY receipt_no DESC LIMIT 1
+            """.trimIndent(),
+            null
+        ).use { c ->
+            if (!c.moveToFirst()) return null
+            return c.getString(0)?.takeIf { it.isNotBlank() } ?: formatBillNumber(c.getLong(1))
+        }
+    }
+
+    /** The most recent bill's receipt number, or null if none exist yet. */
+    fun lastReceiptNo(): Long? {
+        helper.readableDatabase.rawQuery(
+            "SELECT receipt_no FROM ${DatabaseHelper.Tables.TD_BILLS} ORDER BY receipt_no DESC LIMIT 1",
+            null
+        ).use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0)
+        }
+        return null
+    }
+
     /** Looks up a customer's id by phone number, or null if not found. */
     fun findCustomerIdByPhone(phone: String?): Long? {
         if (phone.isNullOrBlank()) return null

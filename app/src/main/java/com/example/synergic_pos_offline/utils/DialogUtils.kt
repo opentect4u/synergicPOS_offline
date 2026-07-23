@@ -181,11 +181,18 @@ object DialogUtils {
             til.hint = field.label
             
             val params = GridLayout.LayoutParams()
-            
-            // Determine column span.
-            val isFullWidth = fields.size == 1 || (index == fields.lastIndex && fields.size % 2 != 0)
-            val span = if (isFullWidth) grid.columnCount else 1
-            
+
+            // Determine column span. An explicit spanColumns wins; otherwise keep the
+            // old behaviour of stretching a lone field, and the last field of an
+            // odd-count form, to full width.
+            val explicitSpan = field.spanColumns.coerceIn(1, grid.columnCount)
+            val span = when {
+                fields.size == 1 -> grid.columnCount
+                explicitSpan > 1 -> explicitSpan
+                index == fields.lastIndex && fields.size % 2 != 0 -> grid.columnCount
+                else -> 1
+            }
+
             params.width = 0 // Will be handled by weight
             params.height = ViewGroup.LayoutParams.WRAP_CONTENT
             params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, span, 1f)
