@@ -16,6 +16,7 @@ import java.util.Locale
  */
 class TaxSettingsDao(context: Context) {
 
+    private val appContext = context.applicationContext
     private val helper = DatabaseHelper.getInstance(context)
     private val table = DatabaseHelper.Tables.MD_APP_SETTINGS
 
@@ -96,6 +97,7 @@ class TaxSettingsDao(context: Context) {
         put(KEY_IGST_ENABLED, s.igstEnabled.b())
         put(KEY_VAT_ENABLED, s.vatEnabled.b())
         helper.regroupAppSettingsByType()
+        com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "Tax settings save (type T)")
     }
 
     // ---- Low-level key/value access ----------------------------------------

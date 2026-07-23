@@ -17,6 +17,7 @@ import java.util.Locale
  */
 class BillSettingsDao(context: Context) {
 
+    private val appContext = context.applicationContext
     private val helper = DatabaseHelper.getInstance(context)
     private val table = DatabaseHelper.Tables.MD_APP_SETTINGS
 
@@ -120,6 +121,7 @@ class BillSettingsDao(context: Context) {
         put(KEY_TOTAL_FONT_SIZE, s.totalAmountFontSize.code)
         put(KEY_BILL_FORMAT, s.billFormat.code)
         helper.regroupAppSettingsByType()
+        com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "Bill settings save (type B)")
     }
 
     /** True if any bill exists (used to warn before changing the start bill no). */

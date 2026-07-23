@@ -8,24 +8,14 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Persists the App Settings as key/value rows in
- * [DatabaseHelper.Tables.MD_APP_SETTINGS], scoped to the current store.
- *
- * Every row uses setting_type 'A' (app settings). Booleans are stored as "1"/"0".
-
-/**
  * Key/value access to [DatabaseHelper.Tables.MD_APP_SETTINGS].
- *
- * Settings live in the database rather than SharedPreferences so they travel with
- * a restored backup - a till rebuilt from a copy keeps its printer, its store id
- * and everything else it was configured with.
  */
 class AppSettingsDao(context: Context) {
 
+    private val appContext = context.applicationContext
     private val helper = DatabaseHelper.getInstance(context)
     private val table = DatabaseHelper.Tables.MD_APP_SETTINGS
 
-    /** The full app-settings configuration with defaults. */
     data class AppSettings(
         val manualRate: Boolean = false,
         val cashReception: Boolean = false,
@@ -33,36 +23,34 @@ class AppSettingsDao(context: Context) {
         val otherCharges: Boolean = false
     )
 
-    /** Reads every app setting for the current store, applying defaults. */
     fun load(): AppSettings {
         val m = readAll()
-        val d = AppSettings()
         return AppSettings(
-            manualRate = m[KEY_MANUAL_RATE]?.toBool() ?: d.manualRate,
-            cashReception = m[KEY_CASH_RECEPTION]?.toBool() ?: d.cashReception,
-            paymentMode = m[KEY_PAYMENT_MODE]?.toBool() ?: d.paymentMode,
-            otherCharges = m[KEY_OTHER_CHARGES]?.toBool() ?: d.otherCharges
+            manualRate = m[KEY_MANUAL_RATE]?.toBool() ?: false,
+            cashReception = m[KEY_CASH_RECEPTION]?.toBool() ?: false,
+            paymentMode = m[KEY_PAYMENT_MODE]?.toBool() ?: false,
+            otherCharges = m[KEY_OTHER_CHARGES]?.toBool() ?: false
         )
     }
 
-    /** Writes every app setting for the current store (upsert per key). */
     fun save(s: AppSettings) {
-        put(KEY_MANUAL_RATE, s.manualRate.b())
-        put(KEY_CASH_RECEPTION, s.cashReception.b())
-        put(KEY_PAYMENT_MODE, s.paymentMode.b())
-        put(KEY_OTHER_CHARGES, s.otherCharges.b())
+        upsertAppSetting(KEY_MANUAL_RATE, s.manualRate.b())
+        upsertAppSetting(KEY_CASH_RECEPTION, s.cashReception.b())
+        upsertAppSetting(KEY_PAYMENT_MODE, s.paymentMode.b())
+        upsertAppSetting(KEY_OTHER_CHARGES, s.otherCharges.b())
         helper.regroupAppSettingsByType()
+        com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "App settings save (type A)")
     }
 
-    // ---- Low-level key/value access ----------------------------------------
-
     private fun readAll(): Map<String, String> {
-        val map = linkedMapOf<String, String>()
+        val map = mutableMapOf<String, String>()
         val store = currentStoreId()
-        val (where, args) = if (store != null) "store_id=?" to arrayOf(store.toString()) else null to null
+        val where = if (store != null) "store_id=?" else null
+        val args = if (store != null) arrayOf(store.toString()) else null
+        
         helper.readableDatabase.query(
             table, arrayOf("setting_name", "setting_value"),
-            where, args, null, null, "setting_type ASC, setting_name ASC"
+            where, args, null, null, "id ASC"
         ).use { c ->
             while (c.moveToNext()) {
                 val name = c.getString(0) ?: continue
@@ -72,8 +60,7 @@ class AppSettingsDao(context: Context) {
         return map
     }
 
-    /** Inserts or updates a single setting row for the current store (type 'A'). */
-    private fun put(name: String, value: String) {
+    private fun upsertAppSetting(name: String, value: String) {
         val db = helper.writableDatabase
         val store = currentStoreId()
         val values = ContentValues().apply {
@@ -90,7 +77,10 @@ class AppSettingsDao(context: Context) {
         if (updated == 0) {
             values.put("store_id", store)
             values.put("created_by", currentUser())
-    /** The stored value for [name], or null when unset. */
+            db.insert(table, null, values)
+        }
+    }
+
     fun get(name: String): String? {
         helper.readableDatabase.query(
             table, arrayOf("setting_value"),
@@ -101,27 +91,24 @@ class AppSettingsDao(context: Context) {
         return null
     }
 
-    /** Writes [value] against [name], replacing any existing entry. */
     fun put(name: String, value: String) {
         val db = helper.writableDatabase
         val values = ContentValues().apply {
             put("store_id", currentStoreId())
-            put("outlet_id", 0)
             put("setting_name", name)
             put("setting_value", value)
-            // 'T' is the text kind in the schema's setting_type check.
             put("setting_type", "T")
-            put("modified_by", SessionManager.currentUser?.userId)
+            put("modified_by", currentUser())
         }
         val updated = db.update(table, values, "setting_name = ?", arrayOf(name))
         if (updated == 0) {
-            values.put("created_by", SessionManager.currentUser?.userId)
+            values.put("created_by", currentUser())
             db.insert(table, null, values)
         }
     }
 
     private fun Boolean.b(): String = if (this) "1" else "0"
-    private fun String.toBool(): Boolean = this == "1" || equals("true", true) || equals("yes", true)
+    private fun String.toBool(): Boolean = this == "1" || equals("true", true)
 
     private fun currentStoreId(): Long? {
         helper.readableDatabase.query(
@@ -133,7 +120,6 @@ class AppSettingsDao(context: Context) {
         return null
     }
 
-    /** Device id captured at registration, mirrored onto each settings row. */
     private fun currentDeviceId(): String? {
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("device_id"),
@@ -145,7 +131,6 @@ class AppSettingsDao(context: Context) {
     }
 
     private fun currentUser(): String? = SessionManager.currentUser?.userId
-
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
     private companion object {

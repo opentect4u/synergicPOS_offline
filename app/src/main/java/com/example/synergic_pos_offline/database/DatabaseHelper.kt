@@ -25,10 +25,6 @@ class DatabaseHelper private constructor(context: Context) :
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
         if (!db.isReadOnly) db.setForeignKeyConstraintsEnabled(true)
-    }
-
-    override fun onOpen(db: SQLiteDatabase) {
-        super.onOpen(db)
         // Non-destructive migrations for existing databases (no version bump / data loss).
         addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
     }
@@ -118,30 +114,24 @@ class DatabaseHelper private constructor(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Migrations are cumulative, so an install several versions behind runs each
-        // in turn. They all preserve data: a blanket drop would take md_users and
-        // md_registration with it and lock the operator out of the app.
-        if (oldVersion in 1 until DATABASE_VERSION) {
-            if (oldVersion < 2) migrateV2AllowCardBillType(db)
-            if (oldVersion < 3) migrateV3ProductGstSlab(db)
-            if (oldVersion < 4) migrateV4AllowCreditPaymentMode(db)
-            if (oldVersion < 5) migrateV5RecordBalanceDue(db)
-            if (oldVersion < 6) migrateV6AddPrinterTable(db)
-            if (oldVersion < 7) migrateV7AddPrinterIp(db)
-            if (oldVersion < 8) migrateV8ImportSavedPrinterIp(db)
-            if (oldVersion < 9) migrateV9AddPaperWidth(db)
-            if (oldVersion < 10) migrateV10AddPrinterTypes(db)
-            if (oldVersion < 11) migrateV11AddOperatingPrinterTable(db)
-            if (oldVersion < 12) migrateV12AddOperatingPrinterDefaultFlag(db)
-            if (oldVersion < 13) migrateV13AddOperatingPrinterPaperWidth(db)
-            return
+        // cumulative migrations to preserve data.
+        if (oldVersion < 2) migrateV2AllowCardBillType(db)
+        if (oldVersion < 3) migrateV3ProductGstSlab(db)
+        if (oldVersion < 4) migrateV4AllowCreditPaymentMode(db)
+        if (oldVersion < 5) migrateV5RecordBalanceDue(db)
+        if (oldVersion < 6) migrateV6AddPrinterTable(db)
+        if (oldVersion < 7) migrateV7AddPrinterIp(db)
+        if (oldVersion < 8) migrateV8ImportSavedPrinterIp(db)
+        if (oldVersion < 9) migrateV9AddPaperWidth(db)
+        if (oldVersion < 10) migrateV10AddPrinterTypes(db)
+        if (oldVersion < 11) migrateV11AddOperatingPrinterTable(db)
+        if (oldVersion < 12) migrateV12AddOperatingPrinterDefaultFlag(db)
+        if (oldVersion < 13) migrateV13AddOperatingPrinterPaperWidth(db)
+        if (oldVersion < 14) {
+            // Ensure md_printer exists before adding column in v7 if we jumped directly from < 6 to 14
+            db.execSQL(SQL_CREATE_MD_PRINTER)
+            addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
         }
-
-        // Unrecognised starting point: fall back to recreating the schema.
-        for (table in ALL_TABLES.asReversed()) {
-            db.execSQL("DROP TABLE IF EXISTS $table")
-        }
-        onCreate(db)
     }
 
     /**
@@ -603,13 +593,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 6
-        // v6 adds md_printer; v7 adds its printer_ip column; v8 imports the printer
-        // address saved by the old settings flow; v9 adds paper_mm and imports the
-        // saved paper width; v10 adds is_selected and BLUETOOTH/USB rows per purpose;
-        // v11 adds md_operating_printer; v12 adds its default_flag column; v13 adds
-        // its own paper_mm column (58/80, independent of md_printer's).
-        private const val DATABASE_VERSION = 13
+        private const val DATABASE_VERSION = 15
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of

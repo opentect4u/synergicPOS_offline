@@ -15,6 +15,7 @@ import java.util.Locale
  */
 class GeneralSettingsDao(context: Context) {
 
+    private val appContext = context.applicationContext
     private val helper = DatabaseHelper.getInstance(context)
     private val table = DatabaseHelper.Tables.MD_APP_SETTINGS
 
@@ -60,6 +61,7 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_LAST_BILL_STATUS, s.lastBillStatus.b())
         put(KEY_QUANTITY_STATUS, s.quantityStatus.b())
         helper.regroupAppSettingsByType()
+        com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "General settings save (type G)")
     }
 
     // ---- Low-level key/value access ----------------------------------------

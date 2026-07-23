@@ -112,9 +112,9 @@ class BillListFragment : Fragment(), TitledScreen {
         etFromDate.setOnClickListener { pickDate(isFrom = true) }
         etToDate.setOnClickListener { pickDate(isFrom = false) }
 
-        // Date-range dropdown (menu style: always show every option)
+        // Date-range dropdown
         val actRange = view.findViewById<MaterialAutoCompleteTextView>(R.id.actRange)
-        val ranges = Range.values()
+        val ranges = Range.entries.toTypedArray()
         actRange.setAdapter(NoFilterAdapter(requireContext(), ranges.map { it.label }))
         actRange.setText(range.label, false)
         actRange.setOnItemClickListener { _, _, pos, _ ->
@@ -123,9 +123,9 @@ class BillListFragment : Fragment(), TitledScreen {
             refresh()
         }
 
-        // Sort dropdown (menu style: always show every option)
+        // Sort dropdown
         val actSort = view.findViewById<MaterialAutoCompleteTextView>(R.id.actSort)
-        val sorts = Sort.values()
+        val sorts = Sort.entries.toTypedArray()
         actSort.setAdapter(NoFilterAdapter(requireContext(), sorts.map { it.label }))
         actSort.setText(sort.label, false)
         actSort.setOnItemClickListener { _, _, pos, _ ->
@@ -190,18 +190,13 @@ class BillListFragment : Fragment(), TitledScreen {
         }
 
         val item = itemQuery.trim()
-        // A text/item search is a "find anywhere" action, so it looks across the
-        // whole history and ignores the selected date period.
-        val searching = q.isNotEmpty() || item.isNotEmpty()
-
-        val bills = allBills.filter { b ->
         val filtered = allBills.filter { b ->
             val matchesText = q.isEmpty() ||
                 b.billNo.contains(q, true) || b.name.contains(q, true) ||
                 b.date.contains(q, true) || b.time.contains(q, true) ||
                 b.total.contains(q, true)
             val d = parseDate(b.date)
-            val matchesRange = searching || when {
+            val matchesRange = when {
                 cutoff != null -> d != null && !d.before(cutoff)
                 from != null || to != null ->
                     d != null && (from == null || !d.before(from)) && (to == null || !d.after(to))
@@ -262,12 +257,6 @@ class BillListFragment : Fragment(), TitledScreen {
             .commit()
     }
 
-    /**
-     * ArrayAdapter for menu-style dropdowns that never filters its options, so the
-     * full list is shown every time — even after an item is selected. (A plain
-     * ArrayAdapter filters by the field's current text, which would otherwise leave
-     * only the already-selected option visible.)
-     */
     private class NoFilterAdapter(context: android.content.Context, items: List<String>) :
         ArrayAdapter<String>(context, android.R.layout.simple_list_item_1, items.toList()) {
 

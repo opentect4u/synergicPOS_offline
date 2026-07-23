@@ -7,7 +7,6 @@ import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.AppSettingsDao
-import com.example.synergic_pos_offline.database.AppSettingsDao.AppSettings
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
@@ -22,7 +21,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "App Settings"
 
-    private val dao by lazy { AppSettingsDao(requireContext()) }
+    private val dao: AppSettingsDao by lazy { AppSettingsDao(requireContext()) }
 
     private lateinit var swManualRate: SwitchMaterial
     private lateinit var swCashReception: SwitchMaterial
@@ -50,14 +49,14 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         ThemeManager.applyTheme(view)
     }
 
-    private fun bind(s: AppSettings) {
+    private fun bind(s: AppSettingsDao.AppSettings) {
         swManualRate.isChecked = s.manualRate
         swCashReception.isChecked = s.cashReception
         swPaymentMode.isChecked = s.paymentMode
         swOtherCharges.isChecked = s.otherCharges
     }
 
-    private fun collect(): AppSettings = AppSettings(
+    private fun collect(): AppSettingsDao.AppSettings = AppSettingsDao.AppSettings(
         manualRate = swManualRate.isChecked,
         cashReception = swCashReception.isChecked,
         paymentMode = swPaymentMode.isChecked,

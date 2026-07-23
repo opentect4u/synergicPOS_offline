@@ -354,17 +354,25 @@ object ThermalPrinter {
 
     /** The saved printer, or null when none has been set up yet. */
     fun savedConfig(context: Context): Config? {
-        val dao = AppSettingsDao(context)
-        val ip = dao.get(KEY_IP)?.takeIf { it.isNotBlank() } ?: return null
+        val dao = com.example.synergic_pos_offline.database.AppSettingsDao(context)
+        val rawIp: String? = dao.get(KEY_IP)
+        val ip: String = rawIp?.takeIf { it.isNotBlank() } ?: return null
+        
+        val rawPort: String? = dao.get(KEY_PORT)
+        val port: Int = rawPort?.toIntOrNull() ?: DEFAULT_PORT
+        
+        val rawPaper: String? = dao.get(KEY_PAPER_MM)
+        val paperMm: Int = rawPaper?.toIntOrNull() ?: DEFAULT_PAPER_MM
+        
         return Config(
             ip = ip,
-            port = dao.get(KEY_PORT)?.toIntOrNull() ?: DEFAULT_PORT,
-            paperMm = dao.get(KEY_PAPER_MM)?.toIntOrNull() ?: DEFAULT_PAPER_MM
+            port = port,
+            paperMm = paperMm
         )
     }
 
     fun saveConfig(context: Context, config: Config) {
-        val dao = AppSettingsDao(context)
+        val dao = com.example.synergic_pos_offline.database.AppSettingsDao(context)
         dao.put(KEY_IP, config.ip)
         dao.put(KEY_PORT, config.port.toString())
         dao.put(KEY_PAPER_MM, config.paperMm.toString())

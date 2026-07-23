@@ -22,6 +22,7 @@ import com.example.synergic_pos_offline.utils.ApiClient
 import com.example.synergic_pos_offline.utils.NetworkBadge
 import com.example.synergic_pos_offline.utils.NetworkMonitor
 import com.example.synergic_pos_offline.utils.SessionManager
+import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import at.favre.lib.crypto.bcrypt.BCrypt
 import com.google.android.material.textfield.TextInputEditText
@@ -287,6 +288,8 @@ class LoginFragment : Fragment() {
         }
 
         SessionManager.currentUser = user
+        // Cache md_app_settings to local storage, chunked by type (B / T / G / A).
+        SettingsCache.storeFromDb(requireContext())
         val roleText = if (user.role == UserRole.ADMIN) "Admin" else "General User"
         Toast.makeText(requireContext(), "Welcome $roleText!", Toast.LENGTH_SHORT).show()
 

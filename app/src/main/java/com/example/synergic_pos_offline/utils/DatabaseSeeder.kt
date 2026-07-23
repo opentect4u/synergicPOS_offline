@@ -11,6 +11,7 @@ import com.example.synergic_pos_offline.database.CategoryDao
 import com.example.synergic_pos_offline.database.CustomerDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.UnitDao
+import com.example.synergic_pos_offline.database.UserDao
 import java.io.ByteArrayOutputStream
 
 /**
@@ -28,6 +29,9 @@ object DatabaseSeeder {
 
     /** Seeds any of the four master tables that are currently empty. */
     fun seedIfEmpty(context: Context) {
+        ensureRegistration(context)
+        seedUsers(context)
+
         val unitDao = UnitDao(context)
         val categoryDao = CategoryDao(context)
         val customerDao = CustomerDao(context)
@@ -275,4 +279,51 @@ object DatabaseSeeder {
         creditDays = creditDays,
         balance = balance
     )
+
+    private fun ensureRegistration(context: Context) {
+        val db = DatabaseHelper.getInstance(context).writableDatabase
+        val cursor = db.rawQuery("SELECT 1 FROM md_registration WHERE store_id = 1", null)
+        val exists = cursor.use { it.moveToFirst() }
+        if (!exists) {
+            val values = ContentValues().apply {
+                put("store_id", 1)
+                put("store_name", "FRESHMART")
+                put("address", "128 Market Street, Sector 5")
+                put("phone_no", "555-0100")
+                put("store_gstin", "27AABCF1234M1Z9")
+                put("verify_flag", 1)
+                put("registration_dt", "2024-01-01 00:00:00")
+            }
+            db.insertWithOnConflict(DatabaseHelper.Tables.MD_REGISTRATION, null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+
+    private fun seedUsers(context: Context) {
+        val db = DatabaseHelper.getInstance(context).writableDatabase
+        val dao = UserDao(context)
+        val te98Id = dao.idOf("te98")
+        
+        if (te98Id == null) {
+            // Re-adding the default user te98 with password '1234'
+            // We'll insert it manually to ensure store_id = 1
+            val values = ContentValues().apply {
+                put("store_id", 1)
+                put("user_id", "te98")
+                put("password", at.favre.lib.crypto.bcrypt.BCrypt.withDefaults().hashToString(10, "1234".toCharArray()))
+                put("user_name", "Tech User 98")
+                put("phone_no", "9800000000")
+                put("role", "S")
+                put("is_blocked", 0)
+            }
+            db.insert(DatabaseHelper.Tables.MD_USERS, null, values)
+        } else {
+            // Force update password to 1234 and ensure store_id = 1
+            val values = ContentValues().apply {
+                put("store_id", 1)
+                put("password", at.favre.lib.crypto.bcrypt.BCrypt.withDefaults().hashToString(10, "1234".toCharArray()))
+                put("is_blocked", 0)
+            }
+            db.update(DatabaseHelper.Tables.MD_USERS, values, "id=?", arrayOf(te98Id.toString()))
+        }
+    }
 }
