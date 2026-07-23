@@ -8,49 +8,57 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Persists the App Settings as key/value rows in
+ * Persists the General Settings as key/value rows in
  * [DatabaseHelper.Tables.MD_APP_SETTINGS], scoped to the current store.
  *
- * Every row uses setting_type 'A' (app settings). Booleans are stored as "1"/"0".
-
-/**
- * Key/value access to [DatabaseHelper.Tables.MD_APP_SETTINGS].
- *
- * Settings live in the database rather than SharedPreferences so they travel with
- * a restored backup - a till rebuilt from a copy keeps its printer, its store id
- * and everything else it was configured with.
+ * Every row uses setting_type 'G' (general settings). Booleans are stored as "1"/"0".
  */
-class AppSettingsDao(context: Context) {
+class GeneralSettingsDao(context: Context) {
 
     private val helper = DatabaseHelper.getInstance(context)
     private val table = DatabaseHelper.Tables.MD_APP_SETTINGS
 
-    /** The full app-settings configuration with defaults. */
-    data class AppSettings(
-        val manualRate: Boolean = false,
-        val cashReception: Boolean = false,
-        val paymentMode: Boolean = false,
-        val otherCharges: Boolean = false
+    /** Business mode of the app. Persisted as a single-letter [code] (G / R). */
+    enum class Mode(val code: String, val label: String) {
+        GROCERY("G", "Grocery"), RESTAURANT("R", "Restaurant");
+        companion object {
+            /** Accepts the stored code (G/R) or the display label. */
+            fun fromStored(value: String?): Mode? = value?.let { v ->
+                values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
+            }
+        }
+    }
+
+    /** The general-settings configuration with defaults. */
+    data class GeneralSettings(
+        val mode: Mode = Mode.GROCERY,
+        val saleReturn: Boolean = false,
+        val saleReturnDays: Int = 0,
+        val lastBillStatus: Boolean = false,
+        val quantityStatus: Boolean = false
     )
 
-    /** Reads every app setting for the current store, applying defaults. */
-    fun load(): AppSettings {
+    /** Reads every general setting for the current store, applying defaults. */
+    fun load(): GeneralSettings {
         val m = readAll()
-        val d = AppSettings()
-        return AppSettings(
-            manualRate = m[KEY_MANUAL_RATE]?.toBool() ?: d.manualRate,
-            cashReception = m[KEY_CASH_RECEPTION]?.toBool() ?: d.cashReception,
-            paymentMode = m[KEY_PAYMENT_MODE]?.toBool() ?: d.paymentMode,
-            otherCharges = m[KEY_OTHER_CHARGES]?.toBool() ?: d.otherCharges
+        val d = GeneralSettings()
+        return GeneralSettings(
+            mode = Mode.fromStored(m[KEY_MODE]) ?: d.mode,
+            saleReturn = m[KEY_SALE_RETURN]?.toBool() ?: d.saleReturn,
+            saleReturnDays = m[KEY_SALE_RETURN_DAYS]?.toIntOrNull() ?: d.saleReturnDays,
+            lastBillStatus = m[KEY_LAST_BILL_STATUS]?.toBool() ?: d.lastBillStatus,
+            quantityStatus = m[KEY_QUANTITY_STATUS]?.toBool() ?: d.quantityStatus
         )
     }
 
-    /** Writes every app setting for the current store (upsert per key). */
-    fun save(s: AppSettings) {
-        put(KEY_MANUAL_RATE, s.manualRate.b())
-        put(KEY_CASH_RECEPTION, s.cashReception.b())
-        put(KEY_PAYMENT_MODE, s.paymentMode.b())
-        put(KEY_OTHER_CHARGES, s.otherCharges.b())
+    /** Writes every general setting for the current store (upsert per key). When
+     *  Sale Return is off, the days value is stored as 0. */
+    fun save(s: GeneralSettings) {
+        put(KEY_MODE, s.mode.code)
+        put(KEY_SALE_RETURN, s.saleReturn.b())
+        put(KEY_SALE_RETURN_DAYS, if (s.saleReturn) s.saleReturnDays.toString() else "0")
+        put(KEY_LAST_BILL_STATUS, s.lastBillStatus.b())
+        put(KEY_QUANTITY_STATUS, s.quantityStatus.b())
         helper.regroupAppSettingsByType()
     }
 
@@ -72,14 +80,14 @@ class AppSettingsDao(context: Context) {
         return map
     }
 
-    /** Inserts or updates a single setting row for the current store (type 'A'). */
+    /** Inserts or updates a single setting row for the current store (type 'G'). */
     private fun put(name: String, value: String) {
         val db = helper.writableDatabase
         val store = currentStoreId()
         val values = ContentValues().apply {
             put("setting_name", name)
             put("setting_value", value)
-            put("setting_type", "A")
+            put("setting_type", "G")
             put("device_id", currentDeviceId())
             put("modified_at", now())
             put("modified_by", currentUser())
@@ -90,32 +98,6 @@ class AppSettingsDao(context: Context) {
         if (updated == 0) {
             values.put("store_id", store)
             values.put("created_by", currentUser())
-    /** The stored value for [name], or null when unset. */
-    fun get(name: String): String? {
-        helper.readableDatabase.query(
-            table, arrayOf("setting_value"),
-            "setting_name = ?", arrayOf(name), null, null, "id DESC", "1"
-        ).use { c ->
-            if (c.moveToFirst()) return c.getString(0)
-        }
-        return null
-    }
-
-    /** Writes [value] against [name], replacing any existing entry. */
-    fun put(name: String, value: String) {
-        val db = helper.writableDatabase
-        val values = ContentValues().apply {
-            put("store_id", currentStoreId())
-            put("outlet_id", 0)
-            put("setting_name", name)
-            put("setting_value", value)
-            // 'T' is the text kind in the schema's setting_type check.
-            put("setting_type", "T")
-            put("modified_by", SessionManager.currentUser?.userId)
-        }
-        val updated = db.update(table, values, "setting_name = ?", arrayOf(name))
-        if (updated == 0) {
-            values.put("created_by", SessionManager.currentUser?.userId)
             db.insert(table, null, values)
         }
     }
@@ -149,9 +131,10 @@ class AppSettingsDao(context: Context) {
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
     private companion object {
-        const val KEY_MANUAL_RATE = "Manual Rate"
-        const val KEY_CASH_RECEPTION = "Cash Reception"
-        const val KEY_PAYMENT_MODE = "Payment Mode"
-        const val KEY_OTHER_CHARGES = "Other Charges"
+        const val KEY_MODE = "Mode"
+        const val KEY_SALE_RETURN = "Sale Return"
+        const val KEY_SALE_RETURN_DAYS = "Sale Return Days"
+        const val KEY_LAST_BILL_STATUS = "Last Bill Status"
+        const val KEY_QUANTITY_STATUS = "Quantity Status"
     }
 }

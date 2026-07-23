@@ -81,6 +81,51 @@ object DialogUtils {
         centerWindow(dialog)
     }
 
+    /** Shows a single-button informational dialog (e.g. "Saved successfully"). */
+    fun showSuccess(
+        context: Context,
+        title: String = "Success",
+        message: String,
+        buttonText: String = "OK",
+        iconRes: Int? = R.drawable.ic_check,
+        onDismiss: () -> Unit = {}
+    ) {
+        val view = LayoutInflater.from(context).inflate(R.layout.dialog_common, null)
+        val dialog = AlertDialog.Builder(context).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val accent = ThemeManager.getThemeColor(context)
+
+        val ivIcon = view.findViewById<ImageView>(R.id.ivDialogIcon)
+        val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
+        val tvMessage = view.findViewById<TextView>(R.id.tvDialogMessage)
+        val btnPositive = view.findViewById<MaterialButton>(R.id.btnDialogPositive)
+        val btnNegative = view.findViewById<MaterialButton>(R.id.btnDialogNegative)
+
+        if (iconRes != null) {
+            ivIcon.setImageResource(iconRes)
+            ivIcon.imageTintList = ColorStateList.valueOf(accent)
+            ivIcon.visibility = android.view.View.VISIBLE
+        } else {
+            ivIcon.visibility = android.view.View.GONE
+        }
+
+        tvTitle.text = title
+        tvMessage.text = message
+        btnNegative.visibility = android.view.View.GONE
+        btnPositive.text = buttonText
+        btnPositive.backgroundTintList = ColorStateList.valueOf(accent)
+
+        btnPositive.setOnClickListener {
+            dialog.dismiss()
+            onDismiss()
+        }
+        dialog.setOnCancelListener { onDismiss() }
+
+        dialog.show()
+        centerWindow(dialog)
+    }
+
     /** A single labelled input field for [showForm]. */
     data class FormField(
         val label: String,

@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_light"
+    android:scrollbars="none">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="14dp">
+
+        <!-- ============ DISCOUNT ============ -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView android:id="@+id/tvDiscountHeader"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="DISCOUNT" android:textSize="12sp" android:letterSpacing="0.08"
+                    android:textStyle="bold" android:textColor="@color/primary_blue" />
+
+                <!-- Discount Type master toggle -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Discount Type" />
+                        <TextView style="@style/BillSettingSub" android:text="Enable discounts on bills and items" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swDiscount" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <!-- Discount options (shown only when Discount Type is ON) -->
+                <LinearLayout
+                    android:id="@+id/llDiscountOptions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <View style="@style/BillSettingDivider" />
+
+                    <TextView style="@style/BillSettingTitle" android:text="Discount type"
+                        android:layout_marginTop="14dp" />
+                    <TextView style="@style/BillSettingSub" android:text="Choose one discount type" />
+
+                    <RadioGroup
+                        android:id="@+id/rgDiscountType"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:layout_marginTop="4dp">
+
+                        <RadioButton android:id="@+id/rbTypeItemPct" style="@style/BillSettingRadio"
+                            android:text="Item wise discount in %" />
+                        <RadioButton android:id="@+id/rbTypeItemAmt" style="@style/BillSettingRadio"
+                            android:text="Item wise discount in amount" />
+                        <RadioButton android:id="@+id/rbTypeBillPct" style="@style/BillSettingRadio"
+                            android:text="Bill wise discount in %" />
+                        <RadioButton android:id="@+id/rbTypeBillAmt" style="@style/BillSettingRadio"
+                            android:text="Bill wise discount in amount" />
+                    </RadioGroup>
+
+                    <View style="@style/BillSettingDivider" />
+
+                    <TextView style="@style/BillSettingTitle" android:text="Discount position"
+                        android:layout_marginTop="14dp" />
+                    <TextView style="@style/BillSettingSub"
+                        android:text="Required when discount is on — choose one" />
+
+                    <RadioGroup
+                        android:id="@+id/rgDiscountPosition"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:layout_marginTop="4dp">
+
+                        <RadioButton android:id="@+id/rbPosItemPre" style="@style/BillSettingRadio"
+                            android:text="Item wise pre-tax discount" />
+                        <RadioButton android:id="@+id/rbPosItemPost" style="@style/BillSettingRadio"
+                            android:text="Item wise post-tax discount" />
+                        <RadioButton android:id="@+id/rbPosBillPre" style="@style/BillSettingRadio"
+                            android:text="Bill wise pre-tax discount" />
+                        <RadioButton android:id="@+id/rbPosBillPost" style="@style/BillSettingRadio"
+                            android:text="Bill wise post-tax discount" />
+                    </RadioGroup>
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ============ TAX ============ -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView android:id="@+id/tvTaxHeader"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="TAX" android:textSize="12sp" android:letterSpacing="0.08"
+                    android:textStyle="bold" android:textColor="@color/primary_blue" />
+
+                <TextView style="@style/BillSettingSub"
+                    android:text="Only one of GST / IGST / VAT can be active at a time" />
+
+                <!-- GST -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="GST" />
+                        <TextView style="@style/BillSettingSub" android:text="Turning GST on switches IGST and VAT off" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swGst" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <!-- GST mode (shown only when GST is ON) -->
+                <RadioGroup
+                    android:id="@+id/rgGstMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginStart="4dp"
+                    android:visibility="gone">
+
+                    <RadioButton android:id="@+id/rbExclusive" style="@style/BillSettingRadio"
+                        android:layout_width="wrap_content" android:text="Exclusive" />
+                    <RadioButton android:id="@+id/rbInclusive" style="@style/BillSettingRadio"
+                        android:layout_width="wrap_content" android:layout_marginStart="24dp" android:text="Inclusive" />
+                </RadioGroup>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- IGST -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="IGST" />
+                        <TextView style="@style/BillSettingSub" android:text="Turning IGST on switches GST and VAT off" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swIgst" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- VAT -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="VAT" />
+                        <TextView style="@style/BillSettingSub" android:text="Turning VAT on switches GST and IGST off" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swVat" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSaveTax"
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:layout_marginTop="16dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minHeight="0dp"
+            android:text="Save Settings"
+            android:textSize="16sp"
+            android:textColor="@color/white"
+            app:cornerRadius="12dp" />
+
+    </LinearLayout>
+</ScrollView>

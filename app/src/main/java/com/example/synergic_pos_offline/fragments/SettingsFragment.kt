@@ -40,6 +40,7 @@ class SettingsFragment : Fragment() {
             SettingsItem("General Settings", android.R.drawable.ic_menu_preferences, R.color.menu_settings, R.color.menu_settings_icon),
             SettingsItem("Bill Settings", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon),
             SettingsItem("Tax Settings", android.R.drawable.ic_menu_sort_by_size, R.color.menu_report, R.color.menu_report_icon),
+           // SettingsItem("Inventory & Stock Settings", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon),
             SettingsItem("Inventory & Stock Settings", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon),
             // The old md_printer picker's tile is hidden (kept, not deleted, in case it's
             // needed again) - "Operating Printer" now takes over the "Printer Settings" name
@@ -49,6 +50,15 @@ class SettingsFragment : Fragment() {
         )
 
         rvSettings.adapter = SettingsAdapter(settingsItems) { item ->
+            val fragment: Fragment? = when (item.title) {
+                "General Settings" -> GeneralSettingsFragment()
+                "Bill Settings" -> BillSettingsFragment()
+                "Tax Settings" -> TaxSettingsFragment()
+                "App Settings" -> AppSettingsFragment()
+                else -> null
+            }
+            if (fragment != null) openFragment(fragment)
+            else Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             when (item.key) {
                 "Printer Settings" -> openFragment(PrinterSettingsFragment())
                 "Operating Printer" -> openFragment(OperatingPrinterFragment())

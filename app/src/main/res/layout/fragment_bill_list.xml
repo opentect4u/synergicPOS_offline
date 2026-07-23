@@ -242,29 +242,75 @@
         </com.google.android.material.textfield.TextInputLayout>
     </LinearLayout>
 
-    <FrameLayout
+    <!-- Table card (data-table design format) -->
+    <com.google.android.material.card.MaterialCardView
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_weight="1"
+        android:layout_margin="12dp"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="2dp"
+        app:cardBackgroundColor="@color/white">
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rvBills"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:paddingVertical="8dp"
-            android:clipToPadding="false"
-            android:scrollbars="vertical"
-            tools:listitem="@layout/item_bill_row" />
+            android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tvEmpty"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:text="No bills found"
-            android:textColor="@color/text_secondary"
-            android:textSize="17sp"
-            android:visibility="gone" />
-    </FrameLayout>
+            <!-- Column header -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="#F1F3F4"
+                android:paddingStart="12dp"
+                android:paddingEnd="8dp"
+                android:paddingVertical="12dp">
+
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.8" android:text="Bill No"
+                    android:textStyle="bold" android:textSize="14sp" android:textColor="@color/text_secondary" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1.5" android:text="Customer"
+                    android:textStyle="bold" android:textSize="14sp" android:textColor="@color/text_secondary" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:text="Date"
+                    android:textStyle="bold" android:textSize="14sp" android:textColor="@color/text_secondary" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="0.7" android:text="Time"
+                    android:textStyle="bold" android:textSize="14sp" android:textColor="@color/text_secondary" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:text="Amount" android:gravity="end"
+                    android:textStyle="bold" android:textSize="14sp" android:textColor="@color/text_secondary" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp" android:minWidth="64dp" android:text="Action" android:gravity="center"
+                    android:textStyle="bold" android:textSize="14sp" android:textColor="@color/text_secondary" />
+            </LinearLayout>
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rvBills"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:scrollbars="vertical"
+                    tools:listitem="@layout/item_bill_row" />
+
+                <TextView
+                    android:id="@+id/tvEmpty"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:text="No bills found"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="17sp"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
 
 </LinearLayout>

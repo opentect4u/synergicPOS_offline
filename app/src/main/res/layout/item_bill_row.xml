@@ -1,84 +1,87 @@
 <?xml version="1.0" encoding="utf-8"?>
-<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginHorizontal="12dp"
-    android:layout_marginVertical="6dp"
-    app:cardCornerRadius="14dp"
-    app:cardElevation="2dp"
-    app:cardBackgroundColor="@color/white">
+    android:orientation="vertical">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:padding="16dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="8dp"
+        android:paddingVertical="14dp">
 
-        <!-- Bill summary -->
-        <LinearLayout
+        <TextView
+            android:id="@+id/tvRowBillNo"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="0.8"
+            android:text="3"
+            android:textStyle="bold"
+            android:textSize="15sp"
+            android:textColor="@color/text_main" />
+
+        <TextView
+            android:id="@+id/tvRowName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1.5"
+            android:text="SOMNATH"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textSize="15sp"
+            android:textColor="@color/text_main" />
+
+        <TextView
+            android:id="@+id/tvRowDate"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:orientation="vertical">
+            android:text="17-07-2026"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary" />
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
+        <TextView
+            android:id="@+id/tvRowTime"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="0.7"
+            android:text="13:18"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary" />
 
-                <TextView
-                    android:id="@+id/tvRowBillNo"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Bill No: 3"
-                    android:textStyle="bold"
-                    android:textSize="16sp"
-                    android:textColor="@color/text_main" />
+        <TextView
+            android:id="@+id/tvRowAmount"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="₹ 962.50"
+            android:gravity="end"
+            android:textStyle="bold"
+            android:textSize="15sp"
+            android:textColor="@color/text_main" />
 
-                <TextView
-                    android:id="@+id/tvRowAmount"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="₹ 962.50"
-                    android:textStyle="bold"
-                    android:textSize="16sp"
-                    android:textColor="@color/text_main" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/tvRowName"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
-                android:text="SOMNATH"
-                android:maxLines="1"
-                android:ellipsize="end"
-                android:textSize="14sp"
-                android:textColor="@color/text_secondary" />
-
-            <TextView
-                android:id="@+id/tvRowDateTime"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="1dp"
-                android:text="17-07-2026  13:18"
-                android:textSize="12sp"
-                android:textColor="@color/text_secondary" />
-        </LinearLayout>
-
-        <!-- View action -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnViewBill"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="10dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingHorizontal="14dp"
             android:text="View"
-            app:icon="@android:drawable/ic_menu_view"
+            android:textSize="13sp"
             app:cornerRadius="10dp" />
     </LinearLayout>
-</com.google.android.material.card.MaterialCardView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#EEEEEE" />
+</LinearLayout>

@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.database
 
 import android.content.Context
+import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
@@ -24,6 +25,52 @@ class DatabaseHelper private constructor(context: Context) :
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
         if (!db.isReadOnly) db.setForeignKeyConstraintsEnabled(true)
+    }
+
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        // Non-destructive migrations for existing databases (no version bump / data loss).
+        addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
+    }
+
+    /**
+     * Physically re-writes [Tables.MD_APP_SETTINGS] so its rows are stored grouped
+     * by setting_type (then setting_name). New auto ids are assigned in that order,
+     * so a plain `SELECT *` (e.g. in the DB Inspector) shows the rows grouped.
+     */
+    fun regroupAppSettingsByType() {
+        val db = writableDatabase
+        val table = Tables.MD_APP_SETTINGS
+        db.beginTransaction()
+        try {
+            val rows = mutableListOf<ContentValues>()
+            db.query(table, null, null, null, null, null, "setting_type ASC, setting_name ASC").use { c ->
+                while (c.moveToNext()) {
+                    val cv = ContentValues()
+                    android.database.DatabaseUtils.cursorRowToContentValues(c, cv)
+                    cv.remove("id")   // let AUTOINCREMENT assign fresh ids in order
+                    rows.add(cv)
+                }
+            }
+            if (rows.isEmpty()) { db.setTransactionSuccessful(); return }
+            db.delete(table, null, null)
+            db.execSQL("DELETE FROM sqlite_sequence WHERE name = ?", arrayOf(table))
+            rows.forEach { db.insert(table, null, it) }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Adds [column] to [table] if it isn't already present, leaving data intact. */
+    private fun addColumnIfMissing(db: SQLiteDatabase, table: String, column: String, type: String) {
+        val exists = db.rawQuery("PRAGMA table_info($table)", null).use { c ->
+            val nameIdx = c.getColumnIndex("name")
+            generateSequence { if (c.moveToNext()) c.getString(nameIdx) else null }.any { it == column }
+        }
+        if (!exists) {
+            db.execSQL("ALTER TABLE $table ADD COLUMN $column $type")
+        }
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -556,6 +603,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
+        private const val DATABASE_VERSION = 6
         // v6 adds md_printer; v7 adds its printer_ip column; v8 imports the printer
         // address saved by the old settings flow; v9 adds paper_mm and imports the
         // saved paper width; v10 adds is_selected and BLUETOOTH/USB rows per purpose;
@@ -824,6 +872,7 @@ class DatabaseHelper private constructor(context: Context) :
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 store_id INTEGER,
                 outlet_id INTEGER,
+                device_id TEXT,
                 setting_name TEXT,
                 setting_value TEXT,
                 setting_type TEXT CHECK(setting_type IN ('G','B','T','I','A')),
