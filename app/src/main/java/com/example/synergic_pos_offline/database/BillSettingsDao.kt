@@ -119,6 +119,7 @@ class BillSettingsDao(context: Context) {
         put(KEY_CUSTOMER_ADDRESS_PRINTING, if (s.customerAddressPrinting) "1" else "0")
         put(KEY_TOTAL_FONT_SIZE, s.totalAmountFontSize.code)
         put(KEY_BILL_FORMAT, s.billFormat.code)
+        helper.regroupAppSettingsByType()
     }
 
     /** True if any bill exists (used to warn before changing the start bill no). */
@@ -152,12 +153,12 @@ class BillSettingsDao(context: Context) {
     // ---- Low-level key/value access ----------------------------------------
 
     private fun readAll(): Map<String, String> {
-        val map = hashMapOf<String, String>()
+        val map = linkedMapOf<String, String>()
         val store = currentStoreId()
         val (where, args) = if (store != null) "store_id=?" to arrayOf(store.toString()) else null to null
         helper.readableDatabase.query(
             table, arrayOf("setting_name", "setting_value"),
-            where, args, null, null, null
+            where, args, null, null, "setting_type ASC, setting_name ASC"
         ).use { c ->
             while (c.moveToNext()) {
                 val name = c.getString(0) ?: continue

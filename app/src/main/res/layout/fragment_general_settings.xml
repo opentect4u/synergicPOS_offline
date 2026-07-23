@@ -176,6 +176,18 @@
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swLastBillStatus" style="@style/BillSettingSwitch" />
                 </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Quantity Status -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Quantity Status" />
+                        <TextView style="@style/BillSettingSub" android:text="Show item quantity status while billing" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swQuantityStatus" style="@style/BillSettingSwitch" />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

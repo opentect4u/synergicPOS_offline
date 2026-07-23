@@ -44,17 +44,18 @@ class AppSettingsDao(context: Context) {
         put(KEY_CASH_RECEPTION, s.cashReception.b())
         put(KEY_PAYMENT_MODE, s.paymentMode.b())
         put(KEY_OTHER_CHARGES, s.otherCharges.b())
+        helper.regroupAppSettingsByType()
     }
 
     // ---- Low-level key/value access ----------------------------------------
 
     private fun readAll(): Map<String, String> {
-        val map = hashMapOf<String, String>()
+        val map = linkedMapOf<String, String>()
         val store = currentStoreId()
         val (where, args) = if (store != null) "store_id=?" to arrayOf(store.toString()) else null to null
         helper.readableDatabase.query(
             table, arrayOf("setting_name", "setting_value"),
-            where, args, null, null, null
+            where, args, null, null, "setting_type ASC, setting_name ASC"
         ).use { c ->
             while (c.moveToNext()) {
                 val name = c.getString(0) ?: continue

@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.database
 
 import android.content.Context
+import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
@@ -21,6 +22,35 @@ class DatabaseHelper private constructor(context: Context) :
         super.onOpen(db)
         // Non-destructive migrations for existing databases (no version bump / data loss).
         addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
+    }
+
+    /**
+     * Physically re-writes [Tables.MD_APP_SETTINGS] so its rows are stored grouped
+     * by setting_type (then setting_name). New auto ids are assigned in that order,
+     * so a plain `SELECT *` (e.g. in the DB Inspector) shows the rows grouped.
+     */
+    fun regroupAppSettingsByType() {
+        val db = writableDatabase
+        val table = Tables.MD_APP_SETTINGS
+        db.beginTransaction()
+        try {
+            val rows = mutableListOf<ContentValues>()
+            db.query(table, null, null, null, null, null, "setting_type ASC, setting_name ASC").use { c ->
+                while (c.moveToNext()) {
+                    val cv = ContentValues()
+                    android.database.DatabaseUtils.cursorRowToContentValues(c, cv)
+                    cv.remove("id")   // let AUTOINCREMENT assign fresh ids in order
+                    rows.add(cv)
+                }
+            }
+            if (rows.isEmpty()) { db.setTransactionSuccessful(); return }
+            db.delete(table, null, null)
+            db.execSQL("DELETE FROM sqlite_sequence WHERE name = ?", arrayOf(table))
+            rows.forEach { db.insert(table, null, it) }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
     }
 
     /** Adds [column] to [table] if it isn't already present, leaving data intact. */

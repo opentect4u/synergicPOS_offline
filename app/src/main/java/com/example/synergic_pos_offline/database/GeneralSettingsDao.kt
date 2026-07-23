@@ -34,7 +34,8 @@ class GeneralSettingsDao(context: Context) {
         val mode: Mode = Mode.GROCERY,
         val saleReturn: Boolean = false,
         val saleReturnDays: Int = 0,
-        val lastBillStatus: Boolean = false
+        val lastBillStatus: Boolean = false,
+        val quantityStatus: Boolean = false
     )
 
     /** Reads every general setting for the current store, applying defaults. */
@@ -45,7 +46,8 @@ class GeneralSettingsDao(context: Context) {
             mode = Mode.fromStored(m[KEY_MODE]) ?: d.mode,
             saleReturn = m[KEY_SALE_RETURN]?.toBool() ?: d.saleReturn,
             saleReturnDays = m[KEY_SALE_RETURN_DAYS]?.toIntOrNull() ?: d.saleReturnDays,
-            lastBillStatus = m[KEY_LAST_BILL_STATUS]?.toBool() ?: d.lastBillStatus
+            lastBillStatus = m[KEY_LAST_BILL_STATUS]?.toBool() ?: d.lastBillStatus,
+            quantityStatus = m[KEY_QUANTITY_STATUS]?.toBool() ?: d.quantityStatus
         )
     }
 
@@ -56,17 +58,19 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_SALE_RETURN, s.saleReturn.b())
         put(KEY_SALE_RETURN_DAYS, if (s.saleReturn) s.saleReturnDays.toString() else "0")
         put(KEY_LAST_BILL_STATUS, s.lastBillStatus.b())
+        put(KEY_QUANTITY_STATUS, s.quantityStatus.b())
+        helper.regroupAppSettingsByType()
     }
 
     // ---- Low-level key/value access ----------------------------------------
 
     private fun readAll(): Map<String, String> {
-        val map = hashMapOf<String, String>()
+        val map = linkedMapOf<String, String>()
         val store = currentStoreId()
         val (where, args) = if (store != null) "store_id=?" to arrayOf(store.toString()) else null to null
         helper.readableDatabase.query(
             table, arrayOf("setting_name", "setting_value"),
-            where, args, null, null, null
+            where, args, null, null, "setting_type ASC, setting_name ASC"
         ).use { c ->
             while (c.moveToNext()) {
                 val name = c.getString(0) ?: continue
@@ -131,5 +135,6 @@ class GeneralSettingsDao(context: Context) {
         const val KEY_SALE_RETURN = "Sale Return"
         const val KEY_SALE_RETURN_DAYS = "Sale Return Days"
         const val KEY_LAST_BILL_STATUS = "Last Bill Status"
+        const val KEY_QUANTITY_STATUS = "Quantity Status"
     }
 }
