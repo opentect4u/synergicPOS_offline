@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.example.synergic_pos_offline.database.AppSettingsDao
+import com.example.synergic_pos_offline.database.OperatingPrinterDao
 import com.example.synergic_pos_offline.database.PrinterDao
 import java.util.concurrent.Executors
 import print.Print
@@ -316,11 +317,14 @@ object ThermalPrinter {
     private const val DEFAULT_PAPER_MM = 80
 
     /**
-     * The printer configured for a purpose (BILL / KOT / OTHERS) in md_printer,
-     * or null when that slot has no address yet. The saved paper width flows through
-     * here, so a slip prints scaled to whatever width that printer is set to.
+     * The printer to send [purpose] to: the printer marked default in
+     * md_operating_printer for that purpose's flag (B for BILL, K for KOT) if one
+     * is set, otherwise the legacy md_printer selection for that purpose, or null
+     * when neither has an address yet. The saved paper width flows through here,
+     * so a slip prints scaled to whatever width that printer is set to.
      */
     fun configForPurpose(context: Context, purpose: String): Config? {
+        operatingDefaultConfig(context, purpose)?.let { return it }
         val printer = PrinterDao(context).get(purpose) ?: return null
         val address = printer.ip?.takeIf { it.isNotBlank() } ?: return null
         return Config(
@@ -328,6 +332,23 @@ object ThermalPrinter {
             port = DEFAULT_PORT,
             paperMm = printer.paperMm ?: DEFAULT_PAPER_MM,
             connection = printer.type.uppercase()
+        )
+    }
+
+    /** The Operating Printer screen's default row for [purpose]'s flag, if fully configured. */
+    private fun operatingDefaultConfig(context: Context, purpose: String): Config? {
+        val flag = OperatingPrinterDao.flagFor(purpose)
+        if (flag.isEmpty()) return null
+        val printer = OperatingPrinterDao(context).getDefault(flag) ?: return null
+        val type = printer.printerType?.takeIf { it.isNotBlank() } ?: return null
+        // USB has no address to open a socket against yet.
+        if (type.equals("USB", ignoreCase = true)) return null
+        val address = printer.value?.takeIf { it.isNotBlank() } ?: return null
+        return Config(
+            ip = address,
+            port = DEFAULT_PORT,
+            paperMm = printer.paperMm,
+            connection = type.uppercase()
         )
     }
 

@@ -86,6 +86,7 @@ class DatabaseHelper private constructor(context: Context) :
             if (oldVersion < 10) migrateV10AddPrinterTypes(db)
             if (oldVersion < 11) migrateV11AddOperatingPrinterTable(db)
             if (oldVersion < 12) migrateV12AddOperatingPrinterDefaultFlag(db)
+            if (oldVersion < 13) migrateV13AddOperatingPrinterPaperWidth(db)
             return
         }
 
@@ -176,6 +177,15 @@ class DatabaseHelper private constructor(context: Context) :
     /** v12: adds default_flag to md_operating_printer, marking the default printer. */
     private fun migrateV12AddOperatingPrinterDefaultFlag(db: SQLiteDatabase) {
         db.execSQL("ALTER TABLE ${Tables.MD_OPERATING_PRINTER} ADD COLUMN default_flag INTEGER DEFAULT 0")
+    }
+
+    /**
+     * v13: adds paper_mm to md_operating_printer - 58 (2 inch) or 80 (3 inch) -
+     * so each named printer carries its own paper width instead of borrowing
+     * whatever md_printer's connection row happens to have.
+     */
+    private fun migrateV13AddOperatingPrinterPaperWidth(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE ${Tables.MD_OPERATING_PRINTER} ADD COLUMN paper_mm INTEGER DEFAULT 80")
     }
 
     /** Ensures every purpose has a BLUETOOTH and a USB option (unselected). */
@@ -549,8 +559,9 @@ class DatabaseHelper private constructor(context: Context) :
         // v6 adds md_printer; v7 adds its printer_ip column; v8 imports the printer
         // address saved by the old settings flow; v9 adds paper_mm and imports the
         // saved paper width; v10 adds is_selected and BLUETOOTH/USB rows per purpose;
-        // v11 adds md_operating_printer; v12 adds its default_flag column.
-        private const val DATABASE_VERSION = 12
+        // v11 adds md_operating_printer; v12 adds its default_flag column; v13 adds
+        // its own paper_mm column (58/80, independent of md_printer's).
+        private const val DATABASE_VERSION = 13
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of
@@ -883,7 +894,8 @@ class DatabaseHelper private constructor(context: Context) :
                 printer TEXT,
                 value TEXT,
                 print_flag INTEGER DEFAULT 0,
-                default_flag INTEGER DEFAULT 0
+                default_flag INTEGER DEFAULT 0,
+                paper_mm INTEGER DEFAULT 80
             )
         """
 
