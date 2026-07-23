@@ -12,6 +12,13 @@ import java.util.Locale
  * [DatabaseHelper.Tables.MD_APP_SETTINGS], scoped to the current store.
  *
  * Every row uses setting_type 'A' (app settings). Booleans are stored as "1"/"0".
+
+/**
+ * Key/value access to [DatabaseHelper.Tables.MD_APP_SETTINGS].
+ *
+ * Settings live in the database rather than SharedPreferences so they travel with
+ * a restored backup - a till rebuilt from a copy keeps its printer, its store id
+ * and everything else it was configured with.
  */
 class AppSettingsDao(context: Context) {
 
@@ -83,6 +90,32 @@ class AppSettingsDao(context: Context) {
         if (updated == 0) {
             values.put("store_id", store)
             values.put("created_by", currentUser())
+    /** The stored value for [name], or null when unset. */
+    fun get(name: String): String? {
+        helper.readableDatabase.query(
+            table, arrayOf("setting_value"),
+            "setting_name = ?", arrayOf(name), null, null, "id DESC", "1"
+        ).use { c ->
+            if (c.moveToFirst()) return c.getString(0)
+        }
+        return null
+    }
+
+    /** Writes [value] against [name], replacing any existing entry. */
+    fun put(name: String, value: String) {
+        val db = helper.writableDatabase
+        val values = ContentValues().apply {
+            put("store_id", currentStoreId())
+            put("outlet_id", 0)
+            put("setting_name", name)
+            put("setting_value", value)
+            // 'T' is the text kind in the schema's setting_type check.
+            put("setting_type", "T")
+            put("modified_by", SessionManager.currentUser?.userId)
+        }
+        val updated = db.update(table, values, "setting_name = ?", arrayOf(name))
+        if (updated == 0) {
+            values.put("created_by", SessionManager.currentUser?.userId)
             db.insert(table, null, values)
         }
     }

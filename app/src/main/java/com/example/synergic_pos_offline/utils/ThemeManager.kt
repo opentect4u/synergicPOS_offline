@@ -115,8 +115,12 @@ object ThemeManager {
             is TextView -> if (name != null) {
                 if (name.endsWith("Header") || name == "tvForgot" || name == "tvSelectionCount") {
                     view.setTextColor(color)
-                } else if (name == "tvGrandTotal" || name == "tvTotal" || name == "tvLeftTotal" || name == "tvAmountDue") {
-                    // These are on dark teal backgrounds, so keep them white
+                } else if (name == "tvTotal" || name == "tvLeftTotal" || name == "tvAmountDue") {
+                    // These are on dark teal backgrounds, so keep them white.
+                    // NOTE: matching is by resource name alone, so it hits *every*
+                    // layout that reuses the id. Only list ids that are unique to a
+                    // dark-background screen - a name shared with a light layout
+                    // paints white-on-white there and the text vanishes.
                     view.setTextColor(Color.WHITE)
                 }
             }

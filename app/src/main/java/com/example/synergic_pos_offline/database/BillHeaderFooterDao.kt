@@ -17,12 +17,19 @@ class BillHeaderFooterDao(context: Context) {
 
     enum class Section { HEADER, FOOTER }
 
-    /** Allowed font sizes, paired with a human label for the dropdown. */
-    enum class FontSize(val stored: String, val label: String) {
-        SMALL("SMALL", "Small"),
-        MEDIUM("MEDIUM", "Medium"),
-        BIG("BIG", "Big"),
-        EXTRA_LARGE("EXTRA_LARGE", "Extra Large");
+    /**
+     * Allowed font sizes, paired with a human label for the dropdown and the point
+     * size they print at.
+     *
+     * [sp] lives here rather than in whatever is drawing the line, so the receipt,
+     * a print preview and any future kitchen ticket all render a MEDIUM header at
+     * the same size. MEDIUM matches the receipt's body text; the rest step around it.
+     */
+    enum class FontSize(val stored: String, val label: String, val sp: Float) {
+        SMALL("SMALL", "Small", 10f),
+        MEDIUM("MEDIUM", "Medium", 12f),
+        BIG("BIG", "Big", 15f),
+        EXTRA_LARGE("EXTRA_LARGE", "Extra Large", 19f);
 
         companion object {
             fun fromStored(v: String?): FontSize =

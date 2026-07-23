@@ -22,7 +22,7 @@
             android:paddingHorizontal="18dp">
 
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="FRESHMART" android:textSize="17sp" android:textStyle="bold" android:textColor="@color/text_main" />
+                android:text="SYNERGIC POS" android:textSize="17sp" android:textStyle="bold" android:textColor="@color/text_main" />
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:text="POS TERMINAL" android:textSize="9sp" android:letterSpacing="0.2" android:textColor="@color/primary_blue" />
         </LinearLayout>
@@ -72,7 +72,7 @@
 
         <LinearLayout style="@style/PosHeaderCell">
             <TextView style="@style/PosHeaderLabel" android:text="Checkout · Order" />
-            <TextView android:id="@+id/tvOrder" style="@style/PosHeaderValue" android:text="#1042" />
+            <TextView android:id="@+id/tvOrder" style="@style/PosHeaderValue" android:text="INV-000001" />
         </LinearLayout>
 
         <View android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
@@ -120,7 +120,7 @@
                     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="BILL PREVIEW" android:textSize="10sp" android:letterSpacing="0.12"
                         android:textColor="@color/primary_blue" />
-                    <TextView android:id="@+id/tvItemCount" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="Review &amp; edit" android:textSize="18sp" android:textStyle="bold" android:textColor="@color/text_main" />
                 </LinearLayout>
 
@@ -201,6 +201,15 @@
                                     android:text="Walk-in" android:textSize="11sp" android:textColor="@color/text_secondary" />
                             </LinearLayout>
 
+                            <ImageButton
+                                android:id="@+id/btnCustInfo"
+                                android:layout_width="38dp"
+                                android:layout_height="38dp"
+                                android:layout_marginEnd="6dp"
+                                android:background="?attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="Customer details"
+                                android:src="@android:drawable/ic_dialog_info" />
+
                             <TextView style="@style/PosHint" android:text="GST · 5%" />
                         </LinearLayout>
 
@@ -213,7 +222,7 @@
                             android:layout_height="wrap_content"
                             android:orientation="vertical" />
 
-                        <!-- Add line -->
+                        <!-- Add line: type a product name, pick from the dropdown -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -223,54 +232,24 @@
 
                             <com.google.android.material.textfield.TextInputLayout
                                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
-                                android:layout_width="0dp"
+                                android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:hint="Add item — name"
+                                android:hint="Add item — type a product name"
+                                app:startIconDrawable="@android:drawable/ic_menu_search"
                                 app:boxCornerRadiusTopStart="10dp"
                                 app:boxCornerRadiusTopEnd="10dp"
                                 app:boxCornerRadiusBottomStart="10dp"
                                 app:boxCornerRadiusBottomEnd="10dp">
 
-                                <com.google.android.material.textfield.TextInputEditText
-                                    android:id="@+id/etAddName"
+                                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                                    android:id="@+id/actAddItem"
                                     android:layout_width="match_parent"
                                     android:layout_height="wrap_content"
+                                    android:completionThreshold="1"
+                                    android:imeOptions="actionSearch"
+                                    android:inputType="text"
                                     android:maxLines="1" />
                             </com.google.android.material.textfield.TextInputLayout>
-
-                            <com.google.android.material.textfield.TextInputLayout
-                                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
-                                android:layout_width="96dp"
-                                android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:hint="Price"
-                                app:prefixText="₹"
-                                app:boxCornerRadiusTopStart="10dp"
-                                app:boxCornerRadiusTopEnd="10dp"
-                                app:boxCornerRadiusBottomStart="10dp"
-                                app:boxCornerRadiusBottomEnd="10dp">
-
-                                <com.google.android.material.textfield.TextInputEditText
-                                    android:id="@+id/etAddPrice"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:inputType="numberDecimal"
-                                    android:gravity="end"
-                                    android:maxLines="1" />
-                            </com.google.android.material.textfield.TextInputLayout>
-
-                            <com.google.android.material.button.MaterialButton
-                                android:id="@+id/btnAddLine"
-                                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                                android:layout_width="wrap_content"
-                                android:layout_height="44dp"
-                                android:layout_marginStart="8dp"
-                                android:insetTop="0dp"
-                                android:insetBottom="0dp"
-                                android:minHeight="0dp"
-                                android:text="Add"
-                                app:cornerRadius="10dp" />
                         </LinearLayout>
 
                         <View android:layout_width="match_parent" android:layout_height="2dp" android:background="#E0E0E0" />
@@ -301,7 +280,7 @@
                             android:padding="24dp">
 
                             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:text="FRESHMART" android:gravity="center" android:fontFamily="monospace"
+                                android:text="SYNERGIC POS" android:gravity="center" android:fontFamily="monospace"
                                 android:textStyle="bold" android:textSize="20sp" android:textColor="@color/text_main" />
                             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                                 android:text="128 Market Street · Sector 5\nGSTIN 27AABCF1234M1Z9 · Tel 555-0100"
@@ -394,6 +373,16 @@
                         <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                             android:text="GST (5%)" android:textSize="13sp" android:textColor="@color/text_secondary" />
                         <TextView android:id="@+id/tvTax" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="₹0.00" android:fontFamily="monospace" android:textSize="13sp" android:textColor="@color/text_main" />
+                    </LinearLayout>
+
+                    <!-- Round off, shown only when the bill needs one -->
+                    <LinearLayout android:id="@+id/rowRoundOff" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:orientation="horizontal"
+                        android:layout_marginTop="3dp" android:visibility="gone">
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                            android:text="Round off" android:textSize="13sp" android:textColor="@color/text_secondary" />
+                        <TextView android:id="@+id/tvRoundOff" android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:text="₹0.00" android:fontFamily="monospace" android:textSize="13sp" android:textColor="@color/text_main" />
                     </LinearLayout>
                 </LinearLayout>
@@ -525,17 +514,17 @@
                         android:orientation="vertical" android:layout_marginTop="16dp">
 
                         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="Cash tendered" android:textSize="12sp" android:textColor="@color/text_secondary" />
+                            android:text="Cash tendered (₹)" android:textSize="12sp" android:textColor="@color/text_secondary" />
 
                         <com.google.android.material.textfield.TextInputLayout
                             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                             android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp"
-                            app:prefixText="₹ "
                             app:boxCornerRadiusTopStart="12dp" app:boxCornerRadiusTopEnd="12dp"
                             app:boxCornerRadiusBottomStart="12dp" app:boxCornerRadiusBottomEnd="12dp">
                             <com.google.android.material.textfield.TextInputEditText android:id="@+id/etCash"
                                 android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:inputType="numberDecimal" android:gravity="end" android:textSize="18sp" android:maxLines="1" />
+                                android:inputType="numberDecimal" android:hint="0.00" android:textSize="18sp" android:maxLines="1"
+                                android:textColor="@color/text_main" android:textColorHint="@color/text_secondary" />
                         </com.google.android.material.textfield.TextInputLayout>
 
 
@@ -568,17 +557,17 @@
                         android:orientation="vertical" android:layout_marginTop="16dp" android:visibility="gone">
 
                         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="Credit amount" android:textSize="12sp" android:textColor="@color/text_secondary" />
+                            android:text="Credit amount (₹)" android:textSize="12sp" android:textColor="@color/text_secondary" />
 
                         <com.google.android.material.textfield.TextInputLayout
                             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                             android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp"
-                            app:prefixText="₹ "
                             app:boxCornerRadiusTopStart="12dp" app:boxCornerRadiusTopEnd="12dp"
                             app:boxCornerRadiusBottomStart="12dp" app:boxCornerRadiusBottomEnd="12dp">
                             <com.google.android.material.textfield.TextInputEditText android:id="@+id/etCredit"
                                 android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:inputType="numberDecimal" android:gravity="end" android:textSize="18sp" android:maxLines="1" />
+                                android:inputType="numberDecimal" android:hint="0.00" android:textSize="18sp" android:maxLines="1"
+                                android:textColor="@color/text_main" android:textColorHint="@color/text_secondary" />
                         </com.google.android.material.textfield.TextInputLayout>
 
                         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -626,7 +615,7 @@
                     android:paddingHorizontal="18dp" android:paddingVertical="10dp">
                     <TextView android:id="@+id/tvPayingBy" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:text="Paying by Cash" android:textSize="12sp" android:textColor="@color/text_secondary" />
-                    <TextView android:id="@+id/tvItemCount" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    <TextView android:id="@+id/tvPayItemCount" android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="Items: 0" android:textSize="12sp" android:textStyle="bold" android:textColor="@color/text_main" />
                 </LinearLayout>
 

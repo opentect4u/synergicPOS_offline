@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillDao
+import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -31,12 +32,12 @@ class BillListFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Bills"
 
+    private lateinit var rv: RecyclerView
+    private lateinit var tvEmpty: TextView
     private val dao by lazy { BillDao(requireContext()) }
     private var allBills: List<BillDao.Bill> = emptyList()
     private var actItem: MaterialAutoCompleteTextView? = null
 
-    private lateinit var rv: RecyclerView
-    private lateinit var tvEmpty: TextView
     private var query = ""
     private var itemQuery = ""
     private var minAmount: Double? = null
@@ -80,6 +81,7 @@ class BillListFragment : Fragment(), TitledScreen {
 
         rv = view.findViewById(R.id.rvBills)
         tvEmpty = view.findViewById(R.id.tvEmpty)
+
         rv.layoutManager = LinearLayoutManager(requireContext())
 
         // Status radio group: Active bills (default) vs Cancelled.
@@ -100,7 +102,6 @@ class BillListFragment : Fragment(), TitledScreen {
         view.findViewById<TextInputEditText>(R.id.etMaxAmount).onChange { maxAmount = it.toDoubleOrNull() }
 
         // Item filter: type an item name to show every bill that contains it.
-        // The dropdown just suggests existing items; free typing also works.
         actItem = view.findViewById<MaterialAutoCompleteTextView>(R.id.actItem).apply {
             onChange { itemQuery = it }
         }
@@ -137,8 +138,7 @@ class BillListFragment : Fragment(), TitledScreen {
 
     override fun onResume() {
         super.onResume()
-        // Reflect any bills added since the screen was last shown.
-        if (::rv.isInitialized) reload()
+        reload()
     }
 
     /** Loads bills from the database, refreshes item suggestions, then re-filters. */
@@ -195,6 +195,7 @@ class BillListFragment : Fragment(), TitledScreen {
         val searching = q.isNotEmpty() || item.isNotEmpty()
 
         val bills = allBills.filter { b ->
+        val filtered = allBills.filter { b ->
             val matchesText = q.isEmpty() ||
                 b.billNo.contains(q, true) || b.name.contains(q, true) ||
                 b.date.contains(q, true) || b.time.contains(q, true) ||
@@ -214,10 +215,10 @@ class BillListFragment : Fragment(), TitledScreen {
         }
 
         val sorted = when (sort) {
-            Sort.DATE_DESC -> bills.sortedByDescending { sortMillis(it) }
-            Sort.DATE_ASC -> bills.sortedBy { sortMillis(it) }
-            Sort.AMOUNT_DESC -> bills.sortedByDescending { it.amount }
-            Sort.AMOUNT_ASC -> bills.sortedBy { it.amount }
+            Sort.DATE_DESC -> filtered.sortedByDescending { sortMillis(it) }
+            Sort.DATE_ASC -> filtered.sortedBy { sortMillis(it) }
+            Sort.AMOUNT_DESC -> filtered.sortedByDescending { it.amount }
+            Sort.AMOUNT_ASC -> filtered.sortedBy { it.amount }
         }
 
         rv.adapter = BillAdapter(sorted) { openBill(it) }
@@ -255,7 +256,7 @@ class BillListFragment : Fragment(), TitledScreen {
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(
                 R.id.fragment_container,
-                BillFragment.newInstance(bill.billNo, bill.name, bill.date, bill.time, bill.total)
+                BillFragment.newInstance(bill.billNo, bill.name, bill.date, bill.time, bill.total, bill.receiptNo)
             )
             .addToBackStack(null)
             .commit()

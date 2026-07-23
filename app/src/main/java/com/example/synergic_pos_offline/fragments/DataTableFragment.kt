@@ -1,5 +1,6 @@
 package com.example.synergic_pos_offline.fragments
 
+import android.database.sqlite.SQLiteConstraintException
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -333,19 +334,41 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             iconRes = android.R.drawable.ic_menu_delete,
             destructive = true
         ) {
+            deleteBlockedReason(ids)?.let { reason ->
+                toast(reason)
+                return@showConfirm
+            }
+            try {
+                onRowsDeleted(ids)
+            } catch (e: SQLiteConstraintException) {
+                // A master row that other records still point at cannot be removed.
+                // The table is reloaded so it keeps showing what the database
+                // actually holds rather than the rows we hoped to drop.
+                android.util.Log.w("DataTableFragment", "Delete refused by the database", e)
+                reload()
+                toast("Cannot delete: these records are still in use")
+                return@showConfirm
+            }
+            // Only drop the rows once the database has actually accepted the delete.
             allRows.removeAll { ids.contains(it.id) }
             selectedIds.clear()
             applyFilter(query)
-            onRowsDeleted(ids)
             toast("Deleted $count record(s)")
         }
     }
 
     /**
-     * Called after the given row ids have been removed from the in-memory table.
-     * Subclasses backed by a database override this to persist the deletion.
+     * Persists the deletion of the given row ids. Subclasses backed by a database
+     * override this; throwing leaves the table untouched.
      */
     protected open fun onRowsDeleted(ids: Set<String>) {}
+
+    /**
+     * Why these rows cannot be deleted, or null to allow it. Overridden by screens
+     * whose rows are referenced elsewhere, so the user is told what is holding the
+     * record rather than being shown a generic refusal.
+     */
+    protected open fun deleteBlockedReason(ids: Set<String>): String? = null
 
     protected open fun onBulkPrint() {
         val count = selectedIds.size

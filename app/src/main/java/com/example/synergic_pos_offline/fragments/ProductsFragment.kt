@@ -182,6 +182,12 @@ class ProductsFragment : DataTableFragment() {
         bindOptions(actUnit2, units, existing?.unit2Id)
         bindOptions(actUnit3, units, existing?.unit3Id)
         bindDiscountType(actDiscountType, existing?.discountType)
+        bindGstSlab(
+            view.findViewById(R.id.actGst),
+            view.findViewById(R.id.etCgst),
+            view.findViewById(R.id.etSgst),
+            existing?.gstRate?.toDoubleOrNull()
+        )
 
         view.findViewById<TextInputEditText>(R.id.etName).setText(existing?.name.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etHsn).setText(existing?.hsn.orEmpty())
@@ -191,8 +197,7 @@ class ProductsFragment : DataTableFragment() {
         view.findViewById<TextInputEditText>(R.id.etRate1).setText(existing?.rate1.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etRate2).setText(existing?.rate2.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etRate3).setText(existing?.rate3.orEmpty())
-        view.findViewById<TextInputEditText>(R.id.etCgst).setText(existing?.cgst.orEmpty())
-        view.findViewById<TextInputEditText>(R.id.etSgst).setText(existing?.sgst.orEmpty())
+        // CGST/SGST are filled in by bindGstSlab - they follow the slab, not free entry.
         view.findViewById<TextInputEditText>(R.id.etIgst).setText(existing?.igst.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etVat).setText(existing?.vat.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etDiscount).setText(existing?.discount.orEmpty())
@@ -236,8 +241,7 @@ class ProductsFragment : DataTableFragment() {
                 unit1Id = selectedId(actUnit1),
                 unit2Id = selectedId(actUnit2),
                 unit3Id = selectedId(actUnit3),
-                cgst = text(view, R.id.etCgst),
-                sgst = text(view, R.id.etSgst),
+                gstRate = (view.findViewById<AutoCompleteTextView>(R.id.actGst).tag as? Double) ?: 0.0,
                 igst = text(view, R.id.etIgst),
                 vat = text(view, R.id.etVat),
                 discount = text(view, R.id.etDiscount),
@@ -359,6 +363,37 @@ class ProductsFragment : DataTableFragment() {
         }
     }
 
+    /**
+     * Offers the legal GST slabs and keeps the read-only CGST/SGST boxes showing
+     * half of the chosen one each, which is how an intra-state supply is split.
+     */
+    private fun bindGstSlab(
+        view: AutoCompleteTextView,
+        cgstField: TextInputEditText,
+        sgstField: TextInputEditText,
+        selectedRate: Double?
+    ) {
+        val slabs = DatabaseHelper.GST_SLABS
+        val labels = slabs.map { pctLabel(it) }
+        view.setAdapter(ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, labels))
+
+        fun apply(rate: Double) {
+            view.tag = rate
+            cgstField.setText(pctLabel(rate / 2.0))
+            sgstField.setText(pctLabel(rate / 2.0))
+        }
+
+        view.setOnItemClickListener { _, _, position, _ -> apply(slabs[position]) }
+
+        val current = slabs.firstOrNull { it == selectedRate } ?: slabs.first()
+        view.setText(pctLabel(current), false)
+        apply(current)
+    }
+
+    /** Trims a whole-number rate to "18", keeping "0.25" and "2.5" intact. */
+    private fun pctLabel(rate: Double): String =
+        if (rate % 1.0 == 0.0) rate.toInt().toString() else rate.toString()
+
     private fun bindDiscountType(view: AutoCompleteTextView, selectedCode: String?) {
         val codes = listOf("P" to "Percentage", "A" to "Amount")
         view.setAdapter(
@@ -393,19 +428,22 @@ class ProductsFragment : DataTableFragment() {
         val unit1Id: Int?,
         val unit2Id: Int?,
         val unit3Id: Int?,
-        val cgst: String,
-        val sgst: String,
+        /** Chosen GST slab; CGST and SGST are each half of it. */
+        val gstRate: Double,
         val igst: String,
         val vat: String,
         val discount: String,
         val discountType: String?,
         val sellPrice: String,
         val purchasePrice: String
-    )
+    ) {
+        val cgstRate: Double get() = gstRate / 2.0
+        val sgstRate: Double get() = gstRate / 2.0
+    }
 
     private class ExistingProduct(
         val name: String, val hsn: String, val barcode: String, val stockAlert: String,
-        val categoryId: Int?, val image: ByteArray?,
+        val categoryId: Int?, val image: ByteArray?, val gstRate: String,
         val batchNo: String, val rate1: String, val rate2: String, val rate3: String,
         val unit1Id: Int?, val unit2Id: Int?, val unit3Id: Int?,
         val cgst: String, val sgst: String, val igst: String, val vat: String,
@@ -419,7 +457,8 @@ class ProductsFragment : DataTableFragment() {
             SELECT p.product_name, p.hsn_code, p.bar_code, p.stock_alert_qty, p.category_id, p.product_image,
                    r.batch_no, r.rate_1, r.rate_2, r.rate_3, r.unit_1_id, r.unit_2_id, r.unit_3_id,
                    r.cgst_rate, r.sgst_rate, r.igst_rate, r.vat_rate,
-                   r.discount, r.discount_type, r.sell_price, r.purchase_price
+                   r.discount, r.discount_type, r.sell_price, r.purchase_price,
+                   p.gst_rate
             FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
             LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r ON r.product_id = p.id
             WHERE p.id = ?
@@ -443,7 +482,8 @@ class ProductsFragment : DataTableFragment() {
                 cgst = num(c, 13), sgst = num(c, 14), igst = num(c, 15), vat = num(c, 16),
                 discount = num(c, 17),
                 discountType = if (c.isNull(18)) null else c.getString(18),
-                sellPrice = num(c, 19), purchasePrice = num(c, 20)
+                sellPrice = num(c, 19), purchasePrice = num(c, 20),
+                gstRate = num(c, 21)
             )
         }
     }
@@ -467,6 +507,7 @@ class ProductsFragment : DataTableFragment() {
                 put("hsn_code", form.hsn.ifEmpty { null })
                 put("bar_code", form.barcode.ifEmpty { null })
                 putDouble(this, "stock_alert_qty", form.stockAlert)
+                put("gst_rate", form.gstRate)
                 if (form.categoryId != null) put("category_id", form.categoryId) else putNull("category_id")
                 // Only touch the image when the user picked a new one or cleared it.
                 val image = pendingImage
@@ -496,8 +537,9 @@ class ProductsFragment : DataTableFragment() {
                 if (form.unit1Id != null) put("unit_1_id", form.unit1Id) else putNull("unit_1_id")
                 if (form.unit2Id != null) put("unit_2_id", form.unit2Id) else putNull("unit_2_id")
                 if (form.unit3Id != null) put("unit_3_id", form.unit3Id) else putNull("unit_3_id")
-                put("cgst_rate", form.cgst.toDoubleOrNull() ?: 0.0)
-                put("sgst_rate", form.sgst.toDoubleOrNull() ?: 0.0)
+                // Kept in step with the slab on md_products, which is the master.
+                put("cgst_rate", form.cgstRate)
+                put("sgst_rate", form.sgstRate)
                 put("igst_rate", form.igst.toDoubleOrNull() ?: 0.0)
                 put("vat_rate", form.vat.toDoubleOrNull() ?: 0.0)
                 put("discount", form.discount.toDoubleOrNull() ?: 0.0)

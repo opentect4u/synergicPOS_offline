@@ -1,7 +1,21 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+// Signing credentials are read from a gitignored keystore.properties so they stay
+// out of version control. Absent the file - a fresh clone, or CI without the key -
+// the release build still assembles, just unsigned, rather than failing outright.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+val hasSigningConfig = keystoreProperties.containsKey("storeFile") &&
+    rootProject.file(keystoreProperties.getProperty("storeFile")).exists()
 
 android {
     namespace = "com.example.synergic_pos_offline"
@@ -17,10 +31,29 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasSigningConfig) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                // AGP drops v1 (JAR) signing when minSdk >= 24, which leaves some
+                // package installers unable to parse a sideloaded APK. Sign with both
+                // v1 and v2 so it installs everywhere.
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
             optimization {
                 enable = false
+            }
+            if (hasSigningConfig) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
     }
@@ -46,6 +79,9 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.bcrypt)
+    // PR-55 thermal printer SDK (ESC/POS). Vendor jar, no Maven artifact; the
+    // matching .so files live in src/main/jniLibs.
+    implementation(files("libs/ESC_SDK_V1.24.04.jar"))
     implementation(libs.androidx.swiperefreshlayout)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

@@ -18,21 +18,29 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <!-- Grayscale photo placeholder -->
+        <!-- Product photo; the caption shows through when a product has none -->
         <FrameLayout
             android:id="@+id/vBanner"
             android:layout_width="match_parent"
-            android:layout_height="72dp"
+            android:layout_height="96dp"
             android:background="#EAE9E9">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
-                android:text="product photo"
+                android:text="no photo"
                 android:textSize="9sp"
                 android:fontFamily="monospace"
                 android:textColor="#8A8A8A" />
+
+            <ImageView
+                android:id="@+id/ivProductPhoto"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:contentDescription="Product photo"
+                android:visibility="gone" />
 
             <TextView
                 android:id="@+id/tvStock"

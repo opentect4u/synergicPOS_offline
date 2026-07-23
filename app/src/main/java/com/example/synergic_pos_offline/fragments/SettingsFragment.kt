@@ -41,6 +41,11 @@ class SettingsFragment : Fragment() {
             SettingsItem("Bill Settings", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon),
             SettingsItem("Tax Settings", android.R.drawable.ic_menu_sort_by_size, R.color.menu_report, R.color.menu_report_icon),
            // SettingsItem("Inventory & Stock Settings", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon),
+            SettingsItem("Inventory & Stock Settings", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon),
+            // The old md_printer picker's tile is hidden (kept, not deleted, in case it's
+            // needed again) - "Operating Printer" now takes over the "Printer Settings" name
+            // and spot in the grid, routed via its own key so the two don't collide below.
+            SettingsItem("Printer Settings", R.drawable.ic_print, R.color.menu_report, R.color.menu_report_icon, key = "Operating Printer"),
             SettingsItem("App Settings", android.R.drawable.ic_menu_manage, R.color.menu_sale, R.color.menu_sale_icon)
         )
 
@@ -54,6 +59,11 @@ class SettingsFragment : Fragment() {
             }
             if (fragment != null) openFragment(fragment)
             else Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
+            when (item.key) {
+                "Printer Settings" -> openFragment(PrinterSettingsFragment())
+                "Operating Printer" -> openFragment(OperatingPrinterFragment())
+                else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -68,7 +78,10 @@ class SettingsFragment : Fragment() {
         val title: String,
         val iconRes: Int,
         val bgColorRes: Int,
-        val iconColorRes: Int
+        val iconColorRes: Int,
+        // Distinct from the display title so a tile can be relabelled without
+        // changing which screen it opens.
+        val key: String = title
     )
 
     private inner class SettingsAdapter(

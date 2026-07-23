@@ -15,7 +15,16 @@ class DatabaseHelper private constructor(context: Context) :
 
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
-        db.setForeignKeyConstraintsEnabled(true)
+        // A pending migration has to rebuild a parent table, which SQLite only
+        // permits with foreign keys off - and they cannot be toggled from inside
+        // onUpgrade, which already runs in a transaction. [onOpen] switches them
+        // back on once any migration has finished.
+        db.setForeignKeyConstraintsEnabled(db.version == DATABASE_VERSION)
+    }
+
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        if (!db.isReadOnly) db.setForeignKeyConstraintsEnabled(true)
     }
 
     override fun onOpen(db: SQLiteDatabase) {
@@ -83,6 +92,11 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_MD_SUPPLIER)
         db.execSQL(SQL_CREATE_MD_BATCH_STOCK)
         db.execSQL(SQL_CREATE_MD_VERSION)
+        db.execSQL(SQL_CREATE_MD_PRINTER)
+        seedDefaultPrinters(db)
+        db.execSQL("UPDATE ${Tables.MD_PRINTER} SET is_selected = 1")
+        addExtraPrinterTypes(db)
+        db.execSQL(SQL_CREATE_MD_OPERATING_PRINTER)
 
         // Transaction tables
         db.execSQL(SQL_CREATE_TD_PURCHASE)
@@ -104,11 +118,431 @@ class DatabaseHelper private constructor(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Pre-release schema: drop and recreate rather than migrate.
+        // Migrations are cumulative, so an install several versions behind runs each
+        // in turn. They all preserve data: a blanket drop would take md_users and
+        // md_registration with it and lock the operator out of the app.
+        if (oldVersion in 1 until DATABASE_VERSION) {
+            if (oldVersion < 2) migrateV2AllowCardBillType(db)
+            if (oldVersion < 3) migrateV3ProductGstSlab(db)
+            if (oldVersion < 4) migrateV4AllowCreditPaymentMode(db)
+            if (oldVersion < 5) migrateV5RecordBalanceDue(db)
+            if (oldVersion < 6) migrateV6AddPrinterTable(db)
+            if (oldVersion < 7) migrateV7AddPrinterIp(db)
+            if (oldVersion < 8) migrateV8ImportSavedPrinterIp(db)
+            if (oldVersion < 9) migrateV9AddPaperWidth(db)
+            if (oldVersion < 10) migrateV10AddPrinterTypes(db)
+            if (oldVersion < 11) migrateV11AddOperatingPrinterTable(db)
+            if (oldVersion < 12) migrateV12AddOperatingPrinterDefaultFlag(db)
+            if (oldVersion < 13) migrateV13AddOperatingPrinterPaperWidth(db)
+            return
+        }
+
+        // Unrecognised starting point: fall back to recreating the schema.
         for (table in ALL_TABLES.asReversed()) {
             db.execSQL("DROP TABLE IF EXISTS $table")
         }
         onCreate(db)
+    }
+
+    /**
+     * v6: adds the md_printer lookup, mapping each print purpose (BILL/KOT/OTHERS)
+     * to its connection type. Created and seeded here for existing databases; fresh
+     * installs get the same from onCreate.
+     */
+    private fun migrateV6AddPrinterTable(db: SQLiteDatabase) {
+        db.execSQL(SQL_CREATE_MD_PRINTER)
+        seedDefaultPrinters(db)
+    }
+
+    /** v7: holds each printer's saved address (WIFI/LAN IP). Null until configured. */
+    private fun migrateV7AddPrinterIp(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE ${Tables.MD_PRINTER} ADD COLUMN printer_ip TEXT")
+    }
+
+    /**
+     * v8: brings the WiFi printer address saved by the old settings flow
+     * (md_app_settings.printer_wifi_ip) into md_printer, against the BILL slot - the
+     * purpose that printer was used for. Only fills an empty slot, so an address
+     * already set through the new Printer Settings screen is left untouched.
+     */
+    private fun migrateV8ImportSavedPrinterIp(db: SQLiteDatabase) {
+        val savedIp = db.query(
+            Tables.MD_APP_SETTINGS, arrayOf("setting_value"),
+            "setting_name = ?", arrayOf("printer_wifi_ip"), null, null, "id DESC", "1"
+        ).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+
+        if (savedIp.isNullOrBlank()) return
+
+        db.execSQL(
+            "UPDATE ${Tables.MD_PRINTER} SET printer_ip = ? " +
+                "WHERE printer_purpose = 'BILL' AND (printer_ip IS NULL OR printer_ip = '')",
+            arrayOf(savedIp)
+        )
+    }
+
+    /**
+     * v9: adds paper_mm (58 or 80) to md_printer and brings across the paper width
+     * saved by the old settings flow (md_app_settings.printer_paper_width_mm) for the
+     * BILL slot. Only fills an empty value.
+     */
+    private fun migrateV9AddPaperWidth(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE ${Tables.MD_PRINTER} ADD COLUMN paper_mm INTEGER")
+
+        val savedPaper = db.query(
+            Tables.MD_APP_SETTINGS, arrayOf("setting_value"),
+            "setting_name = ?", arrayOf("printer_paper_width_mm"), null, null, "id DESC", "1"
+        ).use { c -> if (c.moveToFirst()) c.getString(0) else null }?.toIntOrNull()
+
+        if (savedPaper != null) {
+            db.execSQL(
+                "UPDATE ${Tables.MD_PRINTER} SET paper_mm = ? " +
+                    "WHERE printer_purpose = 'BILL' AND paper_mm IS NULL",
+                arrayOf(savedPaper.toString())
+            )
+        }
+    }
+
+    /**
+     * v10: each purpose can now be connected several ways. Adds is_selected (the
+     * connection currently chosen for a purpose), normalises the old 'BT' label to
+     * 'BLUETOOTH', keeps whatever single row each purpose already had as its selected
+     * choice, and adds BLUETOOTH and USB options alongside it.
+     */
+    private fun migrateV10AddPrinterTypes(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE ${Tables.MD_PRINTER} ADD COLUMN is_selected INTEGER DEFAULT 0")
+        db.execSQL("UPDATE ${Tables.MD_PRINTER} SET printer_type = 'BLUETOOTH' WHERE printer_type = 'BT'")
+        // The rows already present are the one-per-purpose choices - keep them selected.
+        db.execSQL("UPDATE ${Tables.MD_PRINTER} SET is_selected = 1")
+        addExtraPrinterTypes(db)
+    }
+
+    /** v11: adds md_operating_printer. */
+    private fun migrateV11AddOperatingPrinterTable(db: SQLiteDatabase) {
+        db.execSQL(SQL_CREATE_MD_OPERATING_PRINTER)
+    }
+
+    /** v12: adds default_flag to md_operating_printer, marking the default printer. */
+    private fun migrateV12AddOperatingPrinterDefaultFlag(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE ${Tables.MD_OPERATING_PRINTER} ADD COLUMN default_flag INTEGER DEFAULT 0")
+    }
+
+    /**
+     * v13: adds paper_mm to md_operating_printer - 58 (2 inch) or 80 (3 inch) -
+     * so each named printer carries its own paper width instead of borrowing
+     * whatever md_printer's connection row happens to have.
+     */
+    private fun migrateV13AddOperatingPrinterPaperWidth(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE ${Tables.MD_OPERATING_PRINTER} ADD COLUMN paper_mm INTEGER DEFAULT 80")
+    }
+
+    /** Ensures every purpose has a BLUETOOTH and a USB option (unselected). */
+    private fun addExtraPrinterTypes(db: SQLiteDatabase) {
+        for (purpose in listOf("BILL", "KOT", "OTHERS")) {
+            for (type in listOf("BLUETOOTH", "USB")) {
+                db.execSQL(
+                    "INSERT INTO ${Tables.MD_PRINTER} (printer_purpose, printer_type, is_selected) " +
+                        "SELECT ?, ?, 0 WHERE NOT EXISTS (" +
+                        "SELECT 1 FROM ${Tables.MD_PRINTER} WHERE printer_purpose = ? AND printer_type = ?)",
+                    arrayOf(purpose, type, purpose, type)
+                )
+            }
+        }
+    }
+
+    /** The default purpose-to-type printer rows. Idempotent via the sl_no primary key. */
+    private fun seedDefaultPrinters(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            INSERT OR IGNORE INTO ${Tables.MD_PRINTER} (sl_no, printer_purpose, printer_type)
+            VALUES (1, 'BILL', 'WIFI'), (2, 'KOT', 'LAN'), (3, 'OTHERS', 'LAN')
+            """.trimIndent()
+        )
+    }
+
+    /**
+     * Records what is still owed on a bill, so it can be chased later.
+     *
+     * Adds a PARTIAL payment status - previously a customer who paid some of a
+     * credit bill was indistinguishable from one who paid none - and a
+     * `balance_amount` holding the shortfall on each bill. Outstanding bills are
+     * then written into td_customer_ledger as DEBIT entries with a running balance,
+     * and each customer's `balance_amount` is set to what they owe in total.
+     *
+     * This also re-runs the payment_status repair from v4. That statement was added
+     * to [migrateV4AllowCreditPaymentMode] after v4 had already been applied, so any
+     * database that upgraded in between never saw it.
+     */
+    private fun migrateV5RecordBalanceDue(db: SQLiteDatabase) {
+        // Rebuilt rather than altered: payment_status gains a value, and a CHECK
+        // cannot be changed in place. Relies on foreign keys being off for the
+        // upgrade (see [onConfigure]) - td_customer_ledger references td_payments.
+        db.execSQL(
+            """
+            CREATE TABLE td_payments_v5 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                receipt_no INTEGER,
+                bill_id INTEGER,
+                payment_mode TEXT CHECK(payment_mode IN ('CASH','UPI','CARD','CHEQUE','ONLINE','CREDIT')),
+                amount_paid REAL DEFAULT 0,
+                change_amount REAL DEFAULT 0,
+                upi_transaction_id TEXT,
+                card_last_four TEXT,
+                cheque_number TEXT,
+                payment_status TEXT CHECK(payment_status IN ('PENDING','PARTIAL','COMPLETED','FAILED')) DEFAULT 'PENDING',
+                balance_amount REAL DEFAULT 0,
+                payment_date TEXT,
+                cust_name TEXT,
+                cust_gstin TEXT,
+                cust_phone TEXT,
+                cust_id INTEGER,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(bill_id) REFERENCES td_bills(receipt_no),
+                FOREIGN KEY(cust_id) REFERENCES md_customers(id)
+            )
+            """
+        )
+        // balance_amount is new, so the columns are listed rather than SELECT *.
+        db.execSQL(
+            """
+            INSERT INTO td_payments_v5 (
+                id, receipt_no, bill_id, payment_mode, amount_paid, change_amount,
+                upi_transaction_id, card_last_four, cheque_number, payment_status,
+                payment_date, cust_name, cust_gstin, cust_phone, cust_id,
+                created_at, created_by, modified_by
+            )
+            SELECT id, receipt_no, bill_id, payment_mode, amount_paid, change_amount,
+                   upi_transaction_id, card_last_four, cheque_number, payment_status,
+                   payment_date, cust_name, cust_gstin, cust_phone, cust_id,
+                   created_at, created_by, modified_by
+            FROM ${Tables.TD_PAYMENTS}
+            """.trimIndent()
+        )
+        db.execSQL("DROP TABLE ${Tables.TD_PAYMENTS}")
+        db.execSQL("ALTER TABLE td_payments_v5 RENAME TO ${Tables.TD_PAYMENTS}")
+
+        // What each bill still owes. Change is not deducted: the customer handing
+        // over more than the total settles it in full.
+        db.execSQL(
+            """
+            UPDATE ${Tables.TD_PAYMENTS} SET balance_amount = MAX(
+                COALESCE((SELECT b.net_amount FROM ${Tables.TD_BILLS} b
+                          WHERE b.receipt_no = ${Tables.TD_PAYMENTS}.bill_id), 0)
+                - amount_paid, 0)
+            """.trimIndent()
+        )
+
+        // Restate the status from what was actually collected.
+        db.execSQL(
+            """
+            UPDATE ${Tables.TD_PAYMENTS} SET payment_status = CASE
+                WHEN balance_amount <= 0.001 THEN 'COMPLETED'
+                WHEN amount_paid > 0.001     THEN 'PARTIAL'
+                ELSE 'PENDING'
+            END
+            WHERE payment_status <> 'FAILED'
+            """.trimIndent()
+        )
+
+        // Ledger the outstanding bills so they can be recovered. The running balance
+        // is summed per customer up to each bill; a correlated subquery rather than a
+        // window function, which SQLite only gained after this app's minimum API.
+        db.execSQL(
+            """
+            INSERT INTO ${Tables.TD_CUSTOMER_LEDGER} (
+                customer_id, bill_id, payment_id, transaction_type, amount, balance,
+                transaction_date, created_by
+            )
+            SELECT b.customer_id, b.receipt_no, p.id, 'DEBIT', p.balance_amount,
+                   (SELECT SUM(p2.balance_amount)
+                      FROM ${Tables.TD_PAYMENTS} p2
+                      JOIN ${Tables.TD_BILLS} b2 ON b2.receipt_no = p2.bill_id
+                     WHERE b2.customer_id = b.customer_id
+                       AND b2.receipt_no <= b.receipt_no
+                       AND p2.balance_amount > 0.001),
+                   COALESCE(b.bill_date_time, b.bill_date),
+                   'MIGRATION'
+            FROM ${Tables.TD_BILLS} b
+            JOIN ${Tables.TD_PAYMENTS} p ON p.bill_id = b.receipt_no
+            WHERE b.customer_id IS NOT NULL
+              AND p.balance_amount > 0.001
+              AND NOT EXISTS (
+                  SELECT 1 FROM ${Tables.TD_CUSTOMER_LEDGER} l WHERE l.bill_id = b.receipt_no
+              )
+            """.trimIndent()
+        )
+
+        // And what each customer owes in total.
+        db.execSQL(
+            """
+            UPDATE ${Tables.MD_CUSTOMERS} SET balance_amount = COALESCE((
+                SELECT SUM(p.balance_amount)
+                FROM ${Tables.TD_PAYMENTS} p
+                JOIN ${Tables.TD_BILLS} b ON b.receipt_no = p.bill_id
+                WHERE b.customer_id = ${Tables.MD_CUSTOMERS}.id
+                  AND p.balance_amount > 0.001
+            ), 0)
+            """.trimIndent()
+        )
+        createIndexes(db)   // the old table's indexes went with it
+    }
+
+    /**
+     * Adds 'CREDIT' to the `payment_mode` CHECK, and repairs the payment rows that
+     * were written before credit could be recorded honestly.
+     *
+     * Two corrections, both reading from figures already stored on the bill rather
+     * than guessing: a credit sale had nowhere legal to record itself so it was
+     * written as CASH, and every payment was stamped COMPLETED even when nothing
+     * was collected.
+     */
+    private fun migrateV4AllowCreditPaymentMode(db: SQLiteDatabase) {
+        // Same rebuild as v2: a CHECK cannot be altered in place. Relies on foreign
+        // keys being off for the upgrade (see [onConfigure]) - td_customer_ledger
+        // references td_payments, so the old table cannot be dropped with them on.
+        db.execSQL(
+            """
+            CREATE TABLE td_payments_v4 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                receipt_no INTEGER,
+                bill_id INTEGER,
+                payment_mode TEXT CHECK(payment_mode IN ('CASH','UPI','CARD','CHEQUE','ONLINE','CREDIT')),
+                amount_paid REAL DEFAULT 0,
+                change_amount REAL DEFAULT 0,
+                upi_transaction_id TEXT,
+                card_last_four TEXT,
+                cheque_number TEXT,
+                payment_status TEXT CHECK(payment_status IN ('PENDING','COMPLETED','FAILED')) DEFAULT 'PENDING',
+                payment_date TEXT,
+                cust_name TEXT,
+                cust_gstin TEXT,
+                cust_phone TEXT,
+                cust_id INTEGER,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(bill_id) REFERENCES td_bills(receipt_no),
+                FOREIGN KEY(cust_id) REFERENCES md_customers(id)
+            )
+            """
+        )
+        db.execSQL("INSERT INTO td_payments_v4 SELECT * FROM ${Tables.TD_PAYMENTS}")
+        db.execSQL("DROP TABLE ${Tables.TD_PAYMENTS}")
+        db.execSQL("ALTER TABLE td_payments_v4 RENAME TO ${Tables.TD_PAYMENTS}")
+
+        // Re-label the credit sales that had to masquerade as cash.
+        db.execSQL(
+            """
+            UPDATE ${Tables.TD_PAYMENTS} SET payment_mode = 'CREDIT'
+            WHERE payment_mode = 'CASH' AND bill_id IN (
+                SELECT receipt_no FROM ${Tables.TD_BILLS} WHERE bill_type = 'CREDIT'
+            )
+            """.trimIndent()
+        )
+
+        // Every payment used to be stamped COMPLETED regardless of what was taken.
+        // Anything that does not cover its bill is money still owed, not settled.
+        db.execSQL(
+            """
+            UPDATE ${Tables.TD_PAYMENTS} SET payment_status = 'PENDING'
+            WHERE payment_status = 'COMPLETED' AND amount_paid + 0.001 < (
+                SELECT b.net_amount FROM ${Tables.TD_BILLS} b
+                WHERE b.receipt_no = ${Tables.TD_PAYMENTS}.bill_id
+            )
+            """.trimIndent()
+        )
+        createIndexes(db)   // the old table's indexes went with it
+    }
+
+    /**
+     * Gives md_products a single `gst_rate` holding the slab the product is taxed
+     * at, from which CGST and SGST are each derived as half.
+     *
+     * Adding a column is an in-place change, so unlike [migrateV2AllowCardBillType]
+     * this needs no table rebuild. Existing products are back-filled from the rates
+     * already captured against them, but only where CGST+SGST lands on a legal slab
+     * - anything else would be rejected by the new CHECK, so it starts at 0 and has
+     * to be set deliberately.
+     */
+    private fun migrateV3ProductGstSlab(db: SQLiteDatabase) {
+        db.execSQL(
+            "ALTER TABLE ${Tables.MD_PRODUCTS} ADD COLUMN gst_rate REAL DEFAULT 0 " +
+                "CHECK(gst_rate IN ($GST_SLABS_SQL))"
+        )
+        db.execSQL(
+            """
+            UPDATE ${Tables.MD_PRODUCTS} SET gst_rate = COALESCE((
+                SELECT r.cgst_rate + r.sgst_rate
+                FROM ${Tables.MD_PRODUCT_RATES} r
+                WHERE r.product_id = ${Tables.MD_PRODUCTS}.id
+                  AND (r.cgst_rate + r.sgst_rate) IN ($GST_SLABS_SQL)
+                LIMIT 1
+            ), 0)
+            """.trimIndent()
+        )
+    }
+
+    /**
+     * Adds 'CARD' to the `bill_type` CHECK constraint. SQLite cannot alter a CHECK
+     * in place, so the table is rebuilt and the rows copied across.
+     *
+     * The DDL below is deliberately a frozen copy of the v2 schema rather than a
+     * reference to [SQL_CREATE_TD_BILLS] - a migration has to keep describing the
+     * shape the table had at *this* version, even after the live schema moves on.
+     */
+    private fun migrateV2AllowCardBillType(db: SQLiteDatabase) {
+        // Relies on foreign keys being off for the upgrade (see [onConfigure]):
+        // dropping the old parent would otherwise fail against the child rows in
+        // td_bill_items / td_payments.
+        db.execSQL(
+            """
+            CREATE TABLE td_bills_v2 (
+                receipt_no INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                bill_number TEXT,
+                bill_date TEXT,
+                bill_date_time TEXT,
+                customer_id INTEGER,
+                operator_id INTEGER,
+                waiter_id INTEGER,
+                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','VOID')),
+                tot_price REAL DEFAULT 0,
+                tot_discount_amount REAL DEFAULT 0,
+                tot_discount_percentage REAL DEFAULT 0,
+                discount_flag INTEGER NOT NULL DEFAULT 0,
+                discount_type TEXT,
+                tot_cgst_amount REAL DEFAULT 0,
+                tot_sgst_amount REAL DEFAULT 0,
+                tot_igst_amount REAL DEFAULT 0,
+                tot_vat_amount REAL DEFAULT 0,
+                tot_other_charges_amount REAL DEFAULT 0,
+                tot_round_off_amount REAL DEFAULT 0,
+                net_amount REAL DEFAULT 0,
+                amount_in_words TEXT,
+                gst_flag INTEGER NOT NULL DEFAULT 0,
+                vat_flag INTEGER NOT NULL DEFAULT 0,
+                is_mrp_billing INTEGER NOT NULL DEFAULT 0,
+                is_return_bill INTEGER NOT NULL DEFAULT 0,
+                is_duplicate INTEGER NOT NULL DEFAULT 0,
+                is_voided INTEGER NOT NULL DEFAULT 0,
+                bill_status TEXT CHECK(bill_status IN ('DRAFT','COMPLETED','CANCELLED')) DEFAULT 'DRAFT',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(customer_id) REFERENCES md_customers(id),
+                FOREIGN KEY(operator_id) REFERENCES md_users(id),
+                FOREIGN KEY(waiter_id) REFERENCES md_waiters(id)
+            )
+            """
+        )
+        // v1 and v2 have identical columns in identical order - only the CHECK moved.
+        db.execSQL("INSERT INTO td_bills_v2 SELECT * FROM td_bills")
+        db.execSQL("DROP TABLE td_bills")
+        db.execSQL("ALTER TABLE td_bills_v2 RENAME TO td_bills")
+        createIndexes(db)   // the old table's indexes went with it
     }
 
     private fun createIndexes(db: SQLiteDatabase) {
@@ -148,6 +582,8 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_SUPPLIER = "md_supplier"
         const val MD_BATCH_STOCK = "md_batch_stock"
         const val MD_VERSION = "md_version"
+        const val MD_PRINTER = "md_printer"
+        const val MD_OPERATING_PRINTER = "md_operating_printer"
 
         const val TD_PURCHASE = "td_purchase"
         const val TD_PURCHASE_RETURN = "td_purchase_return"
@@ -168,6 +604,23 @@ class DatabaseHelper private constructor(context: Context) :
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
         private const val DATABASE_VERSION = 6
+        // v6 adds md_printer; v7 adds its printer_ip column; v8 imports the printer
+        // address saved by the old settings flow; v9 adds paper_mm and imports the
+        // saved paper width; v10 adds is_selected and BLUETOOTH/USB rows per purpose;
+        // v11 adds md_operating_printer; v12 adds its default_flag column; v13 adds
+        // its own paper_mm column (58/80, independent of md_printer's).
+        private const val DATABASE_VERSION = 13
+
+        /**
+         * The GST slabs a product may be taxed at. CGST and SGST are always half of
+         * the chosen slab each, so only this one figure is captured per product.
+         */
+        val GST_SLABS = listOf(0.0, 0.25, 3.0, 5.0, 12.0, 18.0, 28.0)
+
+        /** The slab list as a SQL `IN (...)` body, so schema and UI cannot diverge. */
+        private val GST_SLABS_SQL = GST_SLABS.joinToString(",") {
+            if (it % 1.0 == 0.0) it.toInt().toString() else it.toString()
+        }
 
         @Volatile
         private var instance: DatabaseHelper? = null
@@ -182,6 +635,7 @@ class DatabaseHelper private constructor(context: Context) :
             Tables.MD_PRODUCTS, Tables.MD_PRODUCT_RATES, Tables.MD_CUSTOMERS, Tables.MD_DESCRIPTION,
             Tables.MD_WAITERS, Tables.MD_HEADERS, Tables.MD_FOOTERS, Tables.MD_LOGOS, Tables.MD_QR,
             Tables.MD_APP_SETTINGS, Tables.MD_SUPPLIER, Tables.MD_BATCH_STOCK, Tables.MD_VERSION,
+            Tables.MD_PRINTER, Tables.MD_OPERATING_PRINTER,
             Tables.TD_PURCHASE, Tables.TD_PURCHASE_RETURN, Tables.TD_WRITE_OFF, Tables.TD_BILLS,
             Tables.TD_BILL_ITEMS, Tables.TD_PAYMENTS, Tables.TD_SALE_RETURNS, Tables.TD_RETURN_ITEMS,
             Tables.TD_STOCK_TRANSACTIONS, Tables.TD_CUSTOMER_LEDGER, Tables.TD_ADVANCE_PAYMENTS,
@@ -255,7 +709,7 @@ class DatabaseHelper private constructor(context: Context) :
             )
         """
 
-        private const val SQL_CREATE_MD_PRODUCTS = """
+        private val SQL_CREATE_MD_PRODUCTS = """
             CREATE TABLE IF NOT EXISTS md_products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 store_id INTEGER,
@@ -264,6 +718,7 @@ class DatabaseHelper private constructor(context: Context) :
                 stock_alert_qty REAL DEFAULT 0,
                 bar_code TEXT,
                 category_id INTEGER,
+                gst_rate REAL DEFAULT 0 CHECK(gst_rate IN ($GST_SLABS_SQL)),
                 product_image BLOB,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
@@ -470,6 +925,29 @@ class DatabaseHelper private constructor(context: Context) :
             )
         """
 
+        private const val SQL_CREATE_MD_PRINTER = """
+            CREATE TABLE IF NOT EXISTS md_printer (
+                sl_no INTEGER PRIMARY KEY,
+                printer_purpose TEXT,
+                printer_type TEXT,
+                printer_ip TEXT,
+                paper_mm INTEGER,
+                is_selected INTEGER DEFAULT 0
+            )
+        """
+
+        private const val SQL_CREATE_MD_OPERATING_PRINTER = """
+            CREATE TABLE IF NOT EXISTS md_operating_printer (
+                sl_no INTEGER PRIMARY KEY,
+                printer_name TEXT,
+                printer TEXT,
+                value TEXT,
+                print_flag INTEGER DEFAULT 0,
+                default_flag INTEGER DEFAULT 0,
+                paper_mm INTEGER DEFAULT 80
+            )
+        """
+
         // ---------------------------------------------------------------
         // Transaction tables (td_)
         // ---------------------------------------------------------------
@@ -548,7 +1026,7 @@ class DatabaseHelper private constructor(context: Context) :
                 customer_id INTEGER,
                 operator_id INTEGER,
                 waiter_id INTEGER,
-                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','ONLINE','VOID')),
+                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','VOID')),
                 tot_price REAL DEFAULT 0,
                 tot_discount_amount REAL DEFAULT 0,
                 tot_discount_percentage REAL DEFAULT 0,
@@ -618,13 +1096,14 @@ class DatabaseHelper private constructor(context: Context) :
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 receipt_no INTEGER,
                 bill_id INTEGER,
-                payment_mode TEXT CHECK(payment_mode IN ('CASH','UPI','CARD','CHEQUE','ONLINE')),
+                payment_mode TEXT CHECK(payment_mode IN ('CASH','UPI','CARD','CHEQUE','ONLINE','CREDIT')),
                 amount_paid REAL DEFAULT 0,
                 change_amount REAL DEFAULT 0,
                 upi_transaction_id TEXT,
                 card_last_four TEXT,
                 cheque_number TEXT,
-                payment_status TEXT CHECK(payment_status IN ('PENDING','COMPLETED','FAILED')) DEFAULT 'PENDING',
+                payment_status TEXT CHECK(payment_status IN ('PENDING','PARTIAL','COMPLETED','FAILED')) DEFAULT 'PENDING',
+                balance_amount REAL DEFAULT 0,
                 payment_date TEXT,
                 cust_name TEXT,
                 cust_gstin TEXT,
