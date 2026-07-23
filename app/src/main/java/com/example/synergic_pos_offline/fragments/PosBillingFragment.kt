@@ -33,6 +33,7 @@ import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.ImageUtils
 import com.example.synergic_pos_offline.utils.SessionManager
+import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
@@ -148,7 +149,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private lateinit var tvNoProducts: TextView
     private lateinit var tvClock: TextView
     private lateinit var tvOrderNo: TextView
-    private lateinit var tvHeaderOrder: TextView
     private lateinit var tvCashierName: TextView
     private lateinit var btnHeld: MaterialButton
     private lateinit var btnCharge: MaterialButton
@@ -185,7 +185,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvNoProducts = view.findViewById(R.id.tvNoProducts)
         tvClock = view.findViewById(R.id.tvClock)
         tvOrderNo = view.findViewById(R.id.tvOrderNo)
-        tvHeaderOrder = view.findViewById(R.id.tvHeaderOrder)
         tvCashierName = view.findViewById(R.id.tvCashierName)
         btnHeld = view.findViewById(R.id.btnHeld)
         btnCharge = view.findViewById(R.id.btnCharge)
@@ -196,13 +195,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvCouponMsg = view.findViewById(R.id.tvCouponMsg)
         btnCustomerInfo = view.findViewById(R.id.btnCustomerInfo)
 
+        // Brand cell shows the registered store name, not a hardcoded placeholder.
+        storeName(ctx)?.let { view.findViewById<TextView>(R.id.tvBrandName).text = it.uppercase() }
+
         // Set cashier name from logged-in user
         tvCashierName.text = SessionManager.currentUser?.userId ?: "Guest"
 
         // Customer info button click listener
         btnCustomerInfo.setOnClickListener {
             if (currentCustomerData != null) {
-                showCustomerInfoPopover(ctx, currentCustomerData!!)
+                showEditCustomerDialog(ctx, currentCustomerData!!)
             }
         }
 
@@ -272,7 +274,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
         btnHold.setOnClickListener { onHold() }
         btnCharge.setOnClickListener { onCheckout() }
 
-        setCustomer(null, null)
+        // Re-apply the current customer rather than clearing it: the view is recreated
+        // when checkout pops back, and the sale must survive that unless the operator
+        // chose "Start new sale" (which resets via startNewSale()).
+        setCustomer(customerName, customerPhone, currentCustomerData)
         loadCategoriesAndProducts()
         updateHeldButton()
         applyFilter()
@@ -323,6 +328,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
             discountPercent = restoredBill.discount
             couponApplied = restoredBill.coupon
+            setCustomer(restoredBill.customerName, restoredBill.customerPhone, restoredBill.customerData)
             cartAdapter.notifyDataSetChanged()
             updateTotals()
             toast("Bill restored")
@@ -348,7 +354,55 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun updateOrderNo() {
         val next = runCatching { BillDao(requireContext()).nextBillNumber() }.getOrDefault("")
         tvOrderNo.text = next
-        tvHeaderOrder.text = next
+        updateLastBill()
+    }
+
+    /**
+     * Shows the last bill's id in the header when the "Last Bill Status" general
+     * setting is on. Read from the local settings cache, not the DB.
+     */
+    private fun updateLastBill() {
+        val v = view ?: return
+        val cell = v.findViewById<View>(R.id.cellLastBill)
+        val divider = v.findViewById<View>(R.id.vLastBillDivider)
+        val on = SettingsCache.value(requireContext(), "G", "Last Bill Status") == "1"
+        if (!on) {
+            cell.visibility = View.GONE
+            divider.visibility = View.GONE
+            return
+        }
+        val last = runCatching { BillDao(requireContext()).lastBillNumber() }.getOrNull()
+        v.findViewById<TextView>(R.id.tvHeaderLastBill).text = last ?: "--"
+        cell.visibility = View.VISIBLE
+        divider.visibility = View.VISIBLE
+        // Tap the cell to open that bill's receipt (with a print option).
+        cell.setOnClickListener { openLastBill() }
+    }
+
+    /** The registered store's name from md_registration, or null if unavailable. */
+    private fun storeName(ctx: android.content.Context): String? {
+        return runCatching {
+            DatabaseHelper.getInstance(ctx).readableDatabase.query(
+                DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_name"),
+                null, null, null, null, "store_id ASC", "1"
+            ).use { c ->
+                if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() } else null
+            }
+        }.getOrNull()
+    }
+
+    /** Opens the last bill's receipt ([BillFragment]), which offers a print option. */
+    private fun openLastBill() {
+        val receiptNo = runCatching { BillDao(requireContext()).lastReceiptNo() }.getOrNull()
+        if (receiptNo == null) { toast("No bills yet"); return }
+        val billNo = (view?.findViewById<TextView>(R.id.tvHeaderLastBill)?.text?.toString()).orEmpty()
+        requireActivity().supportFragmentManager.beginTransaction()
+            .replace(
+                R.id.fragment_container,
+                BillFragment.newInstance(billNo, "", "", "", "", receiptNo)
+            )
+            .addToBackStack(null)
+            .commit()
     }
 
     override fun onDestroyView() {
@@ -488,13 +542,28 @@ class PosBillingFragment : Fragment(), TitledScreen {
         if (editIndex < 0 && p.stock == "out") { toast("${p.name} is out of stock"); return }
         val editing = editIndex in cart.indices
 
+        // "Quantity Status" ON: a new item opens with quantity 0 and the cursor on
+        // the quantity field so the operator must enter it. OFF: defaults to 1.
+        val quantityStatusOn = SettingsCache.value(requireContext(), "G", "Quantity Status") == "1"
+        val startQty = when {
+            editing -> cart[editIndex].qty
+            quantityStatusOn -> 0
+            else -> 1
+        }
+
+        // Manual Rate off (App Settings): the rate field is read-only.
+        val manualRateOn = SettingsCache.value(requireContext(), "A", "Manual Rate") == "1"
+
         ProductEntryDialog.show(
             context = requireContext(),
             inflater = layoutInflater,
             product = p.toDialogProduct(),
             startRate = if (editing) cart[editIndex].product.price else p.price,
-            startQty = if (editing) cart[editIndex].qty else 1,
-            confirmLabel = if (editing) "Update" else "Add to cart"
+            startQty = startQty,
+            confirmLabel = if (editing) "Update" else "Add to cart",
+            focusQty = !editing && quantityStatusOn,
+            focusRate = !editing && manualRateOn,
+            rateEditable = manualRateOn
         ) { qty, rate ->
             if (editing) updateCartLine(editIndex, qty, rate) else addToCart(p, qty, rate)
         }
@@ -690,6 +759,65 @@ class PosBillingFragment : Fragment(), TitledScreen {
         window?.setGravity(android.view.Gravity.CENTER)
     }
 
+    /**
+     * Opens an editable customer form pre-filled with the attached customer, and
+     * writes changes back to md_customers. The updated details also refresh the sale.
+     */
+    private fun showEditCustomerDialog(ctx: android.content.Context, customer: Map<String, Any?>) {
+        val id = customer["id"] as? Long
+        if (id == null) { toast("No customer to edit"); return }
+
+        DialogUtils.showForm(
+            context = ctx,
+            title = "Edit Customer",
+            fields = listOf(
+                DialogUtils.FormField("Customer Name", customer["name"]?.toString().orEmpty()),
+                DialogUtils.FormField("Phone Number", customer["phone"]?.toString().orEmpty(), inputType = "phone", maxLength = 10),
+                DialogUtils.FormField("Address", customer["address"]?.toString().orEmpty(), isTextArea = true, spanColumns = 2),
+                DialogUtils.FormField("GSTIN", customer["gstin"]?.toString().orEmpty(), maxLength = 15, spanColumns = 2)
+            ),
+            positiveText = "Update",
+            mandatoryFields = listOf(1),
+            onSave = { values ->
+                val name = values[0].trim()
+                val phone = values[1].trim()
+                val address = values[2].trim()
+                val gstin = values[3].trim()
+
+                if (phone.length != 10) {
+                    toast("Enter a valid 10-digit phone number")
+                } else {
+                    val updated = runCatching {
+                        val db = DatabaseHelper.getInstance(ctx).writableDatabase
+                        val cv = android.content.ContentValues().apply {
+                            put("customer_name", name)
+                            put("phone_number", phone)
+                            put("customer_address", address)
+                            put("gstin", gstin)
+                            put("modified_by", SessionManager.currentUser?.userId)
+                            put("modified_at", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
+                        }
+                        db.update("md_customers", cv, "id=?", arrayOf(id.toString()))
+                    }.getOrDefault(0)
+
+                    if (updated > 0) {
+                        val newData = customer.toMutableMap().apply {
+                            this["name"] = name
+                            this["phone"] = phone
+                            this["address"] = address
+                            this["gstin"] = gstin
+                        }
+                        currentCustomerData = newData
+                        setCustomer(name.ifEmpty { null }, phone, newData)
+                        toast("Customer updated")
+                    } else {
+                        toast("Could not update the customer")
+                    }
+                }
+            }
+        )
+    }
+
     /** On-screen calculator. Just for calculations, does not add items to cart. */
     private fun showCalculatorDialog() {
         val accent = ThemeManager.getThemeColor(requireContext())
@@ -861,11 +989,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
         heldOrders.clear()
         heldOrders.add(
             CheckoutSession.HeldBill(
-                "Sale #1", cart.map { it.toSessionLine() }, discountPercent, couponApplied
+                "Sale #1", cart.map { it.toSessionLine() }, discountPercent, couponApplied,
+                customerName, customerPhone, currentCustomerData
             )
         )
-        clearSale()
-        updateHeldButton()
+        // Fully refresh the sale page for the next customer (clears cart, resets
+        // filters, reloads the catalogue) - same reset as starting a new sale.
+        startNewSale()
         toast("Sale put on hold")
     }
 
@@ -962,6 +1092,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         cart.addAll(h.toCartLines())
         discountPercent = h.discount
         couponApplied = h.coupon
+        setCustomer(h.customerName, h.customerPhone, h.customerData)
         cartAdapter.notifyDataSetChanged()
         updateHeldButton()
         updateTotals()

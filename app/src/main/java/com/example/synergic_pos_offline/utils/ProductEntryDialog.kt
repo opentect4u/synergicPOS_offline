@@ -50,6 +50,9 @@ object ProductEntryDialog {
         startRate: Double = product.price,
         startQty: Int = 1,
         confirmLabel: String = "Add to cart",
+        focusQty: Boolean = false,
+        focusRate: Boolean = false,
+        rateEditable: Boolean = true,
         onConfirm: (qty: Int, rate: Double) -> Unit
     ) {
         val accent = ThemeManager.getThemeColor(context)
@@ -76,6 +79,14 @@ object ProductEntryDialog {
 
         etRate.setText(String.format("%.2f", startRate))
         etQty.setText(startQty.toString())
+
+        // Manual rate off: the rate is fixed to the product's price and can't be edited.
+        if (!rateEditable) {
+            etRate.isFocusable = false
+            etRate.isFocusableInTouchMode = false
+            etRate.isCursorVisible = false
+            etRate.keyListener = null
+        }
 
         fun refreshAmount() {
             val rate = etRate.text?.toString()?.toDoubleOrNull() ?: 0.0
@@ -115,7 +126,18 @@ object ProductEntryDialog {
                 }
             }
         }
+        // Open focused (keyboard up) on whichever field the operator is expected to
+        // fill in. Rate wins when both apply, since it comes first on the form.
+        if (focusRate || focusQty) {
+            dialog.window?.setSoftInputMode(
+                android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
+            )
+        }
         dialog.show()
+        when {
+            focusRate -> { etRate.requestFocus(); etRate.selectAll() }
+            focusQty -> { etQty.requestFocus(); etQty.selectAll() }
+        }
     }
 
     private fun money(v: Double): String = "₹" + String.format("%.2f", v)

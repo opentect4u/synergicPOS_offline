@@ -50,7 +50,12 @@ object CheckoutSession {
         val cgstRate: Double = 0.0,
         val sgstRate: Double = 0.0
     )
-    data class HeldBill(val label: String, val lines: List<Line>, val discount: Int, val coupon: Boolean)
+    data class HeldBill(
+        val label: String, val lines: List<Line>, val discount: Int, val coupon: Boolean,
+        val customerName: String? = null,
+        val customerPhone: String? = null,
+        val customerData: Map<String, Any?>? = null
+    )
 
     var lines: MutableList<Line> = mutableListOf()
     var customerName: String? = null
@@ -534,6 +539,9 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         val ll = id<LinearLayout>(R.id.llReceiptItems)
         ll.removeAllViews()
         val ctx = requireContext()
+
+        // Store identity from the registered store, not a hardcoded placeholder.
+        renderStoreHeader(ctx)
         lines.forEach { line ->
             val col = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
@@ -561,6 +569,38 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         id<TextView>(R.id.tvRcDiscount).text = "- ${money(discountAmt())}"
         id<TextView>(R.id.tvRcTax).text = money(taxAmt())
         id<TextView>(R.id.tvRcTotal).text = money(total())
+    }
+
+    /** Fills the receipt's store name + address/GSTIN/phone line from md_registration. */
+    private fun renderStoreHeader(ctx: android.content.Context) {
+        val db = DatabaseHelper.getInstance(ctx).readableDatabase
+        db.query(
+            DatabaseHelper.Tables.MD_REGISTRATION,
+            arrayOf("store_name", "address", "phone_no", "store_gstin"),
+            null, null, null, null, "store_id ASC", "1"
+        ).use { c ->
+            if (c.moveToFirst()) {
+                val name = c.getString(0)?.takeIf { it.isNotBlank() } ?: "SYNERGIC POS"
+                val address = c.getString(1)?.takeIf { it.isNotBlank() }
+                val phone = c.getString(2)?.takeIf { it.isNotBlank() }
+                val gstin = c.getString(3)?.takeIf { it.isNotBlank() }
+
+                id<TextView>(R.id.tvRcStoreName).text = name.uppercase()
+
+                // Build a single info line from whatever the store actually has.
+                val parts = mutableListOf<String>()
+                address?.let { parts.add(it) }
+                gstin?.let { parts.add("GSTIN $it") }
+                phone?.let { parts.add("Tel $it") }
+                val info = id<TextView>(R.id.tvRcStoreInfo)
+                if (parts.isEmpty()) {
+                    info.visibility = View.GONE
+                } else {
+                    info.visibility = View.VISIBLE
+                    info.text = parts.joinToString("\n")
+                }
+            }
+        }
     }
 
     // ---- Complete ----------------------------------------------------------
@@ -736,12 +776,23 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         if (lines.isEmpty()) { toast("Cart is empty"); return }
         // Only one bill can be held at a time - replace existing if present
         CheckoutSession.heldOrders.clear()
-        CheckoutSession.heldOrders.add(CheckoutSession.HeldBill("Sale #1", lines.map { it.copy() }, 0, false))
+        val custData = CheckoutSession.customerId?.let {
+            mapOf<String, Any?>("id" to it, "name" to CheckoutSession.customerName, "phone" to CheckoutSession.customerPhone)
+        }
+        CheckoutSession.heldOrders.add(
+            CheckoutSession.HeldBill(
+                "Sale #1", lines.map { it.copy() }, 0, false,
+                CheckoutSession.customerName, CheckoutSession.customerPhone, custData
+            )
+        )
         lines.clear()
         renderItems()
         refreshTotals()
         updateHeldButton()
         toast("Sale put on hold")
+        // Refresh the billing page on the way back, so the held sale is cleared there
+        // too - same flow as holding from the billing screen.
+        CheckoutSession.startFreshSale = true
         parentFragmentManager.popBackStack()
     }
 

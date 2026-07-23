@@ -24,11 +24,14 @@
             android:paddingHorizontal="18dp">
 
             <TextView
+                android:id="@+id/tvBrandName"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="SYNERGIC POS"
                 android:textSize="17sp"
                 android:textStyle="bold"
+                android:maxLines="1"
+                android:ellipsize="end"
                 android:textColor="@color/text_main" />
 
             <TextView
@@ -63,17 +66,12 @@
                         style="@style/PosHeaderValue"
                         android:text="Priya Nair" />
                 </LinearLayout>
-                <View android:layout_width="1dp" android:layout_height="match_parent" android:background="#EEEEEE" />
 
-                <!-- <LinearLayout style="@style/PosHeaderCell">
-                    <TextView style="@style/PosHeaderLabel" android:text="Register" />
-                    <TextView style="@style/PosHeaderValue" android:text="Lane 03" />
-                </LinearLayout>
-                <View android:layout_width="1dp" android:layout_height="match_parent" android:background="#EEEEEE" /> -->
-
-                <LinearLayout style="@style/PosHeaderCell">
-                    <TextView style="@style/PosHeaderLabel" android:text="Order" />
-                    <TextView android:id="@+id/tvHeaderOrder" style="@style/PosHeaderValue" android:text="INV-000001" />
+                <!-- Last bill (shown only when the "Last Bill Status" setting is on) -->
+                <View android:id="@+id/vLastBillDivider" android:layout_width="1dp" android:layout_height="match_parent" android:background="#EEEEEE" android:visibility="gone" />
+                <LinearLayout android:id="@+id/cellLastBill" style="@style/PosHeaderCell" android:visibility="gone">
+                    <TextView style="@style/PosHeaderLabel" android:text="Last Bill" />
+                    <TextView android:id="@+id/tvHeaderLastBill" style="@style/PosHeaderValue" android:text="--" />
                 </LinearLayout>
             </LinearLayout>
         </HorizontalScrollView>
