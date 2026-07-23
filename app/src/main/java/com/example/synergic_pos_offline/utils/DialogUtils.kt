@@ -98,6 +98,7 @@ object DialogUtils {
         fields: List<FormField>,
         positiveText: String = "Save",
         negativeText: String = "Cancel",
+        showNegative: Boolean = true,
         mandatoryFields: List<Int> = emptyList(),
         onSave: (List<String>) -> Unit
     ) {
@@ -118,6 +119,9 @@ object DialogUtils {
         val btnNegative = view.findViewById<MaterialButton>(R.id.btnFormNegative)
         btnPositive.text = positiveText
         btnNegative.text = negativeText
+        // Callers can drop the Cancel button entirely (e.g. a mandatory prompt); the
+        // positive button then fills the row.
+        btnNegative.visibility = if (showNegative) android.view.View.VISIBLE else android.view.View.GONE
 
         val inputs = ArrayList<TextInputEditText>(fields.size)
         val density = context.resources.displayMetrics.density

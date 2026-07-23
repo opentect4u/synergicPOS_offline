@@ -1,5 +1,8 @@
 package com.example.synergic_pos_offline.utils
 
+import android.graphics.Bitmap
+import android.util.Log
+import android.view.ContextThemeWrapper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -12,6 +15,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * Exercises the off-screen receipt render that checkout auto-printing depends on.
@@ -89,5 +94,45 @@ class BillReceiptRendererTest {
         // A real receipt is far taller than it is wide; anything squatter means the
         // layout collapsed to its header.
         assertTrue("receipt collapsed to ${bitmap.width}x${bitmap.height}", bitmap.height > bitmap.width)
+    }
+
+    /**
+     * Renders the receipt for 58mm and 80mm, checks each is non-blank, and saves both
+     * to the app's external files dir for eyeballing. Confirms the paper-width render
+     * does not produce a blank or collapsed slip before it ever reaches a printer.
+     */
+    @Test
+    fun rendersEachPaperWidthNonBlankAndSaves() {
+        val receiptNo = anyReceiptNo()
+        assumeTrue("no bill on this device to render", receiptNo != null)
+        requireNotNull(receiptNo)
+
+        // The renderer inflates MaterialComponents views, so it needs the app's theme -
+        // exactly what a Fragment/Activity context carries in the running app.
+        val themed = ContextThemeWrapper(context, R.style.Theme_Synergic_POS_Offline)
+        val dir = context.filesDir
+        val report = StringBuilder()
+
+        for ((label, dots) in listOf("58mm" to 384, "80mm" to 576)) {
+            val bmp = onMain { BillReceiptRenderer(themed).renderToBitmap(receiptNo, dots) }
+            assertNotNull("render returned null at $label", bmp)
+            requireNotNull(bmp)
+
+            // Count pixels that are neither transparent nor white - real printed ink.
+            val px = IntArray(bmp.width * bmp.height)
+            bmp.getPixels(px, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+            val ink = px.count { (it ushr 24) != 0 && (it and 0x00FFFFFF) != 0x00FFFFFF }
+
+            File(dir, "receipt_$label.png").also { f ->
+                FileOutputStream(f).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            }
+            report.append("$label -> ${bmp.width}x${bmp.height}, inkPixels=$ink\n")
+
+            assertTrue("$label render is blank (no ink)", ink > 500)
+            assertTrue("$label collapsed to ${bmp.width}x${bmp.height}", bmp.height > bmp.width)
+        }
+
+        File(dir, "receipt_dims.txt").writeText(report.toString())
+        Log.i("RENDERCHECK", "\n$report")
     }
 }

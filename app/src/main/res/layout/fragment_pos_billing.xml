@@ -26,7 +26,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="FRESHMART"
+                android:text="SYNERGIC POS"
                 android:textSize="17sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_main" />
@@ -65,11 +65,11 @@
                 </LinearLayout>
                 <View android:layout_width="1dp" android:layout_height="match_parent" android:background="#EEEEEE" />
 
-                <LinearLayout style="@style/PosHeaderCell">
+                <!-- <LinearLayout style="@style/PosHeaderCell">
                     <TextView style="@style/PosHeaderLabel" android:text="Register" />
                     <TextView style="@style/PosHeaderValue" android:text="Lane 03" />
                 </LinearLayout>
-                <View android:layout_width="1dp" android:layout_height="match_parent" android:background="#EEEEEE" />
+                <View android:layout_width="1dp" android:layout_height="match_parent" android:background="#EEEEEE" /> -->
 
                 <LinearLayout style="@style/PosHeaderCell">
                     <TextView style="@style/PosHeaderLabel" android:text="Order" />

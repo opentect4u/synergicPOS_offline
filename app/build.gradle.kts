@@ -38,6 +38,11 @@ android {
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
+                // AGP drops v1 (JAR) signing when minSdk >= 24, which leaves some
+                // package installers unable to parse a sideloaded APK. Sign with both
+                // v1 and v2 so it installs everywhere.
+                enableV1Signing = true
+                enableV2Signing = true
             }
         }
     }

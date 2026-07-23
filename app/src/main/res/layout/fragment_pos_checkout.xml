@@ -22,7 +22,7 @@
             android:paddingHorizontal="18dp">
 
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="FRESHMART" android:textSize="17sp" android:textStyle="bold" android:textColor="@color/text_main" />
+                android:text="SYNERGIC POS" android:textSize="17sp" android:textStyle="bold" android:textColor="@color/text_main" />
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:text="POS TERMINAL" android:textSize="9sp" android:letterSpacing="0.2" android:textColor="@color/primary_blue" />
         </LinearLayout>
@@ -280,7 +280,7 @@
                             android:padding="24dp">
 
                             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:text="FRESHMART" android:gravity="center" android:fontFamily="monospace"
+                                android:text="SYNERGIC POS" android:gravity="center" android:fontFamily="monospace"
                                 android:textStyle="bold" android:textSize="20sp" android:textColor="@color/text_main" />
                             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                                 android:text="128 Market Street · Sector 5\nGSTIN 27AABCF1234M1Z9 · Tel 555-0100"

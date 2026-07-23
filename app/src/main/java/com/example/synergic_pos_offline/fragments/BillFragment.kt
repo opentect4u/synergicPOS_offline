@@ -66,14 +66,21 @@ class BillFragment : Fragment(), TitledScreen {
         // The button floats over the receipt, so it would otherwise be captured
         // onto the paper. Restored right after: both captures are synchronous.
         button.visibility = View.GONE
-        val config = ThermalPrinter.savedConfig(requireContext())
+        // Prefer the BILL slot in md_printer (its paper width scales the print);
+        // fall back to the legacy saved config only if it is unset.
+        val config = ThermalPrinter.configForPurpose(requireContext(), "BILL")
+            ?: ThermalPrinter.savedConfig(requireContext())
         if (config == null) {
             // No printer set up yet - ask for it, then print once it is saved.
             button.visibility = View.VISIBLE
             showPrinterSetup(card, receiptNo)
             return
         }
-        val capture = ReceiptPrinter.capture(card)
+        // Rendered off-screen at the paper's own width, not captured from the on-screen
+        // card: the card here is laid out at the device's screen width regardless of
+        // paper size, so capturing it and shrinking to fit would print 58mm as a
+        // miniature of 80mm instead of at full-size wrapped text.
+        val capture = BillReceiptRenderer(requireContext()).renderToBitmap(receiptNo, config.paperDots)
         button.visibility = View.VISIBLE
 
         if (capture == null) {
@@ -145,7 +152,7 @@ class BillFragment : Fragment(), TitledScreen {
      */
     private fun showPrinterSetup(card: View, receiptNo: Long) {
         PrinterSetup.show(requireContext()) { config ->
-            val capture = ReceiptPrinter.capture(card)
+            val capture = BillReceiptRenderer(requireContext()).renderToBitmap(receiptNo, config.paperDots)
             if (capture == null) toast("Could not render the receipt")
             else sendToThermalPrinter(capture, config, receiptNo)
         }

@@ -45,6 +45,11 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_MD_SUPPLIER)
         db.execSQL(SQL_CREATE_MD_BATCH_STOCK)
         db.execSQL(SQL_CREATE_MD_VERSION)
+        db.execSQL(SQL_CREATE_MD_PRINTER)
+        seedDefaultPrinters(db)
+        db.execSQL("UPDATE ${Tables.MD_PRINTER} SET is_selected = 1")
+        addExtraPrinterTypes(db)
+        db.execSQL(SQL_CREATE_MD_OPERATING_PRINTER)
 
         // Transaction tables
         db.execSQL(SQL_CREATE_TD_PURCHASE)
@@ -74,6 +79,14 @@ class DatabaseHelper private constructor(context: Context) :
             if (oldVersion < 3) migrateV3ProductGstSlab(db)
             if (oldVersion < 4) migrateV4AllowCreditPaymentMode(db)
             if (oldVersion < 5) migrateV5RecordBalanceDue(db)
+            if (oldVersion < 6) migrateV6AddPrinterTable(db)
+            if (oldVersion < 7) migrateV7AddPrinterIp(db)
+            if (oldVersion < 8) migrateV8ImportSavedPrinterIp(db)
+            if (oldVersion < 9) migrateV9AddPaperWidth(db)
+            if (oldVersion < 10) migrateV10AddPrinterTypes(db)
+            if (oldVersion < 11) migrateV11AddOperatingPrinterTable(db)
+            if (oldVersion < 12) migrateV12AddOperatingPrinterDefaultFlag(db)
+            if (oldVersion < 13) migrateV13AddOperatingPrinterPaperWidth(db)
             return
         }
 
@@ -82,6 +95,121 @@ class DatabaseHelper private constructor(context: Context) :
             db.execSQL("DROP TABLE IF EXISTS $table")
         }
         onCreate(db)
+    }
+
+    /**
+     * v6: adds the md_printer lookup, mapping each print purpose (BILL/KOT/OTHERS)
+     * to its connection type. Created and seeded here for existing databases; fresh
+     * installs get the same from onCreate.
+     */
+    private fun migrateV6AddPrinterTable(db: SQLiteDatabase) {
+        db.execSQL(SQL_CREATE_MD_PRINTER)
+        seedDefaultPrinters(db)
+    }
+
+    /** v7: holds each printer's saved address (WIFI/LAN IP). Null until configured. */
+    private fun migrateV7AddPrinterIp(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE ${Tables.MD_PRINTER} ADD COLUMN printer_ip TEXT")
+    }
+
+    /**
+     * v8: brings the WiFi printer address saved by the old settings flow
+     * (md_app_settings.printer_wifi_ip) into md_printer, against the BILL slot - the
+     * purpose that printer was used for. Only fills an empty slot, so an address
+     * already set through the new Printer Settings screen is left untouched.
+     */
+    private fun migrateV8ImportSavedPrinterIp(db: SQLiteDatabase) {
+        val savedIp = db.query(
+            Tables.MD_APP_SETTINGS, arrayOf("setting_value"),
+            "setting_name = ?", arrayOf("printer_wifi_ip"), null, null, "id DESC", "1"
+        ).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+
+        if (savedIp.isNullOrBlank()) return
+
+        db.execSQL(
+            "UPDATE ${Tables.MD_PRINTER} SET printer_ip = ? " +
+                "WHERE printer_purpose = 'BILL' AND (printer_ip IS NULL OR printer_ip = '')",
+            arrayOf(savedIp)
+        )
+    }
+
+    /**
+     * v9: adds paper_mm (58 or 80) to md_printer and brings across the paper width
+     * saved by the old settings flow (md_app_settings.printer_paper_width_mm) for the
+     * BILL slot. Only fills an empty value.
+     */
+    private fun migrateV9AddPaperWidth(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE ${Tables.MD_PRINTER} ADD COLUMN paper_mm INTEGER")
+
+        val savedPaper = db.query(
+            Tables.MD_APP_SETTINGS, arrayOf("setting_value"),
+            "setting_name = ?", arrayOf("printer_paper_width_mm"), null, null, "id DESC", "1"
+        ).use { c -> if (c.moveToFirst()) c.getString(0) else null }?.toIntOrNull()
+
+        if (savedPaper != null) {
+            db.execSQL(
+                "UPDATE ${Tables.MD_PRINTER} SET paper_mm = ? " +
+                    "WHERE printer_purpose = 'BILL' AND paper_mm IS NULL",
+                arrayOf(savedPaper.toString())
+            )
+        }
+    }
+
+    /**
+     * v10: each purpose can now be connected several ways. Adds is_selected (the
+     * connection currently chosen for a purpose), normalises the old 'BT' label to
+     * 'BLUETOOTH', keeps whatever single row each purpose already had as its selected
+     * choice, and adds BLUETOOTH and USB options alongside it.
+     */
+    private fun migrateV10AddPrinterTypes(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE ${Tables.MD_PRINTER} ADD COLUMN is_selected INTEGER DEFAULT 0")
+        db.execSQL("UPDATE ${Tables.MD_PRINTER} SET printer_type = 'BLUETOOTH' WHERE printer_type = 'BT'")
+        // The rows already present are the one-per-purpose choices - keep them selected.
+        db.execSQL("UPDATE ${Tables.MD_PRINTER} SET is_selected = 1")
+        addExtraPrinterTypes(db)
+    }
+
+    /** v11: adds md_operating_printer. */
+    private fun migrateV11AddOperatingPrinterTable(db: SQLiteDatabase) {
+        db.execSQL(SQL_CREATE_MD_OPERATING_PRINTER)
+    }
+
+    /** v12: adds default_flag to md_operating_printer, marking the default printer. */
+    private fun migrateV12AddOperatingPrinterDefaultFlag(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE ${Tables.MD_OPERATING_PRINTER} ADD COLUMN default_flag INTEGER DEFAULT 0")
+    }
+
+    /**
+     * v13: adds paper_mm to md_operating_printer - 58 (2 inch) or 80 (3 inch) -
+     * so each named printer carries its own paper width instead of borrowing
+     * whatever md_printer's connection row happens to have.
+     */
+    private fun migrateV13AddOperatingPrinterPaperWidth(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE ${Tables.MD_OPERATING_PRINTER} ADD COLUMN paper_mm INTEGER DEFAULT 80")
+    }
+
+    /** Ensures every purpose has a BLUETOOTH and a USB option (unselected). */
+    private fun addExtraPrinterTypes(db: SQLiteDatabase) {
+        for (purpose in listOf("BILL", "KOT", "OTHERS")) {
+            for (type in listOf("BLUETOOTH", "USB")) {
+                db.execSQL(
+                    "INSERT INTO ${Tables.MD_PRINTER} (printer_purpose, printer_type, is_selected) " +
+                        "SELECT ?, ?, 0 WHERE NOT EXISTS (" +
+                        "SELECT 1 FROM ${Tables.MD_PRINTER} WHERE printer_purpose = ? AND printer_type = ?)",
+                    arrayOf(purpose, type, purpose, type)
+                )
+            }
+        }
+    }
+
+    /** The default purpose-to-type printer rows. Idempotent via the sl_no primary key. */
+    private fun seedDefaultPrinters(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            INSERT OR IGNORE INTO ${Tables.MD_PRINTER} (sl_no, printer_purpose, printer_type)
+            VALUES (1, 'BILL', 'WIFI'), (2, 'KOT', 'LAN'), (3, 'OTHERS', 'LAN')
+            """.trimIndent()
+        )
     }
 
     /**
@@ -407,6 +535,8 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_SUPPLIER = "md_supplier"
         const val MD_BATCH_STOCK = "md_batch_stock"
         const val MD_VERSION = "md_version"
+        const val MD_PRINTER = "md_printer"
+        const val MD_OPERATING_PRINTER = "md_operating_printer"
 
         const val TD_PURCHASE = "td_purchase"
         const val TD_PURCHASE_RETURN = "td_purchase_return"
@@ -426,7 +556,12 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 5
+        // v6 adds md_printer; v7 adds its printer_ip column; v8 imports the printer
+        // address saved by the old settings flow; v9 adds paper_mm and imports the
+        // saved paper width; v10 adds is_selected and BLUETOOTH/USB rows per purpose;
+        // v11 adds md_operating_printer; v12 adds its default_flag column; v13 adds
+        // its own paper_mm column (58/80, independent of md_printer's).
+        private const val DATABASE_VERSION = 13
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of
@@ -452,6 +587,7 @@ class DatabaseHelper private constructor(context: Context) :
             Tables.MD_PRODUCTS, Tables.MD_PRODUCT_RATES, Tables.MD_CUSTOMERS, Tables.MD_DESCRIPTION,
             Tables.MD_WAITERS, Tables.MD_HEADERS, Tables.MD_FOOTERS, Tables.MD_LOGOS, Tables.MD_QR,
             Tables.MD_APP_SETTINGS, Tables.MD_SUPPLIER, Tables.MD_BATCH_STOCK, Tables.MD_VERSION,
+            Tables.MD_PRINTER, Tables.MD_OPERATING_PRINTER,
             Tables.TD_PURCHASE, Tables.TD_PURCHASE_RETURN, Tables.TD_WRITE_OFF, Tables.TD_BILLS,
             Tables.TD_BILL_ITEMS, Tables.TD_PAYMENTS, Tables.TD_SALE_RETURNS, Tables.TD_RETURN_ITEMS,
             Tables.TD_STOCK_TRANSACTIONS, Tables.TD_CUSTOMER_LEDGER, Tables.TD_ADVANCE_PAYMENTS,
@@ -737,6 +873,29 @@ class DatabaseHelper private constructor(context: Context) :
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 version TEXT,
                 last_updated_on TEXT
+            )
+        """
+
+        private const val SQL_CREATE_MD_PRINTER = """
+            CREATE TABLE IF NOT EXISTS md_printer (
+                sl_no INTEGER PRIMARY KEY,
+                printer_purpose TEXT,
+                printer_type TEXT,
+                printer_ip TEXT,
+                paper_mm INTEGER,
+                is_selected INTEGER DEFAULT 0
+            )
+        """
+
+        private const val SQL_CREATE_MD_OPERATING_PRINTER = """
+            CREATE TABLE IF NOT EXISTS md_operating_printer (
+                sl_no INTEGER PRIMARY KEY,
+                printer_name TEXT,
+                printer TEXT,
+                value TEXT,
+                print_flag INTEGER DEFAULT 0,
+                default_flag INTEGER DEFAULT 0,
+                paper_mm INTEGER DEFAULT 80
             )
         """
 
