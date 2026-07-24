@@ -27,6 +27,8 @@ class DatabaseHelper private constructor(context: Context) :
         if (!db.isReadOnly) db.setForeignKeyConstraintsEnabled(true)
         // Non-destructive migrations for existing databases (no version bump / data loss).
         addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
+        addColumnIfMissing(db, Tables.MD_PRODUCTS, "sku", "TEXT")
+        addColumnIfMissing(db, Tables.MD_PRODUCTS, "brand", "TEXT")
     }
 
     /**
@@ -698,6 +700,8 @@ class DatabaseHelper private constructor(context: Context) :
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 store_id INTEGER,
                 product_name TEXT,
+                sku TEXT,
+                brand TEXT,
                 hsn_code TEXT,
                 stock_alert_qty REAL DEFAULT 0,
                 bar_code TEXT,
