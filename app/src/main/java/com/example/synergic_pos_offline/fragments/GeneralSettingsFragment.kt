@@ -16,7 +16,9 @@ import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThemeManager
 import android.widget.ArrayAdapter
+import android.widget.RadioGroup
 import androidx.core.view.isVisible
+import com.example.synergic_pos_offline.database.GeneralSettingsDao.ItemRate
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.Mode
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
@@ -40,6 +42,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var etSaleReturnDays: TextInputEditText
     private lateinit var swLastBillStatus: SwitchMaterial
     private lateinit var swQuantityStatus: SwitchMaterial
+    private lateinit var rgItemRate: RadioGroup
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -55,10 +58,14 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         etSaleReturnDays = view.findViewById(R.id.etSaleReturnDays)
         swLastBillStatus = view.findViewById(R.id.swLastBillStatus)
         swQuantityStatus = view.findViewById(R.id.swQuantityStatus)
+        rgItemRate = view.findViewById(R.id.rgItemRate)
 
         val s = dao.load()
         swLastBillStatus.isChecked = s.lastBillStatus
         swQuantityStatus.isChecked = s.quantityStatus
+        rgItemRate.check(
+            if (s.itemRate == ItemRate.MULTIPLE) R.id.rbItemRateMultiple else R.id.rbItemRateSingle
+        )
 
         // Mode dropdown (always shows every option). Displays labels; stores G / R.
         actMode.setAdapter(NoFilterAdapter(requireContext(), Mode.values().map { it.label }))
@@ -85,7 +92,9 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                     saleReturn = swSaleReturn.isChecked,
                     saleReturnDays = days,
                     lastBillStatus = swLastBillStatus.isChecked,
-                    quantityStatus = swQuantityStatus.isChecked
+                    quantityStatus = swQuantityStatus.isChecked,
+                    itemRate = if (rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple)
+                        ItemRate.MULTIPLE else ItemRate.SINGLE
                 )
             )
             DialogUtils.showSuccess(

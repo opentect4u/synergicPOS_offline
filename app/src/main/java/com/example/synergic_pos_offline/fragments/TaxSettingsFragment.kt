@@ -36,8 +36,8 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
 
     private lateinit var swGst: SwitchMaterial
     private lateinit var rgGstMode: RadioGroup
-    private lateinit var swIgst: SwitchMaterial
     private lateinit var swVat: SwitchMaterial
+    private lateinit var rgVatMode: RadioGroup
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -53,24 +53,22 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         rgDiscountPosition = view.findViewById(R.id.rgDiscountPosition)
         swGst = view.findViewById(R.id.swGst)
         rgGstMode = view.findViewById(R.id.rgGstMode)
-        swIgst = view.findViewById(R.id.swIgst)
         swVat = view.findViewById(R.id.swVat)
+        rgVatMode = view.findViewById(R.id.rgVatMode)
 
         bind(dao.load())
 
         // Discount options visible only when discount is on.
         swDiscount.setOnCheckedChangeListener { _, on -> llDiscountOptions.isVisible = on }
 
-        // GST / IGST / VAT are mutually exclusive.
+        // GST and VAT are mutually exclusive; each shows its own mode when on.
         swGst.setOnCheckedChangeListener { _, on ->
             rgGstMode.isVisible = on
-            if (on) { swIgst.isChecked = false; swVat.isChecked = false }
-        }
-        swIgst.setOnCheckedChangeListener { _, on ->
-            if (on) { swGst.isChecked = false; swVat.isChecked = false }
+            if (on) swVat.isChecked = false
         }
         swVat.setOnCheckedChangeListener { _, on ->
-            if (on) { swGst.isChecked = false; swIgst.isChecked = false }
+            rgVatMode.isVisible = on
+            if (on) swGst.isChecked = false
         }
 
         view.findViewById<MaterialButton>(R.id.btnSaveTax).setOnClickListener { onSave() }
@@ -84,46 +82,39 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         llDiscountOptions.isVisible = s.discountEnabled
         rgDiscountType.check(
             when (s.discountType) {
-                DiscountType.ITEM_PERCENT -> R.id.rbTypeItemPct
-                DiscountType.ITEM_AMOUNT -> R.id.rbTypeItemAmt
-                DiscountType.BILL_PERCENT -> R.id.rbTypeBillPct
-                DiscountType.BILL_AMOUNT -> R.id.rbTypeBillAmt
+                DiscountType.ITEM_WISE -> R.id.rbTypeItem
+                DiscountType.BILL_WISE -> R.id.rbTypeBill
             }
         )
         rgDiscountPosition.check(
             when (s.discountPosition) {
-                DiscountPosition.ITEM_PRE_TAX -> R.id.rbPosItemPre
-                DiscountPosition.ITEM_POST_TAX -> R.id.rbPosItemPost
-                DiscountPosition.BILL_PRE_TAX -> R.id.rbPosBillPre
-                DiscountPosition.BILL_POST_TAX -> R.id.rbPosBillPost
+                DiscountPosition.PRE_TAX -> R.id.rbPosPre
+                DiscountPosition.POST_TAX -> R.id.rbPosPost
             }
         )
 
         swGst.isChecked = s.gstEnabled
         rgGstMode.isVisible = s.gstEnabled
         rgGstMode.check(if (s.gstMode == GstMode.INCLUSIVE) R.id.rbInclusive else R.id.rbExclusive)
-        swIgst.isChecked = s.igstEnabled
         swVat.isChecked = s.vatEnabled
+        rgVatMode.isVisible = s.vatEnabled
+        rgVatMode.check(if (s.vatMode == GstMode.INCLUSIVE) R.id.rbVatInclusive else R.id.rbVatExclusive)
     }
 
     private fun collect(): TaxSettings = TaxSettings(
         discountEnabled = swDiscount.isChecked,
         discountType = when (rgDiscountType.checkedRadioButtonId) {
-            R.id.rbTypeItemAmt -> DiscountType.ITEM_AMOUNT
-            R.id.rbTypeBillPct -> DiscountType.BILL_PERCENT
-            R.id.rbTypeBillAmt -> DiscountType.BILL_AMOUNT
-            else -> DiscountType.ITEM_PERCENT
+            R.id.rbTypeBill -> DiscountType.BILL_WISE
+            else -> DiscountType.ITEM_WISE
         },
         discountPosition = when (rgDiscountPosition.checkedRadioButtonId) {
-            R.id.rbPosItemPost -> DiscountPosition.ITEM_POST_TAX
-            R.id.rbPosBillPre -> DiscountPosition.BILL_PRE_TAX
-            R.id.rbPosBillPost -> DiscountPosition.BILL_POST_TAX
-            else -> DiscountPosition.ITEM_PRE_TAX
+            R.id.rbPosPost -> DiscountPosition.POST_TAX
+            else -> DiscountPosition.PRE_TAX
         },
         gstEnabled = swGst.isChecked,
         gstMode = if (rgGstMode.checkedRadioButtonId == R.id.rbInclusive) GstMode.INCLUSIVE else GstMode.EXCLUSIVE,
-        igstEnabled = swIgst.isChecked,
-        vatEnabled = swVat.isChecked
+        vatEnabled = swVat.isChecked,
+        vatMode = if (rgVatMode.checkedRadioButtonId == R.id.rbVatInclusive) GstMode.INCLUSIVE else GstMode.EXCLUSIVE
     )
 
     private fun onSave() {

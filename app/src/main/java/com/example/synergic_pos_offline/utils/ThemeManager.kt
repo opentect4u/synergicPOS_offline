@@ -82,7 +82,11 @@ object ThemeManager {
                 view.cornerRadius = (view.resources.displayMetrics.density * 12).toInt()
             }
 
-            is FloatingActionButton -> view.backgroundTintList = tint
+            // FAB uses a darker shade of the accent so it stays on-theme but does
+            // not blend with the accent-tinted row Edit/Delete icons it floats over.
+            is FloatingActionButton ->
+                view.backgroundTintList =
+                    ColorStateList.valueOf(ColorUtils.blendARGB(color, Color.BLACK, 0.22f))
 
             // Switch: accent thumb + translucent accent track when ON, grey when OFF.
             is SwitchMaterial -> {

@@ -230,28 +230,29 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
             db.rawQuery(
                 """
-                SELECT p.id, p.product_name, p.bar_code, p.hsn_code, p.gst_rate,
-                       c.category_name, r.rate_1
+                SELECT p.id, p.product_name, p.bar_code, p.hsn_code,
+                       c.category_name, r.rate, r.cgst_rate, r.sgst_rate
                 FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
                 LEFT JOIN ${DatabaseHelper.Tables.MD_CATEGORY} c ON c.id = p.category_id
-                LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r ON r.product_id = p.id
+                LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r ON r.id = (
+                    SELECT id FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES}
+                    WHERE product_id = p.id ORDER BY "default" DESC, id ASC LIMIT 1
+                )
                 ORDER BY p.product_name COLLATE NOCASE
                 """.trimIndent(),
                 null
             ).use { c ->
                 while (c.moveToNext()) {
-                    // The slab on the product is the master; CGST and SGST are half each.
-                    val gst = c.getDouble(4)
                     list.add(
                         ProductEntryDialog.Product(
                             id = c.getLong(0).toString(),
                             name = c.getString(1)?.takeIf { it.isNotBlank() } ?: "Item",
                             sku = c.getString(2).orEmpty(),
-                            category = c.getString(5).orEmpty(),
-                            price = if (c.isNull(6)) 0.0 else c.getDouble(6),
+                            category = c.getString(4).orEmpty(),
+                            price = if (c.isNull(5)) 0.0 else c.getDouble(5),
                             hsn = c.getString(3)?.takeIf { it.isNotBlank() } ?: "0000",
-                            cgst = gst / 2.0,
-                            sgst = gst / 2.0
+                            cgst = if (c.isNull(6)) 0.0 else c.getDouble(6),
+                            sgst = if (c.isNull(7)) 0.0 else c.getDouble(7)
                         )
                     )
                 }

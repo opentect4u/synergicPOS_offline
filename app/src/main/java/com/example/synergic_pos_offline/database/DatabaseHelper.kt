@@ -24,11 +24,132 @@ class DatabaseHelper private constructor(context: Context) :
 
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
-        if (!db.isReadOnly) db.setForeignKeyConstraintsEnabled(true)
+        if (db.isReadOnly) return
+        db.setForeignKeyConstraintsEnabled(true)
         // Non-destructive migrations for existing databases (no version bump / data loss).
         addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "sku", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "brand", "TEXT")
+        ensureProductsSchema(db)
+        recreateProductRatesIfOldSchema(db)
+        // "default" is a reserved word, so it must be quoted in the ALTER.
+        if (!columnExists(db, Tables.MD_PRODUCT_RATES, "default")) {
+            runCatching {
+                db.execSQL("ALTER TABLE ${Tables.MD_PRODUCT_RATES} ADD COLUMN \"default\" INTEGER DEFAULT 0")
+            }
+        }
+        // Every product rate's sku mirrors its own id.
+        runCatching {
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_product_rates_sku_from_id
+                AFTER INSERT ON ${Tables.MD_PRODUCT_RATES}
+                FOR EACH ROW
+                BEGIN
+                    UPDATE ${Tables.MD_PRODUCT_RATES} SET sku = NEW.id WHERE id = NEW.id;
+                END
+                """.trimIndent()
+            )
+        }
+        // store_id on products and their rates is sourced from md_registration (the
+        // verified store first) when the insert didn't supply one.
+        runCatching { db.execSQL(storeIdTrigger("trg_products_store_id", Tables.MD_PRODUCTS)) }
+        runCatching { db.execSQL(storeIdTrigger("trg_product_rates_store_id", Tables.MD_PRODUCT_RATES)) }
+        // IGST setting was removed; drop any leftover row.
+        runCatching {
+            db.execSQL("DELETE FROM ${Tables.MD_APP_SETTINGS} WHERE setting_name = 'IGST'")
+        }
+    }
+
+    /** Builds an AFTER INSERT trigger that fills a null store_id from md_registration. */
+    private fun storeIdTrigger(name: String, table: String): String = """
+        CREATE TRIGGER IF NOT EXISTS $name
+        AFTER INSERT ON $table
+        FOR EACH ROW WHEN NEW.store_id IS NULL
+        BEGIN
+            UPDATE $table SET store_id = COALESCE(
+                (SELECT store_id FROM ${Tables.MD_REGISTRATION} WHERE verify_flag = 1 ORDER BY store_id LIMIT 1),
+                (SELECT store_id FROM ${Tables.MD_REGISTRATION} ORDER BY store_id LIMIT 1)
+            ) WHERE id = NEW.id;
+        END
+    """.trimIndent()
+
+    /**
+     * Drops and recreates md_product_rates with the new single-rate schema when an
+     * old (rate_1/rate_2/rate_3) table is found. Detected by the new `rate_name`
+     * column being absent. This is destructive for md_product_rates - product rates
+     * must be re-entered - which is intended for the schema change.
+     */
+    private fun recreateProductRatesIfOldSchema(db: SQLiteDatabase) {
+        if (columnExists(db, Tables.MD_PRODUCT_RATES, "rate_name")) return
+        runCatching {
+            db.setForeignKeyConstraintsEnabled(false)
+            db.beginTransaction()
+            try {
+                db.execSQL("DROP TABLE IF EXISTS ${Tables.MD_PRODUCT_RATES}")
+                db.execSQL(SQL_CREATE_MD_PRODUCT_RATES)
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            createIndexes(db)
+            db.setForeignKeyConstraintsEnabled(true)
+        }.onFailure { android.util.Log.e("DBMigrate", "Failed to recreate md_product_rates", it) }
+    }
+
+    /** True if [table] has a column named [column]. */
+    private fun columnExists(db: SQLiteDatabase, table: String, column: String): Boolean =
+        db.rawQuery("PRAGMA table_info($table)", null).use { c ->
+            val nameIdx = c.getColumnIndex("name")
+            generateSequence { if (c.moveToNext()) c.getString(nameIdx) else null }.any { it == column }
+        }
+
+    /** True if [table] has a foreign key on [fromColumn] referencing [refTable]. */
+    private fun foreignKeyExists(db: SQLiteDatabase, table: String, fromColumn: String, refTable: String): Boolean =
+        db.rawQuery("PRAGMA foreign_key_list($table)", null).use { c ->
+            val tableIdx = c.getColumnIndex("table")
+            val fromIdx = c.getColumnIndex("from")
+            generateSequence { if (c.moveToNext()) c.getString(tableIdx) to c.getString(fromIdx) else null }
+                .any { it.first == refTable && it.second == fromColumn }
+        }
+
+    /**
+     * Rebuilds md_products to the current schema when it is out of date - either the
+     * old `gst_rate` column is still present, or the `store_id` foreign key is missing.
+     * Rebuilding is the portable way to drop a column / add a constraint (SQLite has no
+     * in-place support that older Android builds carry). Data is preserved; foreign
+     * keys are toggled off around the rebuild as SQLite requires.
+     */
+    private fun ensureProductsSchema(db: SQLiteDatabase) {
+        val needsRebuild = columnExists(db, Tables.MD_PRODUCTS, "gst_rate") ||
+            !foreignKeyExists(db, Tables.MD_PRODUCTS, "store_id", Tables.MD_REGISTRATION)
+        if (!needsRebuild) return
+        runCatching {
+            db.setForeignKeyConstraintsEnabled(false)
+            db.beginTransaction()
+            try {
+                db.execSQL("ALTER TABLE ${Tables.MD_PRODUCTS} RENAME TO md_products_old")
+                db.execSQL(SQL_CREATE_MD_PRODUCTS)
+                db.execSQL(
+                    """
+                    INSERT INTO ${Tables.MD_PRODUCTS}
+                        (id, store_id, product_name, sku, brand, hsn_code, stock_alert_qty,
+                         bar_code, category_id, product_image, created_at, modified_at,
+                         created_by, modified_by)
+                    SELECT id, store_id, product_name, sku, brand, hsn_code, stock_alert_qty,
+                           bar_code, category_id, product_image, created_at, modified_at,
+                           created_by, modified_by
+                    FROM md_products_old
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE md_products_old")
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            createIndexes(db)
+            db.setForeignKeyConstraintsEnabled(true)
+        }.onFailure { android.util.Log.e("DBMigrate", "Failed to rebuild md_products", it) }
     }
 
     /**
@@ -134,6 +255,8 @@ class DatabaseHelper private constructor(context: Context) :
             db.execSQL(SQL_CREATE_MD_PRINTER)
             addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
         }
+        // gst_rate is dropped in onOpen via a portable table rebuild (see
+        // dropProductGstRateIfPresent), which works on every SQLite version.
     }
 
     /**
@@ -595,7 +718,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 15
+        private const val DATABASE_VERSION = 16
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of
@@ -706,12 +829,12 @@ class DatabaseHelper private constructor(context: Context) :
                 stock_alert_qty REAL DEFAULT 0,
                 bar_code TEXT,
                 category_id INTEGER,
-                gst_rate REAL DEFAULT 0 CHECK(gst_rate IN ($GST_SLABS_SQL)),
                 product_image BLOB,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,
                 modified_by TEXT,
+                FOREIGN KEY(store_id) REFERENCES md_registration(store_id),
                 FOREIGN KEY(category_id) REFERENCES md_category(id)
             )
         """
@@ -724,29 +847,25 @@ class DatabaseHelper private constructor(context: Context) :
                 store_id INTEGER,
                 outlet_id INTEGER,
                 product_id INTEGER,
-                rate_1 REAL,
-                rate_2 REAL,
-                rate_3 REAL,
-                unit_1_id INTEGER,
-                unit_2_id INTEGER,
-                unit_3_id INTEGER,
-                cgst_rate REAL DEFAULT 0,
-                sgst_rate REAL DEFAULT 0,
-                igst_rate REAL DEFAULT 0,
-                vat_rate REAL DEFAULT 0,
+                sku TEXT,
+                batch_no TEXT,
+                rate_name TEXT,
+                rate REAL,
+                unit_id INTEGER,
+                cgst_rate REAL,
+                sgst_rate REAL,
+                igst_rate REAL,
+                vat_rate REAL,
                 discount REAL DEFAULT 0,
                 discount_type TEXT CHECK(discount_type IN ('P','A')),
-                batch_no TEXT,
+                sale_price REAL,
                 sell_price REAL,
                 purchase_price REAL,
+                "default" INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,
-                modified_by TEXT,
-                FOREIGN KEY(product_id) REFERENCES md_products(id),
-                FOREIGN KEY(unit_1_id) REFERENCES md_units(id),
-                FOREIGN KEY(unit_2_id) REFERENCES md_units(id),
-                FOREIGN KEY(unit_3_id) REFERENCES md_units(id)
+                modified_by TEXT
             )
         """
 

@@ -71,7 +71,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val id: String, val name: String, val sku: String,
         val category: String, val categoryId: Long, val price: Double, val stock: String = "ok",
         val hsn: String = "0000", val cgst: Double = 0.0, val sgst: Double = 0.0,
-        val unit: String = "pcs"
+        val unit: String = "pcs",
+        /** Every sellable rate (only populated in Multiple item-rate mode). */
+        val rates: List<ProductEntryDialog.Rate> = emptyList()
     ) {
         /** Combined rate, for display only. */
         val gst: Double get() = cgst + sgst
@@ -437,12 +439,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
         menu.clear()
         val helper = DatabaseHelper.getInstance(requireContext())
         val db = helper.readableDatabase
+        // Multiple item-rate mode: the product popup offers a rate dropdown.
+        val multipleRates = SettingsCache.value(requireContext(), "G", "Item Rate") == "M"
 
         // Query products with their rates
         photoCache.clear()
         db.query(
             "md_products",
-            arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id", "gst_rate",
+            arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id",
                 "product_image"),
             null, null, null, null, "product_name ASC"
         ).use { cursor ->
@@ -452,13 +456,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 val barcode = cursor.getString(2) ?: ""
                 val hsn = cursor.getString(3) ?: "0000"
                 val categoryId = cursor.getLong(4)
-                // The slab on the product is the master; CGST and SGST are half each.
-                val gstRate = cursor.getDouble(5)
 
                 // Decoded once here rather than on every bind: the grid rebinds on
                 // each filter keystroke, and decoding a JPEG per tile would stutter.
-                if (!cursor.isNull(6)) {
-                    cursor.getBlob(6)
+                if (!cursor.isNull(5)) {
+                    cursor.getBlob(5)
                         ?.takeIf { it.isNotEmpty() }
                         ?.let { ImageUtils.decodeThumb(it, PHOTO_PX) }
                         ?.let { photoCache[productId] = it }
@@ -467,17 +469,25 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 // Get the category name
                 val categoryName = categoryItems.find { it.id == categoryId }?.name ?: ""
 
-                // Query the product's selling rate
+                // Query the product's default rate row (rate + its own GST split).
                 db.query(
                     "md_product_rates",
-                    arrayOf("rate_1"),
+                    arrayOf("rate", "cgst_rate", "sgst_rate"),
                     "product_id = ?",
                     arrayOf(productId),
-                    null, null, null, "1"
+                    null, null, "\"default\" DESC, id ASC", "1"
                 ).use { rateCursor ->
-                    val price = if (rateCursor.moveToFirst()) rateCursor.getDouble(0) else 0.0
-                    val cgst = gstRate / 2.0
-                    val sgst = gstRate / 2.0
+                    var price = 0.0
+                    var cgst = 0.0
+                    var sgst = 0.0
+                    if (rateCursor.moveToFirst()) {
+                        price = if (rateCursor.isNull(0)) 0.0 else rateCursor.getDouble(0)
+                        cgst = if (rateCursor.isNull(1)) 0.0 else rateCursor.getDouble(1)
+                        sgst = if (rateCursor.isNull(2)) 0.0 else rateCursor.getDouble(2)
+                    }
+
+                    // In Multiple mode, gather every rate for the popup's dropdown.
+                    val rates = if (multipleRates) loadRates(db, productId) else emptyList()
 
                     // Create product with database values
                     val product = Product(
@@ -489,12 +499,40 @@ class PosBillingFragment : Fragment(), TitledScreen {
                         price = price,
                         hsn = hsn,
                         cgst = cgst,
-                        sgst = sgst
+                        sgst = sgst,
+                        rates = rates
                     )
                     menu.add(product)
                 }
             }
         }
+    }
+
+    /** Every rate row for a product (default first), for the popup's rate dropdown. */
+    private fun loadRates(
+        db: android.database.sqlite.SQLiteDatabase, productId: String
+    ): List<ProductEntryDialog.Rate> {
+        val out = mutableListOf<ProductEntryDialog.Rate>()
+        db.query(
+            "md_product_rates",
+            arrayOf("rate_name", "rate", "cgst_rate", "sgst_rate"),
+            "product_id = ?", arrayOf(productId),
+            null, null, "\"default\" DESC, id ASC"
+        ).use { c ->
+            var i = 1
+            while (c.moveToNext()) {
+                out.add(
+                    ProductEntryDialog.Rate(
+                        name = c.getString(0)?.takeIf { it.isNotBlank() } ?: "Rate ${i}",
+                        rate = if (c.isNull(1)) 0.0 else c.getDouble(1),
+                        cgst = if (c.isNull(2)) 0.0 else c.getDouble(2),
+                        sgst = if (c.isNull(3)) 0.0 else c.getDouble(3)
+                    )
+                )
+                i++
+            }
+        }
+        return out
     }
 
     private fun applyFilter() {
@@ -571,7 +609,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private fun Product.toDialogProduct() = ProductEntryDialog.Product(
         id = id, name = name, sku = sku, category = category,
-        price = price, hsn = hsn, unit = unit, cgst = cgst, sgst = sgst
+        price = price, hsn = hsn, unit = unit, cgst = cgst, sgst = sgst, rates = rates
     )
 
     /** Replaces a cart line's rate and quantity (from the edit dialog). */

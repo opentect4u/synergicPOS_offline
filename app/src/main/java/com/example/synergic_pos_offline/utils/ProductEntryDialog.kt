@@ -6,12 +6,15 @@ import android.graphics.Color
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.LayoutInflater
+import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import com.example.synergic_pos_offline.R
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 
 /**
  * The product line popup: HSN / GST / CGST / SGST with an editable rate and
@@ -32,10 +35,20 @@ object ProductEntryDialog {
         val hsn: String = "0000",
         val unit: String = "pcs",
         val cgst: Double = 0.0,
-        val sgst: Double = 0.0
+        val sgst: Double = 0.0,
+        /** All sellable rates for this product; drives the rate dropdown when >1. */
+        val rates: List<Rate> = emptyList()
     ) {
         val gst: Double get() = cgst + sgst
     }
+
+    /** One named rate a product can be sold at, with its own GST split. */
+    data class Rate(
+        val name: String,
+        val rate: Double,
+        val cgst: Double = 0.0,
+        val sgst: Double = 0.0
+    )
 
     /**
      * @param startRate rate to open with, so an edit reopens on the line's own rate
@@ -63,12 +76,27 @@ object ProductEntryDialog {
         view.findViewById<TextView>(R.id.tvDetSku).text = product.sku
         view.findViewById<TextView>(R.id.tvDetHsn).text = product.hsn
         view.findViewById<TextView>(R.id.tvDetUnit).text = product.unit
-        view.findViewById<TextView>(R.id.tvDetMrp).text = money(product.price)
-        view.findViewById<TextView>(R.id.tvDetGst).text = pct(product.gst)
-        view.findViewById<TextView>(R.id.tvDetCgst).text = pct(product.cgst)
-        view.findViewById<TextView>(R.id.tvDetSgst).text = pct(product.sgst)
-        view.findViewById<TextView>(R.id.tvCgstLabel).text = "CGST (${pct(product.cgst)})"
-        view.findViewById<TextView>(R.id.tvSgstLabel).text = "SGST (${pct(product.sgst)})"
+        val tvDetMrp = view.findViewById<TextView>(R.id.tvDetMrp)
+        val tvDetGst = view.findViewById<TextView>(R.id.tvDetGst)
+        val tvDetCgst = view.findViewById<TextView>(R.id.tvDetCgst)
+        val tvDetSgst = view.findViewById<TextView>(R.id.tvDetSgst)
+        val tvCgstLabel = view.findViewById<TextView>(R.id.tvCgstLabel)
+        val tvSgstLabel = view.findViewById<TextView>(R.id.tvSgstLabel)
+        tvDetMrp.text = money(product.price)
+
+        // GST split can change with the selected rate, so it is held mutable.
+        var curCgst = product.cgst
+        var curSgst = product.sgst
+        fun applyTaxLabels(cgst: Double, sgst: Double) {
+            curCgst = cgst
+            curSgst = sgst
+            tvDetGst.text = pct(cgst + sgst)
+            tvDetCgst.text = pct(cgst)
+            tvDetSgst.text = pct(sgst)
+            tvCgstLabel.text = "CGST (${pct(cgst)})"
+            tvSgstLabel.text = "SGST (${pct(sgst)})"
+        }
+        applyTaxLabels(product.cgst, product.sgst)
 
         val etRate = view.findViewById<TextInputEditText>(R.id.etRate)
         val etQty = view.findViewById<TextInputEditText>(R.id.etQty)
@@ -92,8 +120,8 @@ object ProductEntryDialog {
             val rate = etRate.text?.toString()?.toDoubleOrNull() ?: 0.0
             val qty = etQty.text?.toString()?.toIntOrNull() ?: 0
             val taxable = GstCalculator.taxableValue(rate, qty, 0)
-            val cgst = GstCalculator.taxAmount(taxable, product.cgst)
-            val sgst = GstCalculator.taxAmount(taxable, product.sgst)
+            val cgst = GstCalculator.taxAmount(taxable, curCgst)
+            val sgst = GstCalculator.taxAmount(taxable, curSgst)
             tvTaxable.text = money(taxable)
             tvCgstAmt.text = money(cgst)
             tvSgstAmt.text = money(sgst)
@@ -102,6 +130,32 @@ object ProductEntryDialog {
         etRate.addTextChangedListener(watcher { refreshAmount() })
         etQty.addTextChangedListener(watcher { refreshAmount() })
         refreshAmount()
+
+        // Multiple rates: a dropdown swaps the rate and its own GST split. The rate
+        // is chosen from the list, so manual entry into the Rate field is disabled.
+        if (product.rates.size > 1) {
+            val til = view.findViewById<TextInputLayout>(R.id.tilRateSelect)
+            val act = view.findViewById<MaterialAutoCompleteTextView>(R.id.actRateSelect)
+            til.visibility = android.view.View.VISIBLE
+            etRate.isFocusable = false
+            etRate.isFocusableInTouchMode = false
+            etRate.isCursorVisible = false
+            etRate.keyListener = null
+            val labels = product.rates.map { r ->
+                "${r.name.ifBlank { "Rate" }} (${money(r.rate)})"
+            }
+            act.setAdapter(ArrayAdapter(context, android.R.layout.simple_list_item_1, labels))
+            // Open on whichever rate matches the starting rate, else the first.
+            val startIdx = product.rates.indexOfFirst { it.rate == startRate }.coerceAtLeast(0)
+            act.setText(labels[startIdx], false)
+            act.setOnItemClickListener { _, _, pos, _ ->
+                val r = product.rates[pos]
+                etRate.setText(String.format("%.2f", r.rate))
+                tvDetMrp.text = money(r.rate)
+                applyTaxLabels(r.cgst, r.sgst)
+                refreshAmount()
+            }
+        }
 
         val dialog = AlertDialog.Builder(context).setView(view).create()
         dialog.setCanceledOnTouchOutside(false)

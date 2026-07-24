@@ -331,9 +331,10 @@ class ItemwiseSearchFragment : Fragment(), TitledScreen {
                     r.igst_rate,
                     r.vat_rate
                 FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r
-                LEFT JOIN ${DatabaseHelper.Tables.MD_UNITS} u ON u.id = r.unit_1_id
+                LEFT JOIN ${DatabaseHelper.Tables.MD_UNITS} u ON u.id = r.unit_id
                 LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCTS} p ON p.id = r.product_id
                 WHERE r.product_id = ?
+                ORDER BY r."default" DESC, r.id ASC
                 LIMIT 1
             """.trimIndent()
 

@@ -30,13 +30,25 @@ class GeneralSettingsDao(context: Context) {
         }
     }
 
+    /** How many rates an item can carry. Persisted as a single-letter [code] (S / M). */
+    enum class ItemRate(val code: String, val label: String) {
+        SINGLE("S", "Single"), MULTIPLE("M", "Multiple");
+        companion object {
+            /** Accepts the stored code (S/M) or the display label. */
+            fun fromStored(value: String?): ItemRate? = value?.let { v ->
+                values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
+            }
+        }
+    }
+
     /** The general-settings configuration with defaults. */
     data class GeneralSettings(
         val mode: Mode = Mode.GROCERY,
         val saleReturn: Boolean = false,
         val saleReturnDays: Int = 0,
         val lastBillStatus: Boolean = false,
-        val quantityStatus: Boolean = false
+        val quantityStatus: Boolean = false,
+        val itemRate: ItemRate = ItemRate.SINGLE
     )
 
     /** Reads every general setting for the current store, applying defaults. */
@@ -48,7 +60,8 @@ class GeneralSettingsDao(context: Context) {
             saleReturn = m[KEY_SALE_RETURN]?.toBool() ?: d.saleReturn,
             saleReturnDays = m[KEY_SALE_RETURN_DAYS]?.toIntOrNull() ?: d.saleReturnDays,
             lastBillStatus = m[KEY_LAST_BILL_STATUS]?.toBool() ?: d.lastBillStatus,
-            quantityStatus = m[KEY_QUANTITY_STATUS]?.toBool() ?: d.quantityStatus
+            quantityStatus = m[KEY_QUANTITY_STATUS]?.toBool() ?: d.quantityStatus,
+            itemRate = ItemRate.fromStored(m[KEY_ITEM_RATE]) ?: d.itemRate
         )
     }
 
@@ -60,6 +73,7 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_SALE_RETURN_DAYS, if (s.saleReturn) s.saleReturnDays.toString() else "0")
         put(KEY_LAST_BILL_STATUS, s.lastBillStatus.b())
         put(KEY_QUANTITY_STATUS, s.quantityStatus.b())
+        put(KEY_ITEM_RATE, s.itemRate.code)
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "General settings save (type G)")
     }
@@ -138,5 +152,6 @@ class GeneralSettingsDao(context: Context) {
         const val KEY_SALE_RETURN_DAYS = "Sale Return Days"
         const val KEY_LAST_BILL_STATUS = "Last Bill Status"
         const val KEY_QUANTITY_STATUS = "Quantity Status"
+        const val KEY_ITEM_RATE = "Item Rate"
     }
 }

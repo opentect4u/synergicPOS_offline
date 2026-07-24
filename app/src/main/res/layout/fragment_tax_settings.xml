@@ -62,14 +62,10 @@
                         android:orientation="vertical"
                         android:layout_marginTop="4dp">
 
-                        <RadioButton android:id="@+id/rbTypeItemPct" style="@style/BillSettingRadio"
-                            android:text="Item wise discount in %" />
-                        <RadioButton android:id="@+id/rbTypeItemAmt" style="@style/BillSettingRadio"
-                            android:text="Item wise discount in amount" />
-                        <RadioButton android:id="@+id/rbTypeBillPct" style="@style/BillSettingRadio"
-                            android:text="Bill wise discount in %" />
-                        <RadioButton android:id="@+id/rbTypeBillAmt" style="@style/BillSettingRadio"
-                            android:text="Bill wise discount in amount" />
+                        <RadioButton android:id="@+id/rbTypeItem" style="@style/BillSettingRadio"
+                            android:text="Item wise discount" />
+                        <RadioButton android:id="@+id/rbTypeBill" style="@style/BillSettingRadio"
+                            android:text="Bill wise discount" />
                     </RadioGroup>
 
                     <View style="@style/BillSettingDivider" />
@@ -86,14 +82,10 @@
                         android:orientation="vertical"
                         android:layout_marginTop="4dp">
 
-                        <RadioButton android:id="@+id/rbPosItemPre" style="@style/BillSettingRadio"
-                            android:text="Item wise pre-tax discount" />
-                        <RadioButton android:id="@+id/rbPosItemPost" style="@style/BillSettingRadio"
-                            android:text="Item wise post-tax discount" />
-                        <RadioButton android:id="@+id/rbPosBillPre" style="@style/BillSettingRadio"
-                            android:text="Bill wise pre-tax discount" />
-                        <RadioButton android:id="@+id/rbPosBillPost" style="@style/BillSettingRadio"
-                            android:text="Bill wise post-tax discount" />
+                        <RadioButton android:id="@+id/rbPosPre" style="@style/BillSettingRadio"
+                            android:text="Pre-tax discount" />
+                        <RadioButton android:id="@+id/rbPosPost" style="@style/BillSettingRadio"
+                            android:text="Post-tax discount" />
                     </RadioGroup>
                 </LinearLayout>
             </LinearLayout>
@@ -120,13 +112,13 @@
                     android:textStyle="bold" android:textColor="@color/primary_blue" />
 
                 <TextView style="@style/BillSettingSub"
-                    android:text="Only one of GST / IGST / VAT can be active at a time" />
+                    android:text="Only one of GST / VAT can be active at a time" />
 
                 <!-- GST -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">
                         <TextView style="@style/BillSettingTitle" android:text="GST" />
-                        <TextView style="@style/BillSettingSub" android:text="Turning GST on switches IGST and VAT off" />
+                        <TextView style="@style/BillSettingSub" android:text="Turning GST on switches VAT off" />
                     </LinearLayout>
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swGst" style="@style/BillSettingSwitch" />
@@ -149,27 +141,30 @@
 
                 <View style="@style/BillSettingDivider" />
 
-                <!-- IGST -->
-                <LinearLayout style="@style/BillSettingRow">
-                    <LinearLayout style="@style/BillSettingText">
-                        <TextView style="@style/BillSettingTitle" android:text="IGST" />
-                        <TextView style="@style/BillSettingSub" android:text="Turning IGST on switches GST and VAT off" />
-                    </LinearLayout>
-                    <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/swIgst" style="@style/BillSettingSwitch" />
-                </LinearLayout>
-
-                <View style="@style/BillSettingDivider" />
-
                 <!-- VAT -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">
                         <TextView style="@style/BillSettingTitle" android:text="VAT" />
-                        <TextView style="@style/BillSettingSub" android:text="Turning VAT on switches GST and IGST off" />
+                        <TextView style="@style/BillSettingSub" android:text="Turning VAT on switches GST off" />
                     </LinearLayout>
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swVat" style="@style/BillSettingSwitch" />
                 </LinearLayout>
+
+                <!-- VAT mode (shown only when VAT is ON) -->
+                <RadioGroup
+                    android:id="@+id/rgVatMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginStart="4dp"
+                    android:visibility="gone">
+
+                    <RadioButton android:id="@+id/rbVatExclusive" style="@style/BillSettingRadio"
+                        android:layout_width="wrap_content" android:text="Exclusive" />
+                    <RadioButton android:id="@+id/rbVatInclusive" style="@style/BillSettingRadio"
+                        android:layout_width="wrap_content" android:layout_marginStart="24dp" android:text="Inclusive" />
+                </RadioGroup>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

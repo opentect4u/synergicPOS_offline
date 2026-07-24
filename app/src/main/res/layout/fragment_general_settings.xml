@@ -188,6 +188,38 @@
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swQuantityStatus" style="@style/BillSettingSwitch" />
                 </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Item Rate -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Item Rate" />
+                        <TextView style="@style/BillSettingSub" android:text="Use a single rate per item or allow multiple rates" />
+                    </LinearLayout>
+                    <RadioGroup
+                        android:id="@+id/rgItemRate"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:orientation="horizontal">
+                        <RadioButton
+                            android:id="@+id/rbItemRateSingle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textSize="15sp"
+                            android:textColor="@color/text_main"
+                            android:text="Single" />
+                        <RadioButton
+                            android:id="@+id/rbItemRateMultiple"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:textSize="15sp"
+                            android:textColor="@color/text_main"
+                            android:text="Multiple" />
+                    </RadioGroup>
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

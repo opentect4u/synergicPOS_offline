@@ -29,18 +29,18 @@ class TaxSettingsDao(context: Context) {
         }
     }
 
-    /** The single selected discount type (radio). Persisted as its [code] 1-4. */
+    /** The single selected discount type (radio). Persisted as its [code] 1-2. */
     enum class DiscountType(val code: Int) {
-        ITEM_PERCENT(1), ITEM_AMOUNT(2), BILL_PERCENT(3), BILL_AMOUNT(4);
+        ITEM_WISE(1), BILL_WISE(2);
         companion object {
             fun fromCode(value: String?): DiscountType? =
                 value?.toIntOrNull()?.let { c -> values().firstOrNull { it.code == c } }
         }
     }
 
-    /** The single selected discount position (radio). Persisted as its [code] 1-4. */
+    /** The single selected discount position (radio). Persisted as its [code] 1-2. */
     enum class DiscountPosition(val code: Int) {
-        ITEM_PRE_TAX(1), ITEM_POST_TAX(2), BILL_PRE_TAX(3), BILL_POST_TAX(4);
+        PRE_TAX(1), POST_TAX(2);
         companion object {
             fun fromCode(value: String?): DiscountPosition? =
                 value?.toIntOrNull()?.let { c -> values().firstOrNull { it.code == c } }
@@ -58,13 +58,13 @@ class TaxSettingsDao(context: Context) {
      */
     data class TaxSettings(
         val discountEnabled: Boolean = false,
-        val discountType: DiscountType = DiscountType.ITEM_PERCENT,
-        val discountPosition: DiscountPosition = DiscountPosition.ITEM_PRE_TAX,
+        val discountType: DiscountType = DiscountType.ITEM_WISE,
+        val discountPosition: DiscountPosition = DiscountPosition.PRE_TAX,
         // Tax
         val gstEnabled: Boolean = false,
         val gstMode: GstMode = GstMode.EXCLUSIVE,
-        val igstEnabled: Boolean = false,
-        val vatEnabled: Boolean = false
+        val vatEnabled: Boolean = false,
+        val vatMode: GstMode = GstMode.EXCLUSIVE
     )
 
     /** Reads every tax setting for the current store, applying defaults. */
@@ -77,8 +77,8 @@ class TaxSettingsDao(context: Context) {
             discountPosition = DiscountPosition.fromCode(m[KEY_DISCOUNT_POSITION]) ?: d.discountPosition,
             gstEnabled = m[KEY_GST_ENABLED]?.toBool() ?: d.gstEnabled,
             gstMode = GstMode.fromCode(m[KEY_GST_MODE]) ?: d.gstMode,
-            igstEnabled = m[KEY_IGST_ENABLED]?.toBool() ?: d.igstEnabled,
-            vatEnabled = m[KEY_VAT_ENABLED]?.toBool() ?: d.vatEnabled
+            vatEnabled = m[KEY_VAT_ENABLED]?.toBool() ?: d.vatEnabled,
+            vatMode = GstMode.fromCode(m[KEY_VAT_MODE]) ?: d.vatMode
         )
     }
 
@@ -94,8 +94,9 @@ class TaxSettingsDao(context: Context) {
         put(KEY_GST_ENABLED, s.gstEnabled.b())
         // GST type is only meaningful when GST is on; otherwise store null.
         put(KEY_GST_MODE, if (s.gstEnabled) s.gstMode.code else null)
-        put(KEY_IGST_ENABLED, s.igstEnabled.b())
         put(KEY_VAT_ENABLED, s.vatEnabled.b())
+        // VAT type is only meaningful when VAT is on; otherwise store null.
+        put(KEY_VAT_MODE, if (s.vatEnabled) s.vatMode.code else null)
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "Tax settings save (type T)")
     }
@@ -175,7 +176,7 @@ class TaxSettingsDao(context: Context) {
         const val KEY_DISCOUNT_POSITION = "Discount Position"
         const val KEY_GST_ENABLED = "GST"
         const val KEY_GST_MODE = "GST Type"
-        const val KEY_IGST_ENABLED = "IGST"
         const val KEY_VAT_ENABLED = "VAT"
+        const val KEY_VAT_MODE = "VAT Type"
     }
 }

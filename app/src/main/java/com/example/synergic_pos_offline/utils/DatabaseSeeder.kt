@@ -94,7 +94,6 @@ object DatabaseSeeder {
                 put("hsn_code", p.hsn)
                 put("bar_code", p.barcode)
                 put("stock_alert_qty", p.stockAlert)
-                put("gst_rate", p.gst)
                 if (categoryId != null) put("category_id", categoryId) else putNull("category_id")
                 put("product_image", tileImage(p.name, p.color))
             }
@@ -105,8 +104,8 @@ object DatabaseSeeder {
                 put("store_id", storeId)
                 put("outlet_id", 0)
                 put("product_id", id)
-                put("rate_1", p.rate)
-                if (unitId != null) put("unit_1_id", unitId) else putNull("unit_1_id")
+                put("rate", p.rate)
+                if (unitId != null) put("unit_id", unitId) else putNull("unit_id")
                 // CGST/SGST are each half the product's slab, as elsewhere in the app.
                 put("cgst_rate", p.gst / 2.0)
                 put("sgst_rate", p.gst / 2.0)

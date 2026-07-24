@@ -138,7 +138,7 @@
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
-                <!-- Row: Barcode | Stock Alert Qty -->
+                <!-- Row: Barcode | Category -->
                 <LinearLayout style="@style/ProductFormRow">
 
                     <com.google.android.material.textfield.TextInputLayout
@@ -156,27 +156,9 @@
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/tilStockAlert"
-                        style="@style/ProductFormField"
-                        android:layout_marginStart="8dp"
-                        android:hint="Stock Alert Qty">
-
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/etStockAlert"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:inputType="numberDecimal"
-                            android:maxLines="1" />
-                    </com.google.android.material.textfield.TextInputLayout>
-                </LinearLayout>
-
-                <!-- Row: Category | Batch No -->
-                <LinearLayout style="@style/ProductFormRow">
-
-                    <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilCategory"
                         style="@style/ProductFormDropdown"
-                        android:layout_marginEnd="8dp"
+                        android:layout_marginStart="8dp"
                         android:hint="Category">
 
                         <com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -184,6 +166,23 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="none"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <!-- Hidden fields kept for compatibility (Stock Alert Qty, Batch No) -->
+                <LinearLayout style="@style/ProductFormRow" android:visibility="gone">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilStockAlert"
+                        style="@style/ProductFormField"
+                        android:hint="Stock Alert Qty">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etStockAlert"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="numberDecimal"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
 
@@ -201,6 +200,42 @@
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
+
+                <!-- ===== Rates (repeatable rows) ===== -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="RATES"
+                    android:textStyle="bold"
+                    android:textSize="12sp"
+                    android:letterSpacing="0.08"
+                    android:layout_marginTop="6dp"
+                    android:layout_marginBottom="4dp"
+                    android:textColor="@color/primary_blue" />
+
+                <LinearLayout
+                    android:id="@+id/llRates"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAddRate"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="+ Add Rate"
+                    app:cornerRadius="10dp" />
+
+                <!-- Legacy fields kept hidden for code compatibility -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
 
                 <!-- Row: Rate 1 | Unit 1 -->
                 <LinearLayout style="@style/ProductFormRow">
@@ -454,6 +489,8 @@
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
+                </LinearLayout>
+                <!-- end legacy hidden fields -->
 
             </LinearLayout>
         </ScrollView>

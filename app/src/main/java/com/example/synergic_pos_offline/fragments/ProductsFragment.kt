@@ -9,10 +9,13 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import androidx.core.widget.addTextChangedListener
 import android.view.LayoutInflater
 import android.widget.ArrayAdapter
 import android.widget.AutoCompleteTextView
+import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,6 +27,7 @@ import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
+import com.example.synergic_pos_offline.utils.SettingsCache
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import java.io.ByteArrayOutputStream
@@ -170,39 +174,16 @@ class ProductsFragment : DataTableFragment() {
         val units = loadOptions(DatabaseHelper.Tables.MD_UNITS, "unit_name")
 
         val actCategory = view.findViewById<AutoCompleteTextView>(R.id.actCategory)
-        val actUnit1 = view.findViewById<AutoCompleteTextView>(R.id.actUnit1)
-        val actUnit2 = view.findViewById<AutoCompleteTextView>(R.id.actUnit2)
-        val actUnit3 = view.findViewById<AutoCompleteTextView>(R.id.actUnit3)
-        val actDiscountType = view.findViewById<AutoCompleteTextView>(R.id.actDiscountType)
 
         val existing = productId?.let { loadProduct(it) }
 
         bindOptions(actCategory, categories, existing?.categoryId)
-        bindOptions(actUnit1, units, existing?.unit1Id)
-        bindOptions(actUnit2, units, existing?.unit2Id)
-        bindOptions(actUnit3, units, existing?.unit3Id)
-        bindDiscountType(actDiscountType, existing?.discountType)
-        bindGstSlab(
-            view.findViewById(R.id.actGst),
-            view.findViewById(R.id.etCgst),
-            view.findViewById(R.id.etSgst),
-            existing?.gstRate?.toDoubleOrNull()
-        )
 
         view.findViewById<TextInputEditText>(R.id.etName).setText(existing?.name.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etHsn).setText(existing?.hsn.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etBarcode).setText(existing?.barcode.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etStockAlert).setText(existing?.stockAlert.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etBatchNo).setText(existing?.batchNo.orEmpty())
-        view.findViewById<TextInputEditText>(R.id.etRate1).setText(existing?.rate1.orEmpty())
-        view.findViewById<TextInputEditText>(R.id.etRate2).setText(existing?.rate2.orEmpty())
-        view.findViewById<TextInputEditText>(R.id.etRate3).setText(existing?.rate3.orEmpty())
-        // CGST/SGST are filled in by bindGstSlab - they follow the slab, not free entry.
-        view.findViewById<TextInputEditText>(R.id.etIgst).setText(existing?.igst.orEmpty())
-        view.findViewById<TextInputEditText>(R.id.etVat).setText(existing?.vat.orEmpty())
-        view.findViewById<TextInputEditText>(R.id.etDiscount).setText(existing?.discount.orEmpty())
-        view.findViewById<TextInputEditText>(R.id.etSellPrice).setText(existing?.sellPrice.orEmpty())
-        view.findViewById<TextInputEditText>(R.id.etPurchasePrice).setText(existing?.purchasePrice.orEmpty())
 
         existing?.image?.let { showImage(it) }
         view.findViewById<TextView>(R.id.tvProductFormTitle).text =
@@ -228,6 +209,23 @@ class ProductsFragment : DataTableFragment() {
             }
             tilName.error = null
 
+            // Discount Type is required on any rate that carries a discount value.
+            val ratesContainer = view.findViewById<LinearLayout>(R.id.llRates)
+            for (i in 0 until ratesContainer.childCount) {
+                val r = ratesContainer.getChildAt(i)
+                val disc = r.findViewById<TextInputEditText>(R.id.etRateDiscount)
+                val discType = r.findViewById<AutoCompleteTextView>(R.id.actRateDiscType)
+                val tilDiscType = r.findViewById<TextInputLayout>(R.id.tilRateDiscType)
+                if (disc.isEnabled && !disc.text.isNullOrBlank() && discType.text.isNullOrBlank()) {
+                    tilDiscType.error = "Required"
+                    return@setOnClickListener
+                }
+                tilDiscType.error = null
+            }
+
+            val rateRows = (0 until ratesContainer.childCount)
+                .map { collectRate(ratesContainer.getChildAt(it)) }
+
             val form = ProductForm(
                 name = name,
                 hsn = text(view, R.id.etHsn),
@@ -235,25 +233,191 @@ class ProductsFragment : DataTableFragment() {
                 stockAlert = text(view, R.id.etStockAlert),
                 categoryId = selectedId(actCategory),
                 batchNo = text(view, R.id.etBatchNo),
-                rate1 = text(view, R.id.etRate1),
-                rate2 = text(view, R.id.etRate2),
-                rate3 = text(view, R.id.etRate3),
-                unit1Id = selectedId(actUnit1),
-                unit2Id = selectedId(actUnit2),
-                unit3Id = selectedId(actUnit3),
-                gstRate = (view.findViewById<AutoCompleteTextView>(R.id.actGst).tag as? Double) ?: 0.0,
-                igst = text(view, R.id.etIgst),
-                vat = text(view, R.id.etVat),
-                discount = text(view, R.id.etDiscount),
-                discountType = actDiscountType.tag as? String,
-                sellPrice = text(view, R.id.etSellPrice),
-                purchasePrice = text(view, R.id.etPurchasePrice)
+                rates = rateRows
             )
             saveProduct(productId, form)
             dialog.dismiss()
             dialogImageView = null
             refreshRows()
             toast(if (productId == null) "Product added" else "Product updated")
+        }
+
+        // ----- Repeatable rate rows (Rate Name, Rate, Unit, CGST, IGST, VAT,
+        // Discount, Discount Type, Sell/Purchase price) with add/remove. -----
+        val llRates = view.findViewById<LinearLayout>(R.id.llRates)
+
+        fun renumberRates() {
+            for (i in 0 until llRates.childCount) {
+                llRates.getChildAt(i).findViewById<TextView>(R.id.tvRateTitle).text = "Rate ${i + 1}"
+            }
+        }
+
+        // Tax settings (local cache, type 'T') decide which tax fields are editable:
+        // GST on -> CGST/SGST/IGST; VAT on -> VAT; both off -> all disabled.
+        val gstOn = SettingsCache.value(requireContext(), "T", "GST") == "1"
+        val vatOn = SettingsCache.value(requireContext(), "T", "VAT") == "1"
+        val gstInclusive = SettingsCache.value(requireContext(), "T", "GST Type") == "I"
+        val vatInclusive = SettingsCache.value(requireContext(), "T", "VAT Type") == "I"
+        // Discount applies per product rate only when it is on AND item-wise; a
+        // bill-wise discount is applied later at billing, so the master keeps the
+        // rate's discount field disabled. Position decides how it hits sell price.
+        val discountOn = SettingsCache.value(requireContext(), "T", "Discount") == "1"
+        val itemWiseDiscount = discountOn && SettingsCache.value(requireContext(), "T", "Discount Type") == "1"
+        val preTaxDiscount = SettingsCache.value(requireContext(), "T", "Discount Position") == "1"
+        // Item Rate (general settings, type 'G'): Multiple ("M") allows several rate
+        // cards; anything else (default Single, "S") pins the form to one card.
+        val multipleRates = SettingsCache.value(requireContext(), "G", "Item Rate") == "M"
+
+        fun addRateRow(prefill: RateRow? = null) {
+            val row = LayoutInflater.from(context).inflate(R.layout.item_product_rate, llRates, false)
+            bindOptions(row.findViewById(R.id.actRateUnit), units, prefill?.unitId)
+            bindDiscountType(row.findViewById(R.id.actRateDiscType), prefill?.discountType)
+
+            val etCgst = row.findViewById<TextInputEditText>(R.id.etRateCgst)
+            val etSgst = row.findViewById<TextInputEditText>(R.id.etRateSgst)
+            val etIgst = row.findViewById<TextInputEditText>(R.id.etRateIgst)
+            val etDiscount = row.findViewById<TextInputEditText>(R.id.etRateDiscount)
+            val actDiscType = row.findViewById<AutoCompleteTextView>(R.id.actRateDiscType)
+            etCgst.isEnabled = gstOn
+            etSgst.isEnabled = gstOn
+            etIgst.isEnabled = gstOn
+            row.findViewById<TextInputEditText>(R.id.etRateVat).isEnabled = vatOn
+            etDiscount.isEnabled = itemWiseDiscount
+            actDiscType.isEnabled = itemWiseDiscount
+
+            // Prefill from an existing rate (edit). Sell price is left to recompute.
+            if (prefill != null) {
+                row.findViewById<TextInputEditText>(R.id.etRateName).setText(prefill.rateName)
+                row.findViewById<TextInputEditText>(R.id.etRate).setText(prefill.rate)
+                etCgst.setText(prefill.cgst)
+                etSgst.setText(prefill.sgst)
+                etIgst.setText(prefill.igst)
+                row.findViewById<TextInputEditText>(R.id.etRateVat).setText(prefill.vat)
+                etDiscount.setText(prefill.discount)
+                row.findViewById<TextInputEditText>(R.id.etRatePurchase).setText(prefill.purchasePrice)
+            }
+
+            // Within a rate (GST on): entering CGST/SGST disables IGST, and entering
+            // IGST disables CGST + SGST - they are two ways to charge the same tax.
+            if (gstOn) {
+                fun syncGstFields() {
+                    val cgstSgstFilled = !etCgst.text.isNullOrBlank() || !etSgst.text.isNullOrBlank()
+                    val igstFilled = !etIgst.text.isNullOrBlank()
+                    etIgst.isEnabled = !cgstSgstFilled
+                    etCgst.isEnabled = !igstFilled
+                    etSgst.isEnabled = !igstFilled
+                }
+                etCgst.addTextChangedListener { syncGstFields() }
+                etSgst.addTextChangedListener { syncGstFields() }
+                etIgst.addTextChangedListener { syncGstFields() }
+                syncGstFields()
+            }
+
+            // Sell price is always derived and read-only. GST and VAT are mutually
+            // exclusive, so one effective tax %/inclusive flag drives everything.
+            // Item-wise discount (P = %, A = flat amount):
+            //   pre-tax  + inclusive  -> base = rate/(1+t); discount base; re-add tax
+            //   pre-tax  + exclusive  -> discount rate; then add tax
+            //   post-tax + inclusive  -> just discount the rate (tax already inside)
+            //   post-tax + exclusive  -> add tax to rate; then discount the gross
+            // No item discount: inclusive -> rate ; exclusive -> rate + tax.
+            val etRateVal = row.findViewById<TextInputEditText>(R.id.etRate)
+            val etVat = row.findViewById<TextInputEditText>(R.id.etRateVat)
+            val etSell = row.findViewById<TextInputEditText>(R.id.etRateSell)
+            etSell.isFocusable = false
+            etSell.isFocusableInTouchMode = false
+            etSell.isCursorVisible = false
+            etSell.keyListener = null
+
+            fun computeSellPrice() {
+                if (etRateVal.text.isNullOrBlank()) { etSell.setText(""); return }
+                val rate = etRateVal.text?.toString()?.toDoubleOrNull() ?: 0.0
+                // Effective tax rate + inclusive flag (GST xor VAT).
+                val taxPct: Double
+                val inclusive: Boolean
+                when {
+                    gstOn -> {
+                        val cgst = etCgst.text?.toString()?.toDoubleOrNull() ?: 0.0
+                        val sgst = etSgst.text?.toString()?.toDoubleOrNull() ?: 0.0
+                        val igst = etIgst.text?.toString()?.toDoubleOrNull() ?: 0.0
+                        taxPct = cgst + sgst + igst
+                        inclusive = gstInclusive
+                    }
+                    vatOn -> {
+                        taxPct = etVat.text?.toString()?.toDoubleOrNull() ?: 0.0
+                        inclusive = vatInclusive
+                    }
+                    else -> { taxPct = 0.0; inclusive = false }
+                }
+                val t = taxPct / 100.0
+
+                val sell = if (itemWiseDiscount) {
+                    val discVal = etDiscount.text?.toString()?.toDoubleOrNull() ?: 0.0
+                    val isPercent = actDiscType.text?.toString() != "Amount"
+                    fun less(base: Double) =
+                        (base - if (isPercent) base * discVal / 100.0 else discVal).coerceAtLeast(0.0)
+                    if (preTaxDiscount) {
+                        if (inclusive) {
+                            // 1) strip tax to get base, discount base, re-apply tax
+                            less(rate / (1 + t)) * (1 + t)
+                        } else {
+                            // 2) discount the rate, then add tax
+                            less(rate) * (1 + t)
+                        }
+                    } else {
+                        if (inclusive) {
+                            // 3) tax already inside the rate -> just discount the rate
+                            less(rate)
+                        } else {
+                            // 4) add tax to the rate, then discount the gross
+                            less(rate * (1 + t))
+                        }
+                    }
+                } else {
+                    if (inclusive) rate else rate * (1 + t)
+                }
+                etSell.setText(String.format("%.2f", sell))
+            }
+            etRateVal.addTextChangedListener { computeSellPrice() }
+            etCgst.addTextChangedListener { computeSellPrice() }
+            etSgst.addTextChangedListener { computeSellPrice() }
+            etIgst.addTextChangedListener { computeSellPrice() }
+            etVat.addTextChangedListener { computeSellPrice() }
+            if (itemWiseDiscount) {
+                val tilDiscType = row.findViewById<TextInputLayout>(R.id.tilRateDiscType)
+                etDiscount.addTextChangedListener { computeSellPrice() }
+                actDiscType.addTextChangedListener {
+                    if (!it.isNullOrBlank()) tilDiscType.error = null
+                    computeSellPrice()
+                }
+            }
+            computeSellPrice()
+            val btnRemove = row.findViewById<ImageButton>(R.id.btnRemoveRate)
+            // Single mode never has more than one card, so hide its remove control.
+            btnRemove.visibility = if (multipleRates) android.view.View.VISIBLE else android.view.View.GONE
+            btnRemove.setOnClickListener {
+                if (llRates.childCount > 1) {
+                    llRates.removeView(row)
+                    renumberRates()
+                } else {
+                    toast("At least one rate is required")
+                }
+            }
+            llRates.addView(row)
+            ThemeManager.applyTheme(row)
+            renumberRates()
+        }
+
+        // "+ Add Rate" only exists in Multiple mode.
+        val btnAddRate = view.findViewById<MaterialButton>(R.id.btnAddRate)
+        btnAddRate.visibility = if (multipleRates) android.view.View.VISIBLE else android.view.View.GONE
+        btnAddRate.setOnClickListener { addRateRow() }
+
+        val existingRates = existing?.rates
+        when {
+            existingRates.isNullOrEmpty() -> addRateRow()          // one blank card
+            multipleRates -> existingRates.forEach { addRateRow(it) }
+            else -> addRateRow(existingRates.first())              // single: default card only
         }
 
         ThemeManager.applyTheme(view)
@@ -415,6 +579,52 @@ class ProductsFragment : DataTableFragment() {
 
     private fun storeId(): Int = SessionManager.currentUser?.storeId ?: 0
 
+    /** store_id and outlet_id sourced from md_registration (verified row preferred). */
+    private fun storeAndOutlet(): Pair<Int?, Int?> {
+        val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+        db.rawQuery(
+            "SELECT store_id, outlet_id FROM ${DatabaseHelper.Tables.MD_REGISTRATION} " +
+                "ORDER BY verify_flag DESC, store_id ASC LIMIT 1", null
+        ).use { c ->
+            if (c.moveToFirst()) {
+                val s = if (c.isNull(0)) null else c.getInt(0)
+                val o = if (c.isNull(1)) null else c.getInt(1)
+                return s to o
+            }
+        }
+        return null to null
+    }
+
+    /** One rate card's values (raw strings, parsed on save). */
+    private class RateRow(
+        val rateName: String = "",
+        val rate: String = "",
+        val unitId: Int? = null,
+        val cgst: String = "",
+        val sgst: String = "",
+        val igst: String = "",
+        val vat: String = "",
+        val discount: String = "",
+        val discountType: String? = null,
+        val sellPrice: String = "",
+        val purchasePrice: String = ""
+    )
+
+    /** Reads one inflated rate card back into a [RateRow]. */
+    private fun collectRate(row: android.view.View): RateRow = RateRow(
+        rateName = text(row, R.id.etRateName),
+        rate = text(row, R.id.etRate),
+        unitId = row.findViewById<AutoCompleteTextView>(R.id.actRateUnit).tag as? Int,
+        cgst = text(row, R.id.etRateCgst),
+        sgst = text(row, R.id.etRateSgst),
+        igst = text(row, R.id.etRateIgst),
+        vat = text(row, R.id.etRateVat),
+        discount = text(row, R.id.etRateDiscount),
+        discountType = row.findViewById<AutoCompleteTextView>(R.id.actRateDiscType).tag as? String,
+        sellPrice = text(row, R.id.etRateSell),
+        purchasePrice = text(row, R.id.etRatePurchase)
+    )
+
     private class ProductForm(
         val name: String,
         val hsn: String,
@@ -422,50 +632,50 @@ class ProductsFragment : DataTableFragment() {
         val stockAlert: String,
         val categoryId: Int?,
         val batchNo: String,
-        val rate1: String,
-        val rate2: String,
-        val rate3: String,
-        val unit1Id: Int?,
-        val unit2Id: Int?,
-        val unit3Id: Int?,
-        /** Chosen GST slab; CGST and SGST are each half of it. */
-        val gstRate: Double,
-        val igst: String,
-        val vat: String,
-        val discount: String,
-        val discountType: String?,
-        val sellPrice: String,
-        val purchasePrice: String
-    ) {
-        val cgstRate: Double get() = gstRate / 2.0
-        val sgstRate: Double get() = gstRate / 2.0
-    }
+        val rates: List<RateRow>
+    )
 
     private class ExistingProduct(
         val name: String, val hsn: String, val barcode: String, val stockAlert: String,
-        val categoryId: Int?, val image: ByteArray?, val gstRate: String,
-        val batchNo: String, val rate1: String, val rate2: String, val rate3: String,
-        val unit1Id: Int?, val unit2Id: Int?, val unit3Id: Int?,
-        val cgst: String, val sgst: String, val igst: String, val vat: String,
-        val discount: String, val discountType: String?,
-        val sellPrice: String, val purchasePrice: String
+        val categoryId: Int?, val image: ByteArray?, val batchNo: String,
+        val rates: List<RateRow>
     )
 
     private fun loadProduct(productId: Int): ExistingProduct? {
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
-        val sql = """
-            SELECT p.product_name, p.hsn_code, p.bar_code, p.stock_alert_qty, p.category_id, p.product_image,
-                   r.batch_no, r.rate_1, r.rate_2, r.rate_3, r.unit_1_id, r.unit_2_id, r.unit_3_id,
-                   r.cgst_rate, r.sgst_rate, r.igst_rate, r.vat_rate,
-                   r.discount, r.discount_type, r.sell_price, r.purchase_price,
-                   p.gst_rate
-            FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
-            LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r ON r.product_id = p.id
-            WHERE p.id = ?
-            LIMIT 1
-        """.trimIndent()
 
-        db.rawQuery(sql, arrayOf(productId.toString())).use { c ->
+        // All rate cards for this product (default rate first).
+        val rates = mutableListOf<RateRow>()
+        db.rawQuery(
+            """
+            SELECT rate_name, rate, unit_id, cgst_rate, sgst_rate, igst_rate, vat_rate,
+                   discount, discount_type, sell_price, purchase_price
+            FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES}
+            WHERE product_id = ?
+            ORDER BY "default" DESC, id ASC
+            """.trimIndent(),
+            arrayOf(productId.toString())
+        ).use { c ->
+            while (c.moveToNext()) {
+                rates.add(
+                    RateRow(
+                        rateName = c.getString(0).orEmpty(),
+                        rate = num(c, 1),
+                        unitId = if (c.isNull(2)) null else c.getInt(2),
+                        cgst = num(c, 3), sgst = num(c, 4), igst = num(c, 5), vat = num(c, 6),
+                        discount = num(c, 7),
+                        discountType = if (c.isNull(8)) null else c.getString(8),
+                        sellPrice = num(c, 9), purchasePrice = num(c, 10)
+                    )
+                )
+            }
+        }
+
+        db.rawQuery(
+            "SELECT product_name, hsn_code, bar_code, stock_alert_qty, category_id, product_image " +
+                "FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE id = ? LIMIT 1",
+            arrayOf(productId.toString())
+        ).use { c ->
             if (!c.moveToFirst()) return null
             return ExistingProduct(
                 name = c.getString(0).orEmpty(),
@@ -474,16 +684,8 @@ class ProductsFragment : DataTableFragment() {
                 stockAlert = num(c, 3),
                 categoryId = if (c.isNull(4)) null else c.getInt(4),
                 image = if (c.isNull(5)) null else c.getBlob(5),
-                batchNo = c.getString(6).orEmpty(),
-                rate1 = num(c, 7), rate2 = num(c, 8), rate3 = num(c, 9),
-                unit1Id = if (c.isNull(10)) null else c.getInt(10),
-                unit2Id = if (c.isNull(11)) null else c.getInt(11),
-                unit3Id = if (c.isNull(12)) null else c.getInt(12),
-                cgst = num(c, 13), sgst = num(c, 14), igst = num(c, 15), vat = num(c, 16),
-                discount = num(c, 17),
-                discountType = if (c.isNull(18)) null else c.getString(18),
-                sellPrice = num(c, 19), purchasePrice = num(c, 20),
-                gstRate = num(c, 21)
+                batchNo = "",
+                rates = rates
             )
         }
     }
@@ -497,17 +699,17 @@ class ProductsFragment : DataTableFragment() {
 
     private fun saveProduct(productId: Int?, form: ProductForm) {
         val db = DatabaseHelper.getInstance(requireContext()).writableDatabase
-        val storeId = storeId()
+        // store_id and outlet_id both come from md_registration.
+        val (storeId, outletId) = storeAndOutlet()
 
         db.beginTransaction()
         try {
             val product = ContentValues().apply {
-                put("store_id", storeId)
+                if (storeId != null) put("store_id", storeId) else putNull("store_id")
                 put("product_name", form.name)
                 put("hsn_code", form.hsn.ifEmpty { null })
                 put("bar_code", form.barcode.ifEmpty { null })
                 putDouble(this, "stock_alert_qty", form.stockAlert)
-                put("gst_rate", form.gstRate)
                 if (form.categoryId != null) put("category_id", form.categoryId) else putNull("category_id")
                 // Only touch the image when the user picked a new one or cleared it.
                 val image = pendingImage
@@ -527,39 +729,39 @@ class ProductsFragment : DataTableFragment() {
             }
             if (id == -1L) return
 
-            val rates = ContentValues().apply {
-                put("store_id", storeId)
-                put("outlet_id", 0)
-                put("product_id", id)
-                putDouble(this, "rate_1", form.rate1)
-                putDouble(this, "rate_2", form.rate2)
-                putDouble(this, "rate_3", form.rate3)
-                if (form.unit1Id != null) put("unit_1_id", form.unit1Id) else putNull("unit_1_id")
-                if (form.unit2Id != null) put("unit_2_id", form.unit2Id) else putNull("unit_2_id")
-                if (form.unit3Id != null) put("unit_3_id", form.unit3Id) else putNull("unit_3_id")
-                // Kept in step with the slab on md_products, which is the master.
-                put("cgst_rate", form.cgstRate)
-                put("sgst_rate", form.sgstRate)
-                put("igst_rate", form.igst.toDoubleOrNull() ?: 0.0)
-                put("vat_rate", form.vat.toDoubleOrNull() ?: 0.0)
-                put("discount", form.discount.toDoubleOrNull() ?: 0.0)
-                if (form.discountType != null) put("discount_type", form.discountType) else putNull("discount_type")
-                put("batch_no", form.batchNo.ifEmpty { null })
-                putDouble(this, "sell_price", form.sellPrice)
-                putDouble(this, "purchase_price", form.purchasePrice)
+            // Replace this product's rate cards wholesale (delete then re-insert), so
+            // added/removed rows stay in sync. sku (=rate id) is set by a DB trigger.
+            db.delete(
+                DatabaseHelper.Tables.MD_PRODUCT_RATES, "product_id = ?", arrayOf(id.toString())
+            )
+            var firstRateId = -1L
+            form.rates.forEachIndexed { index, r ->
+                val rate = ContentValues().apply {
+                    if (storeId != null) put("store_id", storeId) else putNull("store_id")
+                    if (outletId != null) put("outlet_id", outletId) else putNull("outlet_id")
+                    put("product_id", id)
+                    put("rate_name", r.rateName.ifEmpty { null })
+                    putDouble(this, "rate", r.rate)
+                    if (r.unitId != null) put("unit_id", r.unitId) else putNull("unit_id")
+                    putDouble(this, "cgst_rate", r.cgst)
+                    putDouble(this, "sgst_rate", r.sgst)
+                    putDouble(this, "igst_rate", r.igst)
+                    putDouble(this, "vat_rate", r.vat)
+                    put("discount", r.discount.toDoubleOrNull() ?: 0.0)
+                    if (r.discountType != null) put("discount_type", r.discountType) else putNull("discount_type")
+                    putDouble(this, "sell_price", r.sellPrice)
+                    putDouble(this, "purchase_price", r.purchasePrice)
+                }
+                val rid = db.insert(DatabaseHelper.Tables.MD_PRODUCT_RATES, null, rate)
+                if (index == 0) firstRateId = rid
             }
-
-            val hasRates = db.rawQuery(
-                "SELECT 1 FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} WHERE product_id = ? LIMIT 1",
-                arrayOf(id.toString())
-            ).use { it.moveToFirst() }
-
-            if (hasRates) {
-                db.update(
-                    DatabaseHelper.Tables.MD_PRODUCT_RATES, rates, "product_id = ?", arrayOf(id.toString())
+            // First card is the product's default rate. "default" is a reserved word,
+            // so set it via execSQL where SQLite honours the quoted identifier.
+            if (firstRateId != -1L) {
+                db.execSQL(
+                    "UPDATE ${DatabaseHelper.Tables.MD_PRODUCT_RATES} SET \"default\" = 1 WHERE id = ?",
+                    arrayOf<Any>(firstRateId)
                 )
-            } else {
-                db.insert(DatabaseHelper.Tables.MD_PRODUCT_RATES, null, rates)
             }
 
             db.setTransactionSuccessful()
