@@ -32,6 +32,7 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swDiscount: SwitchMaterial
     private lateinit var llDiscountOptions: View
     private lateinit var rgDiscountType: RadioGroup
+    private lateinit var llDiscountPosition: View
     private lateinit var rgDiscountPosition: RadioGroup
 
     private lateinit var swGst: SwitchMaterial
@@ -50,6 +51,7 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         swDiscount = view.findViewById(R.id.swDiscount)
         llDiscountOptions = view.findViewById(R.id.llDiscountOptions)
         rgDiscountType = view.findViewById(R.id.rgDiscountType)
+        llDiscountPosition = view.findViewById(R.id.llDiscountPosition)
         rgDiscountPosition = view.findViewById(R.id.rgDiscountPosition)
         swGst = view.findViewById(R.id.swGst)
         rgGstMode = view.findViewById(R.id.rgGstMode)
@@ -62,13 +64,16 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         swDiscount.setOnCheckedChangeListener { _, on -> llDiscountOptions.isVisible = on }
 
         // GST and VAT are mutually exclusive; each shows its own mode when on.
+        // Discount position applies under either tax, so it shows whenever one is on.
         swGst.setOnCheckedChangeListener { _, on ->
             rgGstMode.isVisible = on
             if (on) swVat.isChecked = false
+            updateDiscountPositionVisibility()
         }
         swVat.setOnCheckedChangeListener { _, on ->
             rgVatMode.isVisible = on
             if (on) swGst.isChecked = false
+            updateDiscountPositionVisibility()
         }
 
         view.findViewById<MaterialButton>(R.id.btnSaveTax).setOnClickListener { onSave() }
@@ -99,6 +104,13 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         swVat.isChecked = s.vatEnabled
         rgVatMode.isVisible = s.vatEnabled
         rgVatMode.check(if (s.vatMode == GstMode.INCLUSIVE) R.id.rbVatInclusive else R.id.rbVatExclusive)
+        updateDiscountPositionVisibility()
+    }
+
+    /** Discount position is meaningful only when a tax is charged, so it shows
+     *  whenever GST or VAT is on and hides when neither is. */
+    private fun updateDiscountPositionVisibility() {
+        llDiscountPosition.isVisible = swGst.isChecked || swVat.isChecked
     }
 
     private fun collect(): TaxSettings = TaxSettings(

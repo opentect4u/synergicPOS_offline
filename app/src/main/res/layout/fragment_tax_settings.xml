@@ -68,25 +68,34 @@
                             android:text="Bill wise discount" />
                     </RadioGroup>
 
-                    <View style="@style/BillSettingDivider" />
-
-                    <TextView style="@style/BillSettingTitle" android:text="Discount position"
-                        android:layout_marginTop="14dp" />
-                    <TextView style="@style/BillSettingSub"
-                        android:text="Required when discount is on — choose one" />
-
-                    <RadioGroup
-                        android:id="@+id/rgDiscountPosition"
+                    <!-- Discount position only matters when GST is on, so the whole
+                         block is hidden while GST is off. -->
+                    <LinearLayout
+                        android:id="@+id/llDiscountPosition"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:layout_marginTop="4dp">
+                        android:orientation="vertical">
 
-                        <RadioButton android:id="@+id/rbPosPre" style="@style/BillSettingRadio"
-                            android:text="Pre-tax discount" />
-                        <RadioButton android:id="@+id/rbPosPost" style="@style/BillSettingRadio"
-                            android:text="Post-tax discount" />
-                    </RadioGroup>
+                        <View style="@style/BillSettingDivider" />
+
+                        <TextView style="@style/BillSettingTitle" android:text="Discount position"
+                            android:layout_marginTop="14dp" />
+                        <TextView style="@style/BillSettingSub"
+                            android:text="Required when discount is on — choose one" />
+
+                        <RadioGroup
+                            android:id="@+id/rgDiscountPosition"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:layout_marginTop="4dp">
+
+                            <RadioButton android:id="@+id/rbPosPre" style="@style/BillSettingRadio"
+                                android:text="Pre-tax discount" />
+                            <RadioButton android:id="@+id/rbPosPost" style="@style/BillSettingRadio"
+                                android:text="Post-tax discount" />
+                        </RadioGroup>
+                    </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
