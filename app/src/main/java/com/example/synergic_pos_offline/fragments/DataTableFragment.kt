@@ -95,6 +95,12 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     /** Invoked when a row's inline switch is toggled. Persist + reflect the new state. */
     open fun onSwitchToggled(row: DataRow, isOn: Boolean) {}
 
+    /** Set true to add a per-row "Test Print" icon button next to Edit (Operating Printer only). */
+    open val showsTestPrintAction: Boolean get() = false
+
+    /** Invoked when a row's Test Print button is tapped. */
+    open fun onTestPrintRow(row: DataRow) {}
+
     private val allRows = mutableListOf<DataRow>()
     private val shownRows = mutableListOf<DataRow>()
     private val selectedIds = linkedSetOf<String>()
@@ -138,7 +144,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             onSwitchToggled = { row, isOn -> onSwitchToggled(row, isOn) },
             onEdit = { onEditRow(it) },
             onThumbClick = { showImagePreview(it) },
-            onSelectionChanged = { updateSelectionUI() }
+            onSelectionChanged = { updateSelectionUI() },
+            showsTestPrintAction = showsTestPrintAction,
+            onTestPrint = { onTestPrintRow(it) }
         )
         rvTable.layoutManager = LinearLayoutManager(requireContext())
         rvTable.adapter = adapter
@@ -397,7 +405,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         private val onSwitchToggled: (DataRow, Boolean) -> Unit,
         private val onEdit: (DataRow) -> Unit,
         private val onThumbClick: (DataRow) -> Unit,
-        private val onSelectionChanged: () -> Unit
+        private val onSelectionChanged: () -> Unit,
+        private val showsTestPrintAction: Boolean = false,
+        private val onTestPrint: (DataRow) -> Unit = {}
     ) : RecyclerView.Adapter<DataTableAdapter.ViewHolder>() {
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -405,6 +415,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             val ivThumb: android.widget.ImageView = view.findViewById(R.id.ivRowThumb)
             val llCells: LinearLayout = view.findViewById(R.id.llCells)
             val btnEdit: View = view.findViewById(R.id.btnRowEdit)
+            val btnTestPrint: View = view.findViewById(R.id.btnRowTestPrint)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -450,6 +461,13 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             }
 
             holder.btnEdit.setOnClickListener { onEdit(row) }
+
+            if (showsTestPrintAction) {
+                holder.btnTestPrint.visibility = View.VISIBLE
+                holder.btnTestPrint.setOnClickListener { onTestPrint(row) }
+            } else {
+                holder.btnTestPrint.visibility = View.GONE
+            }
         }
 
         /** A weighted table cell holding a rounded 40dp image thumbnail. */

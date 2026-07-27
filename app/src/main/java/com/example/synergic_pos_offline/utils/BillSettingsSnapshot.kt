@@ -1,0 +1,59 @@
+package com.example.synergic_pos_offline.utils
+
+import com.example.synergic_pos_offline.database.BillSettingsDao
+import org.json.JSONObject
+
+/**
+ * The Bill Settings fields that change how a bill is *displayed* - HSN column,
+ * customer details mode, address line, total amount font size, the round-off row,
+ * amount-in-words, and which tax regime (GST/VAT) was active - as opposed to the
+ * ones that only affect how it was *calculated* (already baked into the stored
+ * amounts, so nothing to snapshot there).
+ *
+ * Written once per bill at creation time and read back by [BillReceiptRenderer],
+ * so a later reprint reads exactly as it did on the day it was made, even after
+ * these settings have since changed for new sales.
+ */
+object BillSettingsSnapshot {
+
+    data class Snapshot(
+        val hsnCode: Boolean,
+        val customerDetails: BillSettingsDao.CustomerDetails,
+        val customerAddressPrinting: Boolean,
+        val totalAmountFontSize: BillSettingsDao.FontSize,
+        val roundOff: Boolean,
+        val amountInWords: Boolean,
+        val taxRegime: GstCalculator.TaxRegime
+    )
+
+    fun serialize(settings: BillSettingsDao.BillSettings, taxRegime: GstCalculator.TaxRegime): String =
+        JSONObject().apply {
+            put("hsnCode", settings.hsnCode)
+            put("customerDetails", settings.customerDetails.name)
+            put("customerAddressPrinting", settings.customerAddressPrinting)
+            put("totalAmountFontSize", settings.totalAmountFontSize.name)
+            put("roundOff", settings.roundOff)
+            put("amountInWords", settings.amountInWords)
+            put("taxRegime", taxRegime.name)
+        }.toString()
+
+    /** Null when [json] is blank or unreadable - an older bill saved before this existed. */
+    fun parse(json: String?): Snapshot? {
+        if (json.isNullOrBlank()) return null
+        return runCatching {
+            val o = JSONObject(json)
+            Snapshot(
+                hsnCode = o.optBoolean("hsnCode"),
+                customerDetails = runCatching { BillSettingsDao.CustomerDetails.valueOf(o.getString("customerDetails")) }
+                    .getOrDefault(BillSettingsDao.CustomerDetails.ONLY_MOBILE),
+                customerAddressPrinting = o.optBoolean("customerAddressPrinting"),
+                totalAmountFontSize = runCatching { BillSettingsDao.FontSize.valueOf(o.getString("totalAmountFontSize")) }
+                    .getOrDefault(BillSettingsDao.FontSize.REGULAR),
+                roundOff = o.optBoolean("roundOff"),
+                amountInWords = o.optBoolean("amountInWords"),
+                taxRegime = runCatching { GstCalculator.TaxRegime.valueOf(o.getString("taxRegime")) }
+                    .getOrDefault(GstCalculator.TaxRegime.GST)
+            )
+        }.getOrNull()
+    }
+}

@@ -289,6 +289,21 @@
 
                             <TextView style="@style/BillDashLine" />
 
+                            <!-- Customer details, shown per Bill Settings' "Customer Details" mode -->
+                            <TextView android:id="@+id/tvRcCustMobile" android:layout_width="match_parent" android:layout_height="wrap_content"
+                                android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main"
+                                android:visibility="gone" />
+                            <TextView android:id="@+id/tvRcCustName" android:layout_width="match_parent" android:layout_height="wrap_content"
+                                android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main"
+                                android:visibility="gone" />
+                            <TextView android:id="@+id/tvRcCustGstin" android:layout_width="match_parent" android:layout_height="wrap_content"
+                                android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main"
+                                android:visibility="gone" />
+                            <!-- Customer address, shown when "Customer Address Printing" is on -->
+                            <TextView android:id="@+id/tvRcCustAddress" android:layout_width="match_parent" android:layout_height="wrap_content"
+                                android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main"
+                                android:visibility="gone" />
+
                             <LinearLayout android:id="@+id/llReceiptItems"
                                 android:layout_width="match_parent" android:layout_height="wrap_content"
                                 android:orientation="vertical" />
@@ -301,16 +316,26 @@
                                 <TextView android:id="@+id/tvRcSubtotal" android:layout_width="wrap_content" android:layout_height="wrap_content"
                                     android:text="₹0.00" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main" />
                             </LinearLayout>
-                            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="4dp">
+                            <LinearLayout android:id="@+id/rowRcDiscount" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="4dp">
                                 <TextView android:id="@+id/tvRcDiscountLabel" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                                     android:text="Discount (0%)" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_secondary" />
                                 <TextView android:id="@+id/tvRcDiscount" android:layout_width="wrap_content" android:layout_height="wrap_content"
                                     android:text="- ₹0.00" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main" />
                             </LinearLayout>
                             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="4dp">
-                                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                                    android:text="GST 5%" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_secondary" />
+                                <TextView android:id="@+id/tvRcTaxLabel" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                                    android:text="GST" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_secondary" />
                                 <TextView android:id="@+id/tvRcTax" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                    android:text="₹0.00" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main" />
+                            </LinearLayout>
+
+                            <!-- Round off, shown only when Bill Settings has it on and the bill needs one -->
+                            <LinearLayout android:id="@+id/rowRcRoundOff" android:layout_width="match_parent"
+                                android:layout_height="wrap_content" android:orientation="horizontal"
+                                android:layout_marginTop="4dp" android:visibility="gone">
+                                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                                    android:text="Round off" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_secondary" />
+                                <TextView android:id="@+id/tvRcRoundOff" android:layout_width="wrap_content" android:layout_height="wrap_content"
                                     android:text="₹0.00" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main" />
                             </LinearLayout>
 
@@ -324,6 +349,11 @@
                             </LinearLayout>
 
                             <TextView style="@style/BillDashLine" />
+
+                            <!-- Amount in words, shown only when Bill Settings has it on -->
+                            <TextView android:id="@+id/tvRcAmountWords" android:layout_width="match_parent" android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp" android:fontFamily="monospace" android:textSize="11sp"
+                                android:lineSpacingExtra="2dp" android:textColor="@color/text_secondary" android:visibility="gone" />
 
                             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                                 android:text="THANK YOU FOR SHOPPING" android:gravity="center" android:fontFamily="monospace"
@@ -363,15 +393,15 @@
                         <TextView android:id="@+id/tvSubtotal" android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:text="₹0.00" android:fontFamily="monospace" android:textSize="13sp" android:textColor="@color/text_main" />
                     </LinearLayout>
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="3dp">
+                    <LinearLayout android:id="@+id/rowDiscount" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="3dp">
                         <TextView android:id="@+id/tvDiscountLabel" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                             android:text="Discount (0%)" android:textSize="13sp" android:textColor="@color/text_secondary" />
                         <TextView android:id="@+id/tvDiscountAmt" android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:text="- ₹0.00" android:fontFamily="monospace" android:textSize="13sp" android:textColor="@color/text_main" />
                     </LinearLayout>
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="3dp">
-                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                            android:text="GST (5%)" android:textSize="13sp" android:textColor="@color/text_secondary" />
+                        <TextView android:id="@+id/tvTaxLabel" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                            android:text="GST" android:textSize="13sp" android:textColor="@color/text_secondary" />
                         <TextView android:id="@+id/tvTax" android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:text="₹0.00" android:fontFamily="monospace" android:textSize="13sp" android:textColor="@color/text_main" />
                     </LinearLayout>
@@ -444,8 +474,9 @@
                     android:text="₹0.00" android:textStyle="bold" android:textSize="34sp" android:textColor="@color/white" />
             </LinearLayout>
 
-            <!-- Payment Mode Buttons -->
+            <!-- Payment Mode Buttons, hidden entirely when the "Payment Mode" app setting is off -->
             <LinearLayout
+                android:id="@+id/sectionPaymentModePicker"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
@@ -513,29 +544,47 @@
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:orientation="vertical" android:layout_marginTop="16dp">
 
-                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="Cash tendered (₹)" android:textSize="12sp" android:textColor="@color/text_secondary" />
+                        <!-- Shown when the "Cash Reception" app setting is on: tendered amount + change -->
+                        <LinearLayout android:id="@+id/cashReceptionFields"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="vertical">
 
-                        <com.google.android.material.textfield.TextInputLayout
-                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                            android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp"
-                            app:boxCornerRadiusTopStart="12dp" app:boxCornerRadiusTopEnd="12dp"
-                            app:boxCornerRadiusBottomStart="12dp" app:boxCornerRadiusBottomEnd="12dp">
-                            <com.google.android.material.textfield.TextInputEditText android:id="@+id/etCash"
-                                android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:inputType="numberDecimal" android:hint="0.00" android:textSize="18sp" android:maxLines="1"
-                                android:textColor="@color/text_main" android:textColorHint="@color/text_secondary" />
-                        </com.google.android.material.textfield.TextInputLayout>
+                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="Cash tendered (₹)" android:textSize="12sp" android:textColor="@color/text_secondary" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                                android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp"
+                                app:boxCornerRadiusTopStart="12dp" app:boxCornerRadiusTopEnd="12dp"
+                                app:boxCornerRadiusBottomStart="12dp" app:boxCornerRadiusBottomEnd="12dp">
+                                <com.google.android.material.textfield.TextInputEditText android:id="@+id/etCash"
+                                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                                    android:inputType="numberDecimal" android:hint="0.00" android:textSize="18sp" android:maxLines="1"
+                                    android:textColor="@color/text_main" android:textColorHint="@color/text_secondary" />
+                            </com.google.android.material.textfield.TextInputLayout>
 
 
-                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:orientation="horizontal" android:gravity="center_vertical"
-                            android:layout_marginTop="10dp" android:padding="14dp"
-                            android:background="@drawable/pos_hint_bg">
-                            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                                android:text="CHANGE DUE" android:textSize="12sp" android:letterSpacing="0.06" android:textColor="@color/text_secondary" />
-                            <TextView android:id="@+id/tvChange" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                android:text="₹0.00" android:textStyle="bold" android:textSize="22sp" android:textColor="@color/text_main" />
+                            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                                android:orientation="horizontal" android:gravity="center_vertical"
+                                android:layout_marginTop="10dp" android:padding="14dp"
+                                android:background="@drawable/pos_hint_bg">
+                                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                                    android:text="CHANGE DUE" android:textSize="12sp" android:letterSpacing="0.06" android:textColor="@color/text_secondary" />
+                                <TextView android:id="@+id/tvChange" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                    android:text="₹0.00" android:textStyle="bold" android:textSize="22sp" android:textColor="@color/text_main" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <!-- Shown when "Cash Reception" is off (or "Payment Mode" is off): exact
+                             amount only, no tendered/change entry -->
+                        <LinearLayout android:id="@+id/sectionCashExact"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="vertical" android:padding="16dp"
+                            android:background="@drawable/pos_hint_bg" android:visibility="gone">
+                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="Collect exact cash amount" android:textStyle="bold" android:textSize="14sp" android:textColor="@color/text_main" />
+                            <TextView android:id="@+id/tvCashExactAmount" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp" android:text="₹0.00" android:textStyle="bold" android:textSize="22sp" android:textColor="@color/text_main" />
                         </LinearLayout>
                     </LinearLayout>
 

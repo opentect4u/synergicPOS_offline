@@ -2,12 +2,19 @@ package com.example.synergic_pos_offline.utils
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.example.synergic_pos_offline.database.AppSettingsDao
 import com.example.synergic_pos_offline.database.OperatingPrinterDao
 import com.example.synergic_pos_offline.database.PrinterDao
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import print.Print
 
@@ -122,6 +129,84 @@ object ThermalPrinter {
             PrintLog.d(context, TAG, "job finished: $result")
             main.post { onResult(result) }
         }
+    }
+
+    /**
+     * Sends [receipt] to the configured printer [copies] times in a row - Bill
+     * Settings' "Two Copy" toggle, honoured wherever a bill prints (on sale, a
+     * reprint, or the bill screen's own print button) by having all three funnel
+     * through here rather than each deciding separately.
+     *
+     * Copies are sent one after another, not in parallel: [print] already queues
+     * jobs on a single worker, so nothing would be gained, and stopping at the
+     * first failure means an operator is not left guessing which copy - if any -
+     * actually came out. [onResult] fires once, for the last copy sent (or
+     * whichever one failed), so a caller written for a single [print] call needs
+     * no change to use this instead.
+     */
+    fun printCopies(context: Context, receipt: Bitmap, config: Config, copies: Int, onResult: (Result) -> Unit) {
+        fun sendOne(remaining: Int) {
+            print(context, receipt, config) { result ->
+                if (result is Result.Failure || remaining <= 1) {
+                    onResult(result)
+                } else {
+                    sendOne(remaining - 1)
+                }
+            }
+        }
+        sendOne(copies.coerceAtLeast(1))
+    }
+
+    /**
+     * Builds and sends a short sample slip to [config] - purpose, connection,
+     * address, paper width and a timestamp - through the exact same [print] path
+     * a real bill takes, so a successful test print is a genuine end-to-end check
+     * that the connection actually works, not just that an address was saved.
+     * Shared by every "Test Print" button (Printer Settings' cards and dialogs,
+     * Operating Printer's rows) so they all print the same thing.
+     */
+    fun testPrint(context: Context, purpose: String, config: Config, onResult: (Result) -> Unit) {
+        print(context, buildTestPrintBitmap(purpose, config), config, onResult)
+    }
+
+    private fun buildTestPrintBitmap(purpose: String, config: Config): Bitmap {
+        val width = config.paperDots
+        val lineHeight = 34
+        val lines = listOf(
+            "Purpose : $purpose",
+            "Type    : ${config.connection}",
+            "Address : ${config.ip}",
+            "Paper   : ${config.paperMm} mm",
+            "",
+            "If you can read this clearly,",
+            "the connection is OK.",
+            SimpleDateFormat("dd-MM-yyyy HH:mm", Locale.US).format(Date())
+        )
+        val height = lineHeight * (lines.size + 3)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+
+        val bodyPaint = Paint().apply {
+            color = Color.BLACK
+            isAntiAlias = true
+            typeface = Typeface.MONOSPACE
+            textSize = 26f
+        }
+        val titlePaint = Paint(bodyPaint).apply {
+            textSize = 34f
+            isFakeBoldText = true
+            textAlign = Paint.Align.CENTER
+        }
+
+        var y = lineHeight * 1.5f
+        canvas.drawText("TEST PRINT", width / 2f, y, titlePaint)
+        y += lineHeight * 1.5f
+        lines.forEach { line ->
+            canvas.drawText(line, 12f, y, bodyPaint)
+            y += lineHeight
+        }
+        return bitmap
     }
 
     /** A finished attempt, and whether starting over could reasonably do better. */

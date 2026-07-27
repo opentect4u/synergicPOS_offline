@@ -133,6 +133,16 @@
                     android:textSize="13sp"
                     android:textColor="#222222" />
 
+                <!-- Customer details, shown per Bill Settings' "Customer Details" mode -->
+                <TextView
+                    android:id="@+id/tvCustMobile"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
                 <TextView
                     android:id="@+id/tvName"
                     android:layout_width="match_parent"
@@ -140,10 +150,21 @@
                     android:text="NAME  : SOMNATH"
                     android:fontFamily="monospace"
                     android:textSize="13sp"
-                    android:textColor="#222222" />
+                    android:textColor="#222222"
+                    android:visibility="gone" />
 
                 <TextView
                     android:id="@+id/tvCustGstin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <!-- Customer address, shown when Bill Settings' "Customer Address Printing" is on -->
+                <TextView
+                    android:id="@+id/tvCustAddress"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:fontFamily="monospace"
@@ -243,6 +264,7 @@
                         android:textColor="#222222" />
 
                     <TextView
+                        android:id="@+id/tvTaxHeadSgst"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="2"
@@ -254,6 +276,7 @@
                         android:textColor="#222222" />
 
                     <TextView
+                        android:id="@+id/tvTaxHeadCgst"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="2"

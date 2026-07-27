@@ -8,6 +8,7 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.BillSettingsDao
 import com.example.synergic_pos_offline.utils.BillReceiptRenderer
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.PrinterSetup
@@ -96,9 +97,12 @@ class BillFragment : Fragment(), TitledScreen {
         receiptNo: Long
     ) {
         toast("Printing to ${config.ip}…")
-        ThermalPrinter.print(requireContext(), capture, config) { result ->
+        // Bill Settings' "Two Copy" toggle - sent as two separate jobs off the one
+        // rendered bitmap, not two renders.
+        val copies = if (BillSettingsDao(requireContext()).load().twoCopyBill) 2 else 1
+        ThermalPrinter.printCopies(requireContext(), capture, config, copies) { result ->
             // The fragment may be gone by the time the printer answers.
-            if (!isAdded) return@print
+            if (!isAdded) return@printCopies
             when (result) {
                 is ThermalPrinter.Result.Success -> {
                     toast("Printed")
