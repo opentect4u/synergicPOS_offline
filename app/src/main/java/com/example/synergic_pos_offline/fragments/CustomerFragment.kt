@@ -71,6 +71,8 @@ class CustomerFragment : DataTableFragment() {
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
         val etName = view.findViewById<TextInputEditText>(R.id.etName)
         val etPhone = view.findViewById<TextInputEditText>(R.id.etPhone)
+        val etBirthday = view.findViewById<TextInputEditText>(R.id.etBirthday)
+        val etAnniversary = view.findViewById<TextInputEditText>(R.id.etAnniversary)
         val etAddress = view.findViewById<TextInputEditText>(R.id.etAddress)
         val etGstin = view.findViewById<TextInputEditText>(R.id.etGstin)
         val etBalance = view.findViewById<TextInputEditText>(R.id.etBalance)
@@ -86,7 +88,13 @@ class CustomerFragment : DataTableFragment() {
         tvTitle.text = if (existing == null) "Add Customer" else "Edit Customer"
         etName.setText(existing?.name.orEmpty())
         etPhone.setText(existing?.phone.orEmpty())
+        etBirthday.setText(existing?.birthday.orEmpty())
+        etAnniversary.setText(existing?.anniversary.orEmpty())
         etAddress.setText(existing?.address.orEmpty())
+
+        // Tapping either date field opens a calendar; the value is stored yyyy-MM-dd.
+        etBirthday.setOnClickListener { pickDate(etBirthday.text?.toString()) { etBirthday.setText(it) } }
+        etAnniversary.setOnClickListener { pickDate(etAnniversary.text?.toString()) { etAnniversary.setText(it) } }
         etGstin.setText(existing?.gstin.orEmpty())
         etBalance.setText(existing?.let { trimNumber(it.balance) }.orEmpty())
         etCreditLimit.setText(existing?.let { trimNumber(it.creditLimit) }.orEmpty())
@@ -127,7 +135,9 @@ class CustomerFragment : DataTableFragment() {
                 creditEnabled = credit,
                 creditLimit = if (credit) etCreditLimit.text?.toString()?.toDoubleOrNull() ?: 0.0 else 0.0,
                 creditDays = if (credit) etCreditDays.text?.toString()?.toIntOrNull() ?: 0 else 0,
-                balance = etBalance.text?.toString()?.toDoubleOrNull() ?: 0.0
+                balance = etBalance.text?.toString()?.toDoubleOrNull() ?: 0.0,
+                birthday = etBirthday.text?.toString()?.trim().orEmpty(),
+                anniversary = etAnniversary.text?.toString()?.trim().orEmpty()
             )
 
             if (existing == null) {
@@ -158,4 +168,24 @@ class CustomerFragment : DataTableFragment() {
     /** Renders a stored amount without a trailing ".0" for whole numbers. */
     private fun trimNumber(v: Double): String =
         if (v == v.toLong().toDouble()) v.toLong().toString() else v.toString()
+
+    /** Opens a calendar seeded with [current] ("yyyy-MM-dd") and returns the pick. */
+    private fun pickDate(current: String?, onPicked: (String) -> Unit) {
+        val cal = java.util.Calendar.getInstance()
+        current?.takeIf { it.isNotBlank() }?.let { s ->
+            runCatching {
+                val p = s.split("-")
+                cal.set(p[0].toInt(), p[1].toInt() - 1, p[2].toInt())
+            }
+        }
+        android.app.DatePickerDialog(
+            requireContext(),
+            { _, year, month, day ->
+                onPicked(String.format(java.util.Locale.US, "%04d-%02d-%02d", year, month + 1, day))
+            },
+            cal.get(java.util.Calendar.YEAR),
+            cal.get(java.util.Calendar.MONTH),
+            cal.get(java.util.Calendar.DAY_OF_MONTH)
+        ).show()
+    }
 }
