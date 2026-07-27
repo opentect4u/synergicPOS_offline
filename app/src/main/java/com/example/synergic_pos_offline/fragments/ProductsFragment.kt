@@ -91,10 +91,11 @@ class ProductsFragment : DataTableFragment() {
 
     override fun onDownloadTemplate() = downloadTemplate()
 
-    /** The item-master columns (same as the bulk-upload template). */
+    /** Upload columns, matching the Add-Product popup (product fields + one rate). */
     private val csvHeader = listOf(
-        "hsn_code", "item_name", "bar_code", "price", "discount", "cgst", "sgst",
-        "sale_price", "sp_gst_flag", "purchase_price", "pp_gst_flag", "description"
+        "product_name", "hsn_code", "bar_code",
+        "rate_name", "rate", "unit_id", "cgst", "sgst",
+        "discount", "discount_type", "sell_price", "purchase_price"
     )
 
     /** Saves a blank CSV template (header + two example rows) to Downloads. */
@@ -102,8 +103,8 @@ class ProductsFragment : DataTableFragment() {
         try {
             val csv = buildString {
                 append(csvHeader.joinToString(",")).append("\n")
-                append("987640,Apple,11111111,120,0,5,5,120,N,110,N,Fresh apple").append("\n")
-                append("897651,Mango,11111112,80,0,5,5,80,N,70,N,").append("\n")
+                append("Apple,987640,11111111,Retail,120,1,5,5,0,P,120,110").append("\n")
+                append("Mango,897651,11111112,Retail,80,2,5,5,0,P,80,70").append("\n")
             }
             val savedTo = saveToDownloads("item_master_template.csv", csv)
             toast("Template saved to $savedTo")

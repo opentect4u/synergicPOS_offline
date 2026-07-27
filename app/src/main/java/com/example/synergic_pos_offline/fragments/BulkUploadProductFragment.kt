@@ -41,10 +41,11 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
     private lateinit var actCategory: MaterialAutoCompleteTextView
     private var categories: List<Category> = emptyList()
 
-    /** The bulk-upload columns; category comes from the on-page selector. */
+    /** Upload columns matching the Add-Product popup; category comes from the page. */
     private val csvHeader = listOf(
-        "hsn_code", "item_name", "bar_code", "price", "discount", "cgst", "sgst",
-        "sale_price", "sp_gst_flag", "purchase_price", "pp_gst_flag", "description"
+        "product_name", "hsn_code", "bar_code",
+        "rate_name", "rate", "unit_id", "cgst", "sgst",
+        "discount", "discount_type", "sell_price", "purchase_price"
     )
 
     private val uploadCsv: ActivityResultLauncher<String> =
@@ -84,8 +85,8 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
             val file = File(requireContext().cacheDir, "item_master_template.csv")
             file.bufferedWriter().use { w ->
                 w.appendLine(csvHeader.joinToString(","))
-                w.appendLine("987640,Apple,11111111,120,0,5,5,120,N,110,N,Fresh apple")
-                w.appendLine("897651,Mango,11111112,80,0,5,5,80,N,70,N,")
+                w.appendLine("Apple,987640,11111111,Retail,120,1,5,5,0,P,120,110")
+                w.appendLine("Mango,897651,11111112,Retail,80,2,5,5,0,P,80,70")
             }
             val uri = FileProvider.getUriForFile(
                 requireContext(), "${requireContext().packageName}.fileprovider", file
@@ -131,20 +132,19 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
             .also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
-        val named = rows.count { (it["item_name"] ?: it["product_name"]).orEmpty().isNotBlank() }
+        // Column order comes from the CSV header (rows are LinkedHashMaps).
+        val columns = rows.first().keys.toList()
+        val named = rows.count { (it["product_name"] ?: it["item_name"]).orEmpty().isNotBlank() }
         view.findViewById<TextView>(R.id.tvPreviewSub).text =
-            "$named of ${rows.size} row(s) → category \"$categoryName\""
+            "$named of ${rows.size} row(s) • ${columns.size} columns → category \"$categoryName\""
 
-        val container = view.findViewById<LinearLayout>(R.id.llPreviewRows)
+        val table = view.findViewById<LinearLayout>(R.id.llPreviewTable)
+        // Header row.
+        table.addView(tableRow(ctx, columns, columns.map { it.replace('_', ' ').uppercase() }, -1))
+        table.addView(divider(ctx))
+        // Data rows.
         rows.forEachIndexed { i, r ->
-            val name = (r["item_name"] ?: r["product_name"]).orEmpty().ifBlank { "(no name)" }
-            val price = r["price"]?.toDoubleOrNull() ?: 0.0
-            val cgst = r["cgst"]?.toDoubleOrNull() ?: 0.0
-            val sgst = r["sgst"]?.toDoubleOrNull() ?: 0.0
-            val sale = r["sale_price"]?.toDoubleOrNull() ?: price
-            val purchase = r["purchase_price"]?.toDoubleOrNull() ?: 0.0
-            val gst = if (cgst == 0.0 && sgst == 0.0) "—" else "${pctLabel(cgst)}+${pctLabel(sgst)}"
-            container.addView(previewRow(ctx, i, name, money(price), gst, money(sale), money(purchase)))
+            table.addView(tableRow(ctx, columns, columns.map { r[it].orEmpty() }, i))
         }
 
         view.findViewById<MaterialButton>(R.id.btnPreviewCancel).setOnClickListener { dialog.dismiss() }
@@ -167,7 +167,7 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         db.beginTransaction()
         try {
             for (r in rows) {
-                val name = (r["item_name"] ?: r["product_name"]).orEmpty()
+                val name = (r["product_name"] ?: r["item_name"]).orEmpty()
                 if (name.isBlank()) { failed++; continue }
 
                 val product = ContentValues().apply {
@@ -180,20 +180,23 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
                 val id = db.insert(DatabaseHelper.Tables.MD_PRODUCTS, null, product)
                 if (id == -1L) { failed++; continue }
 
-                val price = r["price"]?.toDoubleOrNull() ?: 0.0
-                val sale = r["sale_price"]?.toDoubleOrNull() ?: price
+                val rateVal = (r["rate"] ?: r["price"])?.toDoubleOrNull() ?: 0.0
+                val sell = r["sell_price"]?.toDoubleOrNull() ?: r["sale_price"]?.toDoubleOrNull() ?: rateVal
                 val rate = ContentValues().apply {
                     if (storeId != null) put("store_id", storeId) else putNull("store_id")
                     if (outletId != null) put("outlet_id", outletId) else putNull("outlet_id")
                     put("product_id", id)
-                    put("rate", price)
+                    put("rate_name", r["rate_name"]?.ifBlank { null })
+                    put("rate", rateVal)
+                    r["unit_id"]?.toIntOrNull()?.let { put("unit_id", it) } ?: putNull("unit_id")
                     put("cgst_rate", r["cgst"]?.toDoubleOrNull() ?: 0.0)
                     put("sgst_rate", r["sgst"]?.toDoubleOrNull() ?: 0.0)
                     put("igst_rate", 0.0)
                     put("vat_rate", 0.0)
                     put("discount", r["discount"]?.toDoubleOrNull() ?: 0.0)
-                    put("sale_price", sale)
-                    put("sell_price", sale)
+                    discountType(r["discount_type"])?.let { put("discount_type", it) } ?: putNull("discount_type")
+                    put("sale_price", sell)
+                    put("sell_price", sell)
                     put("purchase_price", r["purchase_price"]?.toDoubleOrNull() ?: 0.0)
                 }
                 val rid = db.insert(DatabaseHelper.Tables.MD_PRODUCT_RATES, null, rate)
@@ -228,6 +231,13 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         return list
     }
 
+    /** Normalises a discount type to the stored 'P'/'A' (null when unrecognised). */
+    private fun discountType(v: String?): String? = when (v?.trim()?.uppercase()?.firstOrNull()) {
+        'P' -> "P"
+        'A' -> "A"
+        else -> null
+    }
+
     /** store_id and outlet_id sourced from md_registration (verified row preferred). */
     private fun storeAndOutlet(): Pair<Int?, Int?> {
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
@@ -244,46 +254,57 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         return null to null
     }
 
-    private fun pctLabel(rate: Double): String =
-        if (rate % 1.0 == 0.0) rate.toInt().toString() else rate.toString()
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private fun money(v: Double): String =
-        "₹" + if (v % 1.0 == 0.0) v.toLong().toString() else "%.2f".format(v)
+    /** Fixed cell width per column, so the header aligns with every data row. */
+    private fun columnWidth(name: String): Int = dp(
+        when (name) {
+            "item_name", "product_name", "description" -> 150
+            "rate_name", "hsn_code", "bar_code" -> 110
+            "unit_id", "discount_type" -> 92
+            else -> 80
+        }
+    )
 
-    /** One table row for the preview; column weights match the header in XML. */
-    private fun previewRow(
-        ctx: android.content.Context, index: Int,
-        name: String, rate: String, gst: String, sale: String, purchase: String
+    /** Builds one horizontal row (header when [index] < 0, else a zebra data row). */
+    private fun tableRow(
+        ctx: android.content.Context, columns: List<String>, values: List<String>, index: Int
     ): View {
-        val d = resources.displayMetrics.density
+        val header = index < 0
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding((10 * d).toInt(), (9 * d).toInt(), (10 * d).toInt(), (9 * d).toInt())
-            if (index % 2 == 1) setBackgroundColor(Color.parseColor("#FAFAFA"))
+            setPadding(dp(6), dp(9), dp(6), dp(9))
+            setBackgroundColor(
+                when {
+                    header -> Color.parseColor("#ECEFF1")
+                    index % 2 == 1 -> Color.parseColor("#FFFFFF")
+                    else -> Color.parseColor("#F7F8FA")
+                }
+            )
         }
-        row.addView(cell(ctx, "${index + 1}. $name", 2.4f, android.view.Gravity.START, strong = true))
-        row.addView(cell(ctx, rate, 1f, android.view.Gravity.END))
-        row.addView(cell(ctx, gst, 1.1f, android.view.Gravity.END))
-        row.addView(cell(ctx, sale, 1.1f, android.view.Gravity.END))
-        row.addView(cell(ctx, purchase, 1.3f, android.view.Gravity.END))
+        columns.forEachIndexed { i, colName ->
+            row.addView(TextView(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(columnWidth(colName), LinearLayout.LayoutParams.WRAP_CONTENT)
+                text = values.getOrNull(i).orEmpty().ifBlank { if (header) "" else "—" }
+                textSize = 12f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(8), 0, dp(8), 0)
+                if (header) {
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    setTextColor(resources.getColor(R.color.text_secondary, null))
+                } else {
+                    setTextColor(resources.getColor(R.color.text_main, null))
+                }
+            })
+        }
         return row
     }
 
-    private fun cell(
-        ctx: android.content.Context, text: String, weight: Float, gravity: Int, strong: Boolean = false
-    ): TextView = TextView(ctx).apply {
-        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, weight)
-        this.text = text
-        textSize = 12.5f
-        this.gravity = gravity
-        setTextColor(resources.getColor(R.color.text_main, null))
-        if (strong) {
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            setPadding(0, 0, (6 * resources.displayMetrics.density).toInt(), 0)
-        }
+    private fun divider(ctx: android.content.Context): View = View(ctx).apply {
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+        setBackgroundColor(Color.parseColor("#D8DCE0"))
     }
 
     private fun toast(msg: String) =
