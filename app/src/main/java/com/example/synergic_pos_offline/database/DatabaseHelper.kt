@@ -30,6 +30,10 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "sku", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "brand", "TEXT")
+        // Birthday / anniversary use the existing dob / dom columns; ensure they
+        // exist on databases created before those columns were added.
+        addColumnIfMissing(db, Tables.MD_CUSTOMERS, "dob", "TEXT")
+        addColumnIfMissing(db, Tables.MD_CUSTOMERS, "dom", "TEXT")
         ensureProductsSchema(db)
         recreateProductRatesIfOldSchema(db)
         // "default" is a reserved word, so it must be quoted in the ALTER.
