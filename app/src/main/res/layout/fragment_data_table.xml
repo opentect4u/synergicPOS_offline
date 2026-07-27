@@ -54,9 +54,20 @@
                 android:textColor="@color/text_secondary" />
 
             <ImageButton
+                android:id="@+id/btnGlobalDownload"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_download"
+                android:visibility="gone"
+                app:tint="@color/primary_blue"
+                android:contentDescription="Download template" />
+
+            <ImageButton
                 android:id="@+id/btnGlobalPrint"
                 android:layout_width="44dp"
                 android:layout_height="44dp"
+                android:layout_marginStart="8dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_print"
                 app:tint="@color/primary_blue"
@@ -127,15 +138,35 @@
         </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
 
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/btnAdd"
+    <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
         android:layout_margin="24dp"
-        android:src="@drawable/ic_add"
-        app:tint="@color/white"
-        app:backgroundTint="@color/primary_blue"
-        android:contentDescription="Add New" />
+        android:orientation="vertical"
+        android:gravity="end">
+
+        <!-- Opens a dedicated bulk-upload page (product screen). -->
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/btnBulkPage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            android:src="@drawable/ic_upload"
+            android:visibility="gone"
+            app:fabSize="mini"
+            app:tint="@color/white"
+            app:backgroundTint="@color/primary_blue"
+            android:contentDescription="Bulk upload" />
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/btnAdd"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:src="@drawable/ic_add"
+            app:tint="@color/white"
+            app:backgroundTint="@color/primary_blue"
+            android:contentDescription="Add New" />
+    </LinearLayout>
 
 </FrameLayout>

@@ -25,7 +25,10 @@ class CustomerDao(context: Context) {
         val creditEnabled: Boolean,
         val creditLimit: Double,
         val creditDays: Int,
-        val balance: Double
+        val balance: Double,
+        /** Birthday (dob) and anniversary (dom), stored as "yyyy-MM-dd" or "". */
+        val birthday: String = "",
+        val anniversary: String = ""
     )
 
     /** All customers, oldest first. */
@@ -35,7 +38,7 @@ class CustomerDao(context: Context) {
             table,
             arrayOf(
                 "id", "customer_name", "customer_address", "phone_number", "gstin",
-                "credit_enabled", "credit_limit", "credit_days", "balance_amount"
+                "credit_enabled", "credit_limit", "credit_days", "balance_amount", "dob", "dom"
             ),
             null, null, null, null, "id ASC"
         ).use { c ->
@@ -50,7 +53,9 @@ class CustomerDao(context: Context) {
                         creditEnabled = c.getInt(5) == 1,
                         creditLimit = c.getDouble(6),
                         creditDays = c.getInt(7),
-                        balance = c.getDouble(8)
+                        balance = c.getDouble(8),
+                        birthday = c.getString(9).orEmpty(),
+                        anniversary = c.getString(10).orEmpty()
                     )
                 )
             }
@@ -65,7 +70,7 @@ class CustomerDao(context: Context) {
             table,
             arrayOf(
                 "id", "customer_name", "customer_address", "phone_number", "gstin",
-                "credit_enabled", "credit_limit", "credit_days", "balance_amount"
+                "credit_enabled", "credit_limit", "credit_days", "balance_amount", "dob", "dom"
             ),
             "phone_number = ?", arrayOf(phone.trim()), null, null, "id ASC", "1"
         ).use { c ->
@@ -79,7 +84,9 @@ class CustomerDao(context: Context) {
                     creditEnabled = c.getInt(5) == 1,
                     creditLimit = c.getDouble(6),
                     creditDays = c.getInt(7),
-                    balance = c.getDouble(8)
+                    balance = c.getDouble(8),
+                    birthday = c.getString(9).orEmpty(),
+                    anniversary = c.getString(10).orEmpty()
                 )
             }
         }
@@ -111,6 +118,8 @@ class CustomerDao(context: Context) {
         put("customer_address", address)
         put("phone_number", phone)
         put("gstin", gstin)
+        if (birthday.isBlank()) putNull("dob") else put("dob", birthday)
+        if (anniversary.isBlank()) putNull("dom") else put("dom", anniversary)
         put("credit_enabled", if (creditEnabled) 1 else 0)
         put("credit_limit", creditLimit)
         put("credit_days", creditDays)

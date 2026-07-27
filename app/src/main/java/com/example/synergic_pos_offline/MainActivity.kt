@@ -37,6 +37,7 @@ import com.example.synergic_pos_offline.fragments.InventoryFragment
 import com.example.synergic_pos_offline.fragments.ItemwiseSearchFragment
 import com.example.synergic_pos_offline.fragments.LoginFragment
 import com.example.synergic_pos_offline.fragments.MasterFragment
+import com.example.synergic_pos_offline.fragments.ComingSoonFragment
 import com.example.synergic_pos_offline.fragments.PosBillingFragment
 import com.example.synergic_pos_offline.fragments.ProductsFragment
 import com.example.synergic_pos_offline.fragments.RegistrationFragment
@@ -299,9 +300,8 @@ class MainActivity : AppCompatActivity() {
             "App Settings" -> navigateTo(AppSettingsFragment())
             "Stock & Inventory" -> navigateTo(InventoryFragment())
             "Reports" -> navigateTo(ReportsFragment())
-            "Sale" -> navigateTo(SalesFragment())
-            "Header & Footer" -> navigateTo(HeaderFooterFragment())
             "Sale" -> navigateTo(PosBillingFragment())
+            "Header & Footer" -> navigateTo(HeaderFooterFragment())
             "User Management" -> navigateTo(UserManagementFragment())
             "Bill Header & Footer" -> navigateTo(BillHeaderFooterFragment())
             "Bill Header Footer Logo" -> navigateTo(BillLogoFragment())
@@ -312,7 +312,8 @@ class MainActivity : AppCompatActivity() {
             "Description/Ledger" -> navigateTo(DescriptionLedgerFragment())
             "Units" -> navigateTo(UnitFragment())
             "Waiter" -> navigateTo(WaiterFragment())
-            else -> Toast.makeText(this, "Opening $title...", Toast.LENGTH_SHORT).show()
+            // Every other leaf routes to a clean placeholder page (no dead clicks).
+            else -> navigateTo(ComingSoonFragment.newInstance(title))
         }
     }
 

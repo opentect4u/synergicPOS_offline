@@ -38,6 +38,10 @@ class DatabaseHelper private constructor(context: Context) :
         runCatching {
             db.execSQL("UPDATE ${Tables.TD_BILLS} SET bill_seq_no = receipt_no WHERE bill_seq_no IS NULL")
         }
+        // Birthday / anniversary use the existing dob / dom columns; ensure they
+        // exist on databases created before those columns were added.
+        addColumnIfMissing(db, Tables.MD_CUSTOMERS, "dob", "TEXT")
+        addColumnIfMissing(db, Tables.MD_CUSTOMERS, "dom", "TEXT")
         ensureProductsSchema(db)
         recreateProductRatesIfOldSchema(db)
         // "default" is a reserved word, so it must be quoted in the ALTER.

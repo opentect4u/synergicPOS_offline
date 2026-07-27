@@ -2,6 +2,7 @@ package com.example.synergic_pos_offline.fragments
 
 import android.database.sqlite.SQLiteConstraintException
 import android.content.res.ColorStateList
+import androidx.core.view.isVisible
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -167,7 +168,18 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         })
 
         view.findViewById<View>(R.id.btnAdd).setOnClickListener { onAddRow() }
-        
+
+        // A single FAB that opens a dedicated bulk-upload page (product screen).
+        view.findViewById<View>(R.id.btnBulkPage).apply {
+            isVisible = bulkPageEnabled()
+            setOnClickListener { onBulkPage() }
+        }
+        // Download-template action, beside the bin (product screen only).
+        view.findViewById<View>(R.id.btnGlobalDownload).apply {
+            isVisible = showDownloadTemplate()
+            setOnClickListener { onDownloadTemplate() }
+        }
+
         btnGlobalDelete.setOnClickListener { onBulkDelete() }
         btnGlobalPrint.setOnClickListener { onBulkPrint() }
 
@@ -306,6 +318,18 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     }
 
     // ---- Actions -----------------------------------------------------------
+
+    /** Screens that offer a download-template action (beside the bin) return true. */
+    protected open fun showDownloadTemplate(): Boolean = false
+
+    /** Called when the download-template action is tapped. */
+    protected open fun onDownloadTemplate() {}
+
+    /** Screens that route bulk upload to a dedicated page return true. */
+    protected open fun bulkPageEnabled(): Boolean = false
+
+    /** Called when the bulk-page FAB is tapped. */
+    protected open fun onBulkPage() {}
 
     protected open fun onAddRow() {
         val fields = formFields.map { DialogUtils.FormField(it, "") }
