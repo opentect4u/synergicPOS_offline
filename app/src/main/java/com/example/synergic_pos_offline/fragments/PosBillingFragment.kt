@@ -16,6 +16,7 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
@@ -27,6 +28,7 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillDao
 import com.example.synergic_pos_offline.database.CategoryDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
+import com.example.synergic_pos_offline.database.TaxSettingsDao
 import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.GstCalculator
@@ -70,8 +72,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private data class Product(
         val id: String, val name: String, val sku: String,
         val category: String, val categoryId: Long, val price: Double, val stock: String = "ok",
-        val hsn: String = "0000", val cgst: Double = 0.0, val sgst: Double = 0.0,
+        val hsn: String = "0000", val cgst: Double = 0.0, val sgst: Double = 0.0, val vat: Double = 0.0,
         val unit: String = "pcs",
+        /** The rate's own pre-configured discount (Tax Settings' item-wise discount).
+         *  [discType] is "P"/"A" (percent/amount) or null when none is configured. */
+        val discValue: Double = 0.0, val discType: String? = null,
         /** Every sellable rate (only populated in Multiple item-rate mode). */
         val rates: List<ProductEntryDialog.Rate> = emptyList()
     ) {
@@ -82,7 +87,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private data class CartLine(val product: Product, var qty: Int)
     private fun CartLine.toSessionLine() = CheckoutSession.Line(
         product.name, product.sku, product.price, qty,
-        product.id.toLongOrNull(), product.cgst, product.sgst
+        product.id.toLongOrNull(), product.cgst, product.sgst, product.vat,
+        product.discValue, product.discType
     )
 
     /**
@@ -97,7 +103,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val product = fromMenu?.copy(price = price) ?: Product(
             id = productId?.toString() ?: "",
             name = name, sku = sku, category = "", categoryId = 0L,
-            price = price, cgst = cgstRate, sgst = sgstRate
+            price = price, cgst = cgstRate, sgst = sgstRate, vat = vatRate,
+            discValue = itemDiscValue, discType = itemDiscType
         )
         return CartLine(product, qty)
     }
@@ -118,8 +125,44 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private var activeCategory = "All"
     private var activeCategoryId: Long? = null
     private var query = ""
-    private var discountPercent = 0
+    private var discountMode = GstCalculator.DiscountMode.PERCENT
+    private var discountValue = 0.0
     private var couponApplied = false
+
+    private val taxSettings by lazy { TaxSettingsDao(requireContext()).load() }
+
+    /** Whether the whole-bill discount comes off before GST (Tax Settings' Discount Position). */
+    private val discountPreTax by lazy { taxSettings.discountPosition == TaxSettingsDao.DiscountPosition.PRE_TAX }
+
+    /** The discount box only shows when Tax Settings has Discount on and set to Bill wise. */
+    private val showDiscountBox by lazy {
+        taxSettings.discountEnabled && taxSettings.discountType == TaxSettingsDao.DiscountType.BILL_WISE
+    }
+
+    /** Item-wise discount: each product's own pre-configured discount applies instead
+     *  of a whole-bill one - so [showDiscountBox] and this are mutually exclusive. */
+    private val itemwiseDiscountActive by lazy {
+        taxSettings.discountEnabled && taxSettings.discountType == TaxSettingsDao.DiscountType.ITEM_WISE
+    }
+
+    /** GST and VAT are mutually exclusive in Tax Settings; NONE when neither is on. */
+    private val taxRegime by lazy { GstCalculator.regimeFor(taxSettings.gstEnabled, taxSettings.vatEnabled) }
+
+    /** Whether the listed price already includes whichever tax is active. */
+    private val taxInclusive by lazy {
+        when (taxRegime) {
+            GstCalculator.TaxRegime.GST -> taxSettings.gstMode == TaxSettingsDao.GstMode.INCLUSIVE
+            GstCalculator.TaxRegime.VAT -> taxSettings.vatMode == TaxSettingsDao.GstMode.INCLUSIVE
+            GstCalculator.TaxRegime.NONE -> false
+        }
+    }
+
+    /** The combined rate a line is actually taxed at, per the active regime. */
+    private fun taxRateOf(p: Product): Double = when (taxRegime) {
+        GstCalculator.TaxRegime.GST -> p.cgst + p.sgst
+        GstCalculator.TaxRegime.VAT -> p.vat
+        GstCalculator.TaxRegime.NONE -> 0.0
+    }
     private var customerName: String? = null
     private var customerPhone: String? = null
     private var currentCustomerData: Map<String, Any?>? = null
@@ -159,6 +202,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private lateinit var tvCustName: TextView
     private lateinit var tvCustSub: TextView
     private lateinit var tvCouponMsg: TextView
+    private lateinit var etDiscount: TextInputEditText
+    private lateinit var tilDiscount: com.google.android.material.textfield.TextInputLayout
+    private lateinit var rgDiscountMode: RadioGroup
     private lateinit var btnCustomerInfo: ImageButton
 
     // Auto-prompts for the customer once, the first time this screen is shown after
@@ -196,6 +242,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvCustSub = view.findViewById(R.id.tvCustSub)
         tvCouponMsg = view.findViewById(R.id.tvCouponMsg)
         btnCustomerInfo = view.findViewById(R.id.btnCustomerInfo)
+        etDiscount = view.findViewById(R.id.etDiscount)
+        tilDiscount = view.findViewById(R.id.tilDiscount)
+        rgDiscountMode = view.findViewById(R.id.rgDiscountMode)
 
         // Brand cell shows the registered store name, not a hardcoded placeholder.
         storeName(ctx)?.let { view.findViewById<TextView>(R.id.tvBrandName).text = it.uppercase() }
@@ -259,10 +308,33 @@ class PosBillingFragment : Fragment(), TitledScreen {
         view.findViewById<TextInputEditText>(R.id.etSearch).addTextChangedListener(simpleWatcher {
             query = it; applyFilter()
         })
-        // Discount
-        view.findViewById<TextInputEditText>(R.id.etDiscount).addTextChangedListener(simpleWatcher {
-            discountPercent = (it.toIntOrNull() ?: 0).coerceIn(0, 100); updateTotals()
+        // Discount - hidden entirely when Tax Settings' Discount is on and item-wise.
+        view.findViewById<View>(R.id.sectionDiscount).visibility =
+            if (showDiscountBox) View.VISIBLE else View.GONE
+        if (!showDiscountBox) {
+            discountMode = GstCalculator.DiscountMode.PERCENT
+            discountValue = 0.0
+        }
+        syncDiscountUi()
+
+        etDiscount.addTextChangedListener(simpleWatcher {
+            discountValue = when (discountMode) {
+                GstCalculator.DiscountMode.PERCENT -> (it.toIntOrNull() ?: 0).coerceIn(0, 100).toDouble()
+                GstCalculator.DiscountMode.AMOUNT -> it.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+            }
+            updateTotals()
         })
+        rgDiscountMode.setOnCheckedChangeListener { _, checkedId ->
+            discountMode = if (checkedId == R.id.rbDiscountAmount) {
+                GstCalculator.DiscountMode.AMOUNT
+            } else {
+                GstCalculator.DiscountMode.PERCENT
+            }
+            applyDiscountModeToInput()
+            etDiscount.setText("")
+            discountValue = 0.0
+            updateTotals()
+        }
 
         // Buttons — actions
         val btnCalculator = view.findViewById<MaterialButton>(R.id.btnCalculator)
@@ -328,7 +400,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
             cart.clear()
             cart.addAll(restoredBill.toCartLines())
 
-            discountPercent = restoredBill.discount
+            discountMode = restoredBill.discountMode
+            discountValue = restoredBill.discountValue
+            syncDiscountUi()
             couponApplied = restoredBill.coupon
             setCustomer(restoredBill.customerName, restoredBill.customerPhone, restoredBill.customerData)
             cartAdapter.notifyDataSetChanged()
@@ -469,10 +543,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 // Get the category name
                 val categoryName = categoryItems.find { it.id == categoryId }?.name ?: ""
 
-                // Query the product's default rate row (rate + its own GST split).
+                // Query the product's default rate row (rate + its own tax split).
                 db.query(
                     "md_product_rates",
-                    arrayOf("rate", "cgst_rate", "sgst_rate"),
+                    arrayOf("rate", "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type"),
                     "product_id = ?",
                     arrayOf(productId),
                     null, null, "\"default\" DESC, id ASC", "1"
@@ -480,10 +554,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
                     var price = 0.0
                     var cgst = 0.0
                     var sgst = 0.0
+                    var vat = 0.0
+                    var discValue = 0.0
+                    var discType: String? = null
                     if (rateCursor.moveToFirst()) {
                         price = if (rateCursor.isNull(0)) 0.0 else rateCursor.getDouble(0)
                         cgst = if (rateCursor.isNull(1)) 0.0 else rateCursor.getDouble(1)
                         sgst = if (rateCursor.isNull(2)) 0.0 else rateCursor.getDouble(2)
+                        vat = if (rateCursor.isNull(3)) 0.0 else rateCursor.getDouble(3)
+                        discValue = if (rateCursor.isNull(4)) 0.0 else rateCursor.getDouble(4)
+                        discType = rateCursor.getString(5)
                     }
 
                     // In Multiple mode, gather every rate for the popup's dropdown.
@@ -500,6 +580,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
                         hsn = hsn,
                         cgst = cgst,
                         sgst = sgst,
+                        vat = vat,
+                        discValue = discValue,
+                        discType = discType,
                         rates = rates
                     )
                     menu.add(product)
@@ -515,7 +598,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val out = mutableListOf<ProductEntryDialog.Rate>()
         db.query(
             "md_product_rates",
-            arrayOf("rate_name", "rate", "cgst_rate", "sgst_rate"),
+            arrayOf("rate_name", "rate", "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type"),
             "product_id = ?", arrayOf(productId),
             null, null, "\"default\" DESC, id ASC"
         ).use { c ->
@@ -526,7 +609,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
                         name = c.getString(0)?.takeIf { it.isNotBlank() } ?: "Rate ${i}",
                         rate = if (c.isNull(1)) 0.0 else c.getDouble(1),
                         cgst = if (c.isNull(2)) 0.0 else c.getDouble(2),
-                        sgst = if (c.isNull(3)) 0.0 else c.getDouble(3)
+                        sgst = if (c.isNull(3)) 0.0 else c.getDouble(3),
+                        vat = if (c.isNull(4)) 0.0 else c.getDouble(4),
+                        discValue = if (c.isNull(5)) 0.0 else c.getDouble(5),
+                        discType = c.getString(6)
                     )
                 )
                 i++
@@ -601,7 +687,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
             confirmLabel = if (editing) "Update" else "Add to cart",
             focusQty = !editing && quantityStatusOn,
             focusRate = !editing && manualRateOn,
-            rateEditable = manualRateOn
+            rateEditable = manualRateOn,
+            taxRegime = taxRegime,
+            taxInclusive = taxInclusive,
+            itemwiseDiscountActive = itemwiseDiscountActive,
+            discountPreTax = discountPreTax
         ) { qty, rate ->
             if (editing) updateCartLine(editIndex, qty, rate) else addToCart(p, qty, rate)
         }
@@ -609,7 +699,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private fun Product.toDialogProduct() = ProductEntryDialog.Product(
         id = id, name = name, sku = sku, category = category,
-        price = price, hsn = hsn, unit = unit, cgst = cgst, sgst = sgst, rates = rates
+        price = price, hsn = hsn, unit = unit, cgst = cgst, sgst = sgst, vat = vat,
+        discValue = discValue, discType = discType, rates = rates
     )
 
     /** Replaces a cart line's rate and quantity (from the edit dialog). */
@@ -1027,7 +1118,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         heldOrders.clear()
         heldOrders.add(
             CheckoutSession.HeldBill(
-                "Sale #1", cart.map { it.toSessionLine() }, discountPercent, couponApplied,
+                "Sale #1", cart.map { it.toSessionLine() }, discountMode, discountValue, couponApplied,
                 customerName, customerPhone, currentCustomerData
             )
         )
@@ -1047,7 +1138,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             // Multiple held bills - show as list
             val labels = heldOrders.mapIndexed { index, h ->
                 "${h.label} · ${h.lines.sumOf { it.qty }} items · " +
-                    money(totalOf(h.toCartLines(), h.discount, h.coupon))
+                    money(totalOf(h.toCartLines(), h.discountMode, h.discountValue, h.coupon))
             }.toTypedArray()
 
             AlertDialog.Builder(requireContext())
@@ -1070,7 +1161,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         // Build bill details text
         val gross = heldLines.sumOf { it.product.price * it.qty }
-        val discountAmt = gross * heldBill.discount / 100.0
+        val manualDiscAmt = GstCalculator.discountAmount(gross, heldBill.discountMode, heldBill.discountValue)
+        val couponAmt = if (heldBill.coupon) gross * 10.0 / 100.0 else 0.0
+        val discountAmt = (manualDiscAmt + couponAmt).coerceAtMost(gross)
         val billDetails = StringBuilder().apply {
             append("${heldBill.label}\n\n")
             append("ITEMS:\n")
@@ -1079,11 +1172,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 append("  Qty: ${line.qty} × ${money(line.product.price)} = ${money(line.product.price * line.qty)}\n")
             }
             append("\nSubtotal: ${money(gross)}\n")
-            if (heldBill.discount > 0) {
-                append("Discount (${heldBill.discount}%): -${money(discountAmt)}\n")
+            if (discountAmt > 0.0) {
+                val label = if (heldBill.discountMode == GstCalculator.DiscountMode.PERCENT)
+                    "${heldBill.discountValue}%" else money(heldBill.discountValue)
+                append("Discount ($label): -${money(discountAmt)}\n")
             }
-            append("Tax: ${money(taxOf(heldLines, heldBill.discount))}\n")
-            append("\nTOTAL: ${money(totalOf(heldLines, heldBill.discount, heldBill.coupon))}")
+            append("Tax: ${money(taxOf(heldLines, discountAmt))}\n")
+            append("\nTOTAL: ${money(totalOf(heldLines, heldBill.discountMode, heldBill.discountValue, heldBill.coupon))}")
         }.toString()
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_common, null)
@@ -1128,7 +1223,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val h = heldOrders.removeAt(index)
         cart.clear()
         cart.addAll(h.toCartLines())
-        discountPercent = h.discount
+        discountMode = h.discountMode
+        discountValue = h.discountValue
+        syncDiscountUi()
         couponApplied = h.coupon
         setCustomer(h.customerName, h.customerPhone, h.customerData)
         cartAdapter.notifyDataSetChanged()
@@ -1152,12 +1249,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
         }
 
         // Hand the current sale to the checkout screen.
-        CheckoutSession.lines = cart.map {
-            CheckoutSession.Line(
-                it.product.name, it.product.sku, it.product.price, it.qty,
-                it.product.id.toLongOrNull(), it.product.cgst, it.product.sgst
-            )
-        }.toMutableList()
+        CheckoutSession.lines = cart.map { it.toSessionLine() }.toMutableList()
+        // Passed through as entered when there's no coupon to fold in - checkout has
+        // no notion of a coupon of its own, so a coupon sale is instead resolved to a
+        // flat rupee amount that already includes it, and checkout just charges
+        // whatever this screen previewed.
+        if (couponApplied) {
+            CheckoutSession.discountMode = GstCalculator.DiscountMode.AMOUNT
+            CheckoutSession.discountValue = discountAmt()
+        } else {
+            CheckoutSession.discountMode = discountMode
+            CheckoutSession.discountValue = discountValue
+        }
         CheckoutSession.customerName = customerName
         CheckoutSession.customerPhone = customerPhone
         CheckoutSession.customerId = currentCustomerData?.get("id") as? Long
@@ -1199,7 +1302,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private fun clearSale() {
         cart.clear()
-        discountPercent = 0
+        discountMode = GstCalculator.DiscountMode.PERCENT
+        discountValue = 0.0
+        syncDiscountUi()
         couponApplied = false
         lastAddedId = null
         tvCouponMsg.visibility = View.GONE
@@ -1210,14 +1315,46 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     // ---- Totals ------------------------------------------------------------
 
-    private fun totalPct() = min(100, discountPercent + if (couponApplied) 10 else 0)
     private fun subtotal(): Double = cart.sumOf { it.product.price * it.qty }
-    private fun discountAmt(): Double = subtotal() * totalPct() / 100.0
-    private fun taxAmt(): Double = taxOf(cart, totalPct())
 
-    /** Taxed value before rounding; what the round-off line is measured against. */
-    private fun taxedTotal(): Double =
-        (subtotal() - discountAmt()).coerceAtLeast(0.0) + taxAmt()
+    /**
+     * The manual discount (percent or flat) plus the coupon's flat 10%, capped at
+     * the subtotal. Item-wise discount replaces this mechanism entirely - each
+     * line prices its own discount in [lineTax] - so there is nothing left for a
+     * whole-bill figure to add.
+     */
+    private fun discountAmt(): Double {
+        if (itemwiseDiscountActive) return 0.0
+        val sub = subtotal()
+        val manual = GstCalculator.discountAmount(sub, discountMode, discountValue)
+        val coupon = if (couponApplied) sub * 10.0 / 100.0 else 0.0
+        return (manual + coupon).coerceAtMost(sub)
+    }
+
+    /** "GST", "VAT" or plain "TAX" (neither switched on), matching the active regime. */
+    private fun taxLabelText(): String = when (taxRegime) {
+        GstCalculator.TaxRegime.GST -> "GST"
+        GstCalculator.TaxRegime.VAT -> "VAT"
+        GstCalculator.TaxRegime.NONE -> "TAX"
+    }
+
+    private fun taxAmt(): Double = taxOf(cart, discountAmt())
+
+    /**
+     * Taxed value before rounding; what the round-off line is measured against.
+     * Pre-tax, the discount is already folded into [taxableSumOf] per line;
+     * post-tax, it is taken off once here, after tax. [itemwiseDiscountSumOf] is
+     * the one further deduction not yet reflected in either - a post-tax,
+     * exclusive item-wise discount - and is zero (so a no-op) in every other case.
+     */
+    private fun taxedTotal(): Double {
+        val extra = itemwiseDiscountSumOf(cart, discountAmt())
+        return if (discountPreTax) {
+            (taxableSumOf(cart, discountAmt()) + taxAmt() - extra).coerceAtLeast(0.0)
+        } else {
+            (taxableSumOf(cart, discountAmt()) + taxAmt() - discountAmt() - extra).coerceAtLeast(0.0)
+        }
+    }
 
     private fun roundOffAmt(): Double = BillRounding.roundOff(taxedTotal())
 
@@ -1225,34 +1362,153 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun computeTotal(): Double = BillRounding.payable(taxedTotal())
 
     /**
-     * GST across the cart, charged at each product's own CGST+SGST rate rather than
-     * one blanket rate. The discount is a whole-bill percentage, so it is applied to
-     * each line before that line is taxed - tax follows what is actually charged.
+     * A line's taxable value, tax and (for item-wise discount only) the further
+     * amount still to come off to reach its actual sale price - resolved against
+     * the active regime (GST or VAT) and whether the listed price already
+     * includes that tax.
+     *
+     * Under item-wise discount, each line prices itself from the product's own
+     * pre-configured discount - see [GstCalculator.priceItem] - and [discAmt] /
+     * [grossSubtotal] (the whole-bill discount entered on this screen) do not
+     * apply, since the discount box is hidden whenever item-wise is active. For a
+     * post-tax, exclusive item-wise discount, [GstCalculator.ItemPricing.discount]
+     * carries a further amount the caller still has to take off - taxable/tax
+     * there are the GST-compliant, pre-discount reporting figures - so it is
+     * returned as the third component rather than folded into taxable/tax.
+     *
+     * Otherwise, [discAmt] is spread across lines proportionally to their share of
+     * [grossSubtotal] and taken off before tax only when Tax Settings has the
+     * discount pre-tax; post-tax, the line is taxed on its full amount and the
+     * discount is left for the caller to take off the total once, separately (the
+     * third component is always zero here - that whole-bill deduction happens
+     * once, at the bill level, not per line).
      */
-    private fun taxOf(lines: List<CartLine>, discountPct: Int): Double =
-        lines.sumOf { line ->
-            val taxable = GstCalculator.taxableValue(line.product.price, line.qty, discountPct)
-            GstCalculator.taxAmount(taxable, line.product.cgst) +
-                GstCalculator.taxAmount(taxable, line.product.sgst)
+    private fun lineTax(product: Product, gross: Double, grossSubtotal: Double, discAmt: Double): Triple<Double, Double, Double> {
+        val rate = taxRateOf(product)
+        if (itemwiseDiscountActive && product.discValue > 0.0 && product.discType != null) {
+            val mode = if (product.discType == "A") GstCalculator.DiscountMode.AMOUNT else GstCalculator.DiscountMode.PERCENT
+            val pricing = GstCalculator.priceItem(gross, rate, taxInclusive, discountPreTax, mode, product.discValue)
+            return Triple(pricing.taxable, pricing.tax, pricing.discount)
         }
+        val rawBase = GstCalculator.taxableBase(gross, rate, taxInclusive)
+        val taxable = if (discountPreTax) {
+            GstCalculator.taxableValueSpread(rawBase, gross, grossSubtotal, discAmt)
+        } else {
+            rawBase
+        }
+        val tax = when (taxRegime) {
+            GstCalculator.TaxRegime.GST -> GstCalculator.taxAmount(taxable, product.cgst) + GstCalculator.taxAmount(taxable, product.sgst)
+            GstCalculator.TaxRegime.VAT -> GstCalculator.taxAmount(taxable, product.vat)
+            GstCalculator.TaxRegime.NONE -> 0.0
+        }
+        return Triple(taxable, tax, 0.0)
+    }
+
+    /**
+     * What the cart list shows as a line's total. Under item-wise discount, that is
+     * this line's own discounted, taxed sale price; the whole-bill discount
+     * instead only ever changes the bill's grand total, so otherwise this stays
+     * the bare listed price, unchanged from before.
+     */
+    private fun lineSalePrice(line: CartLine): Double {
+        if (!itemwiseDiscountActive) return line.product.price * line.qty
+        val (taxable, tax, discount) = lineTax(line.product, line.product.price * line.qty, subtotal(), discountAmt())
+        return taxable + tax - discount
+    }
+
+    /** Tax across [lines] under the active regime - see [lineTax]. */
+    private fun taxOf(lines: List<CartLine>, discAmt: Double): Double {
+        val sub = lines.sumOf { it.product.price * it.qty }
+        return lines.sumOf { lineTax(it.product, it.product.price * it.qty, sub, discAmt).second }
+    }
+
+    /** The taxable value across [lines] once any pre-tax discount is applied - see [lineTax]. */
+    private fun taxableSumOf(lines: List<CartLine>, discAmt: Double): Double {
+        val sub = lines.sumOf { it.product.price * it.qty }
+        return lines.sumOf { lineTax(it.product, it.product.price * it.qty, sub, discAmt).first }
+    }
+
+    /** The further amount still owed to lines' own item-wise discount, on top of
+     *  [taxOf]/[taxableSumOf] - see [lineTax]. Zero unless item-wise discount is active. */
+    private fun itemwiseDiscountSumOf(lines: List<CartLine>, discAmt: Double): Double {
+        val sub = lines.sumOf { it.product.price * it.qty }
+        return lines.sumOf { lineTax(it.product, it.product.price * it.qty, sub, discAmt).third }
+    }
 
     /** Rounded total of an arbitrary set of lines, used for held-bill summaries. */
-    private fun totalOf(lines: List<CartLine>, disc: Int, coupon: Boolean): Double {
+    private fun totalOf(lines: List<CartLine>, mode: GstCalculator.DiscountMode, value: Double, coupon: Boolean): Double {
         val sub = lines.sumOf { it.product.price * it.qty }
-        val pct = min(100, disc + if (coupon) 10 else 0)
-        val afterDisc = (sub - sub * pct / 100.0).coerceAtLeast(0.0)
-        return BillRounding.payable(afterDisc + taxOf(lines, pct))
+        val manual = GstCalculator.discountAmount(sub, mode, value)
+        val couponAmt = if (coupon) sub * 10.0 / 100.0 else 0.0
+        val discAmt = (manual + couponAmt).coerceAtMost(sub)
+        val taxable = taxableSumOf(lines, discAmt)
+        val tax = taxOf(lines, discAmt)
+        val itemwiseExtra = itemwiseDiscountSumOf(lines, discAmt)
+        val taxed = if (discountPreTax) taxable + tax - itemwiseExtra else taxable + tax - discAmt - itemwiseExtra
+        return BillRounding.payable(taxed.coerceAtLeast(0.0))
+    }
+
+    /** "Discount (10%)" or "Discount (₹50.00)", matching however it was entered. */
+    private fun discountLabelText(): String = "Discount (" + (
+        if (discountMode == GstCalculator.DiscountMode.PERCENT) {
+            (if (discountValue % 1.0 == 0.0) discountValue.toInt().toString() else String.format(Locale.US, "%.1f", discountValue)) + "%"
+        } else {
+            money(discountValue)
+        }
+    ) + ")"
+
+    /** Applies [discountMode]/[discountValue] to the discount UI without the radio
+     *  listener's "user just changed mode" side effect of resetting the value -
+     *  used after a held bill is restored, where the value must survive intact. */
+    private fun syncDiscountUi() {
+        rgDiscountMode.setOnCheckedChangeListener(null)
+        rgDiscountMode.check(
+            if (discountMode == GstCalculator.DiscountMode.AMOUNT) R.id.rbDiscountAmount else R.id.rbDiscountPercent
+        )
+        applyDiscountModeToInput()
+        etDiscount.setText(
+            when {
+                discountValue == 0.0 -> ""
+                discountMode == GstCalculator.DiscountMode.PERCENT -> discountValue.toInt().toString()
+                else -> String.format(Locale.US, "%.2f", discountValue)
+            }
+        )
+        rgDiscountMode.setOnCheckedChangeListener { _, checkedId ->
+            discountMode = if (checkedId == R.id.rbDiscountAmount) {
+                GstCalculator.DiscountMode.AMOUNT
+            } else {
+                GstCalculator.DiscountMode.PERCENT
+            }
+            applyDiscountModeToInput()
+            etDiscount.setText("")
+            discountValue = 0.0
+            updateTotals()
+        }
+    }
+
+    private fun applyDiscountModeToInput() {
+        tilDiscount.suffixText = if (discountMode == GstCalculator.DiscountMode.AMOUNT) "₹" else "%"
+        etDiscount.inputType = if (discountMode == GstCalculator.DiscountMode.AMOUNT) {
+            InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        } else {
+            InputType.TYPE_CLASS_NUMBER
+        }
     }
 
     private fun updateTotals() {
         tvCartEmpty.visibility = if (cart.isEmpty()) View.VISIBLE else View.GONE
-        
+
         val totalQty = cart.sumOf { it.qty }
         tvItemCount.text = "$totalQty item${if (totalQty != 1) "s" else ""}"
 
         tvSubtotal.text = money(subtotal())
-        tvDiscountLabel.text = "Discount (${totalPct()}%)"
+        // Item-wise discount has no single whole-bill figure to show here - each
+        // line already prices its own discount in what it charges.
+        view?.findViewById<View>(R.id.rowBillingDiscount)?.visibility =
+            if (itemwiseDiscountActive) View.GONE else View.VISIBLE
+        tvDiscountLabel.text = discountLabelText()
         tvDiscountAmt.text = "- ${money(discountAmt())}"
+        view?.findViewById<TextView>(R.id.tvTaxLabel)?.text = taxLabelText()
         tvTax.text = money(taxAmt())
 
         val roundOff = roundOffAmt()
@@ -1409,7 +1665,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             holder.name.text = line.product.name
             holder.each.text = "${money(line.product.price)} each"
             holder.qty.text = line.qty.toString()
-            holder.total.text = money(line.product.price * line.qty)
+            holder.total.text = money(lineSalePrice(line))
             
             // Show marker for the most recently added/updated item
             if (line.product.id == lastAddedId) {

@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import com.example.synergic_pos_offline.utils.AmountInWords
+import com.example.synergic_pos_offline.utils.BillSettingsSnapshot
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.SessionManager
 import java.text.SimpleDateFormat
@@ -24,6 +25,8 @@ import java.util.Locale
 class BillDao(context: Context) {
 
     private val helper = DatabaseHelper.getInstance(context)
+    private val settingsDao = BillSettingsDao(context)
+    private val taxSettingsDao = TaxSettingsDao(context)
 
     /** A single line on the bill. */
     data class Item(
@@ -33,7 +36,9 @@ class BillDao(context: Context) {
         val rate: Double,
         val cgstRate: Double = 0.0,
         val sgstRate: Double = 0.0,
-        /** This line's share of the bill discount; GST is charged on the remainder. */
+        /** Only meaningful when Tax Settings has VAT active instead of GST. */
+        val vatRate: Double = 0.0,
+        /** This line's share of the bill discount; tax is charged on the remainder. */
         val discountAmount: Double = 0.0
     )
 
@@ -57,6 +62,8 @@ class BillDao(context: Context) {
         val totalPrice: Double,
         val discountAmount: Double,
         val discountPercentage: Double,
+        /** How the discount was entered - the raw amount is what math runs on either way. */
+        val discountIsPercent: Boolean = true,
         val cgstAmount: Double,
         val sgstAmount: Double,
         val netAmount: Double,
@@ -85,23 +92,44 @@ class BillDao(context: Context) {
         val user = currentUser()
         val nowDateTime = now()
         val nowDate = today()
+        val settings = settingsDao.load()
+        val seq = nextBillSequence(db, settings, nowDate)
+        val billNumber = formatBillNumber(seq, settings)
+        val taxSettings = taxSettingsDao.load()
+        val regime = GstCalculator.regimeFor(taxSettings.gstEnabled, taxSettings.vatEnabled)
+        val inclusive = when (regime) {
+            GstCalculator.TaxRegime.GST -> taxSettings.gstMode == TaxSettingsDao.GstMode.INCLUSIVE
+            GstCalculator.TaxRegime.VAT -> taxSettings.vatMode == TaxSettingsDao.GstMode.INCLUSIVE
+            GstCalculator.TaxRegime.NONE -> false
+        }
+        val discountPreTax = taxSettings.discountPosition == TaxSettingsDao.DiscountPosition.PRE_TAX
 
         db.beginTransaction()
         try {
-            // 1) Bill header (bill_number filled in after we know the receipt_no).
+            // 1) Bill header. bill_seq_no is the raw counter Bill Settings' Start No. /
+            // Reset Bill No. work off of; bill_number is just that, formatted with the
+            // configured character prefix.
             val billValues = ContentValues().apply {
                 put("store_id", storeId)
                 put("outlet_id", outletId)
                 put("bill_date", nowDate)
                 put("bill_date_time", nowDateTime)
+                put("bill_seq_no", seq)
+                put("bill_number", billNumber)
                 if (bill.customerId != null) put("customer_id", bill.customerId)
                 if (operatorId != null) put("operator_id", operatorId)
                 put("bill_type", bill.billType)
+                // Frozen at creation time so a later reprint reads exactly as it did
+                // on the day, even after Bill/Tax Settings have since changed.
+                put("settings_snapshot", BillSettingsSnapshot.serialize(settings, regime, discountPreTax, inclusive))
                 put("tot_price", bill.totalPrice)
                 put("tot_discount_amount", bill.discountAmount)
                 put("tot_discount_percentage", bill.discountPercentage)
                 put("discount_flag", if (bill.discountAmount > 0) 1 else 0)
-                put("discount_type", if (bill.discountPercentage > 0) "PERCENTAGE" else if (bill.discountAmount > 0) "FLAT" else null)
+                put(
+                    "discount_type",
+                    if (bill.discountAmount <= 0.0) null else if (bill.discountIsPercent) "PERCENTAGE" else "FLAT"
+                )
                 put("tot_cgst_amount", bill.cgstAmount)
                 put("tot_sgst_amount", bill.sgstAmount)
                 put("tot_igst_amount", bill.igstAmount)
@@ -123,20 +151,39 @@ class BillDao(context: Context) {
             val receiptNo = db.insert(DatabaseHelper.Tables.TD_BILLS, null, billValues)
             if (receiptNo == -1L) return null
 
-            val billNumber = formatBillNumber(receiptNo)
-            db.update(
-                DatabaseHelper.Tables.TD_BILLS,
-                ContentValues().apply { put("bill_number", billNumber) },
-                "receipt_no=?", arrayOf(receiptNo.toString())
-            )
-
             // 2) Bill items.
             bill.items.forEach { item ->
                 val subtotal = item.rate * item.quantity
-                // GST applies to what is actually charged, so discount comes off first.
-                val taxable = GstCalculator.taxableValue(subtotal, item.discountAmount)
-                val cgstAmt = GstCalculator.taxAmount(taxable, item.cgstRate)
-                val sgstAmt = GstCalculator.taxAmount(taxable, item.sgstRate)
+                val rate = when (regime) {
+                    GstCalculator.TaxRegime.GST -> item.cgstRate + item.sgstRate
+                    GstCalculator.TaxRegime.VAT -> item.vatRate
+                    GstCalculator.TaxRegime.NONE -> 0.0
+                }
+                // The listed price is stripped of any tax it already includes to reach
+                // the base the rate works on.
+                //
+                // A post-tax discount (inclusive or exclusive) is the case where tax
+                // is NOT charged on the discounted value: the rate is applied to the
+                // full base and the discount then comes off the taxed price, so the
+                // tax reported matches the full MRP (a "cash discount" that does not
+                // reduce the taxable value). A pre-tax discount instead comes off the
+                // base first and tax is worked out on what remains.
+                val rawBase = GstCalculator.taxableBase(subtotal, rate, inclusive)
+                val postTax = !discountPreTax && item.discountAmount > 0.0
+                val taxable = if (postTax) rawBase else GstCalculator.taxableValue(rawBase, item.discountAmount)
+                val cgstAmt = if (regime == GstCalculator.TaxRegime.GST) GstCalculator.taxAmount(taxable, item.cgstRate) else 0.0
+                val sgstAmt = if (regime == GstCalculator.TaxRegime.GST) GstCalculator.taxAmount(taxable, item.sgstRate) else 0.0
+                val vatAmt = if (regime == GstCalculator.TaxRegime.VAT) GstCalculator.taxAmount(taxable, item.vatRate) else 0.0
+                val taxSum = cgstAmt + sgstAmt + vatAmt
+                // item.discountAmount is a pre-tax-base amount; grossed up by the rate
+                // it is the discount off the taxed price the customer actually gets.
+                // (rawBase + taxSum is the full taxed MRP - the listed price for an
+                // inclusive line, MRP + tax for an exclusive one.)
+                val itemTotal = if (postTax) {
+                    (rawBase + taxSum - item.discountAmount * (1.0 + rate / 100.0)).coerceAtLeast(0.0)
+                } else {
+                    taxable + taxSum
+                }
                 val itemValues = ContentValues().apply {
                     put("receipt_no", receiptNo)
                     put("trans_dt", nowDateTime)
@@ -148,9 +195,11 @@ class BillDao(context: Context) {
                     put("discount_amount", item.discountAmount)
                     put("cgst_rate", item.cgstRate)
                     put("sgst_rate", item.sgstRate)
+                    put("vat_rate", item.vatRate)
                     put("cgst_amount", cgstAmt)
                     put("sgst_amount", sgstAmt)
-                    put("item_total", taxable + cgstAmt + sgstAmt)
+                    put("vat_amount", vatAmt)
+                    put("item_total", itemTotal)
                     put("created_by", user)
                 }
                 db.insert(DatabaseHelper.Tables.TD_BILL_ITEMS, null, itemValues)
@@ -250,8 +299,12 @@ class BillDao(context: Context) {
         )
     }
 
-    /** The bill number the next completed sale will be given, e.g. "INV-000010". */
-    fun nextBillNumber(): String = formatBillNumber(nextReceiptNo())
+    /** The bill number the next completed sale will be given, per Bill Settings. */
+    fun nextBillNumber(): String {
+        val settings = settingsDao.load()
+        val seq = nextBillSequence(helper.readableDatabase, settings, today())
+        return formatBillNumber(seq, settings)
+    }
 
     /**
      * The receipt number the next bill will take.
@@ -277,7 +330,7 @@ class BillDao(context: Context) {
         return 1L
     }
 
-    /** The most recent bill's number (e.g. "INV-000009"), or null if none exist yet. */
+    /** The most recent bill's number (e.g. "3"), or null if none exist yet. */
     fun lastBillNumber(): String? {
         helper.readableDatabase.rawQuery(
             """
@@ -287,7 +340,7 @@ class BillDao(context: Context) {
             null
         ).use { c ->
             if (!c.moveToFirst()) return null
-            return c.getString(0)?.takeIf { it.isNotBlank() } ?: formatBillNumber(c.getLong(1))
+            return c.getString(0)?.takeIf { it.isNotBlank() } ?: c.getLong(1).toString()
         }
     }
 
@@ -314,9 +367,40 @@ class BillDao(context: Context) {
         return null
     }
 
-    private fun formatBillNumber(receiptNo: Long): String =
-        "INV-" + String.format(Locale.US, "%06d", receiptNo)
+    /**
+     * The counter the next bill in the current reset period should carry.
+     *
+     * Scoped to today/this month/this year when Bill Settings' Reset Bill No. calls
+     * for it, so bill_seq_no - not the ever-climbing receipt_no - is what actually
+     * resets. Continuing on from the highest one already used in that scope, so a
+     * bill deleted mid-sequence does not hand its number to a later sale. Only an
+     * empty scope falls back to a starting point: the configured Start No. when
+     * numbering continues indefinitely, or 1 when a new period is starting fresh.
+     */
+    private fun nextBillSequence(db: SQLiteDatabase, settings: BillSettingsDao.BillSettings, nowDate: String): Int {
+        val periodWhere = when (settings.resetMode) {
+            BillSettingsDao.ResetMode.DAILY -> "bill_date = ?" to nowDate
+            BillSettingsDao.ResetMode.MONTHLY -> "substr(bill_date, 1, 7) = ?" to nowDate.take(7)
+            BillSettingsDao.ResetMode.YEARLY -> "substr(bill_date, 1, 4) = ?" to nowDate.take(4)
+            BillSettingsDao.ResetMode.CONTINUE -> null
+        }
+        val sql = "SELECT MAX(bill_seq_no) FROM ${DatabaseHelper.Tables.TD_BILLS}" +
+            (periodWhere?.let { " WHERE ${it.first}" } ?: "")
+        val args = periodWhere?.let { arrayOf(it.second) }
+        val maxSeq = db.rawQuery(sql, args).use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null
+        }
+        return when {
+            maxSeq != null -> maxSeq + 1
+            settings.resetMode == BillSettingsDao.ResetMode.CONTINUE -> settings.startBillNo + 1
+            else -> 1
+        }
+    }
 
+    private fun formatBillNumber(seq: Int, settings: BillSettingsDao.BillSettings): String {
+        val prefix = if (settings.billNoCharEnabled) settings.billNoCharPrefix else ""
+        return "$prefix$seq"
+    }
 
     private fun currentStoreId(): Long? {
         helper.readableDatabase.query(

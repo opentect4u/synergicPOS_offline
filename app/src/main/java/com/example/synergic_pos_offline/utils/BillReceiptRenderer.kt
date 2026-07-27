@@ -13,8 +13,10 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillHeaderFooterDao
+import com.example.synergic_pos_offline.database.BillSettingsDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.LogoDao
+import com.example.synergic_pos_offline.database.TaxSettingsDao
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -56,7 +58,9 @@ class BillReceiptRenderer(private val ctx: Context) {
         val name: String,
         val qty: String,
         val price: String,
-        val amount: String
+        val amount: String,
+        val hsn: String? = null,
+        val discount: String? = null
     )
 
     /**
@@ -64,17 +68,57 @@ class BillReceiptRenderer(private val ctx: Context) {
      * `td_bills` header, so the printed receipt always adds up to what is listed
      * on it. [discount] is the one figure the items cannot supply: it is stored
      * per bill, not per line, so it is passed in from the header.
+     *
+     * A pre-tax discount is spread across the lines at billing time, so it already
+     * shows up inside [itemsSubtotal] via each line's own `discount_amount`
+     * ([itemDiscountApplied] is that spread total). A post-tax discount instead
+     * leaves every line untouched and applies once, after tax, at the bill level -
+     * [remainingDiscount] is whichever part of [discount] the lines have not
+     * already accounted for, so it is never subtracted twice.
      */
     private data class BillTotals(
         val itemsSubtotal: Double = 0.0,
         val cgst: Double = 0.0,
         val sgst: Double = 0.0,
+        val vat: Double = 0.0,
         val otherTax: Double = 0.0,
-        val discount: Double = 0.0
+        val discount: Double = 0.0,
+        val itemDiscountApplied: Double = 0.0,
+        val itemDiscountAllIn: Double = 0.0,
+        val grossMrp: Double = 0.0,
+        val qtyCount: Double = 0.0,
+        val itemCount: Int = 0
     ) {
-        val base: Double get() = (itemsSubtotal - discount).coerceAtLeast(0.0)
-        val tax: Double get() = cgst + sgst + otherTax
-        val grandTotal: Double get() = base + tax
+        val base: Double get() = itemsSubtotal
+        val tax: Double get() = cgst + sgst + vat + otherTax
+        val remainingDiscount: Double get() = (discount - itemDiscountApplied).coerceAtLeast(0.0)
+        val grandTotal: Double get() = (base + tax - remainingDiscount).coerceAtLeast(0.0)
+
+        /**
+         * The whole discount the customer got, in tax-inclusive terms: what the
+         * lines already priced in ([itemDiscountAllIn]) plus any bill-level discount
+         * not folded into them ([remainingDiscount]).
+         */
+        val totalDiscount: Double get() = itemDiscountAllIn + remainingDiscount
+    }
+
+    /**
+     * One rate slab in the tax summary. A bill can mix products taxed at different
+     * rates, so the tax is reported one line per rate - not a single blended rate,
+     * which is meaningless on a tax invoice (a 10% and a 5% line do not average to
+     * a real "7.35%"). For GST [cgstRate]/[sgstRate] label the split; for VAT only
+     * [vatRate]/[vat] are used.
+     */
+    private data class TaxSlab(
+        val cgstRate: Double,
+        val sgstRate: Double,
+        val vatRate: Double,
+        val base: Double,
+        val cgst: Double,
+        val sgst: Double,
+        val vat: Double
+    ) {
+        val tax: Double get() = cgst + sgst + vat
     }
 
     /**
@@ -160,11 +204,12 @@ class BillReceiptRenderer(private val ctx: Context) {
             var discount = 0.0
             var storedNetAmount = 0.0
             var roundOff = 0.0
+            var settingsSnapshotJson: String? = null
             db.rawQuery(
                 """
                 SELECT bill_number, bill_date_time, bill_date, customer_id,
                        tot_discount_amount, net_amount, operator_id, created_by, bill_type,
-                       tot_round_off_amount, amount_in_words
+                       tot_round_off_amount, amount_in_words, settings_snapshot
                 FROM ${DatabaseHelper.Tables.TD_BILLS} WHERE receipt_no = ?
                 """.trimIndent(),
                 arrayOf(receiptNo.toString())
@@ -178,6 +223,7 @@ class BillReceiptRenderer(private val ctx: Context) {
                 billType = c.getString(8)
                 roundOff = c.getDouble(9)
                 amountInWords = c.getString(10)
+                settingsSnapshotJson = c.getString(11)
                 // Discounts are recorded per bill, not per line, so this one figure
                 // still has to come from the header; every other total is derived
                 // from the printed line items below.
@@ -185,45 +231,70 @@ class BillReceiptRenderer(private val ctx: Context) {
                 storedNetAmount = c.getDouble(5)
             }
 
+            // Whichever Bill/Tax Settings were active when this bill was made - not
+            // necessarily what is live now - so a reprint reads exactly as it did on
+            // the day. Older bills saved before this existed fall back to today's
+            // settings, the only information there is for them.
+            val snapshot = BillSettingsSnapshot.parse(settingsSnapshotJson)
+            val liveSettings by lazy { BillSettingsDao(ctx).load() }
+            val hsnCode = snapshot?.hsnCode ?: liveSettings.hsnCode
+            val customerDetails = snapshot?.customerDetails ?: liveSettings.customerDetails
+            val customerAddressPrinting = snapshot?.customerAddressPrinting ?: liveSettings.customerAddressPrinting
+            val totalAmountFontSize = snapshot?.totalAmountFontSize ?: liveSettings.totalAmountFontSize
+            val roundOffSetting = snapshot?.roundOff ?: liveSettings.roundOff
+            val amountInWordsSetting = snapshot?.amountInWords ?: liveSettings.amountInWords
+            val taxRegime = snapshot?.taxRegime ?: run {
+                val taxSettings = TaxSettingsDao(ctx).load()
+                GstCalculator.regimeFor(taxSettings.gstEnabled, taxSettings.vatEnabled)
+            }
+            val discountPreTax = snapshot?.discountPreTax
+                ?: (TaxSettingsDao(ctx).load().discountPosition == TaxSettingsDao.DiscountPosition.PRE_TAX)
+            val inclusive = snapshot?.inclusive ?: run {
+                val taxSettings = TaxSettingsDao(ctx).load()
+                when (taxRegime) {
+                    GstCalculator.TaxRegime.GST -> taxSettings.gstMode == TaxSettingsDao.GstMode.INCLUSIVE
+                    GstCalculator.TaxRegime.VAT -> taxSettings.vatMode == TaxSettingsDao.GstMode.INCLUSIVE
+                    GstCalculator.TaxRegime.NONE -> false
+                }
+            }
+
             view.findViewById<TextView>(R.id.tvBillNo).text = "BILL NO: $billNumber"
-            view.findViewById<TextView>(R.id.tvName).text = "NAME  : ${customerName(db, customerId, receiptNo)}"
             // Moved to the foot of the bill, where "created by" belongs.
             view.findViewById<TextView>(R.id.tvBillCreatedBy).text =
                 "Created by: ${cashierName(db, operatorId, createdBy)}"
 
-            // The customer's own GSTIN, when the sale was billed to a business.
-            setIfPresent(
-                view, R.id.tvCustGstin,
-                customerGstin(db, receiptNo)?.let { "GSTIN : $it" }
-            )
+            // Which of mobile/name/gstin print is driven by "Customer Details"; the
+            // address line is a separate on/off. Each still only shows when the
+            // sale actually captured it - the settings choose what to print, not
+            // what to fabricate.
+            val cust = loadCustomerInfo(db, customerId, receiptNo)
+            val showMobile = customerDetails == BillSettingsDao.CustomerDetails.ONLY_MOBILE ||
+                customerDetails == BillSettingsDao.CustomerDetails.MOBILE_NAME ||
+                customerDetails == BillSettingsDao.CustomerDetails.MOBILE_NAME_GSTIN
+            val showName = customerDetails == BillSettingsDao.CustomerDetails.MOBILE_NAME ||
+                customerDetails == BillSettingsDao.CustomerDetails.MOBILE_NAME_GSTIN ||
+                customerDetails == BillSettingsDao.CustomerDetails.ONLY_NAME
+            val showGstin = customerDetails == BillSettingsDao.CustomerDetails.MOBILE_NAME_GSTIN ||
+                customerDetails == BillSettingsDao.CustomerDetails.ONLY_GSTIN
+
+            setIfPresent(view, R.id.tvCustMobile, if (showMobile) cust.phone?.let { "MOBILE : $it" } else null)
+            setIfPresent(view, R.id.tvName, if (showName) cust.name?.let { "NAME  : $it" } else null)
+            setIfPresent(view, R.id.tvCustGstin, if (showGstin) cust.gstin?.let { "GSTIN : $it" } else null)
+            setIfPresent(view, R.id.tvCustAddress, if (customerAddressPrinting) cust.address?.let { "ADDRESS: $it" } else null)
+
             val (date, time) = splitDateTime(dateTime)
             if (date.isNotEmpty()) view.findViewById<TextView>(R.id.tvDate).text = date
             if (time.isNotEmpty()) view.findViewById<TextView>(R.id.tvTime).text = time
 
             // Line items, plus the totals summed from those same lines.
             val narrow = paperDots < NARROW_PAPER_DOTS
-            val (items, lineTotals) = loadItems(db, receiptNo)
+            val (items, lineTotals, taxSlabs) = loadItems(db, receiptNo, hsnCode, inclusive)
             val llItems = view.findViewById<LinearLayout>(R.id.llItems)
             llItems.removeAllViews()
             items.forEach { llItems.addView(if (narrow) buildItemRowNarrow(it) else buildItemRow(it)) }
 
             val totals = lineTotals.copy(discount = discount)
-
-            // Tax block: one consolidated GST row derived from the line items.
-            val llTaxRows = view.findViewById<LinearLayout>(R.id.llTaxRows)
-            llTaxRows.removeAllViews()
-            if (totals.base > 0 && totals.tax > 0) {
-                val rate = totals.tax / totals.base * 100.0
-                val rateText = String.format(Locale.US, "%.2f%%", rate)
-                val bAmt = money(totals.base)
-                val sgst = money(totals.sgst)
-                val cgst = money(totals.cgst)
-                val total = money(totals.grandTotal)
-                llTaxRows.addView(
-                    if (narrow) buildTaxRowNarrow(rateText, bAmt, sgst, cgst, total)
-                    else buildTaxRow(rateText, bAmt, sgst, cgst, total)
-                )
-            }
+            val isGst = taxRegime == GstCalculator.TaxRegime.GST
 
             // Round off is whatever the bill recorded, not something worked out here:
             // the printed total has to match the amount that was actually charged.
@@ -232,19 +303,55 @@ class BillReceiptRenderer(private val ctx: Context) {
             // to a total summed from the line items - adding it to the stored figure
             // would count it twice.
             val payable = if (items.isEmpty()) storedNetAmount else totals.grandTotal + roundOff
-            view.findViewById<TextView>(R.id.tvBillGrandTotal).text = money(payable)
-            view.findViewById<View>(R.id.llRoundOff).visibility =
-                if (kotlin.math.abs(roundOff) > 0.001) {
-                    view.findViewById<TextView>(R.id.tvRoundOff).text =
-                        (if (roundOff > 0) "+ " else "- ") + money(kotlin.math.abs(roundOff))
-                    View.VISIBLE
-                } else View.GONE
+
+            // Bill summary: item count / qty / gross, each tax rate on its own line,
+            // discount and totals - laid out as "label : value" lines. Replaces the
+            // old base-amount tax table.
+            val netSize = if (totalAmountFontSize == BillSettingsDao.FontSize.BIG) 20f else 15f
+            val llSummary = view.findViewById<LinearLayout>(R.id.llSummary)
+            llSummary.removeAllViews()
+            llSummary.addView(
+                summaryHead(
+                    "ITEM: ${totals.itemCount}  QTY: ${qtyText(totals.qtyCount)}",
+                    "AMT: ${money(totals.grossMrp)}"
+                )
+            )
+            // A pre-tax discount reduces the taxable value, so it reads before the
+            // tax; a post-tax discount comes off after tax is charged on the full
+            // amount, so it reads after TOTAL GST.
+            val showDiscount = totals.totalDiscount > 0.005
+            if (showDiscount && discountPreTax) {
+                llSummary.addView(summaryRow("DISCOUNT", money(totals.totalDiscount)))
+            }
+            taxSlabs.forEach { slab ->
+                if (isGst) {
+                    llSummary.addView(summaryRow("CGST @${rate(slab.cgstRate)}%", money(slab.cgst)))
+                    llSummary.addView(summaryRow("SGST @${rate(slab.sgstRate)}%", money(slab.sgst)))
+                } else {
+                    llSummary.addView(summaryRow("VAT @${rate(slab.vatRate)}%", money(slab.vat)))
+                }
+            }
+            if (totals.tax > 0.005) {
+                llSummary.addView(summaryRow(if (isGst) "TOTAL GST" else "TOTAL VAT", money(totals.tax)))
+            }
+            if (showDiscount && !discountPreTax) {
+                llSummary.addView(summaryRow("DISCOUNT", money(totals.totalDiscount)))
+            }
+            llSummary.addView(summaryRow("TOTAL", money(totals.grandTotal)))
+            if (roundOffSetting) {
+                llSummary.addView(summaryRow("ROUND OFF", money(roundOff)))
+            }
+            llSummary.addView(summaryRow("NET AMT", money(payable), bold = true, valueSize = netSize))
 
             // Prefer what the bill stored, so a reprint reads exactly as the original.
-            setIfPresent(
-                view, R.id.tvAmountWords,
-                amountInWords?.takeIf { it.isNotBlank() } ?: AmountInWords.of(payable)
-            )
+            if (amountInWordsSetting) {
+                setIfPresent(
+                    view, R.id.tvAmountWords,
+                    amountInWords?.takeIf { it.isNotBlank() } ?: AmountInWords.of(payable)
+                )
+            } else {
+                view.findViewById<TextView>(R.id.tvAmountWords).visibility = View.GONE
+            }
 
             renderPayment(db, view, receiptNo, billType)
 
@@ -257,17 +364,31 @@ class BillReceiptRenderer(private val ctx: Context) {
         }
     }
 
-    /** Reads the printed lines and sums the receipt totals in the same pass. */
-    private fun loadItems(db: SQLiteDatabase, receiptNo: Long): Pair<List<BillItem>, BillTotals> {
+    /**
+     * Reads the printed lines and sums the receipt totals in the same pass.
+     *
+     * [includeHsn] mirrors the Bill Settings "HSN Code" toggle: the column is only
+     * fetched and printed when it is on.
+     */
+    private fun loadItems(db: SQLiteDatabase, receiptNo: Long, includeHsn: Boolean, inclusive: Boolean): Triple<List<BillItem>, BillTotals, List<TaxSlab>> {
         val list = mutableListOf<BillItem>()
         var subtotalSum = 0.0
         var cgstSum = 0.0
         var sgstSum = 0.0
-        var otherTaxSum = 0.0
+        var vatSum = 0.0
+        var itemDiscountSum = 0.0
+        var itemDiscountAllInSum = 0.0
+        var grossSum = 0.0
+        var qtySum = 0.0
+        // Taxed base/tax grouped by combined rate (scaled x100 for a clean key), so
+        // the summary prints one line per distinct rate rather than one blended row.
+        // Each entry holds [cgstRate, sgstRate, vatRate, base, cgst, sgst, vat].
+        val slabs = LinkedHashMap<Long, DoubleArray>()
         db.rawQuery(
             """
             SELECT i.product_id, i.quantity, i.rate, i.item_subtotal, i.item_total, p.product_name,
-                   i.discount_amount, i.cgst_amount, i.sgst_amount, i.igst_amount, i.vat_amount
+                   i.discount_amount, i.cgst_amount, i.sgst_amount, i.igst_amount, i.vat_amount, p.hsn_code,
+                   i.cgst_rate, i.sgst_rate, i.vat_rate
             FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
             LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCTS} p ON i.product_id = p.id
             WHERE i.bill_id = ?
@@ -280,33 +401,92 @@ class BillReceiptRenderer(private val ctx: Context) {
                 val qty = c.getDouble(1)
                 val rate = c.getDouble(2)
                 val subtotal = if (c.isNull(3)) rate * qty else c.getDouble(3)
+                val itemTotal = if (c.isNull(4)) subtotal else c.getDouble(4)
                 val name = c.getString(5)?.takeIf { it.isNotBlank() } ?: "Item"
+                val cgstAmt = c.getDouble(7)
+                val sgstAmt = c.getDouble(8)
+                val vatAmt = c.getDouble(10)
 
-                // The printed AMOUNT column is net of any per-line discount, so the
-                // listed figures are what the subtotal adds up from.
-                val lineNet = (subtotal - c.getDouble(6)).coerceAtLeast(0.0)
+                // The tax block still needs each line's taxable (pre-tax) base, net
+                // of its discount share - recovered from what was stored rather than
+                // re-derived, so it can never drift from item_total, which already
+                // accounts for inclusive/exclusive pricing and however the discount
+                // was applied.
+                val lineNet = (itemTotal - cgstAmt - sgstAmt - vatAmt).coerceAtLeast(0.0)
                 subtotalSum += lineNet
-                cgstSum += c.getDouble(7)
-                sgstSum += c.getDouble(8)
-                otherTaxSum += c.getDouble(9) + c.getDouble(10)
+                cgstSum += cgstAmt
+                sgstSum += sgstAmt
+                vatSum += vatAmt
+                grossSum += subtotal
+                qtySum += qty
 
+                val cgstRate = c.getDouble(12)
+                val sgstRate = c.getDouble(13)
+                val vatRate = c.getDouble(14)
+
+                // Bucket this line into its rate slab so the summary can report each
+                // rate on its own line. Only taxed lines form a slab - an exempt
+                // (0%) line contributes no tax line.
+                if (cgstAmt + sgstAmt + vatAmt > 0.0) {
+                    val key = Math.round((cgstRate + sgstRate + vatRate) * 100.0)
+                    val acc = slabs.getOrPut(key) { DoubleArray(7) }
+                    acc[0] = cgstRate
+                    acc[1] = sgstRate
+                    acc[2] = vatRate
+                    acc[3] += lineNet
+                    acc[4] += cgstAmt
+                    acc[5] += sgstAmt
+                    acc[6] += vatAmt
+                }
+
+                // The discount the customer actually got is the drop from the line's
+                // full listed price to what it sold for, both in the same terms:
+                //  - inclusive: the price already carries tax, so it is subtotal - net.
+                //  - exclusive: tax is added on top, so it is (subtotal + tax) - net.
+                // Derived from the stored figures, so it always reconciles with the
+                // totals rather than being re-derived from the rate (which would gross
+                // a pre-tax exclusive "3% off 100" up to 3.15 instead of 3).
+                val lineDiscount = c.getDouble(6)
+                val lineGrossAllIn = if (inclusive) subtotal else subtotal + cgstAmt + sgstAmt + vatAmt
+                val lineDiscountAllIn = (lineGrossAllIn - itemTotal).coerceAtLeast(0.0)
+                itemDiscountSum += lineDiscount
+                itemDiscountAllInSum += lineDiscountAllIn
+                val hsn = if (includeHsn) c.getString(11)?.takeIf { it.isNotBlank() } else null
+                val disc = if (lineDiscountAllIn > 0.005) money(lineDiscountAllIn) else null
+
+                // The printed AMOUNT column is the line's selling price - what the
+                // customer actually pays for it, tax included - so it reads the same
+                // as the item dialog's "Amount" and the two never disagree. The
+                // pre-tax base above feeds the separate tax block, not this column.
                 list.add(
                     BillItem(
                         sr = sr++,
                         name = name.uppercase(),
                         qty = qtyText(qty),
                         price = money(rate),
-                        amount = money(lineNet)
+                        amount = money(itemTotal),
+                        hsn = hsn,
+                        discount = disc
                     )
                 )
             }
         }
-        return list to BillTotals(
+        val totals = BillTotals(
             itemsSubtotal = subtotalSum,
             cgst = cgstSum,
             sgst = sgstSum,
-            otherTax = otherTaxSum
+            vat = vatSum,
+            itemDiscountApplied = itemDiscountSum,
+            itemDiscountAllIn = itemDiscountAllInSum,
+            grossMrp = grossSum,
+            qtyCount = qtySum,
+            itemCount = list.size
         )
+        // Highest rate first, the usual order on a tax invoice.
+        val taxSlabs = slabs.entries
+            .sortedByDescending { it.key }
+            .map { (_, acc) -> TaxSlab(acc[0], acc[1], acc[2], acc[3], acc[4], acc[5], acc[6]) }
+        return Triple(list, totals, taxSlabs)
     }
 
     /**
@@ -393,15 +573,58 @@ class BillReceiptRenderer(private val ctx: Context) {
         }
     }
 
-    /** The customer's GSTIN as captured on the payment, for a business sale. */
-    private fun customerGstin(db: SQLiteDatabase, receiptNo: Long): String? {
-        db.rawQuery(
-            "SELECT cust_gstin FROM ${DatabaseHelper.Tables.TD_PAYMENTS} WHERE bill_id = ? LIMIT 1",
-            arrayOf(receiptNo.toString())
-        ).use { c ->
-            if (c.moveToFirst()) return c.getString(0)?.takeIf { it.isNotBlank() }
+    /** Mobile, name, GSTIN and address as captured on the sale - each nullable, printed
+     *  only where the Bill Settings "Customer Details" / "Customer Address Printing"
+     *  toggles call for it and the sale actually captured it. */
+    private data class CustomerInfo(
+        val name: String?,
+        val phone: String?,
+        val gstin: String?,
+        val address: String?
+    )
+
+    /**
+     * Resolves the sale's customer details: the customer master first (it is the
+     * more complete, more current record), falling back to whatever was typed into
+     * the payment for a walk-in with no master record. The address only ever comes
+     * from the master - a payment row has nowhere to store one.
+     */
+    private fun loadCustomerInfo(db: SQLiteDatabase, customerId: Long?, receiptNo: Long): CustomerInfo {
+        var name: String? = null
+        var phone: String? = null
+        var gstin: String? = null
+        var address: String? = null
+
+        if (customerId != null) {
+            db.query(
+                DatabaseHelper.Tables.MD_CUSTOMERS,
+                arrayOf("customer_name", "phone_number", "gstin", "customer_address"),
+                "id=?", arrayOf(customerId.toString()), null, null, null, "1"
+            ).use { c ->
+                if (c.moveToFirst()) {
+                    name = c.getString(0)?.takeIf { it.isNotBlank() }
+                    phone = c.getString(1)?.takeIf { it.isNotBlank() }
+                    gstin = c.getString(2)?.takeIf { it.isNotBlank() }
+                    address = c.getString(3)?.takeIf { it.isNotBlank() }
+                }
+            }
         }
-        return null
+
+        if (name == null || phone == null || gstin == null) {
+            db.query(
+                DatabaseHelper.Tables.TD_PAYMENTS,
+                arrayOf("cust_name", "cust_phone", "cust_gstin"),
+                "bill_id=?", arrayOf(receiptNo.toString()), null, null, "id ASC", "1"
+            ).use { c ->
+                if (c.moveToFirst()) {
+                    if (name == null) name = c.getString(0)?.takeIf { it.isNotBlank() }
+                    if (phone == null) phone = c.getString(1)?.takeIf { it.isNotBlank() }
+                    if (gstin == null) gstin = c.getString(2)?.takeIf { it.isNotBlank() }
+                }
+            }
+        }
+
+        return CustomerInfo(name?.uppercase(), phone, gstin, address?.uppercase())
     }
 
     /**
@@ -461,51 +684,94 @@ class BillReceiptRenderer(private val ctx: Context) {
         return createdBy?.takeIf { it.isNotBlank() }?.uppercase() ?: "---"
     }
 
-    /** Resolves the display name: customer master first, then the payment record. */
-    private fun customerName(db: SQLiteDatabase, customerId: Long?, receiptNo: Long): String {
-        if (customerId != null) {
-            db.query(
-                DatabaseHelper.Tables.MD_CUSTOMERS, arrayOf("customer_name"),
-                "id=?", arrayOf(customerId.toString()), null, null, null, "1"
-            ).use { c ->
-                if (c.moveToFirst()) {
-                    val n = c.getString(0)
-                    if (!n.isNullOrBlank()) return n.uppercase()
-                }
-            }
-        }
-        db.query(
-            DatabaseHelper.Tables.TD_PAYMENTS, arrayOf("cust_name"),
-            "bill_id=?", arrayOf(receiptNo.toString()), null, null, "id ASC", "1"
-        ).use { c ->
-            if (c.moveToFirst()) {
-                val n = c.getString(0)
-                if (!n.isNullOrBlank()) return n.uppercase()
-            }
-        }
-        return "GUEST"
-    }
-
-    /** Builds a 4-column monospace item row matching the header columns. */
+    /**
+     * An item block: the name (and HSN, if shown) on its own full-width row, with
+     * the QTY / PRICE / DISC / AMOUNT columns lined up beneath it under the header.
+     * A dash fills the DISC column when the line carries no discount.
+     */
     private fun buildItemRow(item: BillItem): View {
-        val row = baseRow()
-        row.addView(cell("${item.sr} ${item.name}", 3.4f, Gravity.START))
-        row.addView(cell(item.qty, 2f, Gravity.CENTER))
-        row.addView(cell(item.price, 2f, Gravity.END))
-        row.addView(cell(item.amount, 2.2f, Gravity.END))
+        val density = ctx.resources.displayMetrics.density
+        val container = LinearLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, (6 * density).toInt(), 0, (6 * density).toInt())
+        }
+
+        val name = buildString {
+            append("${item.sr} ${item.name}")
+            if (item.hsn != null) append("\nHSN: ${item.hsn}")
+        }
+        container.addView(TextView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            text = name
+            gravity = Gravity.START
+            typeface = Typeface.MONOSPACE
+            textSize = 12.5f
+            setTextColor(0xFF222222.toInt())
+        })
+
+        val values = LinearLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, (2 * density).toInt(), 0, 0)
+        }
+        values.addView(cell(item.qty, 2f, Gravity.CENTER))
+        values.addView(cell(item.price, 2.5f, Gravity.END))
+        values.addView(cell(item.discount ?: "-", 2f, Gravity.END))
+        values.addView(cell(item.amount, 2.5f, Gravity.END))
+        container.addView(values)
+        return container
+    }
+
+    /** A summary line without a colon column: left label and a right-aligned value
+     *  (used for the "ITEM: n QTY: q ... AMT: x" header of the summary block). */
+    private fun summaryHead(left: String, right: String): View {
+        val row = summaryRowContainer()
+        row.addView(summaryCell(left, 1f, Gravity.START, bold = true, size = 12.5f))
+        row.addView(summaryCell(right, 1f, Gravity.END, bold = true, size = 12.5f))
         return row
     }
 
-    /** Builds a 5-column monospace tax row matching the tax header columns. */
-    private fun buildTaxRow(rate: String, bAmt: String, sgst: String, cgst: String, total: String): View {
-        val row = baseRow()
-        row.addView(cell(rate, 2f, Gravity.START))
-        row.addView(cell(bAmt, 2f, Gravity.CENTER))
-        row.addView(cell(sgst, 2f, Gravity.CENTER))
-        row.addView(cell(cgst, 2f, Gravity.CENTER))
-        row.addView(cell(total, 2.2f, Gravity.END))
+    /** A "label : value" summary line, colons aligned in their own thin column. */
+    private fun summaryRow(label: String, value: String, bold: Boolean = false, valueSize: Float = 12.5f): View {
+        val row = summaryRowContainer()
+        row.addView(summaryCell(label, 3f, Gravity.START, bold, 12.5f))
+        row.addView(summaryCell(":", 0.4f, Gravity.START, bold, 12.5f))
+        row.addView(summaryCell(value, 3f, Gravity.END, bold, valueSize))
         return row
     }
+
+    private fun summaryRowContainer(): LinearLayout {
+        val density = ctx.resources.displayMetrics.density
+        return LinearLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, (2 * density).toInt(), 0, (2 * density).toInt())
+        }
+    }
+
+    private fun summaryCell(text: String, weight: Float, gravity: Int, bold: Boolean, size: Float): TextView =
+        TextView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight)
+            this.text = text
+            this.gravity = gravity
+            setTypeface(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
+            textSize = size
+            setTextColor(0xFF222222.toInt())
+        }
+
+    /** A tax rate trimmed of a needless ".00" - "5" not "5.00", but "2.50" kept. */
+    private fun rate(v: Double): String =
+        if (v % 1.0 == 0.0) v.toInt().toString() else String.format(Locale.US, "%.2f", v)
 
     /**
      * Item row for narrow paper: name on its own line, quantity/price/amount on the
@@ -516,16 +782,9 @@ class BillReceiptRenderer(private val ctx: Context) {
     private fun buildItemRowNarrow(item: BillItem): View {
         val container = narrowContainer()
         container.addView(narrowLine("${item.sr}. ${item.name}"))
+        if (item.hsn != null) container.addView(narrowLine("  HSN: ${item.hsn}"))
+        if (item.discount != null) container.addView(narrowLine("  DISC: ${item.discount}"))
         container.addView(narrowLine("  ${item.qty} x ${item.price} = ${item.amount}"))
-        return container
-    }
-
-    /** Tax block for narrow paper: same values as [buildTaxRow], as full-width lines. */
-    private fun buildTaxRowNarrow(rate: String, bAmt: String, sgst: String, cgst: String, total: String): View {
-        val container = narrowContainer()
-        container.addView(narrowLine("GST $rate   Taxable $bAmt"))
-        container.addView(narrowLine("CGST $cgst   SGST $sgst"))
-        container.addView(narrowLine("TOTAL TAX $total"))
         return container
     }
 

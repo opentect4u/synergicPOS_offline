@@ -30,6 +30,14 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "sku", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "brand", "TEXT")
+        addColumnIfMissing(db, Tables.TD_BILLS, "bill_seq_no", "INTEGER")
+        addColumnIfMissing(db, Tables.TD_BILLS, "settings_snapshot", "TEXT")
+        // Bills created before bill_seq_no existed carried a plain receipt_no-based
+        // number (see BillDao's old formatBillNumber), so that is what continuing
+        // the sequence from here has to match up with.
+        runCatching {
+            db.execSQL("UPDATE ${Tables.TD_BILLS} SET bill_seq_no = receipt_no WHERE bill_seq_no IS NULL")
+        }
         // Birthday / anniversary use the existing dob / dom columns; ensure they
         // exist on databases created before those columns were added.
         addColumnIfMissing(db, Tables.MD_CUSTOMERS, "dob", "TEXT")
@@ -1132,12 +1140,14 @@ class DatabaseHelper private constructor(context: Context) :
                 store_id INTEGER,
                 outlet_id INTEGER,
                 bill_number TEXT,
+                bill_seq_no INTEGER,
                 bill_date TEXT,
                 bill_date_time TEXT,
                 customer_id INTEGER,
                 operator_id INTEGER,
                 waiter_id INTEGER,
                 bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','VOID')),
+                settings_snapshot TEXT,
                 tot_price REAL DEFAULT 0,
                 tot_discount_amount REAL DEFAULT 0,
                 tot_discount_percentage REAL DEFAULT 0,

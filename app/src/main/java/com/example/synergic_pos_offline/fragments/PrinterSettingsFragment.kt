@@ -30,6 +30,7 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.PrinterDao
 import com.example.synergic_pos_offline.utils.PrintLog
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
@@ -154,7 +155,46 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
             dao.getSelected(purpose)?.let { configure(it) }
         }
 
+        card.findViewById<MaterialButton>(R.id.btnTestPrint).setOnClickListener {
+            dao.getSelected(purpose)?.let { testPrint(it) }
+        }
+
         llPurposes.addView(card)
+    }
+
+    /** Test Print from the card itself: whatever is already saved for [printer]. */
+    private fun testPrint(printer: PrinterDao.Printer) {
+        if (printer.type.equals("USB", ignoreCase = true)) {
+            toast("USB printing isn't connected yet - choose WIFI, LAN or Bluetooth to test")
+            return
+        }
+        val address = printer.ip?.takeIf { it.isNotBlank() }
+        if (address == null) {
+            toast("Tap the card to set up ${printer.purpose}'s connection first")
+            return
+        }
+        testPrint(
+            printer.purpose,
+            ThermalPrinter.Config(
+                ip = address,
+                port = ThermalPrinter.defaultPort(),
+                paperMm = printer.paperMm ?: ThermalPrinter.defaultPaperMm(),
+                connection = printer.type.uppercase()
+            )
+        )
+    }
+
+    /** Sends a test print to [config] - see [ThermalPrinter.testPrint]. */
+    private fun testPrint(purpose: String, config: ThermalPrinter.Config) {
+        toast("Sending test print to ${config.ip}…")
+        ThermalPrinter.testPrint(requireContext(), purpose, config) { result ->
+            if (!isAdded) return@testPrint
+            when (result) {
+                is ThermalPrinter.Result.Success -> toast("Test print succeeded - the connection is OK")
+                is ThermalPrinter.Result.Sent -> toast("Sent to printer - check the paper actually came out")
+                is ThermalPrinter.Result.Failure -> toast("Test print failed: ${result.message}")
+            }
+        }
     }
 
     /** The line under the dropdown describing the selected connection's config. */
@@ -232,7 +272,7 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
         val rb80 = RadioButton(ctx).apply { id = View.generateViewId(); text = "80 mm" }
         val container = paperContainer(ctx, printer, rb58, rb80, header = deviceSpinner)
 
-        MaterialAlertDialogBuilder(ctx)
+        val dialog = MaterialAlertDialogBuilder(ctx)
             .setTitle("${printer.purpose} printer (Bluetooth)")
             .setView(container)
             .setPositiveButton("Save") { _, _ ->
@@ -242,7 +282,24 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
                 toast("Bluetooth printer saved: ${safeName(device)}")
             }
             .setNegativeButton("Cancel", null)
+            .setNeutralButton("Test Print", null)
             .show()
+
+        // A custom listener set after show() does not dismiss the dialog on click,
+        // so Test Print can fire off whichever device is currently picked without
+        // losing that choice.
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            val device = devices[deviceSpinner.selectedItemPosition]
+            testPrint(
+                printer.purpose,
+                ThermalPrinter.Config(
+                    ip = device.address,
+                    port = ThermalPrinter.defaultPort(),
+                    paperMm = if (rb58.isChecked) 58 else 80,
+                    connection = "BLUETOOTH"
+                )
+            )
+        }
     }
 
     /** A device's name, or its address when the name can't be read without permission. */
@@ -268,7 +325,7 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
         val rb80 = RadioButton(ctx).apply { id = View.generateViewId(); text = "80 mm" }
         val container = paperContainer(ctx, printer, rb58, rb80, header = ipInput)
 
-        MaterialAlertDialogBuilder(ctx)
+        val dialog = MaterialAlertDialogBuilder(ctx)
             .setTitle("${printer.purpose} printer (${printer.type.uppercase()})")
             .setView(container)
             .setPositiveButton("Save") { _, _ ->
@@ -282,7 +339,28 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
                 Toast.makeText(ctx, "${printer.purpose} printer saved", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancel", null)
+            .setNeutralButton("Test Print", null)
             .show()
+
+        // A custom listener set after show() does not dismiss the dialog on click,
+        // unlike one passed to the builder - so Test Print can fire off whatever is
+        // currently typed in without losing unsaved edits.
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            val ip = ipInput.text?.toString()?.trim().orEmpty()
+            if (ip.isEmpty()) {
+                toast("Enter the printer's IP address first")
+                return@setOnClickListener
+            }
+            testPrint(
+                printer.purpose,
+                ThermalPrinter.Config(
+                    ip = ip,
+                    port = ThermalPrinter.defaultPort(),
+                    paperMm = if (rb58.isChecked) 58 else 80,
+                    connection = printer.type.uppercase()
+                )
+            )
+        }
     }
 
     /**
@@ -298,7 +376,7 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
         val rb80 = RadioButton(ctx).apply { id = View.generateViewId(); text = "80 mm" }
         val container = paperContainer(ctx, printer, rb58, rb80, header = message)
 
-        MaterialAlertDialogBuilder(ctx)
+        val dialog = MaterialAlertDialogBuilder(ctx)
             .setTitle("${printer.purpose} printer ($label)")
             .setView(container)
             .setPositiveButton("Connect") { _, _ ->
@@ -307,7 +385,12 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
                 Toast.makeText(ctx, "$label connection coming soon", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancel", null)
+            .setNeutralButton("Test Print", null)
             .show()
+
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            toast("$label printing isn't connected yet - there's nothing to test")
+        }
     }
 
     /** A dialog body: [header] view, a "Paper width" label, then the 58/80 radios. */

@@ -420,33 +420,66 @@
                 android:paddingTop="12dp"
                 android:paddingBottom="8dp">
 
-                <!-- Discount row -->
+                <!-- Discount, shown only when Tax Settings has Discount off or set to
+                     Bill wise - item-wise discount is entered elsewhere per product. -->
                 <LinearLayout
+                    android:id="@+id/sectionDiscount"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical">
 
-                    <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/tilDiscount"
-                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+                    <RadioGroup
+                        android:id="@+id/rgDiscountMode"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="4dp">
+
+                        <RadioButton
+                            android:id="@+id/rbDiscountPercent"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Percentage"
+                            android:textSize="12sp"
+                            android:checked="true" />
+
+                        <RadioButton
+                            android:id="@+id/rbDiscountAmount"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="16dp"
+                            android:text="Amount"
+                            android:textSize="12sp" />
+                    </RadioGroup>
+
+                    <!-- Discount row -->
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:hint="Discount"
-                        app:suffixText="%"
-                        app:boxCornerRadiusTopStart="10dp"
-                        app:boxCornerRadiusTopEnd="10dp"
-                        app:boxCornerRadiusBottomStart="10dp"
-                        app:boxCornerRadiusBottomEnd="10dp">
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/etDiscount"
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilDiscount"
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:inputType="number"
-                            android:gravity="end"
-                            android:maxLines="1" />
-                    </com.google.android.material.textfield.TextInputLayout>
+                            android:hint="Discount"
+                            app:suffixText="%"
+                            app:boxCornerRadiusTopStart="10dp"
+                            app:boxCornerRadiusTopEnd="10dp"
+                            app:boxCornerRadiusBottomStart="10dp"
+                            app:boxCornerRadiusBottomEnd="10dp">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etDiscount"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="number"
+                                android:gravity="end"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
                 </LinearLayout>
 
                 <TextView
@@ -471,6 +504,7 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/rowBillingDiscount"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -488,7 +522,7 @@
                     android:orientation="horizontal"
                     android:layout_marginTop="4dp">
 
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    <TextView android:id="@+id/tvTaxLabel" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="GST" android:textSize="13sp" android:textColor="@color/text_secondary" />
                     <TextView android:id="@+id/tvTax" android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="₹ 0.00" android:textSize="13sp" android:textColor="@color/text_main" />

@@ -28,6 +28,7 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.OperatingPrinterDao
 import com.example.synergic_pos_offline.database.PrinterDao
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.switchmaterial.SwitchMaterial

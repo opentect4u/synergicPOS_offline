@@ -45,10 +45,29 @@
 
         <!-- Action column -->
         <LinearLayout
-            android:layout_width="120dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center">
+
+            <!-- Opt-in per screen (DataTableFragment.showsTestPrintAction); hidden elsewhere. -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnRowTestPrint"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton.Icon"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginEnd="6dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minWidth="0dp"
+                app:icon="@drawable/ic_print"
+                app:iconPadding="0dp"
+                app:iconGravity="textStart"
+                app:cornerRadius="8dp"
+                app:paddingStart="10dp"
+                app:paddingEnd="10dp"
+                android:contentDescription="Test print"
+                android:visibility="gone" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnRowEdit"

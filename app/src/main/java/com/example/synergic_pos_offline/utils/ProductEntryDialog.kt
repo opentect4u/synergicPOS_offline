@@ -36,18 +36,26 @@ object ProductEntryDialog {
         val unit: String = "pcs",
         val cgst: Double = 0.0,
         val sgst: Double = 0.0,
+        val vat: Double = 0.0,
+        /** The rate's own pre-configured discount (Tax Settings' item-wise discount).
+         *  [discType] is "P"/"A" (percent/amount) or null when none is configured. */
+        val discValue: Double = 0.0,
+        val discType: String? = null,
         /** All sellable rates for this product; drives the rate dropdown when >1. */
         val rates: List<Rate> = emptyList()
     ) {
         val gst: Double get() = cgst + sgst
     }
 
-    /** One named rate a product can be sold at, with its own GST split. */
+    /** One named rate a product can be sold at, with its own GST/VAT split and discount. */
     data class Rate(
         val name: String,
         val rate: Double,
         val cgst: Double = 0.0,
-        val sgst: Double = 0.0
+        val sgst: Double = 0.0,
+        val vat: Double = 0.0,
+        val discValue: Double = 0.0,
+        val discType: String? = null
     )
 
     /**
@@ -66,6 +74,12 @@ object ProductEntryDialog {
         focusQty: Boolean = false,
         focusRate: Boolean = false,
         rateEditable: Boolean = true,
+        taxRegime: GstCalculator.TaxRegime = GstCalculator.TaxRegime.GST,
+        taxInclusive: Boolean = false,
+        /** Tax Settings' Discount on and set to Item wise - each product's own
+         *  pre-configured discount applies, priced per [discountPreTax]. */
+        itemwiseDiscountActive: Boolean = false,
+        discountPreTax: Boolean = true,
         onConfirm: (qty: Int, rate: Double) -> Unit
     ) {
         val accent = ThemeManager.getThemeColor(context)
@@ -77,26 +91,57 @@ object ProductEntryDialog {
         view.findViewById<TextView>(R.id.tvDetHsn).text = product.hsn
         view.findViewById<TextView>(R.id.tvDetUnit).text = product.unit
         val tvDetMrp = view.findViewById<TextView>(R.id.tvDetMrp)
+        val llDetGst = view.findViewById<android.view.View>(R.id.llDetGst)
+        val llDetCgst = view.findViewById<android.view.View>(R.id.llDetCgst)
+        val llDetSgst = view.findViewById<android.view.View>(R.id.llDetSgst)
+        val lblDetCgst = view.findViewById<TextView>(R.id.lblDetCgst)
         val tvDetGst = view.findViewById<TextView>(R.id.tvDetGst)
         val tvDetCgst = view.findViewById<TextView>(R.id.tvDetCgst)
         val tvDetSgst = view.findViewById<TextView>(R.id.tvDetSgst)
+        val rowCgst = view.findViewById<android.view.View>(R.id.rowCgst)
+        val rowSgst = view.findViewById<android.view.View>(R.id.rowSgst)
         val tvCgstLabel = view.findViewById<TextView>(R.id.tvCgstLabel)
         val tvSgstLabel = view.findViewById<TextView>(R.id.tvSgstLabel)
         tvDetMrp.text = money(product.price)
 
-        // GST split can change with the selected rate, so it is held mutable.
-        var curCgst = product.cgst
-        var curSgst = product.sgst
+        // Which detail rows even apply depends on the active regime - GST shows all
+        // three (combined/CGST/SGST); VAT relabels the CGST slot and drops SGST;
+        // NONE (no tax switched on) drops the whole block.
+        llDetGst.visibility = if (taxRegime == GstCalculator.TaxRegime.GST) android.view.View.VISIBLE else android.view.View.GONE
+        llDetCgst.visibility = if (taxRegime == GstCalculator.TaxRegime.NONE) android.view.View.GONE else android.view.View.VISIBLE
+        llDetSgst.visibility = if (taxRegime == GstCalculator.TaxRegime.GST) android.view.View.VISIBLE else android.view.View.GONE
+        rowSgst.visibility = if (taxRegime == GstCalculator.TaxRegime.GST) android.view.View.VISIBLE else android.view.View.GONE
+        rowCgst.visibility = if (taxRegime == GstCalculator.TaxRegime.NONE) android.view.View.GONE else android.view.View.VISIBLE
+        lblDetCgst.text = if (taxRegime == GstCalculator.TaxRegime.VAT) "VAT" else "CGST"
+
+        // The line's tax rate(s) can change with the selected rate row, so they are
+        // held mutable. For VAT, [curCgst] carries the single VAT rate and [curSgst]
+        // stays zero - one combined-rate code path serves both regimes.
+        var curCgst = when (taxRegime) {
+            GstCalculator.TaxRegime.VAT -> product.vat
+            GstCalculator.TaxRegime.GST -> product.cgst
+            GstCalculator.TaxRegime.NONE -> 0.0
+        }
+        var curSgst = if (taxRegime == GstCalculator.TaxRegime.GST) product.sgst else 0.0
         fun applyTaxLabels(cgst: Double, sgst: Double) {
             curCgst = cgst
             curSgst = sgst
             tvDetGst.text = pct(cgst + sgst)
             tvDetCgst.text = pct(cgst)
             tvDetSgst.text = pct(sgst)
-            tvCgstLabel.text = "CGST (${pct(cgst)})"
+            tvCgstLabel.text = "${lblDetCgst.text} (${pct(cgst)})"
             tvSgstLabel.text = "SGST (${pct(sgst)})"
         }
-        applyTaxLabels(product.cgst, product.sgst)
+        applyTaxLabels(curCgst, curSgst)
+
+        // The rate row's own pre-configured discount, held mutable so it can also
+        // change with the selected rate in Multiple item-rate mode.
+        var curDiscValue = product.discValue
+        var curDiscType = product.discType
+        val discMode = { if (curDiscType == "A") GstCalculator.DiscountMode.AMOUNT else GstCalculator.DiscountMode.PERCENT }
+        val rowItemDiscount = view.findViewById<android.view.View>(R.id.rowItemDiscount)
+        val tvItemDiscountLabel = view.findViewById<TextView>(R.id.tvItemDiscountLabel)
+        val tvItemDiscountAmt = view.findViewById<TextView>(R.id.tvItemDiscountAmt)
 
         val etRate = view.findViewById<TextInputEditText>(R.id.etRate)
         val etQty = view.findViewById<TextInputEditText>(R.id.etQty)
@@ -119,19 +164,41 @@ object ProductEntryDialog {
         fun refreshAmount() {
             val rate = etRate.text?.toString()?.toDoubleOrNull() ?: 0.0
             val qty = etQty.text?.toString()?.toIntOrNull() ?: 0
-            val taxable = GstCalculator.taxableValue(rate, qty, 0)
-            val cgst = GstCalculator.taxAmount(taxable, curCgst)
-            val sgst = GstCalculator.taxAmount(taxable, curSgst)
-            tvTaxable.text = money(taxable)
-            tvCgstAmt.text = money(cgst)
-            tvSgstAmt.text = money(sgst)
-            tvAmount.text = money(taxable + cgst + sgst)
+            val mrp = rate * qty
+            val combinedRate = curCgst + curSgst
+
+            if (itemwiseDiscountActive && curDiscValue > 0.0 && curDiscType != null) {
+                val pricing = GstCalculator.priceItem(mrp, combinedRate, taxInclusive, discountPreTax, discMode(), curDiscValue)
+                val discAgainstBase = GstCalculator.itemDiscountAgainstRawBase(
+                    mrp, combinedRate, taxInclusive, discountPreTax, discMode(), curDiscValue
+                )
+                rowItemDiscount.visibility = android.view.View.VISIBLE
+                tvItemDiscountLabel.text = if (discMode() == GstCalculator.DiscountMode.PERCENT) {
+                    "Discount (${pct(curDiscValue)})"
+                } else {
+                    "Discount"
+                }
+                tvItemDiscountAmt.text = "-${money(discAgainstBase)}"
+                tvTaxable.text = money(pricing.taxable)
+                tvCgstAmt.text = money(GstCalculator.taxAmount(pricing.taxable, curCgst))
+                tvSgstAmt.text = money(GstCalculator.taxAmount(pricing.taxable, curSgst))
+                tvAmount.text = money(pricing.salePrice)
+            } else {
+                rowItemDiscount.visibility = android.view.View.GONE
+                val taxable = GstCalculator.taxableBase(mrp, combinedRate, taxInclusive)
+                val cgst = GstCalculator.taxAmount(taxable, curCgst)
+                val sgst = GstCalculator.taxAmount(taxable, curSgst)
+                tvTaxable.text = money(taxable)
+                tvCgstAmt.text = money(cgst)
+                tvSgstAmt.text = money(sgst)
+                tvAmount.text = money(taxable + cgst + sgst)
+            }
         }
         etRate.addTextChangedListener(watcher { refreshAmount() })
         etQty.addTextChangedListener(watcher { refreshAmount() })
         refreshAmount()
 
-        // Multiple rates: a dropdown swaps the rate and its own GST split. The rate
+        // Multiple rates: a dropdown swaps the rate and its own tax split. The rate
         // is chosen from the list, so manual entry into the Rate field is disabled.
         if (product.rates.size > 1) {
             val til = view.findViewById<TextInputLayout>(R.id.tilRateSelect)
@@ -152,7 +219,13 @@ object ProductEntryDialog {
                 val r = product.rates[pos]
                 etRate.setText(String.format("%.2f", r.rate))
                 tvDetMrp.text = money(r.rate)
-                applyTaxLabels(r.cgst, r.sgst)
+                curDiscValue = r.discValue
+                curDiscType = r.discType
+                when (taxRegime) {
+                    GstCalculator.TaxRegime.VAT -> applyTaxLabels(r.vat, 0.0)
+                    GstCalculator.TaxRegime.GST -> applyTaxLabels(r.cgst, r.sgst)
+                    GstCalculator.TaxRegime.NONE -> applyTaxLabels(0.0, 0.0)
+                }
                 refreshAmount()
             }
         }
