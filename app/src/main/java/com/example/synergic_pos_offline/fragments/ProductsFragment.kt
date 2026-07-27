@@ -8,7 +8,10 @@ import android.graphics.BitmapFactory
 import android.graphics.drawable.ColorDrawable
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.core.widget.addTextChangedListener
 import android.view.LayoutInflater
 import android.widget.ArrayAdapter
@@ -68,6 +71,70 @@ class ProductsFragment : DataTableFragment() {
         }
         cameraLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
             if (saved) cameraUri?.let { applyPickedImage(it) }
+        }
+    }
+
+    // ---- Bulk upload -----------------------------------------------------------
+
+    /** A single FAB opens the dedicated, category-wise bulk-upload page. */
+    override fun bulkPageEnabled(): Boolean = true
+
+    override fun onBulkPage() {
+        parentFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, BulkUploadProductFragment())
+            .addToBackStack(null)
+            .commit()
+    }
+
+    /** The download icon (beside the bin) shows only on Products. */
+    override fun showDownloadTemplate(): Boolean = true
+
+    override fun onDownloadTemplate() = downloadTemplate()
+
+    /** The item-master columns (same as the bulk-upload template). */
+    private val csvHeader = listOf(
+        "hsn_code", "item_name", "bar_code", "price", "discount", "cgst", "sgst",
+        "sale_price", "sp_gst_flag", "purchase_price", "pp_gst_flag", "description"
+    )
+
+    /** Saves a blank CSV template (header + two example rows) to Downloads. */
+    private fun downloadTemplate() {
+        try {
+            val csv = buildString {
+                append(csvHeader.joinToString(",")).append("\n")
+                append("987640,Apple,11111111,120,0,5,5,120,N,110,N,Fresh apple").append("\n")
+                append("897651,Mango,11111112,80,0,5,5,80,N,70,N,").append("\n")
+            }
+            val savedTo = saveToDownloads("item_master_template.csv", csv)
+            toast("Template saved to $savedTo")
+        } catch (e: Exception) {
+            toast("Could not save template: ${e.message}")
+        }
+    }
+
+    /** Writes [content] to the public Downloads folder; returns a human-readable path. */
+    private fun saveToDownloads(fileName: String, content: String): String {
+        val ctx = requireContext()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, "text/csv")
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val resolver = ctx.contentResolver
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("could not create file")
+            resolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            "Downloads/$fileName"
+        } else {
+            // No permission needed for the app's own external files dir.
+            val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            val file = File(dir, fileName)
+            file.writeText(content)
+            file.absolutePath
         }
     }
 

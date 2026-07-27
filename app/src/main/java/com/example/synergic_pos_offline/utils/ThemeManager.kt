@@ -111,7 +111,7 @@ object ThemeManager {
             is ImageView -> if (name == "btnBack" || name == "btnMenu" ||
                 name == "btnTheme" || name == "ivChevron" ||
                 name == "btnRowEdit" || name == "btnRowDelete" || name == "btnRowPrint" ||
-                name == "btnGlobalPrint" || name == "btnGlobalDelete" ||
+                name == "btnGlobalPrint" || name == "btnGlobalDelete" || name == "btnGlobalDownload" ||
                 name == "btnPlus" || name == "btnMinus" || name == "btnRemoveLine" || name == "btnRemove") {
                 view.imageTintList = tint
             }
