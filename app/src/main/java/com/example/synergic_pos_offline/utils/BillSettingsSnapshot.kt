@@ -23,10 +23,21 @@ object BillSettingsSnapshot {
         val totalAmountFontSize: BillSettingsDao.FontSize,
         val roundOff: Boolean,
         val amountInWords: Boolean,
-        val taxRegime: GstCalculator.TaxRegime
+        val taxRegime: GstCalculator.TaxRegime,
+        /** Whether the discount was taken before tax - drives where the DISCOUNT line
+         *  sits in the summary (above tax for pre-tax, below it for post-tax). */
+        val discountPreTax: Boolean,
+        /** Whether the listed price already included tax - decides whether the
+         *  displayed discount is read off the price alone or the price plus tax. */
+        val inclusive: Boolean
     )
 
-    fun serialize(settings: BillSettingsDao.BillSettings, taxRegime: GstCalculator.TaxRegime): String =
+    fun serialize(
+        settings: BillSettingsDao.BillSettings,
+        taxRegime: GstCalculator.TaxRegime,
+        discountPreTax: Boolean,
+        inclusive: Boolean
+    ): String =
         JSONObject().apply {
             put("hsnCode", settings.hsnCode)
             put("customerDetails", settings.customerDetails.name)
@@ -35,6 +46,8 @@ object BillSettingsSnapshot {
             put("roundOff", settings.roundOff)
             put("amountInWords", settings.amountInWords)
             put("taxRegime", taxRegime.name)
+            put("discountPreTax", discountPreTax)
+            put("inclusive", inclusive)
         }.toString()
 
     /** Null when [json] is blank or unreadable - an older bill saved before this existed. */
@@ -52,7 +65,9 @@ object BillSettingsSnapshot {
                 roundOff = o.optBoolean("roundOff"),
                 amountInWords = o.optBoolean("amountInWords"),
                 taxRegime = runCatching { GstCalculator.TaxRegime.valueOf(o.getString("taxRegime")) }
-                    .getOrDefault(GstCalculator.TaxRegime.GST)
+                    .getOrDefault(GstCalculator.TaxRegime.GST),
+                discountPreTax = o.optBoolean("discountPreTax", true),
+                inclusive = o.optBoolean("inclusive", false)
             )
         }.getOrNull()
     }

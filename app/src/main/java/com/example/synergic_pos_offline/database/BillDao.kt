@@ -102,6 +102,7 @@ class BillDao(context: Context) {
             GstCalculator.TaxRegime.VAT -> taxSettings.vatMode == TaxSettingsDao.GstMode.INCLUSIVE
             GstCalculator.TaxRegime.NONE -> false
         }
+        val discountPreTax = taxSettings.discountPosition == TaxSettingsDao.DiscountPosition.PRE_TAX
 
         db.beginTransaction()
         try {
@@ -120,7 +121,7 @@ class BillDao(context: Context) {
                 put("bill_type", bill.billType)
                 // Frozen at creation time so a later reprint reads exactly as it did
                 // on the day, even after Bill/Tax Settings have since changed.
-                put("settings_snapshot", BillSettingsSnapshot.serialize(settings, regime))
+                put("settings_snapshot", BillSettingsSnapshot.serialize(settings, regime, discountPreTax, inclusive))
                 put("tot_price", bill.totalPrice)
                 put("tot_discount_amount", bill.discountAmount)
                 put("tot_discount_percentage", bill.discountPercentage)
@@ -158,14 +159,31 @@ class BillDao(context: Context) {
                     GstCalculator.TaxRegime.VAT -> item.vatRate
                     GstCalculator.TaxRegime.NONE -> 0.0
                 }
-                // Tax applies to what is actually charged, so the listed price is
-                // stripped of any tax it already includes, then the discount comes
-                // off before the rate is worked out on what remains.
+                // The listed price is stripped of any tax it already includes to reach
+                // the base the rate works on.
+                //
+                // A post-tax discount (inclusive or exclusive) is the case where tax
+                // is NOT charged on the discounted value: the rate is applied to the
+                // full base and the discount then comes off the taxed price, so the
+                // tax reported matches the full MRP (a "cash discount" that does not
+                // reduce the taxable value). A pre-tax discount instead comes off the
+                // base first and tax is worked out on what remains.
                 val rawBase = GstCalculator.taxableBase(subtotal, rate, inclusive)
-                val taxable = GstCalculator.taxableValue(rawBase, item.discountAmount)
+                val postTax = !discountPreTax && item.discountAmount > 0.0
+                val taxable = if (postTax) rawBase else GstCalculator.taxableValue(rawBase, item.discountAmount)
                 val cgstAmt = if (regime == GstCalculator.TaxRegime.GST) GstCalculator.taxAmount(taxable, item.cgstRate) else 0.0
                 val sgstAmt = if (regime == GstCalculator.TaxRegime.GST) GstCalculator.taxAmount(taxable, item.sgstRate) else 0.0
                 val vatAmt = if (regime == GstCalculator.TaxRegime.VAT) GstCalculator.taxAmount(taxable, item.vatRate) else 0.0
+                val taxSum = cgstAmt + sgstAmt + vatAmt
+                // item.discountAmount is a pre-tax-base amount; grossed up by the rate
+                // it is the discount off the taxed price the customer actually gets.
+                // (rawBase + taxSum is the full taxed MRP - the listed price for an
+                // inclusive line, MRP + tax for an exclusive one.)
+                val itemTotal = if (postTax) {
+                    (rawBase + taxSum - item.discountAmount * (1.0 + rate / 100.0)).coerceAtLeast(0.0)
+                } else {
+                    taxable + taxSum
+                }
                 val itemValues = ContentValues().apply {
                     put("receipt_no", receiptNo)
                     put("trans_dt", nowDateTime)
@@ -181,7 +199,7 @@ class BillDao(context: Context) {
                     put("cgst_amount", cgstAmt)
                     put("sgst_amount", sgstAmt)
                     put("vat_amount", vatAmt)
-                    put("item_total", taxable + cgstAmt + sgstAmt + vatAmt)
+                    put("item_total", itemTotal)
                     put("created_by", user)
                 }
                 db.insert(DatabaseHelper.Tables.TD_BILL_ITEMS, null, itemValues)

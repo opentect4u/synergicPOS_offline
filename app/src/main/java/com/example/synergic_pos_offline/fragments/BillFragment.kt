@@ -41,7 +41,8 @@ class BillFragment : Fragment(), TitledScreen {
         args?.getString(ARG_NAME)?.let { view.findViewById<TextView>(R.id.tvName).text = "NAME  : $it" }
         args?.getString(ARG_DATE)?.let { view.findViewById<TextView>(R.id.tvDate).text = it }
         args?.getString(ARG_TIME)?.let { view.findViewById<TextView>(R.id.tvTime).text = it }
-        args?.getString(ARG_TOTAL)?.let { view.findViewById<TextView>(R.id.tvBillGrandTotal).text = it }
+        // The grand total is no longer a static field - it is one line of the summary
+        // block that populate() builds below, so there is nothing to pre-fill here.
 
         val receiptNo = args?.getLong(ARG_RECEIPT_NO, -1L) ?: -1L
         if (receiptNo > 0) {
