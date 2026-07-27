@@ -52,19 +52,22 @@ class OperatingPrinterFragment : DataTableFragment() {
 
     override val screenTitle = "Operating Printer"
 
-    // Table columns. Cell layout per row: [name, printer, value, paper, flag, default].
-    override val columns = listOf("Printer Name", "Printer", "Value", "Paper", "Flag", "Default")
+    // Table columns. Cell layout per row: [name, printer, value, paper, default].
+    // The Flag column is hidden; each row instead exposes a Test Print action.
+    override val columns = listOf("Printer Name", "Printer", "Value", "Paper", "Default")
 
     // The Default column renders as an inline ON/OFF switch.
     override val switchColumn: Int? = COL_DEFAULT
+
+    // A per-row "Test Print" button prints a sample slip to that printer.
+    override val showsTestPrintAction: Boolean = true
 
     private companion object {
         const val COL_NAME = 0
         const val COL_PRINTER = 1
         const val COL_VALUE = 2
         const val COL_PAPER = 3
-        const val COL_FLAG = 4
-        const val COL_DEFAULT = 5
+        const val COL_DEFAULT = 4
     }
 
     private val dao: OperatingPrinterDao by lazy { OperatingPrinterDao(requireContext()) }
@@ -130,7 +133,7 @@ class OperatingPrinterFragment : DataTableFragment() {
         slNo.toString(),
         listOf(
             printerName, printerLabel.ifBlank { "—" }, value.orEmpty().ifBlank { "—" },
-            paperLabel, printFlag, if (isDefault) "On" else "Off"
+            paperLabel, if (isDefault) "On" else "Off"
         )
     )
 
@@ -146,9 +149,40 @@ class OperatingPrinterFragment : DataTableFragment() {
 
     /** Inline row switch flips the default flag directly, without opening the form. */
     override fun onSwitchToggled(row: DataRow, isOn: Boolean) {
-        val flag = row.cells.getOrNull(COL_FLAG).orEmpty()
+        val flag = entryCache[row.id]?.printFlag.orEmpty()
         dao.setDefault(row.id.toLong(), flag, isOn)
         reload()
+    }
+
+    /** Sends a sample slip to this row's printer, through the real print path. */
+    override fun onTestPrintRow(row: DataRow) {
+        val entry = entryCache[row.id] ?: run { toast("Printer not found"); return }
+        val type = entry.printerType?.takeIf { it.isNotBlank() }
+        val address = entry.value?.takeIf { it.isNotBlank() }
+        when {
+            type == null -> { toast("No connection type set for this printer"); return }
+            type.equals("USB", ignoreCase = true) -> { toast("USB test print isn't supported yet"); return }
+            address.isNullOrBlank() -> { toast("No address configured for this printer"); return }
+        }
+        val config = ThermalPrinter.Config(
+            ip = address!!,
+            port = ThermalPrinter.defaultPort(),
+            paperMm = entry.paperMm,
+            connection = type!!.uppercase()
+        )
+        toast("Sending test print…")
+        ThermalPrinter.testPrint(
+            requireContext(),
+            entry.printFlag.ifBlank { entry.printerName },
+            config
+        ) { result ->
+            activity?.runOnUiThread {
+                when (result) {
+                    is ThermalPrinter.Result.Failure -> toast("Print failed: ${result.message}")
+                    else -> toast("Test print sent")
+                }
+            }
+        }
     }
 
     private fun showPrinterDialog(row: DataRow?) {
