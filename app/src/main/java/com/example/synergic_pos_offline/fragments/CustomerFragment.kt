@@ -76,6 +76,7 @@ class CustomerFragment : DataTableFragment() {
         val etAddress = view.findViewById<TextInputEditText>(R.id.etAddress)
         val etGstin = view.findViewById<TextInputEditText>(R.id.etGstin)
         val etBalance = view.findViewById<TextInputEditText>(R.id.etBalance)
+        val tilBalance = view.findViewById<TextInputLayout>(R.id.tilBalance)
         val swCredit = view.findViewById<SwitchMaterial>(R.id.swCredit)
         val tvCreditState = view.findViewById<TextView>(R.id.tvCreditState)
         val tilCreditLimit = view.findViewById<TextInputLayout>(R.id.tilCreditLimit)
@@ -101,10 +102,15 @@ class CustomerFragment : DataTableFragment() {
         etCreditDays.setText(existing?.creditDays?.takeIf { it != 0 || existing.creditEnabled }?.toString().orEmpty())
         btnSave.text = if (existing == null) "Add" else "Update"
 
+        // Credit gates every figure that only exists because of it - the limit, the
+        // days, and the balance those credit sales run up. A balance already on file
+        // is left as it is rather than zeroed: switching credit off stops more from
+        // accruing, it does not settle what the customer already owes.
         fun applyCreditState(enabled: Boolean) {
             tvCreditState.text = if (enabled) "Yes" else "No"
             tilCreditLimit.isEnabled = enabled
             tilCreditDays.isEnabled = enabled
+            tilBalance.isEnabled = enabled
         }
         swCredit.isChecked = existing?.creditEnabled ?: false
         applyCreditState(swCredit.isChecked)
