@@ -50,8 +50,10 @@ class TaxSettingsDao(context: Context) {
     /**
      * Full tax/discount configuration.
      *
-     * Discount: [discountEnabled] gates a single [discountType] and [discountPosition]
-     * (both mandatory, radio-selected, when discount is on).
+     * Discount: [discountEnabled] gates a single [discountType], radio-selected when
+     * discount is on. [discountPosition] is not a choice at all - it follows from the
+     * type, see [effectivePosition] - and is carried here only because it is what the
+     * rest of the app calculates against.
      *
      * Tax: [gstEnabled], [igstEnabled] and [vatEnabled] are mutually exclusive
      * (enforced by the UI); [gstMode] only applies when GST is on.
@@ -67,14 +69,17 @@ class TaxSettingsDao(context: Context) {
         val vatMode: GstMode = GstMode.EXCLUSIVE
     )
 
-    /** Reads every tax setting for the current store, applying defaults. */
+    /** Reads every tax setting for the current store, applying defaults.
+     *  The position is taken from [effectivePosition] rather than from the stored
+     *  row, so a store configured before it followed the type still reads correctly. */
     fun load(): TaxSettings {
         val m = readAll()
         val d = TaxSettings()
+        val type = DiscountType.fromCode(m[KEY_DISCOUNT_TYPE]) ?: d.discountType
         return TaxSettings(
             discountEnabled = m[KEY_DISCOUNT_ENABLED]?.toBool() ?: d.discountEnabled,
-            discountType = DiscountType.fromCode(m[KEY_DISCOUNT_TYPE]) ?: d.discountType,
-            discountPosition = DiscountPosition.fromCode(m[KEY_DISCOUNT_POSITION]) ?: d.discountPosition,
+            discountType = type,
+            discountPosition = effectivePosition(type),
             gstEnabled = m[KEY_GST_ENABLED]?.toBool() ?: d.gstEnabled,
             gstMode = GstMode.fromCode(m[KEY_GST_MODE]) ?: d.gstMode,
             vatEnabled = m[KEY_VAT_ENABLED]?.toBool() ?: d.vatEnabled,
@@ -90,7 +95,10 @@ class TaxSettingsDao(context: Context) {
     fun save(s: TaxSettings) {
         put(KEY_DISCOUNT_ENABLED, s.discountEnabled.b())
         put(KEY_DISCOUNT_TYPE, if (s.discountEnabled) s.discountType.code.toString() else "0")
-        put(KEY_DISCOUNT_POSITION, if (s.discountEnabled) s.discountPosition.code.toString() else "0")
+        put(
+            KEY_DISCOUNT_POSITION,
+            if (s.discountEnabled) effectivePosition(s.discountType).code.toString() else "0"
+        )
         put(KEY_GST_ENABLED, s.gstEnabled.b())
         // GST type is only meaningful when GST is on; otherwise store null.
         put(KEY_GST_MODE, if (s.gstEnabled) s.gstMode.code else null)
@@ -170,13 +178,30 @@ class TaxSettingsDao(context: Context) {
 
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
-    private companion object {
-        const val KEY_DISCOUNT_ENABLED = "Discount"
-        const val KEY_DISCOUNT_TYPE = "Discount Type"
-        const val KEY_DISCOUNT_POSITION = "Discount Position"
-        const val KEY_GST_ENABLED = "GST"
-        const val KEY_GST_MODE = "GST Type"
-        const val KEY_VAT_ENABLED = "VAT"
-        const val KEY_VAT_MODE = "VAT Type"
+    companion object {
+        /**
+         * The position a discount is applied at, which is not configurable: it
+         * follows from the type, whether or not GST/VAT is on.
+         *
+         * An item-wise discount is configured against the product's own rate and is
+         * always taken off before tax. A bill-wise discount is entered against the
+         * cart's total and is always taken off after it, so tax is charged on the
+         * full sale and the discount comes off the taxed total once.
+         *
+         * Applied on both save and load, so the stored value, the settings cache
+         * (read raw by the product master) and every calculation agree.
+         */
+        fun effectivePosition(type: DiscountType): DiscountPosition = when (type) {
+            DiscountType.ITEM_WISE -> DiscountPosition.PRE_TAX
+            DiscountType.BILL_WISE -> DiscountPosition.POST_TAX
+        }
+
+        private const val KEY_DISCOUNT_ENABLED = "Discount"
+        private const val KEY_DISCOUNT_TYPE = "Discount Type"
+        private const val KEY_DISCOUNT_POSITION = "Discount Position"
+        private const val KEY_GST_ENABLED = "GST"
+        private const val KEY_GST_MODE = "GST Type"
+        private const val KEY_VAT_ENABLED = "VAT"
+        private const val KEY_VAT_MODE = "VAT Type"
     }
 }

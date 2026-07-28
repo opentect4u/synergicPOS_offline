@@ -372,7 +372,6 @@ class MainActivity : AppCompatActivity() {
                     TreeNode("Bill Header Footer Logo"),
                     TreeNode("KOT Header Footer Logo")
                 )),
-                TreeNode("Date & Time"),
                 TreeNode("User Management"),
                 TreeNode("Database Settings", databaseSettingsNodes)
             )),
