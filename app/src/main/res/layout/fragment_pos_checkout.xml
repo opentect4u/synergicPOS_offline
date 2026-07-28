@@ -215,6 +215,34 @@
 
                         <View android:layout_width="match_parent" android:layout_height="2dp" android:background="#E0E0E0" />
 
+                        <!-- Column header for the item list. Only shown when an
+                             item-wise discount is active, since that is the only
+                             case with a per-line DISCOUNT column to label. -->
+                        <LinearLayout
+                            android:id="@+id/llItemsHeader"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:paddingHorizontal="12dp"
+                            android:paddingTop="10dp"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                                android:text="SR.NO ITEM" android:textSize="10sp" android:letterSpacing="0.08"
+                                android:textColor="@color/text_secondary" />
+
+                            <TextView
+                                android:layout_width="80dp" android:layout_height="wrap_content"
+                                android:text="DISC" android:gravity="end" android:textSize="10sp" android:letterSpacing="0.08"
+                                android:textColor="@color/text_secondary" />
+
+                            <TextView
+                                android:layout_width="90dp" android:layout_height="wrap_content"
+                                android:text="NET AMT" android:gravity="end" android:textSize="10sp" android:letterSpacing="0.08"
+                                android:textColor="@color/text_secondary" />
+                        </LinearLayout>
+
                         <!-- Items (rendered programmatically) -->
                         <LinearLayout
                             android:id="@+id/llItems"
@@ -256,112 +284,15 @@
                     </LinearLayout>
                 </ScrollView>
 
-                <!-- RECEIPT VIEW -->
-                <ScrollView
+                <!-- RECEIPT VIEW: the real bill layout (fragment_bill.xml) is inflated
+                     in here and filled by BillReceiptRenderer, so the preview is the
+                     same rendering the printer gets rather than a look-alike. -->
+                <FrameLayout
                     android:id="@+id/scrollReceipt"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:visibility="gone"
-                    android:scrollbars="none">
+                    android:visibility="gone" />
 
-                    <com.google.android.material.card.MaterialCardView
-                        android:layout_width="380dp"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="center_horizontal"
-                        android:layout_marginVertical="20dp"
-                        app:cardCornerRadius="4dp"
-                        app:cardElevation="4dp"
-                        app:cardBackgroundColor="@color/white">
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="vertical"
-                            android:padding="24dp">
-
-                            <TextView android:id="@+id/tvRcStoreName" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:text="SYNERGIC POS" android:gravity="center" android:fontFamily="monospace"
-                                android:textStyle="bold" android:textSize="20sp" android:textColor="@color/text_main" />
-                            <TextView android:id="@+id/tvRcStoreInfo" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:text=""
-                                android:gravity="center" android:fontFamily="monospace" android:textSize="10sp"
-                                android:layout_marginTop="4dp" android:textColor="@color/text_secondary" />
-
-                            <TextView style="@style/BillDashLine" />
-
-                            <!-- Customer details, shown per Bill Settings' "Customer Details" mode -->
-                            <TextView android:id="@+id/tvRcCustMobile" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main"
-                                android:visibility="gone" />
-                            <TextView android:id="@+id/tvRcCustName" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main"
-                                android:visibility="gone" />
-                            <TextView android:id="@+id/tvRcCustGstin" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main"
-                                android:visibility="gone" />
-                            <!-- Customer address, shown when "Customer Address Printing" is on -->
-                            <TextView android:id="@+id/tvRcCustAddress" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main"
-                                android:visibility="gone" />
-
-                            <LinearLayout android:id="@+id/llReceiptItems"
-                                android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:orientation="vertical" />
-
-                            <TextView style="@style/BillDashLine" />
-
-                            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-                                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                                    android:text="Subtotal" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_secondary" />
-                                <TextView android:id="@+id/tvRcSubtotal" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                    android:text="₹0.00" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main" />
-                            </LinearLayout>
-                            <LinearLayout android:id="@+id/rowRcDiscount" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="4dp">
-                                <TextView android:id="@+id/tvRcDiscountLabel" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                                    android:text="Discount (0%)" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_secondary" />
-                                <TextView android:id="@+id/tvRcDiscount" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                    android:text="- ₹0.00" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main" />
-                            </LinearLayout>
-                            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="4dp">
-                                <TextView android:id="@+id/tvRcTaxLabel" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                                    android:text="GST" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_secondary" />
-                                <TextView android:id="@+id/tvRcTax" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                    android:text="₹0.00" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main" />
-                            </LinearLayout>
-
-                            <!-- Round off, shown only when Bill Settings has it on and the bill needs one -->
-                            <LinearLayout android:id="@+id/rowRcRoundOff" android:layout_width="match_parent"
-                                android:layout_height="wrap_content" android:orientation="horizontal"
-                                android:layout_marginTop="4dp" android:visibility="gone">
-                                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                                    android:text="Round off" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_secondary" />
-                                <TextView android:id="@+id/tvRcRoundOff" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                    android:text="₹0.00" android:fontFamily="monospace" android:textSize="12sp" android:textColor="@color/text_main" />
-                            </LinearLayout>
-
-                            <TextView style="@style/BillDashLine" />
-
-                            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
-                                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                                    android:text="TOTAL" android:fontFamily="monospace" android:textStyle="bold" android:textSize="16sp" android:textColor="@color/text_main" />
-                                <TextView android:id="@+id/tvRcTotal" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                    android:text="₹0.00" android:fontFamily="monospace" android:textStyle="bold" android:textSize="22sp" android:textColor="@color/text_main" />
-                            </LinearLayout>
-
-                            <TextView style="@style/BillDashLine" />
-
-                            <!-- Amount in words, shown only when Bill Settings has it on -->
-                            <TextView android:id="@+id/tvRcAmountWords" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp" android:fontFamily="monospace" android:textSize="11sp"
-                                android:lineSpacingExtra="2dp" android:textColor="@color/text_secondary" android:visibility="gone" />
-
-                            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:text="THANK YOU FOR SHOPPING" android:gravity="center" android:fontFamily="monospace"
-                                android:textStyle="bold" android:textSize="12sp" android:letterSpacing="0.1"
-                                android:layout_marginTop="12dp" android:textColor="@color/text_secondary" />
-                        </LinearLayout>
-                    </com.google.android.material.card.MaterialCardView>
-                </ScrollView>
             </FrameLayout>
 
             <!-- Totals footer -->

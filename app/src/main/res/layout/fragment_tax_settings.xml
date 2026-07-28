@@ -68,13 +68,17 @@
                             android:text="Bill wise discount" />
                     </RadioGroup>
 
-                    <!-- Discount position only matters when GST is on, so the whole
-                         block is hidden while GST is off. -->
+                    <!-- Discount position is not a choice: it follows from the type
+                         (item-wise pre-tax, bill-wise post-tax), so this block stays
+                         hidden whether or not GST/VAT is on. Kept, rather than
+                         deleted, so the rule can be handed back to the operator
+                         without rebuilding the screen. -->
                     <LinearLayout
                         android:id="@+id/llDiscountPosition"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="vertical">
+                        android:orientation="vertical"
+                        android:visibility="gone">
 
                         <View style="@style/BillSettingDivider" />
 

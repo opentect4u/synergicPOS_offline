@@ -20,8 +20,13 @@ import com.google.android.material.switchmaterial.SwitchMaterial
 
 /**
  * Tax & Discount settings, backed by [TaxSettingsDao] (md_app_settings, type 'T').
- * Enforces the rules: discount options appear only when discount is on (and a
- * position is mandatory), and GST / IGST / VAT are mutually exclusive.
+ * Enforces the rules: discount options appear only when discount is on, and
+ * GST / IGST / VAT are mutually exclusive.
+ *
+ * Discount position is no longer offered. It follows from the discount type -
+ * item-wise is always pre-tax, bill-wise always post-tax - so the block stays
+ * hidden whether or not a tax is on, and the value is derived on save. See
+ * [TaxSettingsDao.effectivePosition].
  */
 class TaxSettingsFragment : Fragment(), TitledScreen {
 
@@ -63,17 +68,17 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         // Discount options visible only when discount is on.
         swDiscount.setOnCheckedChangeListener { _, on -> llDiscountOptions.isVisible = on }
 
+        // Picking a type fixes the position with it, so only the radio moves.
+        rgDiscountType.setOnCheckedChangeListener { _, _ -> syncDiscountPosition() }
+
         // GST and VAT are mutually exclusive; each shows its own mode when on.
-        // Discount position applies under either tax, so it shows whenever one is on.
         swGst.setOnCheckedChangeListener { _, on ->
             rgGstMode.isVisible = on
             if (on) swVat.isChecked = false
-            updateDiscountPositionVisibility()
         }
         swVat.setOnCheckedChangeListener { _, on ->
             rgVatMode.isVisible = on
             if (on) swGst.isChecked = false
-            updateDiscountPositionVisibility()
         }
 
         view.findViewById<MaterialButton>(R.id.btnSaveTax).setOnClickListener { onSave() }
@@ -91,43 +96,49 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
                 DiscountType.BILL_WISE -> R.id.rbTypeBill
             }
         )
-        rgDiscountPosition.check(
-            when (s.discountPosition) {
-                DiscountPosition.PRE_TAX -> R.id.rbPosPre
-                DiscountPosition.POST_TAX -> R.id.rbPosPost
-            }
-        )
-
         swGst.isChecked = s.gstEnabled
         rgGstMode.isVisible = s.gstEnabled
         rgGstMode.check(if (s.gstMode == GstMode.INCLUSIVE) R.id.rbInclusive else R.id.rbExclusive)
         swVat.isChecked = s.vatEnabled
         rgVatMode.isVisible = s.vatEnabled
         rgVatMode.check(if (s.vatMode == GstMode.INCLUSIVE) R.id.rbVatInclusive else R.id.rbVatExclusive)
-        updateDiscountPositionVisibility()
+        syncDiscountPosition()
     }
 
-    /** Discount position is meaningful only when a tax is charged, so it shows
-     *  whenever GST or VAT is on and hides when neither is. */
-    private fun updateDiscountPositionVisibility() {
-        llDiscountPosition.isVisible = swGst.isChecked || swVat.isChecked
+    /**
+     * Keeps the (hidden) position radio on whatever the selected type implies, so it
+     * never contradicts what is saved. The block itself stays hidden: the position is
+     * no longer a choice - see [TaxSettingsDao.effectivePosition].
+     */
+    private fun syncDiscountPosition() {
+        llDiscountPosition.isVisible = false
+        val type = selectedDiscountType()
+        rgDiscountPosition.check(
+            when (TaxSettingsDao.effectivePosition(type)) {
+                DiscountPosition.PRE_TAX -> R.id.rbPosPre
+                DiscountPosition.POST_TAX -> R.id.rbPosPost
+            }
+        )
     }
 
-    private fun collect(): TaxSettings = TaxSettings(
-        discountEnabled = swDiscount.isChecked,
-        discountType = when (rgDiscountType.checkedRadioButtonId) {
-            R.id.rbTypeBill -> DiscountType.BILL_WISE
-            else -> DiscountType.ITEM_WISE
-        },
-        discountPosition = when (rgDiscountPosition.checkedRadioButtonId) {
-            R.id.rbPosPost -> DiscountPosition.POST_TAX
-            else -> DiscountPosition.PRE_TAX
-        },
-        gstEnabled = swGst.isChecked,
-        gstMode = if (rgGstMode.checkedRadioButtonId == R.id.rbInclusive) GstMode.INCLUSIVE else GstMode.EXCLUSIVE,
-        vatEnabled = swVat.isChecked,
-        vatMode = if (rgVatMode.checkedRadioButtonId == R.id.rbVatInclusive) GstMode.INCLUSIVE else GstMode.EXCLUSIVE
-    )
+    private fun selectedDiscountType(): DiscountType = when (rgDiscountType.checkedRadioButtonId) {
+        R.id.rbTypeBill -> DiscountType.BILL_WISE
+        else -> DiscountType.ITEM_WISE
+    }
+
+    private fun collect(): TaxSettings {
+        val type = selectedDiscountType()
+        return TaxSettings(
+            discountEnabled = swDiscount.isChecked,
+            discountType = type,
+            // Fixed by the type: item-wise pre-tax, bill-wise post-tax.
+            discountPosition = TaxSettingsDao.effectivePosition(type),
+            gstEnabled = swGst.isChecked,
+            gstMode = if (rgGstMode.checkedRadioButtonId == R.id.rbInclusive) GstMode.INCLUSIVE else GstMode.EXCLUSIVE,
+            vatEnabled = swVat.isChecked,
+            vatMode = if (rgVatMode.checkedRadioButtonId == R.id.rbVatInclusive) GstMode.INCLUSIVE else GstMode.EXCLUSIVE
+        )
+    }
 
     private fun onSave() {
         dao.save(collect())
