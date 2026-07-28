@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import com.example.synergic_pos_offline.utils.AmountInWords
+import com.example.synergic_pos_offline.utils.BillPricing
 import com.example.synergic_pos_offline.utils.BillSettingsSnapshot
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.SessionManager
@@ -153,37 +154,24 @@ class BillDao(context: Context) {
 
             // 2) Bill items.
             bill.items.forEach { item ->
-                val subtotal = item.rate * item.quantity
-                val rate = when (regime) {
-                    GstCalculator.TaxRegime.GST -> item.cgstRate + item.sgstRate
-                    GstCalculator.TaxRegime.VAT -> item.vatRate
-                    GstCalculator.TaxRegime.NONE -> 0.0
-                }
-                // The listed price is stripped of any tax it already includes to reach
-                // the base the rate works on.
-                //
-                // A post-tax discount (inclusive or exclusive) is the case where tax
-                // is NOT charged on the discounted value: the rate is applied to the
-                // full base and the discount then comes off the taxed price, so the
-                // tax reported matches the full MRP (a "cash discount" that does not
-                // reduce the taxable value). A pre-tax discount instead comes off the
-                // base first and tax is worked out on what remains.
-                val rawBase = GstCalculator.taxableBase(subtotal, rate, inclusive)
-                val postTax = !discountPreTax && item.discountAmount > 0.0
-                val taxable = if (postTax) rawBase else GstCalculator.taxableValue(rawBase, item.discountAmount)
-                val cgstAmt = if (regime == GstCalculator.TaxRegime.GST) GstCalculator.taxAmount(taxable, item.cgstRate) else 0.0
-                val sgstAmt = if (regime == GstCalculator.TaxRegime.GST) GstCalculator.taxAmount(taxable, item.sgstRate) else 0.0
-                val vatAmt = if (regime == GstCalculator.TaxRegime.VAT) GstCalculator.taxAmount(taxable, item.vatRate) else 0.0
-                val taxSum = cgstAmt + sgstAmt + vatAmt
-                // item.discountAmount is a pre-tax-base amount; grossed up by the rate
-                // it is the discount off the taxed price the customer actually gets.
-                // (rawBase + taxSum is the full taxed MRP - the listed price for an
-                // inclusive line, MRP + tax for an exclusive one.)
-                val itemTotal = if (postTax) {
-                    (rawBase + taxSum - item.discountAmount * (1.0 + rate / 100.0)).coerceAtLeast(0.0)
-                } else {
-                    taxable + taxSum
-                }
+                // Priced by the one routine that prices a line anywhere in the app, so
+                // what is stored here is exactly what checkout previewed - see
+                // [BillPricing.price].
+                val priced = BillPricing.price(
+                    rate = item.rate,
+                    quantity = item.quantity,
+                    cgstRate = item.cgstRate,
+                    sgstRate = item.sgstRate,
+                    vatRate = item.vatRate,
+                    discountAmount = item.discountAmount,
+                    regime = regime,
+                    inclusive = inclusive,
+                    discountPreTax = discountPreTax
+                )
+                val cgstAmt = priced.cgst
+                val sgstAmt = priced.sgst
+                val vatAmt = priced.vat
+                val itemTotal = priced.itemTotal
                 val itemValues = ContentValues().apply {
                     put("receipt_no", receiptNo)
                     put("trans_dt", nowDateTime)
@@ -191,7 +179,7 @@ class BillDao(context: Context) {
                     if (item.productId != null) put("product_id", item.productId)
                     put("quantity", item.quantity)
                     put("rate", item.rate)
-                    put("item_subtotal", subtotal)
+                    put("item_subtotal", priced.subtotal)
                     put("discount_amount", item.discountAmount)
                     put("cgst_rate", item.cgstRate)
                     put("sgst_rate", item.sgstRate)

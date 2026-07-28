@@ -1319,16 +1319,38 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     /**
      * The manual discount (percent or flat) plus the coupon's flat 10%, capped at
-     * the subtotal. Item-wise discount replaces this mechanism entirely - each
-     * line prices its own discount in [lineTax] - so there is nothing left for a
+     * the bill. Item-wise discount replaces this mechanism entirely - each line
+     * prices its own discount in [lineTax] - so there is nothing left for a
      * whole-bill figure to add.
+     *
+     * Worked out against [discountBase] - the taxed bill - not the listed subtotal
+     * underneath it, because a bill-wise discount is always applied post-tax.
      */
     private fun discountAmt(): Double {
         if (itemwiseDiscountActive) return 0.0
+        val base = discountBase()
+        val manual = GstCalculator.discountAmount(base, discountMode, discountValue)
+        val coupon = if (couponApplied) base * 10.0 / 100.0 else 0.0
+        return (manual + coupon).coerceAtMost(base)
+    }
+
+    /**
+     * What a whole-bill discount is a percentage *of*: the bill with its tax already
+     * on, since a bill-wise discount is always taken off after tax. 20% off a 110.00
+     * sale carrying 5.50 of GST is 23.10, not 22.00.
+     *
+     * Under inclusive pricing this is the listed subtotal itself - the price already
+     * carries its tax - so the two only differ when tax is added on top.
+     *
+     * Safe from recursing back into [discountAmt]: a post-tax discount leaves every
+     * line taxed in full, so the lines are priced here with no discount at all.
+     */
+    private fun discountBase(): Double {
         val sub = subtotal()
-        val manual = GstCalculator.discountAmount(sub, discountMode, discountValue)
-        val coupon = if (couponApplied) sub * 10.0 / 100.0 else 0.0
-        return (manual + coupon).coerceAtMost(sub)
+        return cart.sumOf { line ->
+            val (taxable, tax, _) = lineTax(line.product, line.product.price * line.qty, sub, 0.0)
+            taxable + tax
+        }
     }
 
     /** "GST", "VAT" or plain "TAX" (neither switched on), matching the active regime. */
@@ -1384,6 +1406,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * once, at the bill level, not per line).
      */
     private fun lineTax(product: Product, gross: Double, grossSubtotal: Double, discAmt: Double): Triple<Double, Double, Double> {
+        val (taxable, tax, extra) = lineTaxRaw(product, gross, grossSubtotal, discAmt)
+        // Reported to the paisa, and summed from there: totals assembled from the raw
+        // fractions can land half a paisa below what the lines themselves report, and
+        // print a rupee total a paisa short of its own parts.
+        return Triple(BillRounding.toPaise(taxable), BillRounding.toPaise(tax), BillRounding.toPaise(extra))
+    }
+
+    private fun lineTaxRaw(product: Product, gross: Double, grossSubtotal: Double, discAmt: Double): Triple<Double, Double, Double> {
         val rate = taxRateOf(product)
         if (itemwiseDiscountActive && product.discValue > 0.0 && product.discType != null) {
             val mode = if (product.discType == "A") GstCalculator.DiscountMode.AMOUNT else GstCalculator.DiscountMode.PERCENT
@@ -1438,9 +1468,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
     /** Rounded total of an arbitrary set of lines, used for held-bill summaries. */
     private fun totalOf(lines: List<CartLine>, mode: GstCalculator.DiscountMode, value: Double, coupon: Boolean): Double {
         val sub = lines.sumOf { it.product.price * it.qty }
-        val manual = GstCalculator.discountAmount(sub, mode, value)
-        val couponAmt = if (coupon) sub * 10.0 / 100.0 else 0.0
-        val discAmt = (manual + couponAmt).coerceAtMost(sub)
+        // Post-tax, so the discount is a share of the taxed bill - see [discountBase].
+        val base = lines.sumOf { line ->
+            val (taxable, tax, _) = lineTax(line.product, line.product.price * line.qty, sub, 0.0)
+            taxable + tax
+        }
+        val manual = GstCalculator.discountAmount(base, mode, value)
+        val couponAmt = if (coupon) base * 10.0 / 100.0 else 0.0
+        val discAmt = (manual + couponAmt).coerceAtMost(base)
         val taxable = taxableSumOf(lines, discAmt)
         val tax = taxOf(lines, discAmt)
         val itemwiseExtra = itemwiseDiscountSumOf(lines, discAmt)
@@ -1523,7 +1558,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         btnCharge.text = "Checkout ${money(computeTotal())}"
     }
 
-    private fun money(v: Double): String = "₹" + String.format("%.2f", v)
+    private fun money(v: Double): String = "₹" + String.format("%.2f", BillRounding.toPaise(v))
 
     private fun toast(msg: String) =
         android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_SHORT).show()
