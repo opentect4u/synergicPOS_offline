@@ -294,7 +294,7 @@ class LoginFragment : Fragment() {
         Toast.makeText(requireContext(), "Welcome $roleText!", Toast.LENGTH_SHORT).show()
 
         requireActivity().supportFragmentManager.beginTransaction()
-            .replace(R.id.fragment_container, MenuFragment())
+            .replace(R.id.fragment_container, DashboardFragment())
             .addToBackStack(null)
             .commit()
     }

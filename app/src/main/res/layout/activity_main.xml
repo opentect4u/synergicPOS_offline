@@ -67,12 +67,23 @@
                 android:src="@drawable/ic_palette"
                 android:contentDescription="Choose theme color" />
 
+            <ImageButton
+                android:id="@+id/btnHome"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_toStartOf="@id/btnTheme"
+                android:layout_centerVertical="true"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_home"
+                app:tint="@color/primary_blue"
+                android:contentDescription="Home / Dashboard" />
+
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_centerVertical="true"
                 android:layout_toEndOf="@id/btnBack"
-                android:layout_toStartOf="@id/btnTheme"
+                android:layout_toStartOf="@id/btnHome"
                 android:layout_marginStart="8dp"
                 android:orientation="vertical">
 
