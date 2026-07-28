@@ -38,7 +38,6 @@ class MasterFragment : Fragment() {
 
         val masterItems = listOf(
             MasterItem("Header & Footer", android.R.drawable.ic_menu_crop, R.color.menu_master, R.color.menu_master_icon),
-            MasterItem("Date & Time", android.R.drawable.ic_menu_recent_history, R.color.menu_report, R.color.menu_report_icon),
             MasterItem("User Management", android.R.drawable.ic_menu_manage, R.color.menu_sale, R.color.menu_sale_icon),
             MasterItem("Database Settings", android.R.drawable.ic_menu_save, R.color.menu_settings, R.color.menu_settings_icon)
         )
