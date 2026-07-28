@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.MainActivity
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
 
@@ -36,14 +37,18 @@ class DatabaseSettingsFragment : Fragment() {
         val columns = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) 4 else 2
         rvDatabase.layoutManager = GridLayoutManager(requireContext(), columns)
 
-        val items = listOf(
+        val isGrocery = SettingsCache.value(requireContext(), "G", "Mode") == "G"
+
+        val items = mutableListOf(
             DatabaseItem("Category/Department", android.R.drawable.ic_menu_sort_by_size, R.color.menu_master, R.color.menu_master_icon),
             DatabaseItem("Products", android.R.drawable.ic_menu_agenda, R.color.menu_sale, R.color.menu_sale_icon),
             DatabaseItem("Customers", android.R.drawable.ic_menu_myplaces, R.color.menu_report, R.color.menu_report_icon),
             DatabaseItem("Description/Ledger", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon),
-            DatabaseItem("Units", android.R.drawable.ic_menu_crop, R.color.menu_settings, R.color.menu_settings_icon),
-            DatabaseItem("Waiter", android.R.drawable.ic_menu_manage, R.color.menu_delete, R.color.menu_delete_icon)
+            DatabaseItem("Units", android.R.drawable.ic_menu_crop, R.color.menu_settings, R.color.menu_settings_icon)
         )
+        if (!isGrocery) {
+            items.add(DatabaseItem("Waiter", android.R.drawable.ic_menu_manage, R.color.menu_delete, R.color.menu_delete_icon))
+        }
 
         rvDatabase.adapter = DatabaseAdapter(items) { item ->
             when (item.title) {
