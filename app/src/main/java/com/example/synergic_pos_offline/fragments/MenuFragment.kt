@@ -42,8 +42,8 @@ class MenuFragment : Fragment() {
             MenuItem("Bill", android.R.drawable.ic_menu_agenda, R.color.menu_report, R.color.menu_report_icon),
             MenuItem("Sale Return", android.R.drawable.ic_menu_revert, R.color.menu_delete, R.color.menu_delete_icon),
             MenuItem("Advance Payment", android.R.drawable.ic_menu_today, R.color.menu_sale, R.color.menu_sale_icon),
-            MenuItem("Duplicate Bill", android.R.drawable.ic_menu_today, R.color.menu_master, R.color.menu_master_icon),
-            MenuItem("Delete Bill", android.R.drawable.ic_menu_delete, R.color.menu_delete, R.color.menu_delete_icon),
+            // MenuItem("Duplicate Bill", android.R.drawable.ic_menu_today, R.color.menu_master, R.color.menu_master_icon),
+            // MenuItem("Delete Bill", android.R.drawable.ic_menu_delete, R.color.menu_delete, R.color.menu_delete_icon),
             MenuItem("Reports", android.R.drawable.ic_menu_view, R.color.menu_report, R.color.menu_report_icon)
         )
 

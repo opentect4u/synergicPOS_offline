@@ -105,6 +105,9 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         }
 
         ThemeManager.applyTheme(view)
+        com.example.synergic_pos_offline.utils.SettingsHighlighter.apply(
+            view, arguments?.getString(com.example.synergic_pos_offline.utils.SettingsHighlighter.ARG_SETTING)
+        )
     }
 
     private fun showChangePasswordDialog() {

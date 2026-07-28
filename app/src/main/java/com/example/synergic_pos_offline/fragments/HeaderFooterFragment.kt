@@ -7,13 +7,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.MainActivity
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
 
@@ -36,18 +36,27 @@ class HeaderFooterFragment : Fragment() {
         val columns = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) 4 else 2
         rvHeaderFooter.layoutManager = GridLayoutManager(requireContext(), columns)
 
-        val items = listOf(
-            HeaderFooterItem("Bill Header & Footer", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon),
-            HeaderFooterItem("KOT Header & Footer", android.R.drawable.ic_menu_agenda, R.color.menu_sale, R.color.menu_sale_icon),
-            HeaderFooterItem("Bill Header Footer Logo", android.R.drawable.ic_menu_gallery, R.color.menu_report, R.color.menu_report_icon),
-            HeaderFooterItem("KOT Header Footer Logo", android.R.drawable.ic_menu_gallery, R.color.menu_inventory, R.color.menu_inventory_icon)
-        )
+        // Mode decides which set shows: Grocery -> Bill header/footer + logo;
+        // Restaurant -> KOT header/footer + logo.
+        val restaurant = GeneralSettingsDao(requireContext()).load().mode == GeneralSettingsDao.Mode.RESTAURANT
+        val items = if (restaurant) {
+            listOf(
+                HeaderFooterItem("KOT Header & Footer", android.R.drawable.ic_menu_agenda, R.color.menu_sale, R.color.menu_sale_icon),
+                HeaderFooterItem("KOT Header Footer Logo", android.R.drawable.ic_menu_gallery, R.color.menu_inventory, R.color.menu_inventory_icon)
+            )
+        } else {
+            listOf(
+                HeaderFooterItem("Bill Header & Footer", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon),
+                HeaderFooterItem("Bill Header Footer Logo", android.R.drawable.ic_menu_gallery, R.color.menu_report, R.color.menu_report_icon)
+            )
+        }
 
         rvHeaderFooter.adapter = HeaderFooterAdapter(items) { item ->
             when (item.title) {
                 "Bill Header & Footer" -> openFragment(BillHeaderFooterFragment())
                 "Bill Header Footer Logo" -> openFragment(BillLogoFragment())
-                else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
+                // KOT screens don't exist yet -> clean placeholder.
+                else -> openFragment(ComingSoonFragment.newInstance(item.title))
             }
         }
     }

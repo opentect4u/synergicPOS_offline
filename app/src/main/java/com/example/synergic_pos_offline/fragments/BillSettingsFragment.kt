@@ -110,6 +110,9 @@ class BillSettingsFragment : Fragment(), TitledScreen {
 
         // Applies the theme accent to switches, radios, headers, button, inputs.
         ThemeManager.applyTheme(view)
+        com.example.synergic_pos_offline.utils.SettingsHighlighter.apply(
+            view, arguments?.getString(com.example.synergic_pos_offline.utils.SettingsHighlighter.ARG_SETTING)
+        )
     }
 
     private fun bind(s: BillSettings) {

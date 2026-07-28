@@ -29,6 +29,7 @@ import com.example.synergic_pos_offline.fragments.BillHeaderFooterFragment
 import com.example.synergic_pos_offline.fragments.BillLogoFragment
 import com.example.synergic_pos_offline.fragments.CategoryDepartmentFragment
 import com.example.synergic_pos_offline.fragments.CustomerFragment
+import com.example.synergic_pos_offline.fragments.DashboardFragment
 import com.example.synergic_pos_offline.fragments.CategoryProductsFragment
 import com.example.synergic_pos_offline.fragments.DatabaseSettingsFragment
 import com.example.synergic_pos_offline.fragments.DescriptionLedgerFragment
@@ -54,6 +55,7 @@ import com.example.synergic_pos_offline.fragments.WaiterFragment
 import com.example.synergic_pos_offline.utils.DatabaseSeeder
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.SessionManager
+import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 
 class MainActivity : AppCompatActivity() {
@@ -95,6 +97,7 @@ class MainActivity : AppCompatActivity() {
         // Global header actions
         findViewById<View>(R.id.btnMenu).setOnClickListener { openDrawer() }
         btnBack.setOnClickListener { supportFragmentManager.popBackStack() }
+        findViewById<View>(R.id.btnHome).setOnClickListener { goHome() }
         findViewById<View>(R.id.btnTheme).setOnClickListener { showThemePopup(it) }
         findViewById<View>(R.id.btnLogout).setOnClickListener { confirmLogout() }
 
@@ -136,7 +139,7 @@ class MainActivity : AppCompatActivity() {
         val user = SessionManager.currentUser
         tvHeaderSubtitle.text = "Hello, ${user?.userId ?: "User"}"
         // Back is hidden on the Dashboard (root), shown on sub-pages.
-        btnBack.visibility = if (f is com.example.synergic_pos_offline.fragments.MenuFragment) {
+        btnBack.visibility = if (f is com.example.synergic_pos_offline.fragments.DashboardFragment) {
             View.GONE
         } else {
             View.VISIBLE
@@ -180,6 +183,10 @@ class MainActivity : AppCompatActivity() {
     fun openDrawer() {
         val user = SessionManager.currentUser
         tvSidebarUser.text = if (user != null) "Active User: ${user.userId}" else "Main Menu"
+        
+        // Refresh the menu tree in case the app mode (Grocery/Restaurant) changed.
+        rvSidebar.adapter = SidebarAdapter(buildMenuTree()) { leafTitle -> handleLeaf(leafTitle) }
+
         refreshSidebarTheme()
         drawerLayout.openDrawer(GravityCompat.START)
     }
@@ -191,6 +198,9 @@ class MainActivity : AppCompatActivity() {
     fun onThemeColorSelected(colorHex: String) {
         ThemeManager.setThemeColor(this, colorHex)
         applyThemeEverywhere()
+        // The dashboard's cards use raw accent colors (not tracked by ThemeManager),
+        // so rebuild it when the theme changes while it is showing.
+        (supportFragmentManager.findFragmentById(R.id.fragment_container) as? DashboardFragment)?.onThemeChanged()
     }
 
     /** Re-tints every currently inflated view + the status bar + the drawer. */
@@ -289,6 +299,16 @@ class MainActivity : AppCompatActivity() {
             .commit()
     }
 
+    /** Clears the back stack and shows the Dashboard as the single root screen. */
+    private fun goHome() {
+        closeDrawer()
+        val fm = supportFragmentManager
+        fm.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
+        fm.beginTransaction()
+            .replace(R.id.fragment_container, DashboardFragment())
+            .commit()
+    }
+
     private fun handleLeaf(title: String) {
         closeDrawer()
         when (title) {
@@ -320,6 +340,9 @@ class MainActivity : AppCompatActivity() {
     // ---- Menu tree ----------------------------------------------------------
 
     private fun buildMenuTree(): List<TreeNode> {
+        val context = this
+        val isGrocery = SettingsCache.value(context, "G", "Mode") == "G"
+
         val reportTitles = listOf(
             "Bill Wise Report", "Item Wise Report", "Operator Wise Report", "Void Bill Report",
             "Tax Report", "Duplicate Bill Report", "Stock Report", "Item Bill Report",
@@ -329,6 +352,17 @@ class MainActivity : AppCompatActivity() {
             "Month Wise Report", "Year Wise Report", "UDF Wise Item Report", "Customer Item Wise RPT",
             "Time Wise Item Report"
         )
+
+        val databaseSettingsNodes = mutableListOf(
+            TreeNode("Category/Department"),
+            TreeNode("Products"),
+            TreeNode("Customers"),
+            TreeNode("Description/Ledger"),
+            TreeNode("Units")
+        )
+        if (!isGrocery) {
+            databaseSettingsNodes.add(TreeNode("Waiter"))
+        }
 
         return listOf(
             TreeNode("Master", listOf(
@@ -340,14 +374,7 @@ class MainActivity : AppCompatActivity() {
                 )),
                 TreeNode("Date & Time"),
                 TreeNode("User Management"),
-                TreeNode("Database Settings", listOf(
-                    TreeNode("Category/Department"),
-                    TreeNode("Products"),
-                    TreeNode("Customers"),
-                    TreeNode("Description/Ledger"),
-                    TreeNode("Units"),
-                    TreeNode("Waiter")
-                ))
+                TreeNode("Database Settings", databaseSettingsNodes)
             )),
             TreeNode("Settings", listOf(
                 TreeNode("General Settings"),
@@ -367,8 +394,8 @@ class MainActivity : AppCompatActivity() {
             TreeNode("Sale"),
             TreeNode("Sale Return"),
             TreeNode("Advance Payment"),
-            TreeNode("Duplicate Bill"),
-            TreeNode("Delete Bill"),
+            // TreeNode("Duplicate Bill"),
+            // TreeNode("Delete Bill"),
             TreeNode("Reports", reportTitles.map { TreeNode(it) })
         )
     }
