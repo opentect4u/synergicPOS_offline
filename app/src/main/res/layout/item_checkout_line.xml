@@ -38,9 +38,21 @@
                 android:textColor="@color/text_secondary" />
         </LinearLayout>
 
+        <!-- Item-wise discount only: what came off this line. Hidden (with its column
+             header) for a bill-wise sale, which has no per-line figure. -->
+        <TextView
+            android:id="@+id/tvDiscount"
+            android:layout_width="80dp"
+            android:layout_height="wrap_content"
+            android:text="-"
+            android:gravity="end"
+            android:textSize="13sp"
+            android:visibility="gone"
+            android:textColor="@color/text_secondary" />
+
         <TextView
             android:id="@+id/tvPrice"
-            android:layout_width="wrap_content"
+            android:layout_width="90dp"
             android:layout_height="wrap_content"
             android:text="₹0.00"
             android:gravity="end"

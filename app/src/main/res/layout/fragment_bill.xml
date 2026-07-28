@@ -198,7 +198,7 @@
                         <TextView
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
-                            android:layout_weight="2"
+                            android:layout_weight="1.8"
                             android:text="QTY"
                             android:gravity="center"
                             android:fontFamily="monospace"
@@ -206,21 +206,26 @@
                             android:textSize="12sp"
                             android:textColor="#222222" />
 
+                        <!-- Weighted wide enough to keep the label on one line. -->
                         <TextView
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
-                            android:layout_weight="2.5"
-                            android:text="PRICE"
+                            android:layout_weight="3"
+                            android:text="PER UNIT PRICE"
                             android:gravity="end"
                             android:fontFamily="monospace"
                             android:textStyle="bold"
                             android:textSize="12sp"
                             android:textColor="#222222" />
 
+                        <!-- Hidden by the renderer when no line carries a discount -
+                             a bill-wise discount comes off the total, not the lines,
+                             so its column would be nothing but dashes. -->
                         <TextView
+                            android:id="@+id/tvColDisc"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
-                            android:layout_weight="2"
+                            android:layout_weight="1.8"
                             android:text="DISC"
                             android:gravity="end"
                             android:fontFamily="monospace"
@@ -228,11 +233,13 @@
                             android:textSize="12sp"
                             android:textColor="#222222" />
 
+                        <!-- The line's gross less its discount - what it actually
+                             contributes to the bill. -->
                         <TextView
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
-                            android:layout_weight="2.5"
-                            android:text="AMOUNT"
+                            android:layout_weight="2.4"
+                            android:text="NET AMT"
                             android:gravity="end"
                             android:fontFamily="monospace"
                             android:textStyle="bold"

@@ -56,6 +56,31 @@ class BillRoundingTest {
     }
 
     @Test
+    fun `half a paisa rounds up, not down onto the binary value below it`() {
+        // 2.5% of 106.70. The nearest double to 2.6675 sits just below it, so both
+        // "%.2f" and round(x * 100) / 100 would report 2.66.
+        assertEquals(2.67, BillRounding.toPaise(2.6675), delta)
+        assertEquals(112.04, BillRounding.toPaise(112.035), delta)
+        assertEquals(0.01, BillRounding.toPaise(0.005), delta)
+        assertEquals(-2.67, BillRounding.toPaise(-2.6675), delta)
+    }
+
+    @Test
+    fun `a total summed from paise matches the figures it is printed from`() {
+        // A 106.70 line under a 2.5 + 2.5 GST slab: each half reports 2.67, so the
+        // bill's own parts add up to 112.04 and the total has to say the same.
+        val taxable = BillRounding.toPaise(106.70)
+        val cgst = BillRounding.toPaise(106.70 * 2.5 / 100.0)
+        val sgst = BillRounding.toPaise(106.70 * 2.5 / 100.0)
+        assertEquals(2.67, cgst, delta)
+        assertEquals(112.04, taxable + cgst + sgst, delta)
+        assertEquals("112.04", String.format("%.2f", BillRounding.toPaise(taxable + cgst + sgst)))
+        // Whole-rupee settlement then works off that same figure.
+        assertEquals(112.0, BillRounding.payable(taxable + cgst + sgst), delta)
+        assertEquals(-0.04, BillRounding.roundOff(taxable + cgst + sgst), delta)
+    }
+
+    @Test
     fun `zero stays zero`() {
         assertEquals(0.0, BillRounding.payable(0.0), delta)
         assertEquals(0.0, BillRounding.roundOff(0.0), delta)
