@@ -171,7 +171,8 @@
                 </LinearLayout>
 
                 <!-- Hidden fields kept for compatibility (Stock Alert Qty, Batch No) -->
-                <LinearLayout style="@style/ProductFormRow" android:visibility="gone">
+                <LinearLayout
+                     style="@style/ProductFormRow" android:visibility="gone">
 
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilStockAlert"
@@ -199,6 +200,81 @@
                             android:inputType="text"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <!-- ===== Restaurant details (shown only in Restaurant mode) ===== -->
+                <LinearLayout
+                    android:id="@+id/llRestaurantDetails"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="ITEM DETAILS"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:letterSpacing="0.08"
+                        android:layout_marginTop="6dp"
+                        android:layout_marginBottom="4dp"
+                        android:textColor="@color/primary_blue" />
+
+                    <!-- Row: Preparation Time | Food Type -->
+                    <LinearLayout style="@style/ProductFormRow">
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/ProductFormField"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Preparation Time (min)">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etPrepTime"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="number"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/ProductFormDropdown"
+                            android:layout_marginStart="6dp"
+                            android:hint="Veg / Non-Veg / Egg">
+                            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                                android:id="@+id/actFoodType"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:focusable="false"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <!-- Row: Availability | Spice Level -->
+                    <LinearLayout style="@style/ProductFormRow">
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/ProductFormDropdown"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Availability">
+                            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                                android:id="@+id/actAvailability"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:focusable="false"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/ProductFormDropdown"
+                            android:layout_marginStart="6dp"
+                            android:hint="Spice Level">
+                            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                                android:id="@+id/actSpiceLevel"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:focusable="false"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
                 </LinearLayout>
 
                 <!-- ===== Rates (repeatable rows) ===== -->

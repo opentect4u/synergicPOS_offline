@@ -253,6 +253,16 @@ class ProductsFragment : DataTableFragment() {
         view.findViewById<TextInputEditText>(R.id.etStockAlert).setText(existing?.stockAlert.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etBatchNo).setText(existing?.batchNo.orEmpty())
 
+        // Restaurant-only attributes, shown above the rates section in Restaurant mode.
+        val restaurantMode = SettingsCache.value(requireContext(), "G", "Mode") == "R"
+        view.findViewById<LinearLayout>(R.id.llRestaurantDetails).visibility =
+            if (restaurantMode) android.view.View.VISIBLE else android.view.View.GONE
+        if (restaurantMode) {
+            bindStrings(view.findViewById(R.id.actFoodType), listOf("Veg", "Non-Veg", "Egg"))
+            bindStrings(view.findViewById(R.id.actAvailability), listOf("Available", "Unavailable"))
+            bindStrings(view.findViewById(R.id.actSpiceLevel), listOf("Mild", "Medium", "Hot"))
+        }
+
         existing?.image?.let { showImage(it) }
         view.findViewById<TextView>(R.id.tvProductFormTitle).text =
             if (productId == null) "Add Product" else "Edit Product"
@@ -636,6 +646,12 @@ class ProductsFragment : DataTableFragment() {
             view.setText(it.second, false)
             view.tag = it.first
         }
+    }
+
+    /** Binds a plain string dropdown; the picked value is stored on the view's tag. */
+    private fun bindStrings(view: AutoCompleteTextView, items: List<String>) {
+        view.setAdapter(ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, items))
+        view.setOnItemClickListener { _, _, position, _ -> view.tag = items[position] }
     }
 
     private fun selectedId(view: AutoCompleteTextView): Int? = view.tag as? Int
