@@ -11,7 +11,7 @@
     <com.example.synergic_pos_offline.utils.MaxHeightScrollView
         android:layout_width="520dp"
         android:layout_height="wrap_content"
-        android:maxHeight="560dp"
+        android:maxHeight="620dp"
         android:fillViewport="true"
         android:scrollbars="none">
 
@@ -21,92 +21,140 @@
             android:orientation="vertical"
             android:padding="28dp">
 
-            <!-- Title -->
             <TextView
                 android:id="@+id/tvDialogTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Add Waiter"
+                android:text="Add Section"
                 android:textSize="21sp"
                 android:textStyle="bold"
                 android:gravity="center"
                 android:layout_marginBottom="22dp"
                 android:textColor="@color/text_main" />
 
-            <!-- Row 1: Waiter Code | Waiter Name -->
+            <!-- Section Name -->
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Section Name *"
+                app:boxCornerRadiusTopStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusBottomEnd="12dp">
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSectionName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textCapWords"
+                    android:maxLines="1" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Row: No of Tables | Service Charge -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:layout_marginTop="14dp"
+                android:baselineAligned="false">
 
                 <com.google.android.material.textfield.TextInputLayout
-                    android:id="@+id/tilWaiterCode"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:hint="Waiter Code"
-                    app:startIconDrawable="@android:drawable/ic_menu_sort_by_size"
+                    android:layout_marginEnd="8dp"
+                    android:hint="No. of Tables"
                     app:boxCornerRadiusTopStart="12dp"
                     app:boxCornerRadiusTopEnd="12dp"
                     app:boxCornerRadiusBottomStart="12dp"
                     app:boxCornerRadiusBottomEnd="12dp">
-
                     <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etWaiterCode"
+                        android:id="@+id/etNoTables"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:focusable="false"
-                        android:cursorVisible="false"
-                        android:longClickable="false"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_main"
-                        android:maxLines="1"
-                        android:textSize="16sp" />
+                        android:inputType="number"
+                        android:maxLines="1" />
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.textfield.TextInputLayout
-                    android:id="@+id/tilWaiterName"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:layout_marginStart="14dp"
-                    android:hint="Waiter Name"
-                    app:startIconDrawable="@android:drawable/ic_menu_edit"
+                    android:layout_marginStart="8dp"
+                    android:hint="Service Charge"
                     app:boxCornerRadiusTopStart="12dp"
                     app:boxCornerRadiusTopEnd="12dp"
                     app:boxCornerRadiusBottomStart="12dp"
                     app:boxCornerRadiusBottomEnd="12dp">
-
                     <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etWaiterName"
+                        android:id="@+id/etServiceCharge"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:inputType="textCapWords"
-                        android:maxLines="1"
-                        android:textSize="16sp" />
+                        android:inputType="numberDecimal"
+                        android:maxLines="1" />
                 </com.google.android.material.textfield.TextInputLayout>
             </LinearLayout>
 
-            <!-- Last generated value hint -->
-            <TextView
-                android:id="@+id/tvLastGenerated"
+            <!-- Price List -->
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:layout_marginStart="6dp"
-                android:text="Last generated: —"
-                android:textSize="12sp"
-                android:textColor="@color/text_secondary" />
+                android:layout_marginTop="14dp"
+                android:hint="Price List *"
+                app:boxCornerRadiusTopStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusBottomEnd="12dp">
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                    android:id="@+id/actPriceList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none"
+                    android:focusable="false"
+                    android:maxLines="1" />
+            </com.google.android.material.textfield.TextInputLayout>
 
-            <!-- Actions -->
+            <!-- Is Active -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="26dp"
                 android:orientation="horizontal"
-                android:gravity="center">
+                android:gravity="center_vertical"
+                android:layout_marginTop="16dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Is Active"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_main" />
+
+                <TextView
+                    android:id="@+id/tvActiveState"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:text="Yes"
+                    android:textColor="@color/text_secondary" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swActive"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true" />
+            </LinearLayout>
+
+            <!-- Buttons -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="end"
+                android:layout_marginTop="26dp">
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnFormNegative"

@@ -43,7 +43,9 @@ class DescriptionDao(context: Context) {
         val list = mutableListOf<Description>()
         helper.readableDatabase.query(
             table, arrayOf("id", "description_name", "description_type", "description_id_auto"),
-            null, null, null, null, "id ASC"
+            (if (currentStoreId() != null) "store_id = ?" else null),
+            currentStoreId()?.let { arrayOf(it.toString()) },
+            null, null, "id ASC"
         ).use { c ->
             while (c.moveToNext()) {
                 list.add(
@@ -117,6 +119,9 @@ class DescriptionDao(context: Context) {
     }
 
     private fun currentStoreId(): Long? {
+        // The signed-in user's store is the current store; the registration row is
+        // only a fallback (e.g. seeding before anyone has logged in).
+        SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
             null, null, null, null, "store_id ASC", "1"

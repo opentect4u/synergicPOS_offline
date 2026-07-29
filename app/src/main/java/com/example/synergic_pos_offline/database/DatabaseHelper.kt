@@ -42,6 +42,15 @@ class DatabaseHelper private constructor(context: Context) :
         // exist on databases created before those columns were added.
         addColumnIfMissing(db, Tables.MD_CUSTOMERS, "dob", "TEXT")
         addColumnIfMissing(db, Tables.MD_CUSTOMERS, "dom", "TEXT")
+        // New restaurant sections + tables (non-destructive; created if absent).
+        runCatching { db.execSQL(SQL_CREATE_MD_SECTION) }
+        runCatching { db.execSQL(SQL_CREATE_MD_TABLE) }
+        runCatching { db.execSQL(SQL_CREATE_MD_TABLE_UNIT) }
+        runCatching { db.execSQL(SQL_CREATE_TD_ASSIGN_WAITER) }
+        addColumnIfMissing(db, Tables.MD_TABLE, "no_of_tables", "INTEGER")
+        addColumnIfMissing(db, Tables.MD_TABLE, "from_table_no", "INTEGER")
+        addColumnIfMissing(db, Tables.MD_TABLE, "to_table_no", "INTEGER")
+        addColumnIfMissing(db, Tables.MD_TABLE, "waiter_id", "INTEGER")
         ensureProductsSchema(db)
         recreateProductRatesIfOldSchema(db)
         // "default" is a reserved word, so it must be quoted in the ALTER.
@@ -228,6 +237,10 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL("UPDATE ${Tables.MD_PRINTER} SET is_selected = 1")
         addExtraPrinterTypes(db)
         db.execSQL(SQL_CREATE_MD_OPERATING_PRINTER)
+        db.execSQL(SQL_CREATE_MD_SECTION)
+        db.execSQL(SQL_CREATE_MD_TABLE)
+        db.execSQL(SQL_CREATE_MD_TABLE_UNIT)
+        db.execSQL(SQL_CREATE_TD_ASSIGN_WAITER)
 
         // Transaction tables
         db.execSQL(SQL_CREATE_TD_PURCHASE)
@@ -711,6 +724,9 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_VERSION = "md_version"
         const val MD_PRINTER = "md_printer"
         const val MD_OPERATING_PRINTER = "md_operating_printer"
+        const val MD_SECTION = "md_section"
+        const val MD_TABLE = "md_table"
+        const val MD_TABLE_UNIT = "md_table_unit"
 
         const val TD_PURCHASE = "td_purchase"
         const val TD_PURCHASE_RETURN = "td_purchase_return"
@@ -726,6 +742,7 @@ class DatabaseHelper private constructor(context: Context) :
         const val TD_KOT = "td_kot"
         const val TD_KOT_ITEMS = "td_kot_items"
         const val TD_BILL_PRINTS = "td_bill_prints"
+        const val TD_ASSIGN_WAITER = "td_assign_waiter"
     }
 
     companion object {
@@ -1064,6 +1081,88 @@ class DatabaseHelper private constructor(context: Context) :
                 print_flag INTEGER DEFAULT 0,
                 default_flag INTEGER DEFAULT 0,
                 paper_mm INTEGER DEFAULT 80
+            )
+        """
+
+        // Restaurant sections/floors. price_list_id references a product rate tier
+        // (md_product_rates.rate_name — Rate 1 / Rate 2 …) shown in a dropdown.
+        private const val SQL_CREATE_MD_SECTION = """
+            CREATE TABLE IF NOT EXISTS md_section (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                section_name TEXT NOT NULL,
+                no_of_tables INTEGER DEFAULT 0,
+                price_list_id INTEGER,
+                service_charge REAL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
+        // Restaurant tables, each belonging to a section (md_section).
+        private const val SQL_CREATE_MD_TABLE = """
+            CREATE TABLE IF NOT EXISTS md_table (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                section_id INTEGER,
+                no_of_tables INTEGER DEFAULT 0,
+                from_table_no INTEGER,
+                to_table_no INTEGER,
+                table_code TEXT,
+                floor_no TEXT,
+                seating_capacity INTEGER DEFAULT 0,
+                table_status TEXT CHECK(table_status IN
+                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked')) DEFAULT 'Available',
+                waiter_id INTEGER,
+                remarks TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(section_id) REFERENCES md_section(id),
+                FOREIGN KEY(waiter_id) REFERENCES md_waiters(id)
+            )
+        """
+
+        // Assigned waiters (restaurant): only the waiter id and name are kept.
+        private const val SQL_CREATE_TD_ASSIGN_WAITER = """
+            CREATE TABLE IF NOT EXISTS td_assign_waiter (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                waiter_id INTEGER,
+                waiter_name TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(waiter_id) REFERENCES md_waiters(id)
+            )
+        """
+
+        // Individual tables belonging to a table allocation (md_table).
+        private const val SQL_CREATE_MD_TABLE_UNIT = """
+            CREATE TABLE IF NOT EXISTS md_table_unit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                table_id INTEGER,
+                section_id INTEGER,
+                table_code TEXT,
+                floor_no TEXT,
+                seating_capacity INTEGER DEFAULT 0,
+                table_status TEXT CHECK(table_status IN
+                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked')) DEFAULT 'Available',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(table_id) REFERENCES md_table(id),
+                FOREIGN KEY(section_id) REFERENCES md_section(id)
             )
         """
 

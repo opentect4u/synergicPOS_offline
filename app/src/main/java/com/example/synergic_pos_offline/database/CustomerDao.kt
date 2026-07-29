@@ -40,7 +40,9 @@ class CustomerDao(context: Context) {
                 "id", "customer_name", "customer_address", "phone_number", "gstin",
                 "credit_enabled", "credit_limit", "credit_days", "balance_amount", "dob", "dom"
             ),
-            null, null, null, null, "id ASC"
+            (if (currentStoreId() != null) "store_id = ?" else null),
+            currentStoreId()?.let { arrayOf(it.toString()) },
+            null, null, "id ASC"
         ).use { c ->
             while (c.moveToNext()) {
                 list.add(
@@ -134,6 +136,9 @@ class CustomerDao(context: Context) {
     }
 
     private fun currentStoreId(): Long? {
+        // The signed-in user's store is the current store; the registration row is
+        // only a fallback (e.g. seeding before anyone has logged in).
+        SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
             null, null, null, null, "store_id ASC", "1"

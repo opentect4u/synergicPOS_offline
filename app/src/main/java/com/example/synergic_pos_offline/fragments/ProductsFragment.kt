@@ -663,9 +663,21 @@ class ProductsFragment : DataTableFragment() {
 
     private fun storeId(): Int = SessionManager.currentUser?.storeId ?: 0
 
-    /** store_id and outlet_id sourced from md_registration (verified row preferred). */
+    /**
+     * store_id and outlet_id for a new product. The store is the signed-in user's
+     * store (so saved products match the store-scoped list); outlet comes from the
+     * matching md_registration row. Falls back to registration if there's no session.
+     */
     private fun storeAndOutlet(): Pair<Int?, Int?> {
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+        val sessionStore = SessionManager.currentUser?.storeId?.takeIf { it != 0 }
+        if (sessionStore != null) {
+            val outlet = db.rawQuery(
+                "SELECT outlet_id FROM ${DatabaseHelper.Tables.MD_REGISTRATION} WHERE store_id = ? LIMIT 1",
+                arrayOf(sessionStore.toString())
+            ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null }
+            return sessionStore to outlet
+        }
         db.rawQuery(
             "SELECT store_id, outlet_id FROM ${DatabaseHelper.Tables.MD_REGISTRATION} " +
                 "ORDER BY verify_flag DESC, store_id ASC LIMIT 1", null
