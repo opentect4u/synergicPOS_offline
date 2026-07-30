@@ -53,28 +53,52 @@
             android:textSize="14sp"
             android:textColor="@color/text_secondary" />
 
+        <!-- Held off the action buttons so the figure reads as part of the row
+             rather than as a label on the button beside it. -->
         <TextView
             android:id="@+id/tvRowAmount"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:layout_marginEnd="20dp"
             android:text="₹ 962.50"
             android:gravity="end"
             android:textStyle="bold"
             android:textSize="15sp"
             android:textColor="@color/text_main" />
 
+        <!-- Prints straight from the list, without opening the bill first. -->
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnViewBill"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="wrap_content"
+            android:id="@+id/btnPrintBillRow"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton.Icon"
+            android:layout_width="48dp"
             android:layout_height="40dp"
-            android:layout_marginStart="10dp"
             android:insetTop="0dp"
             android:insetBottom="0dp"
             android:minWidth="0dp"
             android:minHeight="0dp"
-            android:paddingHorizontal="14dp"
+            android:contentDescription="Print bill"
+            app:icon="@drawable/ic_print"
+            app:iconSize="20dp"
+            app:iconPadding="0dp"
+            app:iconGravity="textStart"
+            app:iconTint="@color/text_secondary"
+            app:cornerRadius="10dp"
+            app:paddingStart="14dp"
+            app:paddingEnd="14dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnViewBill"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="72dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
             android:text="View"
             android:textSize="13sp"
             app:cornerRadius="10dp" />

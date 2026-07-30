@@ -12,6 +12,7 @@ import com.example.synergic_pos_offline.database.BillSettingsDao
 import com.example.synergic_pos_offline.utils.BillReceiptRenderer
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.PrinterSetup
+import com.example.synergic_pos_offline.utils.ReceiptContext
 import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.example.synergic_pos_offline.utils.ReceiptPrinter
 import com.example.synergic_pos_offline.utils.ThemeManager
@@ -27,10 +28,22 @@ class BillFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Bill"
 
+    /**
+     * Whether this bill is being shown as a second copy of one already issued, and
+     * so heads its preview and its print "DUPLICATE BILL". Set by Bill history; a
+     * reprint of the sale just completed is not a duplicate of anything yet.
+     */
+    private val duplicate: Boolean get() = arguments?.getBoolean(ARG_DUPLICATE) == true
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
-    ): View? = inflater.inflate(R.layout.fragment_bill, container, false)
+    ): View? = LayoutInflater
+        // Inflated at a standard font scale, like the print - otherwise the preview
+        // would grow and shrink with the device's text size while the paper did not,
+        // and the two would stop being the same slip. See [ReceiptContext].
+        .from(ReceiptContext.standardFontScale(requireContext()))
+        .inflate(R.layout.fragment_bill, container, false)
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -46,7 +59,7 @@ class BillFragment : Fragment(), TitledScreen {
 
         val receiptNo = args?.getLong(ARG_RECEIPT_NO, -1L) ?: -1L
         if (receiptNo > 0) {
-            BillReceiptRenderer(requireContext()).populate(view, receiptNo)
+            BillReceiptRenderer(requireContext()).populate(view, receiptNo, duplicate = duplicate)
         }
 
         view.findViewById<MaterialButton>(R.id.btnPrintBill).apply {
@@ -82,7 +95,8 @@ class BillFragment : Fragment(), TitledScreen {
         // card: the card here is laid out at the device's screen width regardless of
         // paper size, so capturing it and shrinking to fit would print 58mm as a
         // miniature of 80mm instead of at full-size wrapped text.
-        val capture = BillReceiptRenderer(requireContext()).renderToBitmap(receiptNo, config.paperDots)
+        val capture = BillReceiptRenderer(requireContext())
+            .renderToBitmap(receiptNo, config.paperDots, duplicate = duplicate)
         button.visibility = View.VISIBLE
 
         if (capture == null) {
@@ -157,7 +171,8 @@ class BillFragment : Fragment(), TitledScreen {
      */
     private fun showPrinterSetup(card: View, receiptNo: Long) {
         PrinterSetup.show(requireContext()) { config ->
-            val capture = BillReceiptRenderer(requireContext()).renderToBitmap(receiptNo, config.paperDots)
+            val capture = BillReceiptRenderer(requireContext())
+                .renderToBitmap(receiptNo, config.paperDots, duplicate = duplicate)
             if (capture == null) toast("Could not render the receipt")
             else sendToThermalPrinter(capture, config, receiptNo)
         }
@@ -173,17 +188,23 @@ class BillFragment : Fragment(), TitledScreen {
         private const val ARG_DATE = "date"
         private const val ARG_TIME = "time"
         private const val ARG_TOTAL = "total"
+        private const val ARG_DUPLICATE = "duplicate"
 
         /**
          * Opens the receipt. When [receiptNo] > 0 the bill is loaded live from the
          * database; the remaining values act as a header fallback.
+         *
+         * [duplicate] heads the bill "DUPLICATE BILL", on screen and on paper - what
+         * Bill history opens, since the customer already has the original.
          */
         fun newInstance(
             billNo: String, name: String, date: String, time: String, total: String,
-            receiptNo: Long = -1L
+            receiptNo: Long = -1L,
+            duplicate: Boolean = false
         ): BillFragment = BillFragment().apply {
             arguments = Bundle().apply {
                 putLong(ARG_RECEIPT_NO, receiptNo)
+                putBoolean(ARG_DUPLICATE, duplicate)
                 putString(ARG_BILL_NO, billNo)
                 putString(ARG_NAME, name)
                 putString(ARG_DATE, date)

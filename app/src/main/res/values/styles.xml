@@ -128,6 +128,36 @@
         <item name="android:background">@drawable/pos_hint_bg</item>
     </style>
 
+    <!-- One figure on the Advance Payment account card: a caption over a value. -->
+    <style name="AdvanceStatTile">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:layout_marginHorizontal">3dp</item>
+        <item name="android:background">@drawable/bg_stat_tile</item>
+        <item name="android:padding">12dp</item>
+    </style>
+
+    <style name="AdvanceStatLabel">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:letterSpacing">0.06</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:textColor">@color/text_secondary</item>
+    </style>
+
+    <style name="AdvanceStatValue">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">4dp</item>
+        <item name="android:textSize">19sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:textColor">@color/text_main</item>
+    </style>
+
     <!-- Printed hyphen separator line, like a thermal receipt. -->
     <style name="BillDashLine">
         <item name="android:layout_width">match_parent</item>

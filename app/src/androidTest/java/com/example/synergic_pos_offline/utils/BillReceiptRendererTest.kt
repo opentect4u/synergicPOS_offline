@@ -59,7 +59,8 @@ class BillReceiptRendererTest {
         requireNotNull(receiptNo)
 
         val report = onMain {
-            val root = LayoutInflater.from(context).inflate(R.layout.fragment_bill, null, false)
+            val themed = ContextThemeWrapper(context, R.style.Theme_Synergic_POS_Offline)
+            val root = LayoutInflater.from(themed).inflate(R.layout.fragment_bill, null, false)
             val card = root.findViewById<View>(R.id.cardReceipt)
                 ?: return@onMain "cardReceipt not found in the layout"
 

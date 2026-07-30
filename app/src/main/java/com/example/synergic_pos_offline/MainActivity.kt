@@ -25,10 +25,13 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.example.synergic_pos_offline.fragments.AdvancePaymentFragment
 import com.example.synergic_pos_offline.fragments.BillHeaderFooterFragment
 import com.example.synergic_pos_offline.fragments.BillLogoFragment
+import com.example.synergic_pos_offline.fragments.CaptionFragment
 import com.example.synergic_pos_offline.fragments.CategoryDepartmentFragment
 import com.example.synergic_pos_offline.fragments.CustomerFragment
+import com.example.synergic_pos_offline.fragments.CustomerLedgerFragment
 import com.example.synergic_pos_offline.fragments.DashboardFragment
 import com.example.synergic_pos_offline.fragments.CategoryProductsFragment
 import com.example.synergic_pos_offline.fragments.DatabaseSettingsFragment
@@ -43,6 +46,7 @@ import com.example.synergic_pos_offline.fragments.PosBillingFragment
 import com.example.synergic_pos_offline.fragments.ProductsFragment
 import com.example.synergic_pos_offline.fragments.RegistrationFragment
 import com.example.synergic_pos_offline.fragments.ReportsFragment
+import com.example.synergic_pos_offline.fragments.SaleReturnRouter
 import com.example.synergic_pos_offline.fragments.SalesFragment
 import com.example.synergic_pos_offline.fragments.SettingsFragment
 import com.example.synergic_pos_offline.fragments.BillSettingsFragment
@@ -321,7 +325,18 @@ class MainActivity : AppCompatActivity() {
             "Stock & Inventory" -> navigateTo(InventoryFragment())
             "Reports" -> navigateTo(ReportsFragment())
             "Sale" -> navigateTo(PosBillingFragment())
+            "Advance Payment" -> navigateTo(AdvancePaymentFragment())
+            "Customer Ledger" -> navigateTo(CustomerLedgerFragment())
+            "Sale Return" -> {
+                val screen = SaleReturnRouter.screenFor(this)
+                if (screen == null) {
+                    android.widget.Toast.makeText(
+                        this, SaleReturnRouter.DISABLED_MESSAGE, android.widget.Toast.LENGTH_LONG
+                    ).show()
+                } else navigateTo(screen)
+            }
             "Header & Footer" -> navigateTo(HeaderFooterFragment())
+            "Captions" -> navigateTo(CaptionFragment())
             "User Management" -> navigateTo(UserManagementFragment())
             "Bill Header & Footer" -> navigateTo(BillHeaderFooterFragment())
             "Bill Header Footer Logo" -> navigateTo(BillLogoFragment())
@@ -366,6 +381,7 @@ class MainActivity : AppCompatActivity() {
 
         return listOf(
             TreeNode("Master", listOf(
+                TreeNode("Captions"),
                 TreeNode("Header & Footer", listOf(
                     TreeNode("Bill Header & Footer"),
                     TreeNode("KOT Header & Footer"),

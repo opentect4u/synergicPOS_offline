@@ -14,6 +14,7 @@ import android.widget.TextView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillHeaderFooterDao
 import com.example.synergic_pos_offline.database.BillSettingsDao
+import com.example.synergic_pos_offline.database.CaptionDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.LogoDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
@@ -31,13 +32,61 @@ private const val CARD_WIDTH_DP = 360
 private const val REFERENCE_PAPER_DOTS = 576
 
 /**
- * Below this, the item/tax rows switch from fixed weighted columns to single
- * full-width lines. A weighted column narrow enough to be smaller than one number
- * forces Android to hard-wrap mid-digit (e.g. "350.0" / "0"); a single line gets the
- * whole card's width and only ever wraps at a space, never inside a number. 58mm
- * (384 dots) falls under this; 80mm (576) and up keep the original column table.
+ * Below this, the item table is set smaller so its columns still fit the roll.
+ *
+ * The layout is the same at every width - serial and item name on one line, the
+ * quantity / unit price / net figures in their columns underneath - because that is
+ * what makes a bill readable down the page. What a 2-inch roll cannot take is the
+ * *headings* at full size: "PER UNIT PRICE" is wider than the column it labels and
+ * wraps, which drags the figures under it out of line. Stepping the type down keeps
+ * the labels on one line and the columns where they belong. 58mm (384 dots) falls
+ * under this; 80mm (576) and up print at full size.
  */
 private const val NARROW_PAPER_DOTS = 450
+
+/** Type size for the item table's headings and figures on a 2-inch roll. */
+private const val NARROW_ITEM_SP = 14f
+
+/** The same, at 80mm and wider. */
+private const val WIDE_ITEM_SP = 12.5f
+
+/**
+ * Type size for the totals block on a 2-inch roll. Its lines are label-and-figure
+ * pairs sharing one width, so at full size "ITEM: n QTY: q" runs past the half it
+ * has and wraps under itself.
+ */
+private const val NARROW_SUMMARY_SP = 13.5f
+
+/** The same, at 80mm and wider. */
+private const val WIDE_SUMMARY_SP = 12.5f
+
+/**
+ * Type size for the rest of the slip - bill number, customer, payment, footer - on
+ * a 2-inch roll. These are single-column lines with room to spare, so they can be
+ * set larger than the item table, which has three columns to fit across the same
+ * width. At 80mm they keep the size the layout gives them.
+ */
+private const val NARROW_BODY_SP = 15f
+
+/**
+ * What the item-table headings say on a 2-inch roll.
+ *
+ * "PER UNIT PRICE" and "NET AMT" are wider than the columns they label once the
+ * type is set large enough to read, and a heading that wraps takes the figures
+ * under it out of line. Shorter words for the same columns is what buys the size.
+ */
+private const val NARROW_PRICE_HEADING = "RATE"
+private const val NARROW_NET_HEADING = "AMOUNT"
+
+/**
+ * How much of the usual gap between printed rows a 2-inch slip keeps.
+ *
+ * The larger type it is set in already carries its own leading, so the padding that
+ * spaces rows apart at 80mm leaves the narrow slip looking loose - and every
+ * millimetre of it is paper. Applied to the gaps between rows only; the space
+ * within a row is what keeps a figure off the line above it.
+ */
+private const val NARROW_ROW_SPACING = 0.5f
 
 /**
  * Fills a receipt layout from the bill tables.
@@ -50,7 +99,13 @@ private const val NARROW_PAPER_DOTS = 450
  * Needs a themed context - an Activity or a Fragment's context - because it
  * inflates and measures real views.
  */
-class BillReceiptRenderer(private val ctx: Context) {
+class BillReceiptRenderer(context: Context) {
+
+    /**
+     * Pinned to a standard font scale, so the slip is identical whatever the device
+     * is set to - see [ReceiptContext].
+     */
+    private val ctx: Context = ReceiptContext.standardFontScale(context)
 
     /**
      * One printed line item: serial + name, quantity, unit price, discount and the
@@ -140,14 +195,21 @@ class BillReceiptRenderer(private val ctx: Context) {
      * same font size as an 80mm one and simply wraps more text, instead of coming out
      * as a shrunk 80mm.
      *
+     * [duplicate] stamps the slip as a second copy of a bill already issued - see
+     * [populate].
+     *
      * @return null if the bill could not be rendered, so a caller does not print blank paper
      */
-    fun renderToBitmap(receiptNo: Long, paperDots: Int = REFERENCE_PAPER_DOTS): Bitmap? = runCatching {
+    fun renderToBitmap(
+        receiptNo: Long,
+        paperDots: Int = REFERENCE_PAPER_DOTS,
+        duplicate: Boolean = false
+    ): Bitmap? = runCatching {
         val root = LayoutInflater.from(ctx).inflate(R.layout.fragment_bill, null, false)
 
         // The print button floats over the receipt and would be drawn onto the paper.
         root.findViewById<View>(R.id.btnPrintBill)?.visibility = View.GONE
-        populate(root, receiptNo, paperDots)
+        populate(root, receiptNo, paperDots, duplicate = duplicate)
 
         val card = root.findViewById<View>(R.id.cardReceipt) ?: return null
         (card.parent as? ViewGroup)?.removeView(card)
@@ -194,7 +256,14 @@ class BillReceiptRenderer(private val ctx: Context) {
             val name: String? = null,
             val phone: String? = null,
             val gstin: String? = null,
-            val address: String? = null
+            val address: String? = null,
+            /**
+             * What the customer will owe once this sale is booked - what is already
+             * on their account plus whatever this bill leaves unpaid. The preview
+             * has to work it out because nothing has been written yet; a saved bill
+             * reads the same figure straight off the master.
+             */
+            val outstanding: Double? = null
         )
 
         /**
@@ -217,15 +286,28 @@ class BillReceiptRenderer(private val ctx: Context) {
     /**
      * Fills an already-inflated receipt layout in place, for the on-screen bill.
      *
-     * [paperDots] chooses the item/tax row style: the default (80mm's width) keeps
-     * the usual column table, unchanged from before. Pass the printer's actual
-     * [paperDots] when this is heading to a printer, so a narrow paper switches to
-     * full-width lines - see [NARROW_PAPER_DOTS].
+     * [paperDots] sets how tightly the item table is packed: the default (80mm's
+     * width) prints it full size. Pass the printer's actual [paperDots] when this is
+     * heading to a printer, so a 2-inch roll gets the smaller setting its columns
+     * need - see [NARROW_PAPER_DOTS].
      *
      * [draft] renders a sale that has not been saved yet, in which case [receiptNo]
      * is unused; without one the bill is read from the transaction tables as usual.
+     *
+     * [duplicate] marks the slip as a copy of one already issued, which brings the
+     * DUPLICATE captions onto it. It is the caller's to decide, not something
+     * worked out from the print history: whether a copy counts as a duplicate is
+     * about where it was asked for - a bill pulled back up from Bill history is a
+     * second copy of one the customer already has - and the sale itself cannot
+     * know that.
      */
-    fun populate(view: View, receiptNo: Long, paperDots: Int = REFERENCE_PAPER_DOTS, draft: Draft? = null) {
+    fun populate(
+        view: View,
+        receiptNo: Long,
+        paperDots: Int = REFERENCE_PAPER_DOTS,
+        draft: Draft? = null,
+        duplicate: Boolean = false
+    ) {
         try {
             val db = DatabaseHelper.getInstance(ctx).readableDatabase
 
@@ -333,21 +415,42 @@ class BillReceiptRenderer(private val ctx: Context) {
             // sale actually captured it - the settings choose what to print, not
             // what to fabricate.
             val cust = draft?.customer?.let {
-                CustomerInfo(it.name?.uppercase(), it.phone, it.gstin, it.address?.uppercase())
+                CustomerInfo(it.name?.uppercase(), it.phone, it.gstin, it.address?.uppercase(), it.outstanding)
             } ?: loadCustomerInfo(db, customerId, receiptNo)
+            // A credit bill is an invoice the customer settles later and claims
+            // against, so their GSTIN goes on it whatever Customer Details says - if
+            // the sale captured one at all.
+            val creditSale = draft?.paymentModes?.any { it.equals("CREDIT", true) }
+                ?: billType.equals("CREDIT", true)
             val showMobile = customerDetails == BillSettingsDao.CustomerDetails.ONLY_MOBILE ||
                 customerDetails == BillSettingsDao.CustomerDetails.MOBILE_NAME ||
                 customerDetails == BillSettingsDao.CustomerDetails.MOBILE_NAME_GSTIN
             val showName = customerDetails == BillSettingsDao.CustomerDetails.MOBILE_NAME ||
                 customerDetails == BillSettingsDao.CustomerDetails.MOBILE_NAME_GSTIN ||
                 customerDetails == BillSettingsDao.CustomerDetails.ONLY_NAME
-            val showGstin = customerDetails == BillSettingsDao.CustomerDetails.MOBILE_NAME_GSTIN ||
+            val showGstin = creditSale ||
+                customerDetails == BillSettingsDao.CustomerDetails.MOBILE_NAME_GSTIN ||
                 customerDetails == BillSettingsDao.CustomerDetails.ONLY_GSTIN
+
+            // Captions head the slip, and which ones apply is only known now that
+            // the bill's type has been read. They stack: a credit bill reprinted
+            // from Bill history carries all three sets.
+            renderCaptions(view, creditSale = creditSale, duplicate = duplicate)
 
             setIfPresent(view, R.id.tvCustMobile, if (showMobile) cust.phone?.let { "MOBILE : $it" } else null)
             setIfPresent(view, R.id.tvName, if (showName) cust.name?.let { "NAME  : $it" } else null)
             setIfPresent(view, R.id.tvCustGstin, if (showGstin) cust.gstin?.let { "GSTIN : $it" } else null)
             setIfPresent(view, R.id.tvCustAddress, if (customerAddressPrinting) cust.address?.let { "ADDRESS: $it" } else null)
+            // A credit sale is collected later, so the slip has to say what the
+            // customer now owes in total - this bill plus whatever was already on
+            // their account. It is printed for credit bills whatever "Customer
+            // Details" is set to, for the same reason their GSTIN is: the figure is
+            // the point of the document, not an optional courtesy. A settled sale
+            // has nothing outstanding to report, so the line stays off.
+            setIfPresent(
+                view, R.id.tvCustOutstanding,
+                if (creditSale) cust.outstanding?.let { "OUTSTANDING: ${money(it)}" } else null
+            )
 
             val (date, time) = splitDateTime(dateTime)
             if (date.isNotEmpty()) view.findViewById<TextView>(R.id.tvDate).text = date
@@ -369,8 +472,19 @@ class BillReceiptRenderer(private val ctx: Context) {
             val showDisc = items.any { it.discount != null }
             view.findViewById<TextView>(R.id.tvColDisc).visibility =
                 if (showDisc) View.VISIBLE else View.GONE
+
+            // The headings are set at the size the figures beneath them are, so the
+            // two stay in step - a heading left at full size on a 2-inch roll wraps
+            // and takes the column alignment with it.
+            val headingSp = if (narrow) NARROW_ITEM_SP else WIDE_ITEM_SP
+            listOf(R.id.tvColSrItem, R.id.tvColQty, R.id.tvColPrice, R.id.tvColDisc, R.id.tvColNet)
+                .forEach { view.findViewById<TextView>(it).textSize = headingSp }
+            if (narrow) {
+                view.findViewById<TextView>(R.id.tvColPrice).text = NARROW_PRICE_HEADING
+                view.findViewById<TextView>(R.id.tvColNet).text = NARROW_NET_HEADING
+            }
             items.forEach {
-                llItems.addView(if (narrow) buildItemRowNarrow(it) else buildItemRow(it, showDisc))
+                llItems.addView(buildItemRow(it, showDisc, narrow))
             }
 
             val totals = lineTotals.copy(discount = discount)
@@ -387,43 +501,52 @@ class BillReceiptRenderer(private val ctx: Context) {
             // Bill summary: item count / qty / gross, each tax rate on its own line,
             // discount and totals - laid out as "label : value" lines. Replaces the
             // old base-amount tax table.
+            // The totals block follows the item table down on a 2-inch roll, so the
+            // two read as one thing rather than the figures shrinking and their
+            // totals staying large. The NET AMT value keeps its own size - Bill
+            // Settings sets that deliberately, and it is the figure being looked for.
+            val summarySp = if (narrow) NARROW_SUMMARY_SP else WIDE_SUMMARY_SP
             val netSize = if (totalAmountFontSize == BillSettingsDao.FontSize.BIG) 20f else 15f
             val llSummary = view.findViewById<LinearLayout>(R.id.llSummary)
             llSummary.removeAllViews()
             // AMT is the AMOUNT column's own total - every line's gross - so the
             // customer can add the column up and land on it.
+            // "ITEM: n  QTY: q" shares its line with the AMT figure, and on a
+            // 2-inch roll at this size the pair does not fit beside it - left to
+            // itself it breaks as "QTY:" / "3", splitting a label from its number.
+            // Stacked deliberately instead, each count stays with its own label.
+            val separator = if (narrow) "\n" else "  "
+            val counts = "ITEM: ${totals.itemCount}$separator" +
+                "QTY: ${qtyText(totals.qtyCount)}"
             llSummary.addView(
-                summaryHead(
-                    "ITEM: ${totals.itemCount}  QTY: ${qtyText(totals.qtyCount)}",
-                    "AMT: ${money(totals.grossMrp)}"
-                )
+                summaryHead(counts, "AMT: ${money(totals.grossMrp)}", summarySp, narrow)
             )
             // A pre-tax discount reduces the taxable value, so it reads before the
             // tax; a post-tax discount comes off after tax is charged on the full
             // amount, so it reads after TOTAL GST.
             val showDiscount = totals.totalDiscount > 0.005
             if (showDiscount && discountPreTax) {
-                llSummary.addView(summaryRow("DISCOUNT", money(totals.totalDiscount)))
+                llSummary.addView(summaryRow("DISCOUNT", money(totals.totalDiscount), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
             }
             taxSlabs.forEach { slab ->
                 if (isGst) {
-                    llSummary.addView(summaryRow("CGST @${rate(slab.cgstRate)}%", money(slab.cgst)))
-                    llSummary.addView(summaryRow("SGST @${rate(slab.sgstRate)}%", money(slab.sgst)))
+                    llSummary.addView(summaryRow("CGST @${rate(slab.cgstRate)}%", money(slab.cgst), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
+                    llSummary.addView(summaryRow("SGST @${rate(slab.sgstRate)}%", money(slab.sgst), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
                 } else {
-                    llSummary.addView(summaryRow("VAT @${rate(slab.vatRate)}%", money(slab.vat)))
+                    llSummary.addView(summaryRow("VAT @${rate(slab.vatRate)}%", money(slab.vat), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
                 }
             }
             if (totals.tax > 0.005) {
-                llSummary.addView(summaryRow(if (isGst) "TOTAL GST" else "TOTAL VAT", money(totals.tax)))
+                llSummary.addView(summaryRow(if (isGst) "TOTAL GST" else "TOTAL VAT", money(totals.tax), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
             }
             if (showDiscount && !discountPreTax) {
-                llSummary.addView(summaryRow("DISCOUNT", money(totals.totalDiscount)))
+                llSummary.addView(summaryRow("DISCOUNT", money(totals.totalDiscount), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
             }
-            llSummary.addView(summaryRow("TOTAL", money(totals.grandTotal)))
+            llSummary.addView(summaryRow("TOTAL", money(totals.grandTotal), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
             if (roundOffSetting) {
-                llSummary.addView(summaryRow("ROUND OFF", money(roundOff)))
+                llSummary.addView(summaryRow("ROUND OFF", money(roundOff), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
             }
-            llSummary.addView(summaryRow("NET AMT", money(payable), bold = true, valueSize = netSize))
+            llSummary.addView(summaryRow("NET AMT", money(payable), bold = true, valueSize = netSize, labelSize = summarySp, narrow = narrow))
 
             // Prefer what the bill stored, so a reprint reads exactly as the original.
             if (amountInWordsSetting) {
@@ -435,12 +558,14 @@ class BillReceiptRenderer(private val ctx: Context) {
                 view.findViewById<TextView>(R.id.tvAmountWords).visibility = View.GONE
             }
 
-            renderPayment(view, draft?.paymentModes ?: paymentModes(db, receiptNo, billType))
+            renderPayment(view, draft?.paymentModes ?: paymentModes(db, receiptNo, billType), narrow)
 
             renderFixedLines(
                 db, view, R.id.llBillFooterLines,
                 DatabaseHelper.Tables.MD_FOOTERS, "footer_text", "footer_number", "footer_type"
             )
+
+            if (narrow) enlargeBodyForNarrowPaper(view)
         } catch (e: Exception) {
             android.util.Log.e(TAG, "Error loading bill $receiptNo", e)
         }
@@ -698,6 +823,75 @@ class BillReceiptRenderer(private val ctx: Context) {
         }
     }
 
+    /**
+     * Prints the operator's caption lines at the head of the slip.
+     *
+     * BILL and DUPLICATE are alternatives, not layers: a slip is either an original
+     * or a copy of one, so a duplicate is captioned DUPLICATE *instead of* BILL.
+     * CREDIT is a separate question - how the sale was settled - so it joins
+     * whichever of the two applies.
+     *
+     * A till with no captions set up prints none and the block takes no height,
+     * which is what keeps this out of the way of anyone who does not use it.
+     */
+    private fun renderCaptions(view: View, creditSale: Boolean, duplicate: Boolean) {
+        val container = view.findViewById<LinearLayout>(R.id.llBillCaptions) ?: return
+        container.removeAllViews()
+
+        val types = buildList {
+            add(if (duplicate) CaptionDao.Type.DUPLICATE else CaptionDao.Type.BILL)
+            if (creditSale) add(CaptionDao.Type.CREDIT)
+        }
+        val captions = runCatching { CaptionDao(ctx).enabledFor(types) }.getOrDefault(emptyList())
+        if (captions.isEmpty()) return
+
+        val density = ctx.resources.displayMetrics.density
+        captions.forEach { caption ->
+            container.addView(TextView(ctx).apply {
+                text = caption.text
+                gravity = Gravity.CENTER
+                textSize = caption.fontSize.sp
+                setTypeface(Typeface.MONOSPACE, if (caption.bold) Typeface.BOLD else Typeface.NORMAL)
+                setTextColor(0xFF111111.toInt())
+                setPadding(0, (2 * density).toInt(), 0, 0)
+            })
+        }
+        // Breathing room either side, so the captions read as their own block
+        // between the header above and the bill below - but only when there is
+        // something there to space out.
+        val gap = (6 * density).toInt()
+        container.setPadding(0, gap, 0, gap)
+    }
+
+    /**
+     * Sets the slip's single-column lines to [NARROW_BODY_SP] on a 2-inch roll.
+     *
+     * Listed by id rather than swept for by current size, so adding a line to the
+     * layout is a deliberate decision to include or leave out rather than something
+     * that silently changes size because it happened to be set at 13sp. The store
+     * header and the separator rules are left alone: the header is already sized to
+     * stand out, and a wider rule only overflows the card sooner.
+     */
+    private fun enlargeBodyForNarrowPaper(view: View) {
+        listOf(
+            R.id.tvDate, R.id.tvTime, R.id.tvBillNo,
+            R.id.tvCustMobile, R.id.tvName, R.id.tvCustGstin,
+            R.id.tvCustAddress, R.id.tvCustOutstanding,
+            R.id.tvAmountWords, R.id.tvBillCreatedBy
+        ).forEach { view.findViewById<TextView>(it)?.textSize = NARROW_BODY_SP }
+
+        // The payment rows are built in code, so they are not in the list above.
+        view.findViewById<LinearLayout>(R.id.llBillPayment)?.let { block ->
+            (0 until block.childCount)
+                .mapNotNull { block.getChildAt(it) as? LinearLayout }
+                .forEach { row ->
+                    (0 until row.childCount).forEach { i ->
+                        (row.getChildAt(i) as? TextView)?.textSize = NARROW_BODY_SP
+                    }
+                }
+        }
+    }
+
     /** Fills a receipt line, or hides it when there is nothing to print there. */
     private fun setIfPresent(root: View, id: Int, value: String?) {
         val tv = root.findViewById<TextView>(id)
@@ -760,7 +954,13 @@ class BillReceiptRenderer(private val ctx: Context) {
         val name: String?,
         val phone: String?,
         val gstin: String?,
-        val address: String?
+        val address: String?,
+        /**
+         * What the customer owes in total, `md_customers.balance_amount`. Null when
+         * the sale is not attached to a master record, which is where the figure
+         * lives - a walk-in has no running account to report.
+         */
+        val outstanding: Double? = null
     )
 
     /**
@@ -774,11 +974,12 @@ class BillReceiptRenderer(private val ctx: Context) {
         var phone: String? = null
         var gstin: String? = null
         var address: String? = null
+        var outstanding: Double? = null
 
         if (customerId != null) {
             db.query(
                 DatabaseHelper.Tables.MD_CUSTOMERS,
-                arrayOf("customer_name", "phone_number", "gstin", "customer_address"),
+                arrayOf("customer_name", "phone_number", "gstin", "customer_address", "balance_amount"),
                 "id=?", arrayOf(customerId.toString()), null, null, null, "1"
             ).use { c ->
                 if (c.moveToFirst()) {
@@ -786,6 +987,9 @@ class BillReceiptRenderer(private val ctx: Context) {
                     phone = c.getString(1)?.takeIf { it.isNotBlank() }
                     gstin = c.getString(2)?.takeIf { it.isNotBlank() }
                     address = c.getString(3)?.takeIf { it.isNotBlank() }
+                    // Read after the sale is written, so this bill's own unpaid
+                    // amount is already in it - see [recordBalanceDue].
+                    outstanding = if (c.isNull(4)) 0.0 else c.getDouble(4)
                 }
             }
         }
@@ -804,7 +1008,7 @@ class BillReceiptRenderer(private val ctx: Context) {
             }
         }
 
-        return CustomerInfo(name?.uppercase(), phone, gstin, address?.uppercase())
+        return CustomerInfo(name?.uppercase(), phone, gstin, address?.uppercase(), outstanding)
     }
 
     /**
@@ -830,13 +1034,13 @@ class BillReceiptRenderer(private val ctx: Context) {
         return modes
     }
 
-    private fun renderPayment(view: View, modes: List<String>) {
+    private fun renderPayment(view: View, modes: List<String>, narrow: Boolean = false) {
         val ll = view.findViewById<LinearLayout>(R.id.llBillPayment)
         ll.removeAllViews()
         if (modes.isEmpty()) return
 
         modes.forEach { mode ->
-            val row = baseRow()
+            val row = baseRow(narrow)
             row.addView(cell("PAY MODE", 1f, Gravity.START))
             row.addView(cell(mode, 1f, Gravity.END))
             ll.addView(row)
@@ -874,14 +1078,16 @@ class BillReceiptRenderer(private val ctx: Context) {
      * for a bill whose lines carry no discount at all. Where the column is printed, a
      * dash fills it on whichever lines were not discounted.
      */
-    private fun buildItemRow(item: BillItem, showDisc: Boolean): View {
+    private fun buildItemRow(item: BillItem, showDisc: Boolean, narrow: Boolean = false): View {
+        val itemSp = if (narrow) NARROW_ITEM_SP else WIDE_ITEM_SP
         val density = ctx.resources.displayMetrics.density
+        val gap = 6 * density * (if (narrow) NARROW_ROW_SPACING else 1f)
         val container = LinearLayout(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             )
             orientation = LinearLayout.VERTICAL
-            setPadding(0, (6 * density).toInt(), 0, (6 * density).toInt())
+            setPadding(0, gap.toInt(), 0, gap.toInt())
         }
 
         val name = buildString {
@@ -895,7 +1101,7 @@ class BillReceiptRenderer(private val ctx: Context) {
             text = name
             gravity = Gravity.START
             typeface = Typeface.MONOSPACE
-            textSize = 12.5f
+            textSize = itemSp
             setTextColor(0xFF222222.toInt())
         })
 
@@ -908,41 +1114,54 @@ class BillReceiptRenderer(private val ctx: Context) {
         }
         // Weights mirror the QTY / PER UNIT PRICE / DISC / NET AMT header in
         // fragment_bill.xml - change one and the other has to follow.
-        values.addView(cell(item.qty, 1.8f, Gravity.CENTER))
-        values.addView(cell(item.price, 3f, Gravity.END))
-        if (showDisc) values.addView(cell(item.discount ?: "-", 1.8f, Gravity.END))
-        values.addView(cell(item.netAmount, 2.4f, Gravity.END))
+        values.addView(cell(item.qty, 1.8f, Gravity.CENTER, itemSp))
+        values.addView(cell(item.price, 3f, Gravity.END, itemSp))
+        if (showDisc) values.addView(cell(item.discount ?: "-", 1.8f, Gravity.END, itemSp))
+        values.addView(cell(item.netAmount, 2.4f, Gravity.END, itemSp))
         container.addView(values)
         return container
     }
 
     /** A summary line without a colon column: left label and a right-aligned value
      *  (used for the "ITEM: n QTY: q ... AMT: x" header of the summary block). */
-    private fun summaryHead(left: String, right: String): View {
-        val row = summaryRowContainer()
-        row.addView(summaryCell(left, 1f, Gravity.START, bold = true, size = 12.5f))
-        row.addView(summaryCell(right, 1f, Gravity.END, bold = true, size = 12.5f))
+    private fun summaryHead(
+        left: String,
+        right: String,
+        sizeSp: Float = WIDE_SUMMARY_SP,
+        narrow: Boolean = false
+    ): View {
+        val row = summaryRowContainer(narrow)
+        row.addView(summaryCell(left, 1f, Gravity.START, bold = true, size = sizeSp))
+        row.addView(summaryCell(right, 1f, Gravity.END, bold = true, size = sizeSp))
         return row
     }
 
     /** A "label : value" summary line, colons aligned in their own thin column. */
-    private fun summaryRow(label: String, value: String, bold: Boolean = false, valueSize: Float = 12.5f): View {
-        val row = summaryRowContainer()
-        row.addView(summaryCell(label, 3f, Gravity.START, bold, 12.5f))
-        row.addView(summaryCell(":", 0.4f, Gravity.START, bold, 12.5f))
+    private fun summaryRow(
+        label: String,
+        value: String,
+        bold: Boolean = false,
+        valueSize: Float = WIDE_SUMMARY_SP,
+        labelSize: Float = WIDE_SUMMARY_SP,
+        narrow: Boolean = false
+    ): View {
+        val row = summaryRowContainer(narrow)
+        row.addView(summaryCell(label, 3f, Gravity.START, bold, labelSize))
+        row.addView(summaryCell(":", 0.4f, Gravity.START, bold, labelSize))
         row.addView(summaryCell(value, 3f, Gravity.END, bold, valueSize))
         return row
     }
 
-    private fun summaryRowContainer(): LinearLayout {
+    private fun summaryRowContainer(narrow: Boolean = false): LinearLayout {
         val density = ctx.resources.displayMetrics.density
+        val gap = 2 * density * (if (narrow) NARROW_ROW_SPACING else 1f)
         return LinearLayout(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             )
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, (2 * density).toInt(), 0, (2 * density).toInt())
+            setPadding(0, gap.toInt(), 0, gap.toInt())
         }
     }
 
@@ -960,69 +1179,29 @@ class BillReceiptRenderer(private val ctx: Context) {
     private fun rate(v: Double): String =
         if (v % 1.0 == 0.0) v.toInt().toString() else String.format(Locale.US, "%.2f", v)
 
-    /**
-     * Item row for narrow paper: name on its own line, quantity/price/net on the
-     * next as one plain string. Each line gets the card's full width and wraps only
-     * at a space if it must - never mid-number, unlike the fixed-width columns
-     * [buildItemRow] uses (safe on 80mm, where there is room to spare).
-     *
-     * An undiscounted line's net is its gross, so "qty x price = net" reads as the
-     * sum it is; a discounted one splits the discount and net onto their own lines
-     * rather than printing an equation that does not add up.
-     */
-    private fun buildItemRowNarrow(item: BillItem): View {
-        val container = narrowContainer()
-        container.addView(narrowLine("${item.sr}. ${item.name}"))
-        if (item.hsn != null) container.addView(narrowLine("  HSN: ${item.hsn}"))
-        if (item.discount == null) {
-            container.addView(narrowLine("  ${item.qty} x ${item.price} = ${item.netAmount}"))
-        } else {
-            container.addView(narrowLine("  ${item.qty} x ${item.price}"))
-            container.addView(narrowLine("  DISC: ${item.discount}"))
-            container.addView(narrowLine("  NET AMT: ${item.netAmount}"))
-        }
-        return container
-    }
-
-    private fun narrowContainer(): LinearLayout {
+    private fun baseRow(narrow: Boolean = false): LinearLayout {
         val density = ctx.resources.displayMetrics.density
-        return LinearLayout(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, (6 * density).toInt(), 0, (6 * density).toInt())
-        }
-    }
-
-    private fun narrowLine(text: String): TextView = TextView(ctx).apply {
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        this.text = text
-        gravity = Gravity.START
-        typeface = Typeface.MONOSPACE
-        textSize = 12.5f
-        setTextColor(0xFF222222.toInt())
-    }
-
-    private fun baseRow(): LinearLayout {
-        val density = ctx.resources.displayMetrics.density
+        val gap = 6 * density * (if (narrow) NARROW_ROW_SPACING else 1f)
         return LinearLayout(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             )
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, (6 * density).toInt(), 0, (6 * density).toInt())
+            setPadding(0, gap.toInt(), 0, gap.toInt())
         }
     }
 
-    private fun cell(text: String, weight: Float, gravity: Int): TextView = TextView(ctx).apply {
+    private fun cell(
+        text: String,
+        weight: Float,
+        gravity: Int,
+        sizeSp: Float = WIDE_ITEM_SP
+    ): TextView = TextView(ctx).apply {
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight)
         this.text = text
         this.gravity = gravity
         typeface = Typeface.MONOSPACE
-        textSize = 12.5f
+        textSize = sizeSp
         setTextColor(0xFF222222.toInt())
     }
 

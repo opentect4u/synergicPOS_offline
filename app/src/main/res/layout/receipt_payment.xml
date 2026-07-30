@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The slip printed when a due is collected on the Advance Payment screen.
+  Laid out at 360dp for 80mm paper, the same reference width as fragment_bill.xml,
+  and scaled from there for narrower rolls by PaymentReceiptRenderer.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_light">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none">
+
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardPayReceipt"
+            android:layout_width="360dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="28dp"
+            app:cardCornerRadius="6dp"
+            app:cardElevation="6dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="22dp">
+
+                <!-- Header logo (md_logos BILL_HEADER), hidden when none is set -->
+                <ImageView
+                    android:id="@+id/ivPayHeaderLogo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxHeight="76dp"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:layout_marginBottom="8dp"
+                    android:contentDescription="Store logo"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvPayStoreName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="18sp"
+                    android:textColor="#111111"
+                    android:text="STORE" />
+
+                <TextView
+                    android:id="@+id/tvPayStoreAddress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvPayStorePhone"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvPayStoreGstin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="11sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <!-- Configurable header lines (md_headers) -->
+                <LinearLayout
+                    android:id="@+id/llPayHeaderLines"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- What this slip is - never a tax invoice -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="15sp"
+                    android:textColor="#111111"
+                    android:text="PAYMENT RECEIPT" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444"
+                    android:text="(against outstanding dues)" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Date | Time -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tvPayDate"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="monospace"
+                        android:textSize="13sp"
+                        android:textColor="#333333" />
+
+                    <TextView
+                        android:id="@+id/tvPayTime"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:textSize="13sp"
+                        android:textColor="#333333" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvPayReceiptNo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Who paid -->
+                <TextView
+                    android:id="@+id/tvPayCustName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvPayCustMobile"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvPayCustGstin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Figures: filled row by row from the collection -->
+                <LinearLayout
+                    android:id="@+id/llPaySummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <TextView
+                    android:id="@+id/tvPayAmountWords"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textColor="#333333"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvPayCreatedBy"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textColor="#333333" />
+
+                <!-- Configurable footer lines (md_footers) -->
+                <LinearLayout
+                    android:id="@+id/llPayFooterLines"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="vertical" />
+
+                <ImageView
+                    android:id="@+id/ivPayFooterLogo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxHeight="76dp"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:layout_marginTop="8dp"
+                    android:contentDescription="Store logo"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </ScrollView>
+</FrameLayout>

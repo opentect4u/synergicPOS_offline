@@ -30,6 +30,24 @@ class GeneralSettingsDao(context: Context) {
         }
     }
 
+    /**
+     * How a sale return is taken. Persisted as a single-letter [code] (B / I).
+     *
+     * BILL_WISE starts from the original bill and returns lines off it, so it can be
+     * held to a time limit - the bill has a date to measure from. ITEM_WISE starts
+     * from the item instead, with no bill behind it and so nothing to measure a
+     * limit against, which is why Sale Return Days only applies to the former.
+     */
+    enum class ReturnMode(val code: String, val label: String) {
+        BILL_WISE("B", "Bill-wise"), ITEM_WISE("I", "Item-wise");
+        companion object {
+            /** Accepts the stored code (B/I) or the display label. */
+            fun fromStored(value: String?): ReturnMode? = value?.let { v ->
+                values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
+            }
+        }
+    }
+
     /** How many rates an item can carry. Persisted as a single-letter [code] (S / M). */
     enum class ItemRate(val code: String, val label: String) {
         SINGLE("S", "Single"), MULTIPLE("M", "Multiple");
@@ -45,10 +63,23 @@ class GeneralSettingsDao(context: Context) {
     data class GeneralSettings(
         val mode: Mode = Mode.GROCERY,
         val saleReturn: Boolean = false,
+        val returnMode: ReturnMode = ReturnMode.BILL_WISE,
+        /** Only meaningful under [ReturnMode.BILL_WISE] - see [ReturnMode]. */
         val saleReturnDays: Int = 0,
         val lastBillStatus: Boolean = false,
         val quantityStatus: Boolean = false,
-        val itemRate: ItemRate = ItemRate.SINGLE
+        val itemRate: ItemRate = ItemRate.SINGLE,
+        /**
+         * Whether a sale captures the customer at all.
+         *
+         * Off, the till never asks: the sale carries no customer, `customer_id` is
+         * left null and the receipt prints no customer block. A credit sale is the
+         * exception - it is collected later, so it has to be attributable, and it
+         * asks for the customer and prints them whatever this says.
+         *
+         * Defaults on, which is how the till behaved before the setting existed.
+         */
+        val customerInfo: Boolean = true
     )
 
     /** Reads every general setting for the current store, applying defaults. */
@@ -58,10 +89,12 @@ class GeneralSettingsDao(context: Context) {
         return GeneralSettings(
             mode = Mode.fromStored(m[KEY_MODE]) ?: d.mode,
             saleReturn = m[KEY_SALE_RETURN]?.toBool() ?: d.saleReturn,
+            returnMode = ReturnMode.fromStored(m[KEY_RETURN_MODE]) ?: d.returnMode,
             saleReturnDays = m[KEY_SALE_RETURN_DAYS]?.toIntOrNull() ?: d.saleReturnDays,
             lastBillStatus = m[KEY_LAST_BILL_STATUS]?.toBool() ?: d.lastBillStatus,
             quantityStatus = m[KEY_QUANTITY_STATUS]?.toBool() ?: d.quantityStatus,
-            itemRate = ItemRate.fromStored(m[KEY_ITEM_RATE]) ?: d.itemRate
+            itemRate = ItemRate.fromStored(m[KEY_ITEM_RATE]) ?: d.itemRate,
+            customerInfo = m[KEY_CUSTOMER_INFO]?.toBool() ?: d.customerInfo
         )
     }
 
@@ -70,10 +103,14 @@ class GeneralSettingsDao(context: Context) {
     fun save(s: GeneralSettings) {
         put(KEY_MODE, s.mode.code)
         put(KEY_SALE_RETURN, s.saleReturn.b())
-        put(KEY_SALE_RETURN_DAYS, if (s.saleReturn) s.saleReturnDays.toString() else "0")
+        put(KEY_RETURN_MODE, s.returnMode.code)
+        // Days only bound a bill-wise return; item-wise has no bill to date from.
+        val daysApply = s.saleReturn && s.returnMode == ReturnMode.BILL_WISE
+        put(KEY_SALE_RETURN_DAYS, if (daysApply) s.saleReturnDays.toString() else "0")
         put(KEY_LAST_BILL_STATUS, s.lastBillStatus.b())
         put(KEY_QUANTITY_STATUS, s.quantityStatus.b())
         put(KEY_ITEM_RATE, s.itemRate.code)
+        put(KEY_CUSTOMER_INFO, s.customerInfo.b())
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "General settings save (type G)")
     }
@@ -150,8 +187,10 @@ class GeneralSettingsDao(context: Context) {
         const val KEY_MODE = "Mode"
         const val KEY_SALE_RETURN = "Sale Return"
         const val KEY_SALE_RETURN_DAYS = "Sale Return Days"
+        const val KEY_RETURN_MODE = "Sale Return Mode"
         const val KEY_LAST_BILL_STATUS = "Last Bill Status"
         const val KEY_QUANTITY_STATUS = "Quantity Status"
         const val KEY_ITEM_RATE = "Item Rate"
+        const val KEY_CUSTOMER_INFO = "Customer Info"
     }
 }

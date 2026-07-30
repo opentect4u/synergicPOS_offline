@@ -38,6 +38,7 @@ class MasterFragment : Fragment() {
 
         val masterItems = listOf(
             MasterItem("Header & Footer", android.R.drawable.ic_menu_crop, R.color.menu_master, R.color.menu_master_icon),
+            MasterItem("Captions", android.R.drawable.ic_menu_sort_by_size, R.color.menu_report, R.color.menu_report_icon),
             MasterItem("User Management", android.R.drawable.ic_menu_manage, R.color.menu_sale, R.color.menu_sale_icon),
             MasterItem("Database Settings", android.R.drawable.ic_menu_save, R.color.menu_settings, R.color.menu_settings_icon)
         )
@@ -52,6 +53,7 @@ class MasterFragment : Fragment() {
     private fun handleAction(title: String) {
         when (title) {
             "Header & Footer" -> openFragment(HeaderFooterFragment())
+            "Captions" -> openFragment(CaptionFragment())
             "User Management" -> openFragment(UserManagementFragment())
             "Database Settings" -> openFragment(DatabaseSettingsFragment())
             else -> Toast.makeText(requireContext(), "Opening $title...", Toast.LENGTH_SHORT).show()

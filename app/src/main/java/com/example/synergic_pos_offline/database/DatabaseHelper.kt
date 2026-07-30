@@ -40,6 +40,7 @@ class DatabaseHelper private constructor(context: Context) :
         }
         // Birthday / anniversary use the existing dob / dom columns; ensure they
         // exist on databases created before those columns were added.
+        db.execSQL(SQL_CREATE_MD_CAPTIONS)
         addColumnIfMissing(db, Tables.MD_CUSTOMERS, "dob", "TEXT")
         addColumnIfMissing(db, Tables.MD_CUSTOMERS, "dom", "TEXT")
         // New restaurant sections + tables (non-destructive; created if absent).
@@ -51,6 +52,12 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_TABLE, "from_table_no", "INTEGER")
         addColumnIfMissing(db, Tables.MD_TABLE, "to_table_no", "INTEGER")
         addColumnIfMissing(db, Tables.MD_TABLE, "waiter_id", "INTEGER")
+        // A due collection is numbered and takes a tender mode, so its receipt can
+        // be traced back to the row that produced it. The table itself is ensured
+        // first: ALTER TABLE on one that was never created would fail the open.
+        db.execSQL(SQL_CREATE_TD_ADVANCE_PAYMENTS)
+        addColumnIfMissing(db, Tables.TD_ADVANCE_PAYMENTS, "receipt_number", "TEXT")
+        addColumnIfMissing(db, Tables.TD_ADVANCE_PAYMENTS, "payment_mode", "TEXT")
         ensureProductsSchema(db)
         recreateProductRatesIfOldSchema(db)
         // "default" is a reserved word, so it must be quoted in the ALTER.
@@ -226,6 +233,7 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_MD_WAITERS)
         db.execSQL(SQL_CREATE_MD_HEADERS)
         db.execSQL(SQL_CREATE_MD_FOOTERS)
+        db.execSQL(SQL_CREATE_MD_CAPTIONS)
         db.execSQL(SQL_CREATE_MD_LOGOS)
         db.execSQL(SQL_CREATE_MD_QR)
         db.execSQL(SQL_CREATE_MD_APP_SETTINGS)
@@ -716,6 +724,7 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_WAITERS = "md_waiters"
         const val MD_HEADERS = "md_headers"
         const val MD_FOOTERS = "md_footers"
+        const val MD_CAPTIONS = "md_captions"
         const val MD_LOGOS = "md_logos"
         const val MD_QR = "md_qr"
         const val MD_APP_SETTINGS = "md_app_settings"
@@ -771,7 +780,8 @@ class DatabaseHelper private constructor(context: Context) :
         private val ALL_TABLES = listOf(
             Tables.MD_REGISTRATION, Tables.MD_USERS, Tables.MD_CATEGORY, Tables.MD_UNITS,
             Tables.MD_PRODUCTS, Tables.MD_PRODUCT_RATES, Tables.MD_CUSTOMERS, Tables.MD_DESCRIPTION,
-            Tables.MD_WAITERS, Tables.MD_HEADERS, Tables.MD_FOOTERS, Tables.MD_LOGOS, Tables.MD_QR,
+            Tables.MD_WAITERS, Tables.MD_HEADERS, Tables.MD_FOOTERS, Tables.MD_CAPTIONS, Tables.MD_LOGOS,
+            Tables.MD_QR,
             Tables.MD_APP_SETTINGS, Tables.MD_SUPPLIER, Tables.MD_BATCH_STOCK, Tables.MD_VERSION,
             Tables.MD_PRINTER, Tables.MD_OPERATING_PRINTER,
             Tables.TD_PURCHASE, Tables.TD_PURCHASE_RETURN, Tables.TD_WRITE_OFF, Tables.TD_BILLS,
@@ -974,6 +984,24 @@ class DatabaseHelper private constructor(context: Context) :
                 is_bold INTEGER NOT NULL DEFAULT 0,
                 is_enabled INTEGER NOT NULL DEFAULT 1,
                 footer_type TEXT CHECK(footer_type IN ('BILL','KOT'))
+            )
+        """
+
+        /**
+         * Captions are header/footer lines by another name - same columns, same
+         * limits - but keyed to what the slip *is* rather than where on it the line
+         * sits: an ordinary bill, a credit bill, or a reprint of one already issued.
+         */
+        private const val SQL_CREATE_MD_CAPTIONS = """
+            CREATE TABLE IF NOT EXISTS md_captions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                caption_number INTEGER CHECK(caption_number BETWEEN 1 AND 10),
+                caption_text TEXT,
+                font_size TEXT CHECK(font_size IN ('SMALL','MEDIUM','BIG','EXTRA_LARGE')),
+                is_bold INTEGER NOT NULL DEFAULT 0,
+                is_enabled INTEGER NOT NULL DEFAULT 1,
+                caption_type TEXT CHECK(caption_type IN ('BILL','DUPLICATE','CREDIT'))
             )
         """
 
@@ -1415,9 +1443,11 @@ class DatabaseHelper private constructor(context: Context) :
             CREATE TABLE IF NOT EXISTS td_advance_payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
+                receipt_number TEXT,
                 advance_amount REAL,
                 remaining_balance REAL,
                 payment_date TEXT,
+                payment_mode TEXT,
                 notes TEXT,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,

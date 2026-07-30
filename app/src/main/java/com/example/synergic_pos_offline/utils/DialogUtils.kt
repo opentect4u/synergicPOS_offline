@@ -62,9 +62,7 @@ object DialogUtils {
         btnPositive.text = positiveText
         btnNegative.text = negativeText
 
-        btnPositive.backgroundTintList = ColorStateList.valueOf(positiveColor)
-        btnNegative.setTextColor(accent)
-        btnNegative.strokeColor = ColorStateList.valueOf(accent)
+        ThemeManager.styleDialogButtons(btnPositive, btnNegative, positiveColor)
 
         btnPositive.setOnClickListener {
             dialog.dismiss()
@@ -114,7 +112,7 @@ object DialogUtils {
         tvMessage.text = message
         btnNegative.visibility = android.view.View.GONE
         btnPositive.text = buttonText
-        btnPositive.backgroundTintList = ColorStateList.valueOf(accent)
+        ThemeManager.styleDialogButtons(btnPositive, null)
 
         btnPositive.setOnClickListener {
             dialog.dismiss()
@@ -235,9 +233,7 @@ object DialogUtils {
         }
 
         ThemeManager.applyTheme(grid)
-        btnPositive.backgroundTintList = ColorStateList.valueOf(accent)
-        btnNegative.setTextColor(accent)
-        btnNegative.strokeColor = ColorStateList.valueOf(accent)
+        ThemeManager.styleDialogButtons(btnPositive, btnNegative)
 
         btnPositive.setOnClickListener {
             val values = inputs.map { it.text?.toString()?.trim().orEmpty() }
