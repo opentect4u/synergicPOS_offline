@@ -2,6 +2,7 @@ package com.example.synergic_pos_offline.database
 
 import android.content.ContentValues
 import android.content.Context
+import android.database.Cursor
 import com.example.synergic_pos_offline.utils.SessionManager
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -24,7 +25,6 @@ class CustomerDao(context: Context) {
         val gstin: String,
         val creditEnabled: Boolean,
         val creditLimit: Double,
-        val creditDays: Int,
         val balance: Double,
         /** Birthday (dob) and anniversary (dom), stored as "yyyy-MM-dd" or "". */
         val birthday: String = "",
@@ -35,30 +35,9 @@ class CustomerDao(context: Context) {
     fun getAll(): List<Customer> {
         val list = mutableListOf<Customer>()
         helper.readableDatabase.query(
-            table,
-            arrayOf(
-                "id", "customer_name", "customer_address", "phone_number", "gstin",
-                "credit_enabled", "credit_limit", "credit_days", "balance_amount", "dob", "dom"
-            ),
-            null, null, null, null, "id ASC"
+            table, COLUMNS, null, null, null, null, "id ASC"
         ).use { c ->
-            while (c.moveToNext()) {
-                list.add(
-                    Customer(
-                        id = c.getLong(0),
-                        name = c.getString(1).orEmpty(),
-                        address = c.getString(2).orEmpty(),
-                        phone = c.getString(3).orEmpty(),
-                        gstin = c.getString(4).orEmpty(),
-                        creditEnabled = c.getInt(5) == 1,
-                        creditLimit = c.getDouble(6),
-                        creditDays = c.getInt(7),
-                        balance = c.getDouble(8),
-                        birthday = c.getString(9).orEmpty(),
-                        anniversary = c.getString(10).orEmpty()
-                    )
-                )
-            }
+            while (c.moveToNext()) list.add(c.toCustomer())
         }
         return list
     }
@@ -67,31 +46,60 @@ class CustomerDao(context: Context) {
     fun findByPhone(phone: String?): Customer? {
         if (phone.isNullOrBlank()) return null
         helper.readableDatabase.query(
-            table,
-            arrayOf(
-                "id", "customer_name", "customer_address", "phone_number", "gstin",
-                "credit_enabled", "credit_limit", "credit_days", "balance_amount", "dob", "dom"
-            ),
-            "phone_number = ?", arrayOf(phone.trim()), null, null, "id ASC", "1"
+            table, COLUMNS, "phone_number = ?", arrayOf(phone.trim()), null, null, "id ASC", "1"
         ).use { c ->
-            if (c.moveToFirst()) {
-                return Customer(
-                    id = c.getLong(0),
-                    name = c.getString(1).orEmpty(),
-                    address = c.getString(2).orEmpty(),
-                    phone = c.getString(3).orEmpty(),
-                    gstin = c.getString(4).orEmpty(),
-                    creditEnabled = c.getInt(5) == 1,
-                    creditLimit = c.getDouble(6),
-                    creditDays = c.getInt(7),
-                    balance = c.getDouble(8),
-                    birthday = c.getString(9).orEmpty(),
-                    anniversary = c.getString(10).orEmpty()
-                )
-            }
+            if (c.moveToFirst()) return c.toCustomer()
         }
         return null
     }
+
+    /** The customer with this row id, or null when it no longer exists. */
+    fun findById(id: Long): Customer? {
+        helper.readableDatabase.query(
+            table, COLUMNS, "id = ?", arrayOf(id.toString()), null, null, null, "1"
+        ).use { c ->
+            if (c.moveToFirst()) return c.toCustomer()
+        }
+        return null
+    }
+
+    /**
+     * Customers whose name or phone number contains [term], for a type-ahead
+     * lookup. A blank term matches nobody: an empty search box should offer
+     * nothing rather than dump the whole master into a dropdown.
+     *
+     * Ordered by name so the list reads the way the operator scans it.
+     */
+    fun search(term: String, limit: Int = 25): List<Customer> {
+        val trimmed = term.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        // LIKE's own wildcards in the typed text would silently widen the search.
+        val pattern = "%" + trimmed.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+        val list = mutableListOf<Customer>()
+        helper.readableDatabase.query(
+            table, COLUMNS,
+            "customer_name LIKE ? ESCAPE '!' OR phone_number LIKE ? ESCAPE '!'",
+            arrayOf(pattern, pattern),
+            null, null, "customer_name COLLATE NOCASE ASC", limit.toString()
+        ).use { c ->
+            while (c.moveToNext()) list.add(c.toCustomer())
+        }
+        return list
+    }
+
+    /** Reads a customer off a cursor positioned on a row selected with [COLUMNS]. */
+    private fun Cursor.toCustomer(): Customer = Customer(
+        id = getLong(0),
+        name = getString(1).orEmpty(),
+        address = getString(2).orEmpty(),
+        phone = getString(3).orEmpty(),
+        gstin = getString(4).orEmpty(),
+        creditEnabled = getInt(5) == 1,
+        creditLimit = getDouble(6),
+        balance = getDouble(7),
+        birthday = getString(8).orEmpty(),
+        anniversary = getString(9).orEmpty()
+    )
 
     /** Inserts a new customer and returns its new row id (or -1 on failure). */
     fun insert(customer: Customer): Long {
@@ -122,7 +130,9 @@ class CustomerDao(context: Context) {
         if (anniversary.isBlank()) putNull("dom") else put("dom", anniversary)
         put("credit_enabled", if (creditEnabled) 1 else 0)
         put("credit_limit", creditLimit)
-        put("credit_days", creditDays)
+        // credit_days is no longer collected anywhere. The column stays on the
+        // table so existing rows keep whatever was recorded against them, but
+        // nothing here writes it any more.
         put("balance_amount", balance)
         if (isNew) {
             put("store_id", currentStoreId())
@@ -147,4 +157,12 @@ class CustomerDao(context: Context) {
 
     private fun now(): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+
+    private companion object {
+        /** Selected in this order by every read here; [Cursor.toCustomer] indexes it. */
+        val COLUMNS = arrayOf(
+            "id", "customer_name", "customer_address", "phone_number", "gstin",
+            "credit_enabled", "credit_limit", "balance_amount", "dob", "dom"
+        )
+    }
 }

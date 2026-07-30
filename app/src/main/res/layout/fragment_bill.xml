@@ -93,6 +93,17 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
 
+                <!-- Captions (md_captions): the operator's own lines for what this
+                     slip is - an ordinary bill, one on credit, a reprint of one
+                     already issued. Sits under the whole header block, so the store
+                     identity reads first and the caption qualifies it. Empty unless
+                     captions have been set up. -->
+                <LinearLayout
+                    android:id="@+id/llBillCaptions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
                 <!-- Date | Time -->
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -172,6 +183,18 @@
                     android:textColor="#222222"
                     android:visibility="gone" />
 
+                <!-- What the customer owes once this bill is on their account.
+                     Credit sales only - a settled sale leaves nothing outstanding. -->
+                <TextView
+                    android:id="@+id/tvCustOutstanding"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
                 <TextView style="@style/BillDashLine" />
 
                 <!-- Items header: the item name sits on its own row, so the header
@@ -182,6 +205,7 @@
                     android:orientation="vertical">
 
                     <TextView
+                        android:id="@+id/tvColSrItem"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="SR.NO ITEM"
@@ -196,6 +220,7 @@
                         android:orientation="horizontal">
 
                         <TextView
+                            android:id="@+id/tvColQty"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1.8"
@@ -208,6 +233,7 @@
 
                         <!-- Weighted wide enough to keep the label on one line. -->
                         <TextView
+                            android:id="@+id/tvColPrice"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="3"
@@ -236,6 +262,7 @@
                         <!-- The line's gross less its discount - what it actually
                              contributes to the bill. -->
                         <TextView
+                            android:id="@+id/tvColNet"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="2.4"

@@ -30,6 +30,7 @@ import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.PrinterSetup
+import com.example.synergic_pos_offline.utils.ReceiptContext
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThemeManager
@@ -37,6 +38,7 @@ import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import android.widget.ArrayAdapter
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import java.text.SimpleDateFormat
@@ -149,6 +151,21 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      */
     private fun cashReceptionEnabled() = appSettings.paymentMode && appSettings.cashReception
 
+    /**
+     * Whether a sale captures the customer at all - General Settings' "Customer
+     * Info". Off, nothing on this screen collects or shows one, and the sale is
+     * written with a null `customer_id`.
+     *
+     * A credit sale is the exception throughout: it is collected later, so it has
+     * to be attributable, and it asks for the customer and prints them regardless.
+     */
+    private val capturesCustomer: Boolean by lazy {
+        com.example.synergic_pos_offline.database.GeneralSettingsDao(requireContext()).load().customerInfo
+    }
+
+    /** True when this sale carries a customer at all - see [capturesCustomer]. */
+    private fun customerApplies(): Boolean = capturesCustomer || method == Method.CREDIT
+
     private var creditCustomerName = ""
     private var creditCustomerPhone = ""
     private var creditCustomerAddress = ""
@@ -191,6 +208,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         id<MaterialButton>(R.id.btnHold).setOnClickListener { onHold() }
         id<MaterialButton>(R.id.btnHeld).setOnClickListener { showHeldDialog() }
         id<android.widget.ImageButton>(R.id.btnCustInfo).setOnClickListener { showCustomerDetails() }
+        applyCustomerVisibility()
 
         // Accent bars
         id<View>(R.id.barLeftTotal).setBackgroundColor(accent)
@@ -441,8 +459,14 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      * the details are pulled from the master and used as they are. The dialog only
      * appears when something is actually missing, prefilled with whatever is on file
      * so the operator types the gap rather than the whole record.
+     *
+     * A customer already on file must also have credit switched on: the flag is what
+     * says this customer is allowed to owe the store money, so a sale cannot be put
+     * on the account of someone who has never been given credit terms.
      */
     private fun ensureCreditCustomer() {
+        if (blockCreditIfIneligible()) return
+
         // Already captured earlier in this checkout.
         if (creditCustomerName.isNotBlank() && creditCustomerPhone.isNotBlank()) {
             updateHeaderWithCustomer()
@@ -460,7 +484,21 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             return
         }
 
-        // Prefill the gaps we can, then ask for the rest.
+        showCreditCustomerDialog()
+    }
+
+    /**
+     * Fills in whatever is already known about the sale's customer, from the master
+     * first and the sale itself second.
+     *
+     * Called from the dialog rather than from one route into it, so it opens with the
+     * same details however it was reached - including from the credit-not-enabled
+     * message, which stops before any of the flow below it runs. A customer with no
+     * master record still arrives with at least the phone number the sale was rung up
+     * against, rather than an empty form.
+     */
+    private fun prefillCreditCustomer() {
+        val onFile = currentCustomer()
         if (creditCustomerPhone.isBlank()) {
             creditCustomerPhone = onFile?.phone?.takeIf { it.isNotBlank() }
                 ?: CheckoutSession.customerPhone.orEmpty()
@@ -471,26 +509,120 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         }
         if (creditCustomerAddress.isBlank()) creditCustomerAddress = onFile?.address.orEmpty()
         if (creditCustomerGstin.isBlank()) creditCustomerGstin = onFile?.gstin.orEmpty()
-
-        showCreditCustomerDialog()
     }
 
     /**
-     * Writes details captured for a credit sale back to the customer master, so the
-     * same gaps are not asked for again on the next visit. Only fills blanks - it
-     * never overwrites something already recorded against the customer.
+     * The gate a sale has to pass before it can go on a customer's account: they must
+     * have credit switched on, and enough of their limit left to carry what is
+     * payable. Whichever way it falls short, the operator is told and sent to the
+     * customer's details to fix it.
+     *
+     * Checked both when credit is chosen and again when the bill is completed - the
+     * cart can be edited in between, and a sale that has grown past the limit since
+     * must not slip through on a mode picked when it still fitted.
+     *
+     * A customer with no master record has no limit to test, so nothing is blocked
+     * here; the details dialog captures them first.
+     *
+     * @return true when the sale was blocked, and the caller should stop.
      */
-    private fun saveCreditCustomerDetails() {
-        val onFile = currentCustomer() ?: return
-        val merged = onFile.copy(
-            name = onFile.name.ifBlank { creditCustomerName },
-            address = onFile.address.ifBlank { creditCustomerAddress },
-            gstin = onFile.gstin.ifBlank { creditCustomerGstin }
-        )
-        if (merged == onFile) return
-        runCatching { CustomerDao(requireContext()).update(onFile.id, merged) }
-            .onFailure { android.util.Log.e("PosCheckoutFragment", "Could not save details", it) }
+    private fun blockCreditIfIneligible(): Boolean {
+        val onFile = currentCustomer() ?: return false
+        if (!onFile.creditEnabled) {
+            showCreditDisabledDialog(onFile.name.takeIf { it.isNotBlank() } ?: onFile.phone)
+            return true
+        }
+        val payable = total()
+        if (onFile.creditLimit < payable - 0.005) {
+            showCreditLimitDialog(onFile.creditLimit, payable)
+            return true
+        }
+        return false
     }
+
+    /**
+     * Stops a credit sale the customer's remaining limit cannot carry, and says by
+     * how much it falls short. Confirming opens their details, where the limit can be
+     * raised; the sale goes through once it covers what is payable.
+     */
+    private fun showCreditLimitDialog(limit: Double, payable: Double) {
+        DialogUtils.showConfirm(
+            context = requireContext(),
+            title = "Credit limit too low",
+            message = "This sale comes to ${money(payable)}, but only ${money(limit)} of credit " +
+                "is left on the account. Raise the credit limit to at least ${money(payable)} " +
+                "to bill it to their account.",
+            positiveText = "Open details",
+            negativeText = "Cancel",
+            onConfirm = { showCreditCustomerDialog() }
+        )
+        setMethod(Method.CASH)
+    }
+
+    /**
+     * Stops a credit sale to a customer whose credit flag is off, and says why.
+     *
+     * Confirming opens their details, where the same Credit switch the customer
+     * master carries can be turned on and saved; the sale can then be put on credit
+     * on the next attempt. Either way the payment mode falls back to cash, so a bill
+     * cannot be completed on credit the customer does not have.
+     */
+    private fun showCreditDisabledDialog(who: String) {
+        DialogUtils.showConfirm(
+            context = requireContext(),
+            title = "Credit not enabled",
+            message = "Credit is switched off for $who. Turn Credit on in the customer's " +
+                "details before billing this sale to their account.",
+            positiveText = "Open details",
+            negativeText = "Cancel",
+            onConfirm = { showCreditCustomerDialog() }
+        )
+        setMethod(Method.CASH)
+    }
+
+    /**
+     * Writes the details captured for a credit sale to the customer master, so the
+     * same questions are not asked again on the next visit.
+     *
+     * Matched on the phone number typed in the dialog, which is the number the bill
+     * goes out under. A number not already on file is inserted rather than left to
+     * live only on this one bill: a credit sale has to hang off a customer record for
+     * the balance it runs up to be traceable at all.
+     *
+     * The dialog opens prefilled from this same record, so saving what is on screen
+     * writes back only what the operator actually changed.
+     */
+    private fun saveCreditCustomer(details: CustomerDao.Customer) {
+        val dao = CustomerDao(requireContext())
+        runCatching {
+            val onFile = dao.findByPhone(details.phone)
+            if (onFile == null) dao.insert(details.copy(id = 0L)) else dao.update(onFile.id, details.copy(id = onFile.id))
+        }.onFailure { android.util.Log.e("PosCheckoutFragment", "Could not save customer details", it) }
+    }
+
+    /** Opens a calendar seeded with [current] ("yyyy-MM-dd") and returns the pick. */
+    private fun pickDate(current: String?, onPicked: (String) -> Unit) {
+        val cal = java.util.Calendar.getInstance()
+        current?.takeIf { it.isNotBlank() }?.let { s ->
+            runCatching {
+                val p = s.split("-")
+                cal.set(p[0].toInt(), p[1].toInt() - 1, p[2].toInt())
+            }
+        }
+        android.app.DatePickerDialog(
+            requireContext(),
+            { _, year, month, day ->
+                onPicked(String.format(Locale.US, "%04d-%02d-%02d", year, month + 1, day))
+            },
+            cal.get(java.util.Calendar.YEAR),
+            cal.get(java.util.Calendar.MONTH),
+            cal.get(java.util.Calendar.DAY_OF_MONTH)
+        ).show()
+    }
+
+    /** A whole number without a needless ".0" - what the master shows in its inputs. */
+    private fun trimNumber(v: Double): String =
+        if (v == v.toLong().toDouble()) v.toLong().toString() else v.toString()
 
     // ---- Mode / method / receipt selection --------------------------------
 
@@ -532,6 +664,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
         id<TextView>(R.id.tvPayingBy).text = "Paying by $title"
         applyTileStyles()
+        applyCustomerVisibility()
         refreshTotals()
 
         if (m == Method.CREDIT) {
@@ -861,7 +994,10 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      *  every render. */
     private val receiptView: View by lazy {
         val host = id<FrameLayout>(R.id.scrollReceipt)
-        layoutInflater.inflate(R.layout.fragment_bill, host, false).also { bill ->
+        // Standard font scale, like the print - see [ReceiptContext]. The rest of
+        // this screen still honours the device's text size; only the slip is pinned.
+        LayoutInflater.from(ReceiptContext.standardFontScale(requireContext()))
+            .inflate(R.layout.fragment_bill, host, false).also { bill ->
             // Printing is the checkout button's job; the preview only shows the bill.
             bill.findViewById<View>(R.id.btnPrintBill)?.visibility = View.GONE
             host.addView(bill)
@@ -889,11 +1025,20 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      * preview cannot quote a figure the completed sale will not.
      */
     private fun buildDraft(): BillReceiptRenderer.Draft {
-        val onFile = currentCustomer()
+        val onFile = currentCustomer().takeIf { customerApplies() }
         val name = creditCustomerName.ifEmpty { onFile?.name ?: CheckoutSession.customerName.orEmpty() }
         val phone = creditCustomerPhone.ifEmpty { onFile?.phone ?: CheckoutSession.customerPhone.orEmpty() }
         val gstin = creditCustomerGstin.ifEmpty { onFile?.gstin.orEmpty() }
         val address = creditCustomerAddress.ifEmpty { onFile?.address.orEmpty() }
+        // What the customer will owe once this sale is booked: what is already on
+        // their account plus whatever this bill leaves unpaid - the same sum
+        // [BillDao.recordBalanceDue] will write, so the preview and the printed
+        // slip quote one figure. Only a customer on the master has an account to
+        // add it to, and only a credit sale adds anything to it.
+        val outstanding = onFile?.takeIf { method == Method.CREDIT }?.let { customer ->
+            val paidNow = id<TextInputEditText>(R.id.etCredit).text?.toString()?.toDoubleOrNull() ?: 0.0
+            BillRounding.toPaise(customer.balance + (total() - paidNow).coerceAtLeast(0.0))
+        }
         return BillReceiptRenderer.Draft(
             billNumber = BillDao(requireContext()).nextBillNumber(),
             dateTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()),
@@ -902,7 +1047,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                 name = name.ifEmpty { null },
                 phone = phone.ifEmpty { null },
                 gstin = gstin.ifEmpty { null },
-                address = address.ifEmpty { null }
+                address = address.ifEmpty { null },
+                outstanding = outstanding
             ),
             items = lines.map { line ->
                 BillReceiptRenderer.Draft.Item(
@@ -927,6 +1073,9 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
     private fun complete() {
         if (lines.isEmpty()) { toast("The bill is empty"); return }
+        // Re-checked here, not just when credit was chosen: the cart may have grown
+        // past the customer's limit since.
+        if (method == Method.CREDIT && blockCreditIfIneligible()) return
 
         val result = generateBill()
         if (result == null) {
@@ -1062,9 +1211,11 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             else -> grandTotal to 0.0
         }
 
-        // Resolve customer: credit dialog details take precedence, else the sale's customer.
-        val custName = creditCustomerName.ifEmpty { CheckoutSession.customerName ?: "" }
-        val custPhone = creditCustomerPhone.ifEmpty { CheckoutSession.customerPhone ?: "" }
+        // Resolve customer: credit dialog details take precedence, else the sale's
+        // customer. With capture off, a non-credit sale has none at all - the fields
+        // stay empty and customer_id below resolves to null.
+        val custName = if (customerApplies()) creditCustomerName.ifEmpty { CheckoutSession.customerName ?: "" } else ""
+        val custPhone = if (customerApplies()) creditCustomerPhone.ifEmpty { CheckoutSession.customerPhone ?: "" } else ""
         // Resolve against the phone actually printed on the bill so an edited number
         // cannot attach the sale to the previously selected customer. The id captured
         // when the customer was picked in billing is the fallback, which also covers
@@ -1239,6 +1390,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     // ---- Credit Customer Information ----------------------------------------
 
     private fun showCreditCustomerDialog() {
+        prefillCreditCustomer()
         val ctx = requireContext()
         val inflater = LayoutInflater.from(ctx)
         val view = inflater.inflate(R.layout.dialog_form, null)
@@ -1258,75 +1410,98 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
         val density = ctx.resources.displayMetrics.density
         val margin = (8 * density).toInt()
-        val inputs = mutableListOf<TextInputEditText>()
 
-        // Phone field (first)
-        var tilPhone = inflater.inflate(R.layout.item_form_field, null, false) as TextInputLayout
-        tilPhone.hint = "Phone Number"
-        tilPhone.layoutParams = GridLayout.LayoutParams().apply {
-            rowSpec = GridLayout.spec(0)
-            columnSpec = GridLayout.spec(0, 2, 1f)
-            width = 0
-            height = ViewGroup.LayoutParams.WRAP_CONTENT
-            setMargins(margin, margin / 2, margin, margin / 2)
-        }
-        val etPhone = tilPhone.findViewById<TextInputEditText>(R.id.etField)
-        etPhone.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        etPhone.filters = arrayOf(android.text.InputFilter.LengthFilter(10))
-        etPhone.setText(creditCustomerPhone)
-        grid.addView(tilPhone)
-        inputs.add(etPhone)
+        // Whatever the master already holds for this customer, so the form opens as
+        // the record stands and a field left alone saves back unchanged.
+        val onFile = currentCustomer()
 
-        // Name field
-        var tilName = inflater.inflate(R.layout.item_form_field, null, false) as TextInputLayout
-        tilName.hint = "Customer Name"
-        tilName.layoutParams = GridLayout.LayoutParams().apply {
-            rowSpec = GridLayout.spec(1)
-            columnSpec = GridLayout.spec(0, 1, 1f)
-            width = 0
-            height = ViewGroup.LayoutParams.WRAP_CONTENT
-            setMargins(margin, margin / 2, margin, margin / 2)
+        /** Adds one outlined input at [row], spanning [span] of the grid's 2 columns. */
+        fun field(hint: String, row: Int, col: Int, span: Int, value: String): TextInputLayout {
+            val til = inflater.inflate(R.layout.item_form_field, null, false) as TextInputLayout
+            til.hint = hint
+            til.layoutParams = GridLayout.LayoutParams().apply {
+                rowSpec = GridLayout.spec(row)
+                columnSpec = GridLayout.spec(col, span, 1f)
+                width = 0
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
+                setMargins(margin, margin / 2, margin, margin / 2)
+            }
+            grid.addView(til)
+            til.findViewById<TextInputEditText>(R.id.etField).setText(value)
+            return til
         }
-        val etName = tilName.findViewById<TextInputEditText>(R.id.etField)
-        etName.setText(creditCustomerName)
-        grid.addView(tilName)
-        inputs.add(etName)
 
-        // Address field
-        var tilAddress = inflater.inflate(R.layout.item_form_field, null, false) as TextInputLayout
-        tilAddress.hint = "Address"
-        tilAddress.layoutParams = GridLayout.LayoutParams().apply {
-            rowSpec = GridLayout.spec(2)
-            columnSpec = GridLayout.spec(0, 2, 1f)
-            width = 0
-            height = ViewGroup.LayoutParams.WRAP_CONTENT
-            setMargins(margin, margin / 2, margin, margin / 2)
-        }
-        val etAddress = tilAddress.findViewById<TextInputEditText>(R.id.etField)
-        etAddress.setText(creditCustomerAddress)
-        etAddress.minLines = 3
-        etAddress.maxLines = 5
-        etAddress.isSingleLine = false
-        grid.addView(tilAddress)
-        inputs.add(etAddress)
+        fun editText(til: TextInputLayout) = til.findViewById<TextInputEditText>(R.id.etField)
 
-        // GSTIN field
-        var tilGstin = inflater.inflate(R.layout.item_form_field, null, false) as TextInputLayout
-        tilGstin.hint = "GSTIN"
-        tilGstin.layoutParams = GridLayout.LayoutParams().apply {
-            rowSpec = GridLayout.spec(3)
-            columnSpec = GridLayout.spec(0, 2, 1f)
-            width = 0
-            height = ViewGroup.LayoutParams.WRAP_CONTENT
-            setMargins(margin, margin / 2, margin, margin / 2)
+        // The same fields the customer master keeps, in the same order, so a credit
+        // sale can capture the whole record rather than the four details the bill
+        // itself needs and leave the rest to be filled in later.
+        val etPhone = editText(field("Phone Number", 0, 0, 2, creditCustomerPhone)).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            filters = arrayOf(android.text.InputFilter.LengthFilter(10))
         }
-        val etGstin = tilGstin.findViewById<TextInputEditText>(R.id.etField)
-        etGstin.setText(creditCustomerGstin)
-        grid.addView(tilGstin)
-        inputs.add(etGstin)
+        val etName = editText(field("Customer Name", 1, 0, 2, creditCustomerName))
+        val etAddress = editText(field("Address", 2, 0, 2, creditCustomerAddress)).apply {
+            minLines = 3
+            maxLines = 5
+            isSingleLine = false
+        }
+        val etGstin = editText(field("GSTIN", 3, 0, 2, creditCustomerGstin))
+
+        // Dates are picked from a calendar, never typed, so they can only ever be
+        // stored in the yyyy-MM-dd the master expects.
+        val etBirthday = editText(field("Birthday", 4, 0, 1, onFile?.birthday.orEmpty())).apply {
+            isFocusable = false
+            setOnClickListener { pickDate(text?.toString()) { setText(it) } }
+        }
+        val etAnniversary = editText(field("Anniversary", 4, 1, 1, onFile?.anniversary.orEmpty())).apply {
+            isFocusable = false
+            setOnClickListener { pickDate(text?.toString()) { setText(it) } }
+        }
+
+        // Credit switch, laid out as its own full-width row.
+        val creditRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = GridLayout.LayoutParams().apply {
+                rowSpec = GridLayout.spec(5)
+                columnSpec = GridLayout.spec(0, 2, 1f)
+                width = 0
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
+                setMargins(margin, margin / 2, margin, margin / 2)
+            }
+        }
+        creditRow.addView(TextView(ctx).apply {
+            text = "Credit"
+            textSize = 16f
+            setTextColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.text_main))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        val swCredit = SwitchMaterial(ctx).apply {
+            isChecked = onFile?.creditEnabled ?: true
+            thumbTintList = android.content.res.ColorStateList.valueOf(accent)
+        }
+        creditRow.addView(swCredit)
+        grid.addView(creditRow)
+
+        val tilLimit = field("Credit Limit", 6, 0, 1, onFile?.let { trimNumber(it.creditLimit) }.orEmpty())
+        val tilBalance = field("Balance Amount", 6, 1, 1, onFile?.let { trimNumber(it.balance) }.orEmpty())
+        editText(tilLimit).inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+            android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        editText(tilBalance).inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+            android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+
+        // Credit gates the figures that only exist because of it, exactly as the
+        // customer master does.
+        fun applyCreditState(enabled: Boolean) {
+            tilLimit.isEnabled = enabled
+            tilBalance.isEnabled = enabled
+        }
+        applyCreditState(swCredit.isChecked)
+        swCredit.setOnCheckedChangeListener { _, checked -> applyCreditState(checked) }
 
         // Phone autocomplete with suggestions
-        val customerDao = com.example.synergic_pos_offline.database.CustomerDao(ctx)
+        val customerDao = CustomerDao(ctx)
         val suggestionsContainer = view.findViewById<LinearLayout>(R.id.llSuggestions)
 
         etPhone.addTextChangedListener(object : TextWatcher {
@@ -1353,10 +1528,17 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                                     LinearLayout.LayoutParams.WRAP_CONTENT
                                 )
                                 setOnClickListener {
+                                    // Picking a suggestion fills the whole record, not
+                                    // just the four details the bill needs.
                                     etPhone.setText(customer.phone)
                                     etName.setText(customer.name)
                                     etAddress.setText(customer.address)
                                     etGstin.setText(customer.gstin)
+                                    etBirthday.setText(customer.birthday)
+                                    etAnniversary.setText(customer.anniversary)
+                                    swCredit.isChecked = customer.creditEnabled
+                                    editText(tilLimit).setText(trimNumber(customer.creditLimit))
+                                    editText(tilBalance).setText(trimNumber(customer.balance))
                                     suggestionsContainer.visibility = View.GONE
                                 }
                             }
@@ -1373,31 +1555,65 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         })
 
         ThemeManager.applyTheme(grid)
-        btnPositive.backgroundTintList = android.content.res.ColorStateList.valueOf(accent)
-        btnNegative.setTextColor(accent)
-        btnNegative.strokeColor = android.content.res.ColorStateList.valueOf(accent)
+        ThemeManager.styleDialogButtons(btnPositive, btnNegative)
 
         btnPositive.setOnClickListener {
-            val phone = inputs[0].text?.toString()?.trim() ?: ""
-            if (phone.isEmpty() || phone.length != 10 || !phone.all { it.isDigit() }) {
+            val phone = etPhone.text?.toString()?.trim().orEmpty()
+            if (phone.length != 10 || !phone.all { it.isDigit() }) {
                 toast("Phone number must be exactly 10 digits")
                 return@setOnClickListener
             }
-
-            creditCustomerPhone = phone
-            creditCustomerName = inputs[1].text?.toString()?.trim() ?: ""
-            creditCustomerAddress = inputs[2].text?.toString()?.trim() ?: ""
-            creditCustomerGstin = inputs[3].text?.toString()?.trim() ?: ""
-
-            if (creditCustomerName.isBlank()) {
+            val name = etName.text?.toString()?.trim().orEmpty()
+            if (name.isBlank()) {
                 toast("Customer name is required for a credit bill")
                 return@setOnClickListener
             }
 
-            saveCreditCustomerDetails()
+            val credit = swCredit.isChecked
+            val limit = editText(tilLimit).text?.toString()?.toDoubleOrNull() ?: 0.0
+            // A balance already run up is not settled by switching credit off, so it
+            // is carried over rather than zeroed - as in the master.
+            val balance = if (credit) {
+                editText(tilBalance).text?.toString()?.toDoubleOrNull() ?: 0.0
+            } else {
+                onFile?.balance ?: 0.0
+            }
+            // The limit is what the customer is allowed to owe, so it cannot be set
+            // below what they already do - that would put them over their limit the
+            // moment it was saved.
+            if (credit && limit < balance - 0.005) {
+                toast("Credit limit cannot be less than the outstanding ${money(balance)}")
+                return@setOnClickListener
+            }
+
+            creditCustomerPhone = phone
+            creditCustomerName = name
+            creditCustomerAddress = etAddress.text?.toString()?.trim().orEmpty()
+            creditCustomerGstin = etGstin.text?.toString()?.trim().orEmpty()
+
+            saveCreditCustomer(
+                CustomerDao.Customer(
+                    id = onFile?.id ?: 0L,
+                    name = name,
+                    address = creditCustomerAddress,
+                    phone = phone,
+                    gstin = creditCustomerGstin,
+                    creditEnabled = credit,
+                    creditLimit = if (credit) limit else 0.0,
+                    balance = balance,
+                    birthday = etBirthday.text?.toString()?.trim().orEmpty(),
+                    anniversary = etAnniversary.text?.toString()?.trim().orEmpty()
+                )
+            )
             updateHeaderWithCustomer()
             dialog.dismiss()
             toast("Customer details saved")
+
+            // Straight back through the gate on what was just saved. Clearing it puts
+            // the sale back on credit - what the operator opened this dialog to do -
+            // while a limit still short of the bill says so again, rather than leaving
+            // them to find out at checkout.
+            if (!blockCreditIfIneligible()) setMethod(Method.CREDIT)
         }
 
         btnNegative.setOnClickListener { dialog.dismiss() }
@@ -1406,6 +1622,18 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         val window = dialog.window
         window?.setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         window?.setGravity(android.view.Gravity.CENTER)
+    }
+
+    /**
+     * Hides the customer strip when this sale has no customer to speak of. Called
+     * again on every payment-mode change, because switching to Credit gives the
+     * sale a customer and switching away takes it back.
+     */
+    private fun applyCustomerVisibility() {
+        val show = customerApplies()
+        id<View>(R.id.llCustomerHeader).visibility = if (show) View.VISIBLE else View.GONE
+        id<android.widget.ImageButton>(R.id.btnCustInfo).visibility =
+            if (show) View.VISIBLE else View.GONE
     }
 
     private fun updateHeaderWithCustomer() {

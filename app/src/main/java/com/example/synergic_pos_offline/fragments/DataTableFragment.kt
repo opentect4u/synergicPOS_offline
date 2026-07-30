@@ -102,6 +102,21 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     /** Invoked when a row's Test Print button is tapped. */
     open fun onTestPrintRow(row: DataRow) {}
 
+    /**
+     * Icon for an extra action on [row], or null to leave that row without one.
+     *
+     * Decided per row rather than per screen, so an action that only makes sense
+     * for some records - a ledger for a customer who is actually on credit - is
+     * simply absent on the rest instead of being offered and then refused.
+     */
+    open fun rowActionIcon(row: DataRow): Int? = null
+
+    /** Accessibility label for the [rowActionIcon] button. */
+    open val rowActionLabel: String get() = "Action"
+
+    /** Invoked when a row's extra action button is tapped. */
+    open fun onRowAction(row: DataRow) {}
+
     private val allRows = mutableListOf<DataRow>()
     private val shownRows = mutableListOf<DataRow>()
     private val selectedIds = linkedSetOf<String>()
@@ -147,7 +162,10 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             onThumbClick = { showImagePreview(it) },
             onSelectionChanged = { updateSelectionUI() },
             showsTestPrintAction = showsTestPrintAction,
-            onTestPrint = { onTestPrintRow(it) }
+            onTestPrint = { onTestPrintRow(it) },
+            rowActionIcon = { rowActionIcon(it) },
+            rowActionLabel = rowActionLabel,
+            onRowAction = { onRowAction(it) }
         )
         rvTable.layoutManager = LinearLayoutManager(requireContext())
         rvTable.adapter = adapter
@@ -431,7 +449,10 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         private val onThumbClick: (DataRow) -> Unit,
         private val onSelectionChanged: () -> Unit,
         private val showsTestPrintAction: Boolean = false,
-        private val onTestPrint: (DataRow) -> Unit = {}
+        private val onTestPrint: (DataRow) -> Unit = {},
+        private val rowActionIcon: (DataRow) -> Int? = { null },
+        private val rowActionLabel: String = "Action",
+        private val onRowAction: (DataRow) -> Unit = {}
     ) : RecyclerView.Adapter<DataTableAdapter.ViewHolder>() {
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -440,6 +461,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             val llCells: LinearLayout = view.findViewById(R.id.llCells)
             val btnEdit: View = view.findViewById(R.id.btnRowEdit)
             val btnTestPrint: View = view.findViewById(R.id.btnRowTestPrint)
+            val btnAction: MaterialButton = view.findViewById(R.id.btnRowAction)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -485,6 +507,25 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             }
 
             holder.btnEdit.setOnClickListener { onEdit(row) }
+
+            // Recycled rows carry the previous row's action, so both branches are
+            // always taken - a row with no action has to actively lose one.
+            val actionIcon = rowActionIcon(row)
+            if (actionIcon != null) {
+                holder.btnAction.visibility = View.VISIBLE
+                holder.btnAction.setIconResource(actionIcon)
+                holder.btnAction.contentDescription = rowActionLabel
+                // ThemeManager fills every MaterialButton above; this one is a
+                // secondary action and reads as outlined.
+                val accent = ThemeManager.getThemeColor(ctx)
+                holder.btnAction.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+                holder.btnAction.iconTint = ColorStateList.valueOf(accent)
+                holder.btnAction.strokeColor = ColorStateList.valueOf(accent)
+                holder.btnAction.setOnClickListener { onRowAction(row) }
+            } else {
+                holder.btnAction.visibility = View.GONE
+                holder.btnAction.setOnClickListener(null)
+            }
 
             if (showsTestPrintAction) {
                 holder.btnTestPrint.visibility = View.VISIBLE

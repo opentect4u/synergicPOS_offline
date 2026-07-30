@@ -80,8 +80,18 @@ class ReportsFragment : Fragment() {
         }
 
         rvReports.adapter = ReportsAdapter(reportItems) { item ->
-            Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
+            when (item.title) {
+                "Customer Ledger" -> openFragment(CustomerLedgerFragment())
+                else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
+            }
         }
+    }
+
+    private fun openFragment(fragment: Fragment) {
+        requireActivity().supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, fragment)
+            .addToBackStack(null)
+            .commit()
     }
 
     data class ReportItem(

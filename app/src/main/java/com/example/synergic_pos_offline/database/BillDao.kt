@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import com.example.synergic_pos_offline.utils.AmountInWords
 import com.example.synergic_pos_offline.utils.BillPricing
+import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.BillSettingsSnapshot
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.SessionManager
@@ -249,6 +250,12 @@ class BillDao(context: Context) {
      * a DEBIT line on their ledger carrying the running balance, and the same total
      * on their master record.
      *
+     * The credit limit comes down by what was just put on the account, so it always
+     * reads as the credit the customer has left rather than the figure they started
+     * with. It floors at zero: a sale larger than the remaining limit exhausts it
+     * rather than turning it negative, and the full debt is still carried by the
+     * balance either way.
+     *
      * Skipped when the sale has no customer - there would be nobody to chase, and
      * the balance is still recorded on the payment row either way.
      */
@@ -261,11 +268,19 @@ class BillDao(context: Context) {
         nowDateTime: String,
         user: String?
     ) {
-        val previous = db.rawQuery(
-            "SELECT balance_amount FROM ${DatabaseHelper.Tables.MD_CUSTOMERS} WHERE id = ?",
+        var previous = 0.0
+        var previousLimit = 0.0
+        db.rawQuery(
+            "SELECT balance_amount, credit_limit FROM ${DatabaseHelper.Tables.MD_CUSTOMERS} WHERE id = ?",
             arrayOf(customerId.toString())
-        ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getDouble(0) else 0.0 }
-        val running = previous + balance
+        ).use { c ->
+            if (c.moveToFirst()) {
+                previous = if (c.isNull(0)) 0.0 else c.getDouble(0)
+                previousLimit = if (c.isNull(1)) 0.0 else c.getDouble(1)
+            }
+        }
+        val running = BillRounding.toPaise(previous + balance)
+        val remainingLimit = BillRounding.toPaise((previousLimit - balance).coerceAtLeast(0.0))
 
         db.insert(
             DatabaseHelper.Tables.TD_CUSTOMER_LEDGER, null,
@@ -282,7 +297,10 @@ class BillDao(context: Context) {
         )
         db.update(
             DatabaseHelper.Tables.MD_CUSTOMERS,
-            ContentValues().apply { put("balance_amount", running) },
+            ContentValues().apply {
+                put("balance_amount", running)
+                put("credit_limit", remainingLimit)
+            },
             "id = ?", arrayOf(customerId.toString())
         )
     }

@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The printed customer ledger. Laid out at 360dp for 80mm paper, the same reference
+  width as fragment_bill.xml, and scaled from there by LedgerReceiptRenderer.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_light">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none">
+
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardLedgerReceipt"
+            android:layout_width="360dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="28dp"
+            app:cardCornerRadius="6dp"
+            app:cardElevation="6dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="22dp">
+
+                <ImageView
+                    android:id="@+id/ivLedgerHeaderLogo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxHeight="76dp"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:layout_marginBottom="8dp"
+                    android:contentDescription="Store logo"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvLedgerStoreName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="18sp"
+                    android:textColor="#111111"
+                    android:text="STORE" />
+
+                <TextView
+                    android:id="@+id/tvLedgerStoreAddress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvLedgerStorePhone"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvLedgerStoreGstin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="11sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="15sp"
+                    android:textColor="#111111"
+                    android:text="CUSTOMER LEDGER" />
+
+                <TextView
+                    android:id="@+id/tvLedgerPeriod"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Who the account belongs to -->
+                <TextView
+                    android:id="@+id/tvLedgerCustName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvLedgerCustMobile"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvLedgerCustGstin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Opening, then a line per movement, then the totals and closing -->
+                <LinearLayout
+                    android:id="@+id/llLedgerRows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <TextView
+                    android:id="@+id/tvLedgerClosingWords"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textColor="#333333"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvLedgerPrintedBy"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textColor="#333333" />
+
+                <LinearLayout
+                    android:id="@+id/llLedgerFooterLines"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="vertical" />
+
+                <ImageView
+                    android:id="@+id/ivLedgerFooterLogo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxHeight="76dp"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:layout_marginTop="8dp"
+                    android:contentDescription="Store logo"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </ScrollView>
+</FrameLayout>
