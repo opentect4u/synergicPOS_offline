@@ -15,6 +15,10 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.database.ReturnDao
+import com.example.synergic_pos_offline.utils.DialogUtils
+import com.example.synergic_pos_offline.utils.BillPrinter
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -25,12 +29,28 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Item-wise list of bills, sourced from the database via [BillDao]. Each row has a
- * "View" button that opens the already-designed receipt preview ([BillFragment]).
+ * Bill History - an item-wise list of past bills, sourced from the database via
+ * [BillDao].
+ *
+ * Each row opens the receipt preview ([BillFragment]), or prints straight from the
+ * list for when the bill only needs to be reproduced and not read.
  */
 class BillListFragment : Fragment(), TitledScreen {
 
-    override val screenTitle = "Bills"
+    /**
+     * When true this is the bill picker for a sale return rather than history: the
+     * same search, filters and list, but View opens the bill for return instead of
+     * for reading, and there is nothing to print from here.
+     *
+     * The list is reused rather than copied because a return is found the same way
+     * a bill is - by number, customer, date, amount or item - and a second screen
+     * would be the same filters maintained twice.
+     */
+    private val pickingForReturn: Boolean
+        get() = arguments?.getBoolean(ARG_PICK_FOR_RETURN) == true
+
+    override val screenTitle: String
+        get() = if (pickingForReturn) "Sale Return" else "Bill History"
 
     private lateinit var rv: RecyclerView
     private lateinit var tvEmpty: TextView
@@ -216,7 +236,12 @@ class BillListFragment : Fragment(), TitledScreen {
             Sort.AMOUNT_ASC -> filtered.sortedBy { it.amount }
         }
 
-        rv.adapter = BillAdapter(sorted) { openBill(it) }
+        rv.adapter = BillAdapter(
+            sorted,
+            onView = { if (pickingForReturn) openForReturn(it) else openBill(it) },
+            onPrint = { printBill(it) },
+            showPrint = !pickingForReturn
+        )
         tvEmpty.visibility = if (sorted.isEmpty()) View.VISIBLE else View.GONE
     }
 
@@ -247,11 +272,51 @@ class BillListFragment : Fragment(), TitledScreen {
         })
     }
 
+    /**
+     * Prints without opening the bill first. Marked a duplicate for the same reason
+     * the preview is: this list is history, so the customer already has the original.
+     */
+    private fun printBill(bill: BillDao.Bill) {
+        BillPrinter.print(requireContext(), bill.receiptNo, duplicate = true) { message ->
+            if (isAdded) android.widget.Toast.makeText(
+                requireContext(), message, android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    /**
+     * Opens the bill for return. A bill outside the Sale Return Days window is
+     * refused here rather than at save time - the operator finds out before picking
+     * through the lines, not after.
+     */
+    private fun openForReturn(bill: BillDao.Bill) {
+        val settings = GeneralSettingsDao(requireContext()).load()
+        if (!ReturnDao(requireContext()).withinReturnWindow(bill.receiptNo, settings.saleReturnDays)) {
+            DialogUtils.showSuccess(
+                context = requireContext(),
+                title = "Outside the return window",
+                message = "Bill ${bill.billNo} is older than the ${settings.saleReturnDays}-day " +
+                    "return limit set in General Settings.",
+                iconRes = android.R.drawable.ic_dialog_alert
+            )
+            return
+        }
+        requireActivity().supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, BillReturnFragment.newInstance(bill.receiptNo, bill.billNo))
+            .addToBackStack(null)
+            .commit()
+    }
+
     private fun openBill(bill: BillDao.Bill) {
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(
                 R.id.fragment_container,
-                BillFragment.newInstance(bill.billNo, bill.name, bill.date, bill.time, bill.total, bill.receiptNo)
+                BillFragment.newInstance(
+                    bill.billNo, bill.name, bill.date, bill.time, bill.total, bill.receiptNo,
+                    // Opened from Bill history: the customer already has the
+                    // original, so anything printed from here is a second copy.
+                    duplicate = true
+                )
             )
             .addToBackStack(null)
             .commit()
@@ -272,7 +337,9 @@ class BillListFragment : Fragment(), TitledScreen {
 
     private inner class BillAdapter(
         private val items: List<BillDao.Bill>,
-        private val onView: (BillDao.Bill) -> Unit
+        private val onView: (BillDao.Bill) -> Unit,
+        private val onPrint: (BillDao.Bill) -> Unit,
+        private val showPrint: Boolean = true
     ) : RecyclerView.Adapter<BillAdapter.ViewHolder>() {
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -282,6 +349,7 @@ class BillListFragment : Fragment(), TitledScreen {
             val tvTime: TextView = view.findViewById(R.id.tvRowTime)
             val tvAmount: TextView = view.findViewById(R.id.tvRowAmount)
             val btnView: MaterialButton = view.findViewById(R.id.btnViewBill)
+            val btnPrint: MaterialButton = view.findViewById(R.id.btnPrintBillRow)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -298,12 +366,30 @@ class BillListFragment : Fragment(), TitledScreen {
             holder.tvAmount.text = "₹ ${bill.total}"
 
             val accent = ThemeManager.getThemeColor(holder.itemView.context)
+            val tint = ColorStateList.valueOf(accent)
             holder.btnView.setTextColor(accent)
-            holder.btnView.strokeColor = ColorStateList.valueOf(accent)
-            holder.btnView.iconTint = ColorStateList.valueOf(accent)
+            holder.btnView.strokeColor = tint
+            holder.btnView.iconTint = tint
             holder.btnView.setOnClickListener { onView(bill) }
+
+            holder.btnPrint.visibility = if (showPrint) View.VISIBLE else View.GONE
+            holder.btnPrint.strokeColor = tint
+            holder.btnPrint.iconTint = tint
+            // A cancelled bill has nothing to reproduce, so it is not offered.
+            holder.btnPrint.isEnabled = !bill.cancelled
+            holder.btnPrint.alpha = if (bill.cancelled) 0.4f else 1f
+            holder.btnPrint.setOnClickListener { onPrint(bill) }
         }
 
         override fun getItemCount() = items.size
+    }
+
+    companion object {
+        private const val ARG_PICK_FOR_RETURN = "pick_for_return"
+
+        /** The bill picker for a sale return - see [pickingForReturn]. */
+        fun forReturn(): BillListFragment = BillListFragment().apply {
+            arguments = Bundle().apply { putBoolean(ARG_PICK_FOR_RETURN, true) }
+        }
     }
 }

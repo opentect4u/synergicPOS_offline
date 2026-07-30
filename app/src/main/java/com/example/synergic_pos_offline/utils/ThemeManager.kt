@@ -45,6 +45,38 @@ object ThemeManager {
         applyRecursive(root, getThemeColor(root.context))
     }
 
+    /**
+     * Styles a dialog's confirm/cancel button pair: the positive filled with the
+     * accent (or [positiveColor], for a destructive action) and lettered in white,
+     * the negative white with accent lettering inside an accent border.
+     *
+     * Both text colors are set here rather than left to the widget styles. A
+     * MaterialButton with no `android:textColor` takes its label color from the
+     * platform theme, which is not necessarily readable against the background the
+     * button is being tinted with - the label then comes out invisible.
+     */
+    fun styleDialogButtons(
+        positive: MaterialButton?,
+        negative: MaterialButton?,
+        positiveColor: Int? = null
+    ) {
+        val context = positive?.context ?: negative?.context ?: return
+        val accent = getThemeColor(context)
+        positive?.apply {
+            backgroundTintList = ColorStateList.valueOf(positiveColor ?: accent)
+            setTextColor(Color.WHITE)
+            iconTint = ColorStateList.valueOf(Color.WHITE)
+            strokeWidth = 0
+        }
+        negative?.apply {
+            backgroundTintList = ColorStateList.valueOf(Color.WHITE)
+            setTextColor(accent)
+            strokeColor = ColorStateList.valueOf(accent)
+            strokeWidth = (resources.displayMetrics.density * 1.5f).toInt()
+            iconTint = ColorStateList.valueOf(accent)
+        }
+    }
+
     private fun applyRecursive(view: View, color: Int) {
         themeSingle(view, color)
         if (view is ViewGroup) {

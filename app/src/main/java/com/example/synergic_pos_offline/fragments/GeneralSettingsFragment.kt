@@ -20,6 +20,7 @@ import android.widget.RadioGroup
 import androidx.core.view.isVisible
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.ItemRate
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.Mode
+import com.example.synergic_pos_offline.database.GeneralSettingsDao.ReturnMode
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -38,10 +39,13 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
 
     private lateinit var actMode: MaterialAutoCompleteTextView
     private lateinit var swSaleReturn: SwitchMaterial
+    private lateinit var llReturnMode: View
+    private lateinit var rgReturnMode: RadioGroup
     private lateinit var llSaleReturnDays: View
     private lateinit var etSaleReturnDays: TextInputEditText
     private lateinit var swLastBillStatus: SwitchMaterial
     private lateinit var swQuantityStatus: SwitchMaterial
+    private lateinit var swCustomerInfo: SwitchMaterial
     private lateinit var rgItemRate: RadioGroup
 
     override fun onCreateView(
@@ -54,15 +58,19 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
 
         actMode = view.findViewById(R.id.actMode)
         swSaleReturn = view.findViewById(R.id.swSaleReturn)
+        llReturnMode = view.findViewById(R.id.llReturnMode)
+        rgReturnMode = view.findViewById(R.id.rgReturnMode)
         llSaleReturnDays = view.findViewById(R.id.llSaleReturnDays)
         etSaleReturnDays = view.findViewById(R.id.etSaleReturnDays)
         swLastBillStatus = view.findViewById(R.id.swLastBillStatus)
         swQuantityStatus = view.findViewById(R.id.swQuantityStatus)
+        swCustomerInfo = view.findViewById(R.id.swCustomerInfo)
         rgItemRate = view.findViewById(R.id.rgItemRate)
 
         val s = dao.load()
         swLastBillStatus.isChecked = s.lastBillStatus
         swQuantityStatus.isChecked = s.quantityStatus
+        swCustomerInfo.isChecked = s.customerInfo
         rgItemRate.check(
             if (s.itemRate == ItemRate.MULTIPLE) R.id.rbItemRateMultiple else R.id.rbItemRateSingle
         )
@@ -72,29 +80,44 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         actMode.setText(s.mode.label, false)
 
         swSaleReturn.isChecked = s.saleReturn
-        llSaleReturnDays.isVisible = s.saleReturn
+        rgReturnMode.check(
+            if (s.returnMode == ReturnMode.ITEM_WISE) R.id.rbReturnItemWise else R.id.rbReturnBillWise
+        )
         etSaleReturnDays.setText(if (s.saleReturn) s.saleReturnDays.toString() else "")
 
-        // Days section is only shown while Sale Return is on.
-        swSaleReturn.setOnCheckedChangeListener { _, on ->
-            llSaleReturnDays.isVisible = on
+        // The return type only exists while Sale Return is on, and the days limit
+        // only within bill-wise - an item-wise return has no bill to date from, so
+        // there is nothing for a limit to measure against.
+        fun applyReturnState() {
+            val on = swSaleReturn.isChecked
+            val billWise = rgReturnMode.checkedRadioButtonId != R.id.rbReturnItemWise
+            llReturnMode.isVisible = on
+            llSaleReturnDays.isVisible = on && billWise
         }
+        applyReturnState()
+        swSaleReturn.setOnCheckedChangeListener { _, _ -> applyReturnState() }
+        rgReturnMode.setOnCheckedChangeListener { _, _ -> applyReturnState() }
 
         view.findViewById<MaterialButton>(R.id.btnChangePassword).setOnClickListener {
             showChangePasswordDialog()
         }
         view.findViewById<MaterialButton>(R.id.btnSaveGeneral).setOnClickListener {
-            val days = if (swSaleReturn.isChecked) etSaleReturnDays.text?.toString()?.toIntOrNull() ?: 0 else 0
+            val returnMode = if (rgReturnMode.checkedRadioButtonId == R.id.rbReturnItemWise)
+                ReturnMode.ITEM_WISE else ReturnMode.BILL_WISE
+            val daysApply = swSaleReturn.isChecked && returnMode == ReturnMode.BILL_WISE
+            val days = if (daysApply) etSaleReturnDays.text?.toString()?.toIntOrNull() ?: 0 else 0
             val mode = Mode.fromStored(actMode.text?.toString()) ?: Mode.GROCERY
             dao.save(
                 GeneralSettings(
                     mode = mode,
                     saleReturn = swSaleReturn.isChecked,
+                    returnMode = returnMode,
                     saleReturnDays = days,
                     lastBillStatus = swLastBillStatus.isChecked,
                     quantityStatus = swQuantityStatus.isChecked,
                     itemRate = if (rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple)
-                        ItemRate.MULTIPLE else ItemRate.SINGLE
+                        ItemRate.MULTIPLE else ItemRate.SINGLE,
+                    customerInfo = swCustomerInfo.isChecked
                 )
             )
             DialogUtils.showSuccess(

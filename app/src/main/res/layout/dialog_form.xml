@@ -26,9 +26,12 @@
             android:textColor="@color/text_main"
             android:layout_marginBottom="24dp" />
 
+        <!-- Weighted so that when the form is taller than the screen, it is this
+             that gives up height and scrolls - not the button row below it. -->
         <com.example.synergic_pos_offline.utils.MaxHeightScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:layout_marginBottom="20dp"
             android:maxHeight="450dp"
             android:fillViewport="true"
@@ -59,6 +62,8 @@
             </LinearLayout>
         </com.example.synergic_pos_offline.utils.MaxHeightScrollView>
 
+        <!-- Fixed height, and unweighted, so a long form can never squeeze the
+             buttons down to a sliver with their labels clipped away. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -70,8 +75,11 @@
                 android:id="@+id/btnFormNegative"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="48dp"
                 android:layout_weight="1"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minHeight="48dp"
                 android:text="Cancel"
                 android:textAllCaps="false"
                 app:cornerRadius="12dp" />
@@ -79,9 +87,12 @@
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnFormPositive"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="48dp"
                 android:layout_weight="1"
                 android:layout_marginStart="16dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minHeight="48dp"
                 android:text="Save"
                 android:textColor="@color/white"
                 android:textAllCaps="false"

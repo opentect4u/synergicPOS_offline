@@ -129,7 +129,45 @@
                         android:id="@+id/swSaleReturn" style="@style/BillSettingSwitch" />
                 </LinearLayout>
 
-                <!-- Sale Return days (shown only when Sale Return is ON) -->
+                <!-- How the return is taken (shown only when Sale Return is ON) -->
+                <LinearLayout
+                    android:id="@+id/llReturnMode"
+                    style="@style/BillSettingRow"
+                    android:visibility="gone">
+
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Return Type" />
+                        <TextView style="@style/BillSettingSub"
+                            android:text="Bill-wise returns lines off the original bill; item-wise returns an item on its own, with no bill behind it" />
+                    </LinearLayout>
+
+                    <RadioGroup
+                        android:id="@+id/rgReturnMode"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <RadioButton
+                            android:id="@+id/rbReturnBillWise"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:checked="true"
+                            android:text="Bill-wise"
+                            android:textColor="@color/text_main" />
+
+                        <RadioButton
+                            android:id="@+id/rbReturnItemWise"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="16dp"
+                            android:text="Item-wise"
+                            android:textColor="@color/text_main" />
+                    </RadioGroup>
+                </LinearLayout>
+
+                <!-- Sale Return days (Sale Return ON *and* bill-wise: an item-wise
+                     return has no bill date to measure a limit from) -->
                 <LinearLayout
                     android:id="@+id/llSaleReturnDays"
                     android:layout_width="match_parent"
@@ -187,6 +225,19 @@
                     </LinearLayout>
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swQuantityStatus" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Customer Info -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Customer Info" />
+                        <TextView style="@style/BillSettingSub"
+                            android:text="Capture the customer during a sale. Off, the till never asks and the receipt prints no customer - except on a credit sale, which always does." />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swCustomerInfo" style="@style/BillSettingSwitch" />
                 </LinearLayout>
 
                 <View style="@style/BillSettingDivider" />

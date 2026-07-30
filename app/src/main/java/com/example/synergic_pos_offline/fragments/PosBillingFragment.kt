@@ -28,6 +28,7 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillDao
 import com.example.synergic_pos_offline.database.CategoryDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
 import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.DialogUtils
@@ -212,6 +213,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
     // back here, so this flag keeps the dialog from reopening on that return.
     private var promptedForCustomer = false
 
+    /**
+     * Whether a sale captures the customer at all - General Settings' "Customer
+     * Info". Off, this screen never asks and offers no way to attach one, so the
+     * sale reaches checkout with no customer and its `customer_id` stays null. A
+     * credit sale still asks, but it does that at checkout, not here.
+     */
+    private val capturesCustomer: Boolean by lazy {
+        GeneralSettingsDao(requireContext()).load().customerInfo
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
@@ -343,6 +354,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         btnCalculator.setOnClickListener { showCalculatorDialog() }
         btnCustomer.setOnClickListener { showCustomerDialog() }
         btnAddCustomer.setOnClickListener { showCustomerDialog() }
+        // With customer capture off there is nothing for these to collect, so they
+        // go rather than sit there and be refused.
+        btnCustomer.visibility = if (capturesCustomer) View.VISIBLE else View.GONE
         view.findViewById<ImageButton>(R.id.btnRemoveCust).setOnClickListener { setCustomer(null, null) }
         btnHeld.setOnClickListener { showHeldDialog() }
         btnHold.setOnClickListener { onHold() }
@@ -351,7 +365,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // Re-apply the current customer rather than clearing it: the view is recreated
         // when checkout pops back, and the sale must survive that unless the operator
         // chose "Start new sale" (which resets via startNewSale()).
-        setCustomer(customerName, customerPhone, currentCustomerData)
+        if (capturesCustomer) {
+            setCustomer(customerName, customerPhone, currentCustomerData)
+        } else {
+            // Also clears anything captured before the setting was turned off, so a
+            // sale in progress cannot carry a customer the receipt will not print.
+            setCustomer(null, null)
+        }
         loadCategoriesAndProducts()
         updateHeldButton()
         applyFilter()
@@ -413,7 +433,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // First arrival from "Sale": prompt to add a customer. Guarded so it opens
         // only on entry and never when checkout returns to this screen (a completed
         // sale returns via the startFreshSale path above, which already returns).
-        if (!promptedForCustomer) {
+        if (capturesCustomer && !promptedForCustomer) {
             promptedForCustomer = true
             showCustomerDialog()
         }
@@ -739,6 +759,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
         customerName = name
         customerPhone = phone
         currentCustomerData = customerData
+        if (!capturesCustomer) {
+            btnAddCustomer.visibility = View.GONE
+            llCustomerInfo.visibility = View.GONE
+            currentCustomerData = null
+            return
+        }
         if (name == null && phone == null) {
             btnAddCustomer.visibility = View.VISIBLE
             llCustomerInfo.visibility = View.GONE
@@ -1238,11 +1264,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun onCheckout() {
         if (cart.isEmpty()) { toast("Cart is empty"); return }
 
-        // Every bill is raised against a customer. The phone is what identifies one,
-        // and is present whether the record was matched or created on the spot, so a
-        // blank here means nothing was attached. Open the lookup rather than just
-        // refusing, so the block can be cleared without hunting for the button.
-        if (customerPhone.isNullOrBlank()) {
+        // With customer capture on, every bill is raised against a customer. The
+        // phone is what identifies one, and is present whether the record was
+        // matched or created on the spot, so a blank here means nothing was
+        // attached. Open the lookup rather than just refusing, so the block can be
+        // cleared without hunting for the button.
+        //
+        // With it off the sale has no customer by design, so there is nothing to
+        // insist on - a credit sale still asks, but it does that at checkout.
+        if (capturesCustomer && customerPhone.isNullOrBlank()) {
             toast("Add a customer to continue")
             showCustomerDialog()
             return
@@ -1261,9 +1291,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
             CheckoutSession.discountMode = discountMode
             CheckoutSession.discountValue = discountValue
         }
-        CheckoutSession.customerName = customerName
-        CheckoutSession.customerPhone = customerPhone
-        CheckoutSession.customerId = currentCustomerData?.get("id") as? Long
+        // Cleared rather than left alone when capture is off: the session outlives a
+        // single sale, so a customer from an earlier one would otherwise ride along
+        // and end up on this bill.
+        CheckoutSession.customerName = customerName.takeIf { capturesCustomer }
+        CheckoutSession.customerPhone = customerPhone.takeIf { capturesCustomer }
+        CheckoutSession.customerId =
+            if (capturesCustomer) currentCustomerData?.get("id") as? Long else null
         // heldOrders needs no copying: both screens read the one list on the session.
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_container, PosCheckoutFragment())
