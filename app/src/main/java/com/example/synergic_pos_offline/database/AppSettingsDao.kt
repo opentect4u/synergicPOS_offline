@@ -20,7 +20,13 @@ class AppSettingsDao(context: Context) {
         val manualRate: Boolean = false,
         val cashReception: Boolean = false,
         val paymentMode: Boolean = false,
-        val otherCharges: Boolean = false
+        val otherCharges: Boolean = false,
+        // Restaurant-only toggles.
+        val couponMode: Boolean = false,
+        val kot: Boolean = false,
+        val tableMerge: Boolean = false,
+        val tableShift: Boolean = false,
+        val tableSplit: Boolean = false
     )
 
     fun load(): AppSettings {
@@ -29,7 +35,12 @@ class AppSettingsDao(context: Context) {
             manualRate = m[KEY_MANUAL_RATE]?.toBool() ?: false,
             cashReception = m[KEY_CASH_RECEPTION]?.toBool() ?: false,
             paymentMode = m[KEY_PAYMENT_MODE]?.toBool() ?: false,
-            otherCharges = m[KEY_OTHER_CHARGES]?.toBool() ?: false
+            otherCharges = m[KEY_OTHER_CHARGES]?.toBool() ?: false,
+            couponMode = m[KEY_COUPON_MODE]?.toBool() ?: false,
+            kot = m[KEY_KOT]?.toBool() ?: false,
+            tableMerge = m[KEY_TABLE_MERGE]?.toBool() ?: false,
+            tableShift = m[KEY_TABLE_SHIFT]?.toBool() ?: false,
+            tableSplit = m[KEY_TABLE_SPLIT]?.toBool() ?: false
         )
     }
 
@@ -38,6 +49,11 @@ class AppSettingsDao(context: Context) {
         upsertAppSetting(KEY_CASH_RECEPTION, s.cashReception.b())
         upsertAppSetting(KEY_PAYMENT_MODE, s.paymentMode.b())
         upsertAppSetting(KEY_OTHER_CHARGES, s.otherCharges.b())
+        upsertAppSetting(KEY_COUPON_MODE, s.couponMode.b())
+        upsertAppSetting(KEY_KOT, s.kot.b())
+        upsertAppSetting(KEY_TABLE_MERGE, s.tableMerge.b())
+        upsertAppSetting(KEY_TABLE_SHIFT, s.tableShift.b())
+        upsertAppSetting(KEY_TABLE_SPLIT, s.tableSplit.b())
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "App settings save (type A)")
     }
@@ -138,5 +154,10 @@ class AppSettingsDao(context: Context) {
         const val KEY_CASH_RECEPTION = "Cash Reception"
         const val KEY_PAYMENT_MODE = "Payment Mode"
         const val KEY_OTHER_CHARGES = "Other Charges"
+        const val KEY_COUPON_MODE = "Coupon Mode"
+        const val KEY_KOT = "KOT"
+        const val KEY_TABLE_MERGE = "Table Merge"
+        const val KEY_TABLE_SHIFT = "Table Shift"
+        const val KEY_TABLE_SPLIT = "Table Split"
     }
 }

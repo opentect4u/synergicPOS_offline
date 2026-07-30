@@ -475,6 +475,19 @@ class PosBillingFragment : Fragment(), TitledScreen {
         cell.setOnClickListener { openLastBill() }
     }
 
+    /**
+     * The current store id: the signed-in user's store, falling back to the
+     * first registration row. Mirrors how the Products master scopes md_products.
+     */
+    private fun currentStoreId(db: android.database.sqlite.SQLiteDatabase): Long? {
+        SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
+        db.query(
+            DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
+            null, null, null, null, "store_id ASC", "1"
+        ).use { c -> if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0) }
+        return null
+    }
+
     /** The registered store's name from md_registration, or null if unavailable. */
     private fun storeName(ctx: android.content.Context): String? {
         return runCatching {
@@ -536,13 +549,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // Multiple item-rate mode: the product popup offers a rate dropdown.
         val multipleRates = SettingsCache.value(requireContext(), "G", "Item Rate") == "M"
 
-        // Query products with their rates
+        // Query products with their rates — store-scoped like the Products master.
         photoCache.clear()
+        val store = currentStoreId(db)
         db.query(
             "md_products",
             arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id",
                 "product_image"),
-            null, null, null, null, "product_name ASC"
+            (if (store != null) "store_id = ?" else null),
+            store?.let { arrayOf(it.toString()) },
+            null, null, "product_name ASC"
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 val productId = cursor.getLong(0).toString()

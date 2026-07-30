@@ -409,6 +409,8 @@ class BillDao(context: Context) {
     }
 
     private fun currentStoreId(): Long? {
+        // The signed-in user's store is the current store; registration is a fallback.
+        SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
             null, null, null, null, "store_id ASC", "1"
@@ -419,6 +421,13 @@ class BillDao(context: Context) {
     }
 
     private fun currentOutletId(): Long? {
+        // Prefer the outlet registered for the current store; else the first row.
+        currentStoreId()?.let { store ->
+            helper.readableDatabase.rawQuery(
+                "SELECT outlet_id FROM ${DatabaseHelper.Tables.MD_REGISTRATION} WHERE store_id = ? LIMIT 1",
+                arrayOf(store.toString())
+            ).use { c -> if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0) }
+        }
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("outlet_id"),
             null, null, null, null, "store_id ASC", "1"
@@ -467,15 +476,20 @@ class BillDao(context: Context) {
         val itemsByBill = loadItemsByBill()
         val list = mutableListOf<Bill>()
 
+        // Store-scoped: only the current store's bills (all date filters run on top of this).
+        val store = currentStoreId()
+        val storeClause = if (store != null) "WHERE b.store_id = ?" else ""
+        val args = store?.let { arrayOf(it.toString()) }
         val sql = """
             SELECT b.receipt_no, b.bill_number, b.bill_date, b.bill_date_time,
                    b.net_amount, b.bill_status, c.customer_name
             FROM td_bills b
             LEFT JOIN md_customers c ON c.id = b.customer_id
+            $storeClause
             ORDER BY b.receipt_no DESC
         """.trimIndent()
 
-        helper.readableDatabase.rawQuery(sql, null).use { c ->
+        helper.readableDatabase.rawQuery(sql, args).use { c ->
             while (c.moveToNext()) {
                 val receiptNo = c.getLong(0)
                 val billNumber = c.getString(1)?.takeIf { it.isNotBlank() } ?: receiptNo.toString()
@@ -506,16 +520,22 @@ class BillDao(context: Context) {
     fun allItems(): List<String> =
         loadItemsByBill().values.flatten().distinct().sorted()
 
-    /** Maps each bill's receipt_no to the list of its product names. */
+    /** Maps each bill's receipt_no to the list of its product names (current store only). */
     private fun loadItemsByBill(): Map<Long, MutableList<String>> {
         val map = hashMapOf<Long, MutableList<String>>()
+        val store = currentStoreId()
+        // Restrict to items whose bill belongs to the current store.
+        val storeClause = if (store != null)
+            "WHERE bi.bill_id IN (SELECT receipt_no FROM td_bills WHERE store_id = ?)" else ""
+        val args = store?.let { arrayOf(it.toString()) }
         val sql = """
             SELECT bi.bill_id, p.product_name
             FROM td_bill_items bi
             LEFT JOIN md_products p ON p.id = bi.product_id
+            $storeClause
         """.trimIndent()
 
-        helper.readableDatabase.rawQuery(sql, null).use { c ->
+        helper.readableDatabase.rawQuery(sql, args).use { c ->
             while (c.moveToNext()) {
                 if (c.isNull(0)) continue
                 val billId = c.getLong(0)

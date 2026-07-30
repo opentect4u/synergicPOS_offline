@@ -181,8 +181,10 @@ class RecentBillsFragment : Fragment(), TitledScreen {
         }
     }
 
-    /** Store id as saved on bills — read from md_registration (same as BillDao). */
+    /** Store id as saved on bills — the signed-in user's store, else md_registration (same as BillDao). */
     private fun storeId(): Long? {
+        com.example.synergic_pos_offline.utils.SessionManager.currentUser?.storeId
+            ?.takeIf { it != 0 }?.let { return it.toLong() }
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
         db.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),

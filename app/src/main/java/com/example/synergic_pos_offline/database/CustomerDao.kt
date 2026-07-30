@@ -34,18 +34,19 @@ class CustomerDao(context: Context) {
     /** All customers, oldest first. */
     fun getAll(): List<Customer> {
         val list = mutableListOf<Customer>()
-        helper.readableDatabase.query(
-            table,
-            arrayOf(
-                "id", "customer_name", "customer_address", "phone_number", "gstin",
-                "credit_enabled", "credit_limit", "credit_days", "balance_amount", "dob", "dom"
-            ),
-            (if (currentStoreId() != null) "store_id = ?" else null),
-            currentStoreId()?.let { arrayOf(it.toString()) },
-            null, null, "id ASC"
-            table, COLUMNS, null, null, null, null, "id ASC"
-        ).use { c ->
-            while (c.moveToNext()) list.add(c.toCustomer())
+        val storeId = currentStoreId()
+        val selection = if (storeId != null) "store_id = ?" else null
+        val selectionArgs = if (storeId != null) arrayOf(storeId.toString()) else null
+        
+        val cursor: Cursor = helper.readableDatabase.query(
+            table, COLUMNS, selection, selectionArgs, null, null, "id ASC"
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursor.toCustomer())
+            }
+        } finally {
+            cursor.close()
         }
         return list
     }
@@ -53,44 +54,51 @@ class CustomerDao(context: Context) {
     /** The customer registered against [phone], or null when there is no match. */
     fun findByPhone(phone: String?): Customer? {
         if (phone.isNullOrBlank()) return null
-        helper.readableDatabase.query(
+        val cursor: Cursor = helper.readableDatabase.query(
             table, COLUMNS, "phone_number = ?", arrayOf(phone.trim()), null, null, "id ASC", "1"
-        ).use { c ->
-            if (c.moveToFirst()) return c.toCustomer()
+        )
+        try {
+            if (cursor.moveToFirst()) return cursor.toCustomer()
+        } finally {
+            cursor.close()
         }
         return null
     }
 
     /** The customer with this row id, or null when it no longer exists. */
     fun findById(id: Long): Customer? {
-        helper.readableDatabase.query(
+        val cursor: Cursor = helper.readableDatabase.query(
             table, COLUMNS, "id = ?", arrayOf(id.toString()), null, null, null, "1"
-        ).use { c ->
-            if (c.moveToFirst()) return c.toCustomer()
+        )
+        try {
+            if (cursor.moveToFirst()) return cursor.toCustomer()
+        } finally {
+            cursor.close()
         }
         return null
     }
 
     /**
      * Customers whose name or phone number contains [term], for a type-ahead
-     * lookup. A blank term matches nobody: an empty search box should offer
-     * nothing rather than dump the whole master into a dropdown.
-     *
-     * Ordered by name so the list reads the way the operator scans it.
+     * lookup.
      */
     fun search(term: String, limit: Int = 25): List<Customer> {
         val trimmed = term.trim()
         if (trimmed.isEmpty()) return emptyList()
-        // LIKE's own wildcards in the typed text would silently widen the search.
         val pattern = "%" + trimmed.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
         val list = mutableListOf<Customer>()
-        helper.readableDatabase.query(
+        val cursor: Cursor = helper.readableDatabase.query(
             table, COLUMNS,
             "customer_name LIKE ? ESCAPE '!' OR phone_number LIKE ? ESCAPE '!'",
             arrayOf(pattern, pattern),
             null, null, "customer_name COLLATE NOCASE ASC", limit.toString()
-        ).use { c ->
-            while (c.moveToNext()) list.add(c.toCustomer())
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursor.toCustomer())
+            }
+        } finally {
+            cursor.close()
         }
         return list
     }
@@ -138,12 +146,11 @@ class CustomerDao(context: Context) {
         if (anniversary.isBlank()) putNull("dom") else put("dom", anniversary)
         put("credit_enabled", if (creditEnabled) 1 else 0)
         put("credit_limit", creditLimit)
-        // credit_days is no longer collected anywhere. The column stays on the
-        // table so existing rows keep whatever was recorded against them, but
-        // nothing here writes it any more.
         put("balance_amount", balance)
+        
+        val storeId = currentStoreId()
         if (isNew) {
-            put("store_id", currentStoreId())
+            if (storeId != null) put("store_id", storeId) else putNull("store_id")
             put("created_by", currentUser())
         } else {
             put("modified_at", now())
@@ -152,14 +159,15 @@ class CustomerDao(context: Context) {
     }
 
     private fun currentStoreId(): Long? {
-        // The signed-in user's store is the current store; the registration row is
-        // only a fallback (e.g. seeding before anyone has logged in).
         SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
-        helper.readableDatabase.query(
+        val cursor = helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
             null, null, null, null, "store_id ASC", "1"
-        ).use { c ->
-            if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0)
+        )
+        try {
+            if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) return cursor.getLong(0)
+        } finally {
+            cursor?.close()
         }
         return null
     }
