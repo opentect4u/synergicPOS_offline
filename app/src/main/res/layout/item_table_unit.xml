@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingVertical="8dp">
+
+    <TextView
+        android:id="@+id/tvUnitId"
+        android:layout_width="60dp"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="1"
+        android:textSize="15sp"
+        android:textColor="@color/text_main" />
+
+    <TextView
+        android:id="@+id/tvUnitSection"
+        android:layout_width="92dp"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:textSize="13sp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="@color/text_secondary"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/etUnitCode"
+        android:layout_width="216dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="6dp"
+        android:gravity="center"
+        android:maxLines="1"
+        android:textStyle="bold"
+        android:textSize="15sp"
+        android:textColor="@color/text_main" />
+
+    <EditText
+        android:id="@+id/etUnitFloor"
+        android:layout_width="66dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="2dp"
+        android:hint="Floor"
+        android:inputType="text"
+        android:maxLines="1"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+    <EditText
+        android:id="@+id/etUnitSeating"
+        android:layout_width="66dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="2dp"
+        android:hint="Cap"
+        android:inputType="number"
+        android:maxLines="1"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+    <AutoCompleteTextView
+        android:id="@+id/actUnitStatus"
+        android:layout_width="236dp"
+        android:layout_height="48dp"
+        android:layout_marginHorizontal="6dp"
+        android:background="@drawable/bg_dropdown_field"
+        android:paddingStart="14dp"
+        android:paddingEnd="10dp"
+        android:drawableEnd="@drawable/ic_arrow_drop_down"
+        android:drawablePadding="4dp"
+        android:gravity="center_vertical"
+        android:inputType="none"
+        android:focusable="false"
+        android:cursorVisible="false"
+        android:maxLines="1"
+        android:textColor="@color/text_main"
+        android:textSize="15sp" />
+
+    <ImageButton
+        android:id="@+id/btnRemoveUnit"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:src="@drawable/ic_minus"
+        app:tint="@color/menu_delete_icon"
+        android:contentDescription="Remove table" />
+</LinearLayout>

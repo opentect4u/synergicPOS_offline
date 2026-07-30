@@ -46,8 +46,11 @@ class DatabaseSettingsFragment : Fragment() {
             DatabaseItem("Description/Ledger", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon),
             DatabaseItem("Units", android.R.drawable.ic_menu_crop, R.color.menu_settings, R.color.menu_settings_icon)
         )
+        // Restaurant-only masters.
         if (!isGrocery) {
             items.add(DatabaseItem("Waiter", android.R.drawable.ic_menu_manage, R.color.menu_delete, R.color.menu_delete_icon))
+            items.add(DatabaseItem("Section", android.R.drawable.ic_menu_mapmode, R.color.menu_master, R.color.menu_master_icon))
+            items.add(DatabaseItem("Table", android.R.drawable.ic_menu_agenda, R.color.menu_report, R.color.menu_report_icon))
         }
 
         rvDatabase.adapter = DatabaseAdapter(items) { item ->
@@ -58,6 +61,8 @@ class DatabaseSettingsFragment : Fragment() {
                 "Customers" -> openFragment(CustomerFragment())
                 "Description/Ledger" -> openFragment(DescriptionLedgerFragment())
                 "Products" -> openFragment(ProductsFragment())
+                "Section" -> openFragment(SectionFragment())
+                "Table" -> openFragment(TableFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             }
         }

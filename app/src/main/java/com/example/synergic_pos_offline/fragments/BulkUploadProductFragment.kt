@@ -238,9 +238,18 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         else -> null
     }
 
-    /** store_id and outlet_id sourced from md_registration (verified row preferred). */
+    /** store_id (signed-in user's store) + outlet_id, so uploads land in the list. */
     private fun storeAndOutlet(): Pair<Int?, Int?> {
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+        val sessionStore =
+            com.example.synergic_pos_offline.utils.SessionManager.currentUser?.storeId?.takeIf { it != 0 }
+        if (sessionStore != null) {
+            val outlet = db.rawQuery(
+                "SELECT outlet_id FROM ${DatabaseHelper.Tables.MD_REGISTRATION} WHERE store_id = ? LIMIT 1",
+                arrayOf(sessionStore.toString())
+            ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null }
+            return sessionStore to outlet
+        }
         db.rawQuery(
             "SELECT store_id, outlet_id FROM ${DatabaseHelper.Tables.MD_REGISTRATION} " +
                 "ORDER BY verify_flag DESC, store_id ASC LIMIT 1", null

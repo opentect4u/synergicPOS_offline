@@ -253,6 +253,16 @@ class ProductsFragment : DataTableFragment() {
         view.findViewById<TextInputEditText>(R.id.etStockAlert).setText(existing?.stockAlert.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etBatchNo).setText(existing?.batchNo.orEmpty())
 
+        // Restaurant-only attributes, shown above the rates section in Restaurant mode.
+        val restaurantMode = SettingsCache.value(requireContext(), "G", "Mode") == "R"
+        view.findViewById<LinearLayout>(R.id.llRestaurantDetails).visibility =
+            if (restaurantMode) android.view.View.VISIBLE else android.view.View.GONE
+        if (restaurantMode) {
+            bindStrings(view.findViewById(R.id.actFoodType), listOf("Veg", "Non-Veg", "Egg"))
+            bindStrings(view.findViewById(R.id.actAvailability), listOf("Available", "Unavailable"))
+            bindStrings(view.findViewById(R.id.actSpiceLevel), listOf("Mild", "Medium", "Hot"))
+        }
+
         existing?.image?.let { showImage(it) }
         view.findViewById<TextView>(R.id.tvProductFormTitle).text =
             if (productId == null) "Add Product" else "Edit Product"
@@ -638,6 +648,12 @@ class ProductsFragment : DataTableFragment() {
         }
     }
 
+    /** Binds a plain string dropdown; the picked value is stored on the view's tag. */
+    private fun bindStrings(view: AutoCompleteTextView, items: List<String>) {
+        view.setAdapter(ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, items))
+        view.setOnItemClickListener { _, _, position, _ -> view.tag = items[position] }
+    }
+
     private fun selectedId(view: AutoCompleteTextView): Int? = view.tag as? Int
 
     private fun text(root: android.view.View, id: Int): String =
@@ -647,9 +663,21 @@ class ProductsFragment : DataTableFragment() {
 
     private fun storeId(): Int = SessionManager.currentUser?.storeId ?: 0
 
-    /** store_id and outlet_id sourced from md_registration (verified row preferred). */
+    /**
+     * store_id and outlet_id for a new product. The store is the signed-in user's
+     * store (so saved products match the store-scoped list); outlet comes from the
+     * matching md_registration row. Falls back to registration if there's no session.
+     */
     private fun storeAndOutlet(): Pair<Int?, Int?> {
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+        val sessionStore = SessionManager.currentUser?.storeId?.takeIf { it != 0 }
+        if (sessionStore != null) {
+            val outlet = db.rawQuery(
+                "SELECT outlet_id FROM ${DatabaseHelper.Tables.MD_REGISTRATION} WHERE store_id = ? LIMIT 1",
+                arrayOf(sessionStore.toString())
+            ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null }
+            return sessionStore to outlet
+        }
         db.rawQuery(
             "SELECT store_id, outlet_id FROM ${DatabaseHelper.Tables.MD_REGISTRATION} " +
                 "ORDER BY verify_flag DESC, store_id ASC LIMIT 1", null

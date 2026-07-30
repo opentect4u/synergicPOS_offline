@@ -33,7 +33,9 @@ class UnitDao(context: Context) {
         val list = mutableListOf<Unit>()
         helper.readableDatabase.query(
             table, arrayOf("id", "unit_name", "unit_symbol", "fraction_flag"),
-            null, null, null, null, "id ASC"
+            (if (currentStoreId() != null) "store_id = ?" else null),
+            currentStoreId()?.let { arrayOf(it.toString()) },
+            null, null, "id ASC"
         ).use { c ->
             val iId = c.getColumnIndexOrThrow("id")
             val iName = c.getColumnIndexOrThrow("unit_name")
@@ -104,6 +106,9 @@ class UnitDao(context: Context) {
     }
 
     private fun currentStoreId(): Long? {
+        // The signed-in user's store is the current store; the registration row is
+        // only a fallback (e.g. seeding before anyone has logged in).
+        SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
             null, null, null, null, "store_id ASC", "1"
