@@ -202,9 +202,14 @@ class MainActivity : AppCompatActivity() {
     fun onThemeColorSelected(colorHex: String) {
         ThemeManager.setThemeColor(this, colorHex)
         applyThemeEverywhere()
-        // The dashboard's cards use raw accent colors (not tracked by ThemeManager),
-        // so rebuild it when the theme changes while it is showing.
-        (supportFragmentManager.findFragmentById(R.id.fragment_container) as? DashboardFragment)?.onThemeChanged()
+        // Some screens use raw accent colors (not tracked by ThemeManager), so
+        // notify them to recolor when the theme changes while they are showing.
+        when (val f = supportFragmentManager.findFragmentById(R.id.fragment_container)) {
+            is DashboardFragment -> f.onThemeChanged()
+            is com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment -> f.onThemeChanged()
+            is com.example.synergic_pos_offline.fragments.RestaurantCheckoutFragment -> f.onThemeChanged()
+            else -> {}
+        }
     }
 
     /** Re-tints every currently inflated view + the status bar + the drawer. */
@@ -324,7 +329,11 @@ class MainActivity : AppCompatActivity() {
             "App Settings" -> navigateTo(AppSettingsFragment())
             "Stock & Inventory" -> navigateTo(InventoryFragment())
             "Reports" -> navigateTo(ReportsFragment())
-            "Sale" -> navigateTo(PosBillingFragment())
+            "Sale" -> navigateTo(
+                if (SettingsCache.value(this, "G", "Mode") == "R")
+                    com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment()
+                else PosBillingFragment()
+            )
             "Advance Payment" -> navigateTo(AdvancePaymentFragment())
             "Customer Ledger" -> navigateTo(CustomerLedgerFragment())
             "Sale Return" -> {
