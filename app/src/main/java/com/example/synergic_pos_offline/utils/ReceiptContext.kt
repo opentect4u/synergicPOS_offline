@@ -1,9 +1,6 @@
 package com.example.synergic_pos_offline.utils
 
 import android.content.Context
-import android.content.res.Configuration
-import androidx.appcompat.view.ContextThemeWrapper
-import com.example.synergic_pos_offline.R
 
 /**
  * The context a receipt is built with.
@@ -27,15 +24,5 @@ object ReceiptContext {
      * [context] with the device's font scale neutralised, carrying the app theme so
      * the Material views in the receipt layouts still inflate.
      */
-    fun standardFontScale(context: Context): Context {
-        // A default Configuration has fontScale 1 and every other field undefined,
-        // so merging it over the base changes the scale and nothing else.
-        val override = Configuration().apply { fontScale = STANDARD_FONT_SCALE }
-        return ContextThemeWrapper(context, R.style.Theme_Synergic_POS_Offline).apply {
-            applyOverrideConfiguration(override)
-        }
-    }
-
-    /** The scale a receipt is always drawn at, whatever the device is set to. */
-    private const val STANDARD_FONT_SCALE = 1f
+    fun standardFontScale(context: Context): Context = FixedFontScale.wrap(context)
 }
