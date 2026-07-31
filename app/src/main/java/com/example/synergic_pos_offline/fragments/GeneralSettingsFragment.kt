@@ -107,24 +107,48 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             val daysApply = swSaleReturn.isChecked && returnMode == ReturnMode.BILL_WISE
             val days = if (daysApply) etSaleReturnDays.text?.toString()?.toIntOrNull() ?: 0 else 0
             val mode = Mode.fromStored(actMode.text?.toString()) ?: Mode.GROCERY
-            dao.save(
-                GeneralSettings(
-                    mode = mode,
-                    saleReturn = swSaleReturn.isChecked,
-                    returnMode = returnMode,
-                    saleReturnDays = days,
-                    lastBillStatus = swLastBillStatus.isChecked,
-                    quantityStatus = swQuantityStatus.isChecked,
-                    itemRate = if (rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple)
-                        ItemRate.MULTIPLE else ItemRate.SINGLE,
-                    customerInfo = swCustomerInfo.isChecked
+            val settings = GeneralSettings(
+                mode = mode,
+                saleReturn = swSaleReturn.isChecked,
+                returnMode = returnMode,
+                saleReturnDays = days,
+                lastBillStatus = swLastBillStatus.isChecked,
+                quantityStatus = swQuantityStatus.isChecked,
+                itemRate = if (rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple)
+                    ItemRate.MULTIPLE else ItemRate.SINGLE,
+                customerInfo = swCustomerInfo.isChecked
+            )
+
+            // Switching mode wipes the mode-specific business data — confirm first.
+            val originalMode = dao.load().mode
+            if (mode != originalMode) {
+                DialogUtils.showConfirm(
+                    context = requireContext(),
+                    title = "Switch to ${mode.label}?",
+                    message = "Changing the mode will erase all current data — products, categories, " +
+                        "sections, tables, waiters, bills, KOTs, payments, sale returns and running " +
+                        "orders. This cannot be undone.",
+                    positiveText = "Erase & Switch",
+                    negativeText = "Cancel",
+                    destructive = true
+                ) {
+                    com.example.synergic_pos_offline.database.DatabaseHelper
+                        .getInstance(requireContext()).eraseBusinessDataForModeChange()
+                    dao.save(settings)
+                    DialogUtils.showSuccess(
+                        context = requireContext(),
+                        title = "Mode changed",
+                        message = "Switched to ${mode.label}. All previous data was erased."
+                    )
+                }
+            } else {
+                dao.save(settings)
+                DialogUtils.showSuccess(
+                    context = requireContext(),
+                    title = "Saved",
+                    message = "General settings saved successfully."
                 )
-            )
-            DialogUtils.showSuccess(
-                context = requireContext(),
-                title = "Saved",
-                message = "General settings saved successfully."
-            )
+            }
         }
 
         ThemeManager.applyTheme(view)
