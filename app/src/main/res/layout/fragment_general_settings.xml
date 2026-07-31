@@ -242,6 +242,38 @@
 
                 <View style="@style/BillSettingDivider" />
 
+                <!-- After Login -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="After Login" />
+                        <TextView style="@style/BillSettingSub" android:text="Which screen a login opens on: the Sale screen, or the Home screen with the dashboard and menu" />
+                    </LinearLayout>
+                    <RadioGroup
+                        android:id="@+id/rgLandingScreen"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:orientation="horizontal">
+                        <RadioButton
+                            android:id="@+id/rbLandingSale"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textSize="15sp"
+                            android:textColor="@color/text_main"
+                            android:text="Sale" />
+                        <RadioButton
+                            android:id="@+id/rbLandingHome"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:textSize="15sp"
+                            android:textColor="@color/text_main"
+                            android:text="Home" />
+                    </RadioGroup>
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
                 <!-- Item Rate -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">

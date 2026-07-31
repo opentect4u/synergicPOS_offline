@@ -93,6 +93,18 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     /** Column index (into [columns]) rendered as an inline ON/OFF switch, if any. */
     open val switchColumn: Int? = null
 
+    /**
+     * Columns (indices into [columns]) whose cells wrap onto as many lines as their
+     * text needs, instead of being cut off with an ellipsis on one line.
+     *
+     * One line per cell is what keeps a table of short values - names, codes, amounts -
+     * scannable, so it stays the default. A column holding a whole sentence, like a
+     * printed header or footer line, is the opposite case: truncated it is unreadable,
+     * and the operator cannot tell what will come out on the paper without opening the
+     * row. Opting a column in here is saying it holds prose, not a value.
+     */
+    open val wrappingColumns: Set<Int> get() = emptySet()
+
     /** Invoked when a row's inline switch is toggled. Persist + reflect the new state. */
     open fun onSwitchToggled(row: DataRow, isOn: Boolean) {}
 
@@ -157,6 +169,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             onThumbnailClick = { onThumbnailClick(it) },
             showsThumbnails,
             switchColumn,
+            wrappingColumns,
             onSwitchToggled = { row, isOn -> onSwitchToggled(row, isOn) },
             onEdit = { onEditRow(it) },
             onThumbClick = { showImagePreview(it) },
@@ -444,6 +457,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         private val onThumbnailClick: (DataRow) -> Unit,
         private val showsThumbnails: Boolean,
         private val switchColumn: Int?,
+        private val wrappingColumns: Set<Int>,
         private val onSwitchToggled: (DataRow, Boolean) -> Unit,
         private val onEdit: (DataRow) -> Unit,
         private val onThumbClick: (DataRow) -> Unit,
@@ -490,8 +504,15 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
                 tv.text = row.cells.getOrNull(i).orEmpty()
                 tv.setTextColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.text_main))
                 tv.textSize = 16f
-                tv.maxLines = 1
-                tv.ellipsize = android.text.TextUtils.TruncateAt.END
+                // Recycled cells carry the last row's setting, so both branches always
+                // run rather than only the one that turns wrapping on.
+                if (i in wrappingColumns) {
+                    tv.maxLines = Int.MAX_VALUE
+                    tv.ellipsize = null
+                } else {
+                    tv.maxLines = 1
+                    tv.ellipsize = android.text.TextUtils.TruncateAt.END
+                }
                 tv.setPadding(0, 0, (8 * ctx.resources.displayMetrics.density).toInt(), 0)
                 holder.llCells.addView(tv)
             }

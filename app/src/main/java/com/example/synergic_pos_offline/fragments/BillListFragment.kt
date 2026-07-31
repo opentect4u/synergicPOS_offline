@@ -70,7 +70,9 @@ class BillListFragment : Fragment(), TitledScreen {
         LAST_DAY("Previous day", 1),
         LAST_WEEK("Previous week", 7),
         LAST_MONTH("Previous month", 30),
-        CUSTOM("Custom range", null)
+        CUSTOM("Custom range", null),
+        /** No date bound at all - every bill the store has. */
+        ALL("All dates", null)
     }
     private var range = Range.TODAY
     private var customFrom: Calendar? = null
@@ -131,6 +133,11 @@ class BillListFragment : Fragment(), TitledScreen {
         etToDate = view.findViewById(R.id.etToDate)
         etFromDate.setOnClickListener { pickDate(isFrom = true) }
         etToDate.setOnClickListener { pickDate(isFrom = false) }
+
+        // What bounds the picker is the return window, not a date range, so it opens
+        // on every date and shows exactly the bills that can still be returned
+        // against. History still opens on today, which is what it is usually for.
+        if (pickingForReturn) range = Range.ALL
 
         // Date-range dropdown
         val actRange = view.findViewById<MaterialAutoCompleteTextView>(R.id.actRange)
@@ -209,6 +216,13 @@ class BillListFragment : Fragment(), TitledScreen {
             else -> null
         }
 
+        // The return window only bounds the picker, and only when a limit is set.
+        // Read per refresh rather than held, so changing it in General Settings and
+        // coming back shows the new window.
+        val returnDays = if (pickingForReturn) {
+            GeneralSettingsDao(requireContext()).load().saleReturnDays
+        } else 0
+
         val item = itemQuery.trim()
         val filtered = allBills.filter { b ->
             val matchesText = q.isEmpty() ||
@@ -225,8 +239,19 @@ class BillListFragment : Fragment(), TitledScreen {
             val matchesItem = item.isEmpty() || b.items.any { it.contains(item, true) }
             val matchesAmount = (minAmount == null || b.amount >= minAmount!!) &&
                 (maxAmount == null || b.amount <= maxAmount!!)
-            val matchesStatus = b.cancelled == showCancelled
-            matchesText && matchesRange && matchesItem && matchesAmount && matchesStatus
+            // History files a returned bill with the cancelled ones - some or all of
+            // it has come back, so it is not a live sale any more. The picker keeps
+            // judging by the bill's own status alone: a partly-returned bill has to
+            // stay listed, or the rest of that return could never be taken.
+            val matchesStatus =
+                if (pickingForReturn) b.cancelled == showCancelled
+                else (b.cancelled || b.returned) == showCancelled
+            // A bill past the Sale Return Days limit is not offered for return at all,
+            // rather than being listed and then refused when it is opened.
+            val matchesReturnWindow = !pickingForReturn ||
+                ReturnDao.withinReturnWindow(d, returnDays)
+            matchesText && matchesRange && matchesItem && matchesAmount && matchesStatus &&
+                matchesReturnWindow
         }
 
         val sorted = when (sort) {
@@ -243,6 +268,13 @@ class BillListFragment : Fragment(), TitledScreen {
             showPrint = !pickingForReturn
         )
         tvEmpty.visibility = if (sorted.isEmpty()) View.VISIBLE else View.GONE
+        // An empty picker is usually the return window rather than an empty till, and
+        // "No bills found" would send the operator looking for a bill that is there.
+        tvEmpty.text = if (pickingForReturn && returnDays > 0) {
+            "No bills within the $returnDays-day return window"
+        } else {
+            "No bills found"
+        }
     }
 
     /** Sortable timestamp (date + time) for a bill; 0 if unparseable. */

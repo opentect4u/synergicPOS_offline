@@ -14,6 +14,7 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.BillDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.utils.ThemeManager
@@ -94,13 +95,19 @@ class DashboardHomeFragment : Fragment() {
                 if (c.moveToFirst() && !c.isNull(0)) c.getDouble(0) else 0.0
             }
             val today = "date('now','localtime')"
-            val billOk = "date(COALESCE(bill_date_time, bill_date)) = $today AND is_voided = 0"
+            // A voided bill never counted, and a bill that has come back on a sale
+            // return stops counting - see [BillDao.countableBillClause], which is the
+            // same rule the reports are to use so today's figures and a later report
+            // over today cannot disagree.
+            val billOk = "date(COALESCE(bill_date_time, bill_date)) = $today AND " +
+                BillDao.countableBillClause()
             val bills = num("SELECT COUNT(*) FROM td_bills WHERE $billOk").toInt()
             val sales = num("SELECT COALESCE(SUM(net_amount),0) FROM td_bills WHERE $billOk")
             fun pay(mode: String?) = num(
                 "SELECT COALESCE(SUM(p.amount_paid),0) FROM td_payments p " +
                     "JOIN td_bills b ON b.receipt_no = p.bill_id " +
-                    "WHERE date(COALESCE(b.bill_date_time,b.bill_date)) = $today AND b.is_voided = 0" +
+                    "WHERE date(COALESCE(b.bill_date_time,b.bill_date)) = $today AND " +
+                    BillDao.countableBillClause("b") +
                     (if (mode != null) " AND p.payment_mode = '$mode'" else "")
             )
             val stockOf = "COALESCE((SELECT SUM(current_quantity) FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} s WHERE s.product_id = p.id),0)"

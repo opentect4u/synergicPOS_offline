@@ -997,7 +997,9 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // Standard font scale, like the print - see [ReceiptContext]. The rest of
         // this screen still honours the device's text size; only the slip is pinned.
         LayoutInflater.from(ReceiptContext.standardFontScale(requireContext()))
-            .inflate(R.layout.fragment_bill, host, false).also { bill ->
+            // The till's Print Template layout, so the preview is the slip that will
+            // print rather than a Standard stand-in for it.
+            .inflate(BillReceiptRenderer.layoutFor(requireContext()), host, false).also { bill ->
             // Printing is the checkout button's job; the preview only shows the bill.
             bill.findViewById<View>(R.id.btnPrintBill)?.visibility = View.GONE
             host.addView(bill)
@@ -1059,7 +1061,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                     sgstRate = line.sgstRate,
                     vatRate = line.vatRate,
                     discountAmount = lineDiscountForBill(line),
-                    hsn = catalog.firstOrNull { it.id.toLongOrNull() == line.productId }?.hsn
+                    hsn = catalog.firstOrNull { it.id.toLongOrNull() == line.productId }?.hsn,
+                    unit = catalog.firstOrNull { it.id.toLongOrNull() == line.productId }?.unit
                 )
             },
             discount = discountAmt(),

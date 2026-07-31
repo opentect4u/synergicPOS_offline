@@ -686,11 +686,34 @@ class PosBillingFragment : Fragment(), TitledScreen {
         
         lastAddedId = p.id
         cartAdapter.notifyDataSetChanged()
-        
+
         // Scroll to top to show the most recent item
         view?.findViewById<RecyclerView>(R.id.rvCart)?.scrollToPosition(0)
 
         updateTotals()
+
+        // That item is dealt with, so the grid goes back to showing everything: the
+        // next one is searched for from scratch, and a search left in the box would
+        // otherwise have to be cleared by hand before it could be. Only on a
+        // completed add - a cancelled dialog leaves the operator's search alone.
+        resetBrowsing()
+    }
+
+    /**
+     * Puts the product grid back to "All Items" with an empty search box.
+     *
+     * The search text, the active category and the highlighted category chip are
+     * three separate pieces of state that have to move together; every caller that
+     * wants a clean grid goes through here so none of them can drift apart.
+     */
+    private fun resetBrowsing() {
+        query = ""
+        view?.findViewById<TextInputEditText>(R.id.etSearch)?.setText("")
+        activeCategory = "All"
+        activeCategoryId = null
+        categoryAdapter.notifyDataSetChanged()
+        applyFilter()
+        view?.findViewById<RecyclerView>(R.id.rvProducts)?.scrollToPosition(0)
     }
 
     /**
@@ -1336,18 +1359,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun startNewSale() {
         clearSale()
 
-        query = ""
-        view?.findViewById<TextInputEditText>(R.id.etSearch)?.setText("")
-        activeCategory = "All"
-        activeCategoryId = null
-
         // Re-read the masters so anything edited mid-sale shows up, photos included.
         loadCategoriesAndProducts()
 
-        applyFilter()
+        resetBrowsing()
         updateHeldButton()
         updateOrderNo()
-        view?.findViewById<RecyclerView>(R.id.rvProducts)?.scrollToPosition(0)
     }
 
     private fun clearSale() {

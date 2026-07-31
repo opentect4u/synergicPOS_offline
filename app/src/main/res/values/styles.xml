@@ -172,4 +172,14 @@
         <item name="android:text">--------------------------------------------------------</item>
     </style>
 
+    <!--
+        The same rule for the Classic bill, cut off square at the edge of the paper
+        rather than trailing an ellipsis. The line is deliberately longer than any
+        roll it prints on, so the overflow is the point - marking it "..." says the
+        rule was truncated, which on a receipt just reads as a smudge.
+    -->
+    <style name="BillDashLineClassic" parent="BillDashLine">
+        <item name="android:ellipsize">none</item>
+    </style>
+
 </resources>

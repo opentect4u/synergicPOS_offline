@@ -465,7 +465,17 @@ class BillDao(context: Context) {
         val time: String,       // HH:mm
         val total: String,      // formatted net amount, e.g. "1,285.75"
         val items: List<String>,
-        val cancelled: Boolean
+        val cancelled: Boolean,
+        /**
+         * Whether any of this bill has come back on a sale return.
+         *
+         * Derived from the returns table rather than stored on the bill: a return is
+         * its own document with its own number, and rewriting the sale's status when
+         * one is taken would change what every report reading `bill_status` counts.
+         * True for a partial return too - some of the goods are back, so the sale is
+         * no longer the plain sale it was, which is what Bill History needs to show.
+         */
+        val returned: Boolean = false
     ) {
         /** Numeric total, tolerant of thousands separators. */
         val amount: Double get() = total.replace(",", "").toDoubleOrNull() ?: 0.0
@@ -482,7 +492,9 @@ class BillDao(context: Context) {
         val args = store?.let { arrayOf(it.toString()) }
         val sql = """
             SELECT b.receipt_no, b.bill_number, b.bill_date, b.bill_date_time,
-                   b.net_amount, b.bill_status, c.customer_name
+                   b.net_amount, b.bill_status, c.customer_name,
+                   EXISTS(SELECT 1 FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} r
+                          WHERE r.original_bill_id = b.receipt_no)
             FROM td_bills b
             LEFT JOIN md_customers c ON c.id = b.customer_id
             $storeClause
@@ -508,7 +520,8 @@ class BillDao(context: Context) {
                         time = formatTime(rawDateTime),
                         total = String.format(Locale.US, "%,.2f", net),
                         items = itemsByBill[receiptNo].orEmpty(),
-                        cancelled = status.equals("CANCELLED", ignoreCase = true)
+                        cancelled = status.equals("CANCELLED", ignoreCase = true),
+                        returned = c.getInt(7) == 1
                     )
                 )
             }
@@ -562,4 +575,30 @@ class BillDao(context: Context) {
 
     private fun parse(fmt: SimpleDateFormat, text: String?) =
         try { if (text.isNullOrBlank()) null else fmt.parse(text) } catch (_: Exception) { null }
+
+    companion object {
+
+        /**
+         * SQL predicate for a bill that still counts as a sale: not voided, and with
+         * nothing returned against it.
+         *
+         * Kept here as one string because every figure the till reports has to agree
+         * on what a countable bill is. There are two dozen reports still to be built,
+         * and each one writing its own version of this is how a Day-Wise total ends up
+         * disagreeing with a Bill-Wise one over the same day.
+         *
+         * [alias] is the table alias the query gave `td_bills`, or null when its
+         * columns are unqualified.
+         *
+         * Note this drops a partly-returned bill entirely rather than netting the
+         * returned amount off it - see the returns table if a report needs the
+         * finer-grained figure.
+         */
+        fun countableBillClause(alias: String? = null): String {
+            val prefix = alias?.let { "$it." } ?: ""
+            return "${prefix}is_voided = 0 AND NOT EXISTS(" +
+                "SELECT 1 FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} r " +
+                "WHERE r.original_bill_id = ${prefix}receipt_no)"
+        }
+    }
 }
