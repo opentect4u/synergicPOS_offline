@@ -30,9 +30,11 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "sku", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "brand", "TEXT")
-        // Restaurant-mode product attributes (Veg/Non-Veg/Egg + spice level).
+        // Restaurant-mode product attributes (Veg/Non-Veg/Egg, spice, prep time, availability).
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "food_type", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "spice_level", "TEXT")
+        addColumnIfMissing(db, Tables.MD_PRODUCTS, "prep_time", "TEXT")
+        addColumnIfMissing(db, Tables.MD_PRODUCTS, "availability", "TEXT")
         addColumnIfMissing(db, Tables.TD_BILLS, "bill_seq_no", "INTEGER")
         addColumnIfMissing(db, Tables.TD_BILLS, "settings_snapshot", "TEXT")
         // Bills created before bill_seq_no existed carried a plain receipt_no-based

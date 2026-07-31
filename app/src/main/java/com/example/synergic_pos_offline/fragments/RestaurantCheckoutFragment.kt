@@ -24,14 +24,16 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
     private data class Line(val name: String, val qty: Int, val rate: Double)
 
-    private val lines = listOf(
-        Line("Chicken Biryani", 1, 280.0),
-        Line("Paneer Butter Masala", 1, 220.0),
-        Line("Garlic Naan", 2, 60.0),
-        Line("Masala Papad", 1, 30.0),
-        Line("Fresh Lime Soda", 2, 40.0),
-        Line("Chocolate Brownie", 1, 120.0)
-    )
+    // The selected order's items, passed in from the Orders screen.
+    private val lines: List<Line> by lazy {
+        val names = arguments?.getStringArrayList(ARG_NAMES) ?: arrayListOf()
+        val qtys = arguments?.getIntArray(ARG_QTYS) ?: IntArray(0)
+        val rates = arguments?.getDoubleArray(ARG_RATES) ?: DoubleArray(0)
+        names.mapIndexed { i, n -> Line(n, qtys.getOrElse(i) { 1 }, rates.getOrElse(i) { 0.0 }) }
+    }
+
+    private val tableNo get() = arguments?.getString(ARG_TABLE).orEmpty()
+    private val customer get() = arguments?.getString(ARG_CUSTOMER)?.ifBlank { "Walk-in" } ?: "Walk-in"
 
     private var total = 0.0
     private var payMethod = "Cash"
@@ -43,6 +45,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        view.findViewById<TextView>(R.id.tvCoTable).text = "Table: $tableNo     Customer: $customer"
         populateItems(view)
 
         // Payment method selection — always re-read the current theme colour.
@@ -63,7 +66,15 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             requireActivity().supportFragmentManager.popBackStack()
         }
         view.findViewById<MaterialButton>(R.id.btnConfirmPay).setOnClickListener {
-            android.widget.Toast.makeText(requireContext(), "Payment confirmed ($payMethod)", android.widget.Toast.LENGTH_SHORT).show()
+            // Close the table's order back on the Orders screen, then return to it.
+            parentFragmentManager.setFragmentResult(
+                RESULT_PAID, android.os.Bundle().apply { putString(ARG_TABLE, tableNo) }
+            )
+            android.widget.Toast.makeText(
+                requireContext(), "Payment confirmed for table $tableNo ($payMethod)",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+            parentFragmentManager.popBackStack()
         }
 
         // Re-apply our accents after MainActivity's global theme pass.
@@ -131,4 +142,27 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     }
 
     private fun money(v: Double): String = String.format(java.util.Locale.US, "%,.2f", v)
+
+    companion object {
+        const val RESULT_PAID = "restaurant_checkout_paid"
+        const val ARG_TABLE = "table"
+        private const val ARG_CUSTOMER = "customer"
+        private const val ARG_NAMES = "names"
+        private const val ARG_QTYS = "qtys"
+        private const val ARG_RATES = "rates"
+
+        /** Builds a checkout for [table]'s order, carrying its items. */
+        fun newInstance(
+            table: String, customer: String,
+            names: ArrayList<String>, qtys: IntArray, rates: DoubleArray
+        ): RestaurantCheckoutFragment = RestaurantCheckoutFragment().apply {
+            arguments = android.os.Bundle().apply {
+                putString(ARG_TABLE, table)
+                putString(ARG_CUSTOMER, customer)
+                putStringArrayList(ARG_NAMES, names)
+                putIntArray(ARG_QTYS, qtys)
+                putDoubleArray(ARG_RATES, rates)
+            }
+        }
+    }
 }

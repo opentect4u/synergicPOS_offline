@@ -265,6 +265,10 @@ class ProductsFragment : DataTableFragment() {
                 ?.let { view.findViewById<AutoCompleteTextView>(R.id.actFoodType).setText(it, false) }
             existing?.spiceLevel?.takeIf { it.isNotBlank() }
                 ?.let { view.findViewById<AutoCompleteTextView>(R.id.actSpiceLevel).setText(it, false) }
+            existing?.prepTime?.takeIf { it.isNotBlank() }
+                ?.let { view.findViewById<TextInputEditText>(R.id.etPrepTime).setText(it) }
+            existing?.availability?.takeIf { it.isNotBlank() }
+                ?.let { view.findViewById<AutoCompleteTextView>(R.id.actAvailability).setText(it, false) }
         }
 
         existing?.image?.let { showImage(it) }
@@ -320,6 +324,8 @@ class ProductsFragment : DataTableFragment() {
                 batchNo = text(view, R.id.etBatchNo),
                 foodType = view.findViewById<TextView>(R.id.actFoodType).text?.toString()?.trim().orEmpty(),
                 spiceLevel = view.findViewById<TextView>(R.id.actSpiceLevel).text?.toString()?.trim().orEmpty(),
+                prepTime = text(view, R.id.etPrepTime),
+                availability = view.findViewById<TextView>(R.id.actAvailability).text?.toString()?.trim().orEmpty(),
                 rates = rateRows
             )
             saveProduct(productId, form)
@@ -739,6 +745,8 @@ class ProductsFragment : DataTableFragment() {
         val batchNo: String,
         val foodType: String,
         val spiceLevel: String,
+        val prepTime: String,
+        val availability: String,
         val rates: List<RateRow>
     )
 
@@ -746,6 +754,7 @@ class ProductsFragment : DataTableFragment() {
         val name: String, val hsn: String, val barcode: String, val stockAlert: String,
         val categoryId: Int?, val image: ByteArray?, val batchNo: String,
         val foodType: String, val spiceLevel: String,
+        val prepTime: String, val availability: String,
         val rates: List<RateRow>
     )
 
@@ -781,7 +790,7 @@ class ProductsFragment : DataTableFragment() {
 
         db.rawQuery(
             "SELECT product_name, hsn_code, bar_code, stock_alert_qty, category_id, product_image, " +
-                "food_type, spice_level " +
+                "food_type, spice_level, prep_time, availability " +
                 "FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE id = ? LIMIT 1",
             arrayOf(productId.toString())
         ).use { c ->
@@ -796,6 +805,8 @@ class ProductsFragment : DataTableFragment() {
                 batchNo = "",
                 foodType = c.getString(6).orEmpty(),
                 spiceLevel = c.getString(7).orEmpty(),
+                prepTime = c.getString(8).orEmpty(),
+                availability = c.getString(9).orEmpty(),
                 rates = rates
             )
         }
@@ -822,6 +833,8 @@ class ProductsFragment : DataTableFragment() {
                 put("bar_code", form.barcode.ifEmpty { null })
                 put("food_type", form.foodType.ifEmpty { null })
                 put("spice_level", form.spiceLevel.ifEmpty { null })
+                put("prep_time", form.prepTime.ifEmpty { null })
+                put("availability", form.availability.ifEmpty { null })
                 putDouble(this, "stock_alert_qty", form.stockAlert)
                 if (form.categoryId != null) put("category_id", form.categoryId) else putNull("category_id")
                 // Only touch the image when the user picked a new one or cleared it.

@@ -94,12 +94,38 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
         }
 
-        // Bill & Pay → restaurant checkout.
+        // When checkout confirms payment, close that table's order.
+        parentFragmentManager.setFragmentResultListener(
+            RestaurantCheckoutFragment.RESULT_PAID, viewLifecycleOwner
+        ) { _, bundle ->
+            val paidTable = bundle.getString(RestaurantCheckoutFragment.ARG_TABLE)
+            orders.removeAll { it.id == paidTable }
+            val root = view ?: return@setFragmentResultListener
+            populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+            clearDetail(root)
+        }
+
+        // Bill & Pay → restaurant checkout with the selected order's items.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).setOnClickListener {
-            requireActivity().supportFragmentManager.beginTransaction()
-                .replace(R.id.fragment_container, RestaurantCheckoutFragment())
-                .addToBackStack(null)
-                .commit()
+            val order = orders.firstOrNull { it.selected }
+            when {
+                order == null -> toast("Select a table order first")
+                order.items.isEmpty() -> toast("Add items before billing")
+                else -> {
+                    val names = ArrayList(order.items.map { it.product.name })
+                    val qtys = order.items.map { it.qty }.toIntArray()
+                    val rates = order.items.map { it.rate }.toDoubleArray()
+                    requireActivity().supportFragmentManager.beginTransaction()
+                        .replace(
+                            R.id.fragment_container,
+                            RestaurantCheckoutFragment.newInstance(
+                                order.id, order.phone.ifBlank { "Walk-in" }, names, qtys, rates
+                            )
+                        )
+                        .addToBackStack(null)
+                        .commit()
+                }
+            }
         }
 
         // MainActivity re-themes the whole tree on resume (by button name), which
