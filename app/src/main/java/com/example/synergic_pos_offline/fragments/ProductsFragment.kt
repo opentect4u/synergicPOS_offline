@@ -28,6 +28,8 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.SessionManager
+import com.example.synergic_pos_offline.utils.Downloads
+import com.example.synergic_pos_offline.utils.ProductCsvExport
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.example.synergic_pos_offline.utils.SettingsCache
@@ -47,6 +49,9 @@ class ProductsFragment : DataTableFragment() {
     override val screenTitle = "Products"
 
     override val columns = listOf("S.No", "Name", "HSN Code", "Barcode", "Category")
+
+    /** Products filter by category - the "Category" column above. */
+    override val filterColumnIndex = 4
 
     /** Products show their image as a round preview before the name. */
     override val showsThumbnails = true
@@ -91,51 +96,26 @@ class ProductsFragment : DataTableFragment() {
 
     override fun onDownloadTemplate() = downloadTemplate()
 
-    /** Upload columns, matching the Add-Product popup (product fields + one rate). */
-    private val csvHeader = listOf(
-        "product_name", "hsn_code", "bar_code",
-        "rate_name", "rate", "unit_id", "cgst", "sgst",
-        "discount", "discount_type", "sell_price", "purchase_price"
-    )
-
-    /** Saves a blank CSV template (header + two example rows) to Downloads. */
+    /**
+     * Saves the product master itself to Downloads - not the blank template.
+     *
+     * This button used to hand over an empty sheet, which the Bulk Upload page also
+     * does and does better, since that is where a template is any use. What is
+     * wanted from a table is the table: the catalogue joined back together across
+     * products, rates, categories and units.
+     *
+     * It comes out in the upload's own format ([ProductCsvExport]), so the two make
+     * a round trip - export what is here, edit it in a spreadsheet, upload it back.
+     */
     private fun downloadTemplate() {
         try {
-            val csv = buildString {
-                append(csvHeader.joinToString(",")).append("\n")
-                append("Apple,987640,11111111,Retail,120,1,5,5,0,P,120,110").append("\n")
-                append("Mango,897651,11111112,Retail,80,2,5,5,0,P,80,70").append("\n")
-            }
-            val savedTo = saveToDownloads("item_master_template.csv", csv)
-            toast("Template saved to $savedTo")
+            val savedTo = Downloads.save(
+                requireContext(), ProductCsvExport.FILE_NAME,
+                ProductCsvExport.content(requireContext())
+            )
+            toast("Products saved to $savedTo")
         } catch (e: Exception) {
-            toast("Could not save template: ${e.message}")
-        }
-    }
-
-    /** Writes [content] to the public Downloads folder; returns a human-readable path. */
-    private fun saveToDownloads(fileName: String, content: String): String {
-        val ctx = requireContext()
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-                put(MediaStore.Downloads.MIME_TYPE, "text/csv")
-                put(MediaStore.Downloads.IS_PENDING, 1)
-            }
-            val resolver = ctx.contentResolver
-            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: throw IllegalStateException("could not create file")
-            resolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
-            values.clear()
-            values.put(MediaStore.Downloads.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-            "Downloads/$fileName"
-        } else {
-            // No permission needed for the app's own external files dir.
-            val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            val file = File(dir, fileName)
-            file.writeText(content)
-            file.absolutePath
+            toast("Could not save products: ${e.message}")
         }
     }
 
@@ -875,7 +855,13 @@ class ProductsFragment : DataTableFragment() {
                     putDouble(this, "vat_rate", r.vat)
                     put("discount", r.discount.toDoubleOrNull() ?: 0.0)
                     if (r.discountType != null) put("discount_type", r.discountType) else putNull("discount_type")
+                    // md_product_rates carries the selling price in two columns.
+                    // Both are written with the same figure: a rate saved through
+                    // this form used to fill only one of them, so anything reading
+                    // the other - the CSV export among them - reported no price at
+                    // all for a product added by hand.
                     putDouble(this, "sell_price", r.sellPrice)
+                    putDouble(this, "sale_price", r.sellPrice)
                     putDouble(this, "purchase_price", r.purchasePrice)
                 }
                 val rid = db.insert(DatabaseHelper.Tables.MD_PRODUCT_RATES, null, rate)

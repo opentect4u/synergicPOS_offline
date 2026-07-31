@@ -13,6 +13,21 @@
         android:paddingTop="20dp"
         android:paddingBottom="14dp">
 
+        <!-- The product's own photo, so the operator can see they picked the right
+             thing before committing a quantity to it - the names on a till differ by
+             a size or a variant and read alike in a hurry. Hidden, taking no height,
+             for a product that has no picture. -->
+        <ImageView
+            android:id="@+id/ivDialogPhoto"
+            android:layout_width="match_parent"
+            android:layout_height="120dp"
+            android:layout_marginBottom="12dp"
+            android:scaleType="centerCrop"
+            android:background="@drawable/bg_dialog_photo"
+            android:clipToOutline="true"
+            android:contentDescription="Product photo"
+            android:visibility="gone" />
+
         <!-- Header -->
         <TextView
             android:id="@+id/tvDialogTitle"

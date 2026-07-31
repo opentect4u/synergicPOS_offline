@@ -39,20 +39,28 @@ object DialogUtils {
 
     private const val DESTRUCTIVE_COLOR = "#D93025"
 
-    /** Room left either side of the card, matching the layouts' own 24dp margin. */
-    private const val SCREEN_MARGIN_DP = 24
+    /**
+     * The most of the screen's width a dialog may take.
+     *
+     * The card is designed at a fixed width, which is what stops a two-field form
+     * stretching across a tablet. On a screen too narrow for that width - a phone,
+     * or a tablet set to a large display size, which leaves fewer `dp` to go round -
+     * the fixed width is wider than the screen and the dialog is cut off at both
+     * edges. The share below is the ceiling; the designed width still wins wherever
+     * it fits.
+     */
+    private const val MAX_SCREEN_WIDTH_FRACTION = 0.92f
 
     /**
-     * Narrows [content] to the width the screen actually has, when its designed
+     * Narrows [content] to what the screen can actually show, when its designed
      * width does not fit.
      *
-     * Only ever narrows: a dialog that fits keeps the width it was drawn at, so
-     * this cannot stretch a small form across a tablet.
+     * Only ever narrows: a dialog that fits keeps the width it was drawn at, so this
+     * cannot stretch a small form across a tablet.
      */
     private fun fitToScreen(context: Context, content: android.view.View?) {
         val params = content?.layoutParams ?: return
-        val metrics = context.resources.displayMetrics
-        val available = metrics.widthPixels - (2 * SCREEN_MARGIN_DP * metrics.density).toInt()
+        val available = (context.resources.displayMetrics.widthPixels * MAX_SCREEN_WIDTH_FRACTION).toInt()
         if (available > 0 && params.width > available) {
             params.width = available
             content.layoutParams = params

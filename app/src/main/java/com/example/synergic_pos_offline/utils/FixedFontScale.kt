@@ -2,6 +2,7 @@ package com.example.synergic_pos_offline.utils
 
 import android.content.Context
 import android.content.res.Configuration
+import android.util.DisplayMetrics
 import androidx.appcompat.view.ContextThemeWrapper
 import com.example.synergic_pos_offline.R
 
@@ -35,13 +36,32 @@ object FixedFontScale {
      * [context] with the device's font scale neutralised, carrying the app theme so
      * the Material views in those layouts still inflate.
      *
+     * [pinDensity] additionally neutralises the *Display size* setting, which is a
+     * separate slider doing a separate thing: font size scales `sp`, display size
+     * scales everything by changing how many `dp` the screen reports. A card fixed
+     * at 450dp is a different physical width at each display size, and at the
+     * largest one it is wider than the screen it has to appear on. Pinned back to
+     * the display's own stable density, the dialog is the same size on a device
+     * whatever either slider is set to.
+     *
+     * Receipts do not pin density - they are measured in printer dots, and the
+     * screen's density never enters into it.
+     *
      * The wrapper keeps the original as its base, so a dialog built on it still
      * reaches the Activity it belongs to and can find a window to show itself in.
      */
-    fun wrap(context: Context): Context {
+    fun wrap(context: Context, pinDensity: Boolean = false): Context {
         // A default Configuration has fontScale 1 and every other field undefined,
         // so merging it over the base changes the scale and nothing else.
-        val override = Configuration().apply { fontScale = STANDARD }
+        val override = Configuration().apply {
+            fontScale = STANDARD
+            if (pinDensity) {
+                // DENSITY_DEVICE_STABLE is the density the hardware actually has -
+                // what the Display size setting moves away from - so this puts it
+                // back rather than imposing some fixed number of its own.
+                densityDpi = DisplayMetrics.DENSITY_DEVICE_STABLE
+            }
+        }
         return ContextThemeWrapper(context, R.style.Theme_Synergic_POS_Offline).apply {
             applyOverrideConfiguration(override)
         }

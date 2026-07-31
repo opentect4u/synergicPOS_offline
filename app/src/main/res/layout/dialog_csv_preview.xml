@@ -31,6 +31,55 @@
             android:textSize="13sp"
             android:textColor="@color/text_secondary" />
 
+        <!-- What to do with the products already on the till.
+             Asked at the top, before the data rather than under it: it decides what
+             the whole import means, and below a table of fifty rows it is a question
+             the operator scrolls past without reading. Boxed and tinted for the same
+             reason - it is the one choice on this dialog that can destroy something.
+             Append is the default: the answer that cannot lose anything. -->
+        <LinearLayout
+            android:id="@+id/llImportMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="14dp"
+            android:padding="12dp"
+            android:background="@drawable/bg_import_mode">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Existing products"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_main" />
+
+            <RadioGroup
+                android:id="@+id/rgImportMode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:orientation="vertical">
+
+                <RadioButton
+                    android:id="@+id/rbImportAppend"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    android:text="Append — keep what is on the till and add these"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_main" />
+
+                <RadioButton
+                    android:id="@+id/rbImportReplace"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Replace — remove the existing products first"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_main" />
+            </RadioGroup>
+        </LinearLayout>
+
         <!-- Full uploaded table: scrolls both ways. Header + rows are built in code
              so every CSV column is shown with matching widths. -->
         <ScrollView

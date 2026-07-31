@@ -84,6 +84,33 @@ class DatabaseHelper private constructor(context: Context) :
                 """.trimIndent()
             )
         }
+        // And every product's sku mirrors its own id, the same way.
+        //
+        // Done in the database rather than at each insert because there are several
+        // ways a product gets created - the Add Product popup, a bulk upload, the
+        // seeder - and a rule that lives in one of them is a rule the other two get
+        // wrong. It is the id that is copied, so a product's sku is unique without
+        // anything having to allocate it.
+        runCatching {
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_products_sku_from_id
+                AFTER INSERT ON ${Tables.MD_PRODUCTS}
+                FOR EACH ROW
+                BEGIN
+                    UPDATE ${Tables.MD_PRODUCTS} SET sku = NEW.id WHERE id = NEW.id;
+                END
+                """.trimIndent()
+            )
+        }
+        // Products created before that trigger existed have no sku at all; give them
+        // the same one they would have been given. Only the blanks are touched, so a
+        // product whose sku was set by hand keeps it.
+        runCatching {
+            db.execSQL(
+                "UPDATE ${Tables.MD_PRODUCTS} SET sku = id WHERE sku IS NULL OR trim(sku) = ''"
+            )
+        }
         // store_id on products and their rates is sourced from md_registration (the
         // verified store first) when the insert didn't supply one.
         runCatching { db.execSQL(storeIdTrigger("trg_products_store_id", Tables.MD_PRODUCTS)) }

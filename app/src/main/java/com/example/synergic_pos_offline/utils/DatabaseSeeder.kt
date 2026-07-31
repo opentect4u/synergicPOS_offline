@@ -110,6 +110,7 @@ object DatabaseSeeder {
                 put("cgst_rate", p.gst / 2.0)
                 put("sgst_rate", p.gst / 2.0)
                 put("sell_price", p.rate)
+                put("sale_price", p.rate)
                 put("purchase_price", p.purchase)
             }
             db.insert(DatabaseHelper.Tables.MD_PRODUCT_RATES, null, rates)
