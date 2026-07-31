@@ -126,14 +126,37 @@
                     android:textSize="16sp" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <!-- USB: no address needed -->
+            <!-- USB: attached device picker -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilUsbDevice"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:hint="USB Device"
+                android:visibility="gone"
+                app:startIconDrawable="@android:drawable/stat_sys_data_bluetooth"
+                app:boxCornerRadiusTopStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusBottomEnd="12dp">
+
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                    android:id="@+id/actvUsbDevice"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none"
+                    android:maxLines="1"
+                    android:textSize="16sp" />
+            </com.google.android.material.textfield.TextInputLayout>
+
             <TextView
                 android:id="@+id/tvUsbNote"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="8dp"
                 android:layout_marginStart="6dp"
-                android:text="USB printers don't need an address."
+                android:text="Plug the printer into the tablet's USB port (or an OTG adapter), then tap USB Device to pick it."
                 android:textSize="12sp"
                 android:textColor="@color/text_secondary"
                 android:visibility="gone" />

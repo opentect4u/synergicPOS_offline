@@ -89,6 +89,106 @@ private const val NARROW_NET_HEADING = "AMOUNT"
 private const val NARROW_ROW_SPACING = 0.5f
 
 /**
+ * Type size for a Classic line item on a 2-inch roll.
+ *
+ * Classic prints a whole line - serial, name, quantity, price and amount - across
+ * one row, so a narrow roll has to set it *smaller* to keep those five columns on
+ * that row. This is the opposite of the Standard layout, whose name sits on a row
+ * of its own and so has the width to be set larger ([NARROW_ITEM_SP]).
+ */
+private const val CLASSIC_NARROW_ITEM_SP = 10f
+
+/**
+ * Type size for the Classic head - bill number, date and time, which share a line.
+ *
+ * Left out of [NARROW_BODY_SP] for the same reason as the item rows: three fields
+ * on one line have no room to grow. Here the squeeze is the sharper one, because
+ * the date is centred on the paper rather than merely placed between the other two,
+ * which leaves the bill number only half of what the date does not take.
+ */
+private const val CLASSIC_NARROW_HEAD_SP = 10f
+
+/**
+ * What the bill number is labelled on a 2-inch Classic roll.
+ *
+ * Centring the date costs the bill number width - it gets half of what is left,
+ * about ten characters here - and "BILL NO: " spends nine of them on the label
+ * before the number starts. Shortening the label is what keeps the number itself on
+ * the line; beside a date and a time, "NO:" is not ambiguous.
+ */
+private const val NARROW_BILL_NO_LABEL = "NO:"
+
+/** GRAND TOTAL on a Classic slip, at Bill Settings' Regular and Big sizes. */
+private const val CLASSIC_GRAND_TOTAL_SP = 17f
+private const val CLASSIC_GRAND_TOTAL_BIG_SP = 22f
+
+/** The same on a 2-inch roll, where "GRAND TOTAL:" and its figure share 24 characters. */
+private const val CLASSIC_NARROW_GRAND_TOTAL_SP = 14f
+private const val CLASSIC_NARROW_GRAND_TOTAL_BIG_SP = 17f
+
+/**
+ * Column weights for the Classic item table: name, quantity, price, discount, amount.
+ *
+ * The one source of truth for both the headings and the rows beneath them - the
+ * headings in fragment_bill_classic.xml are laid out to these at inflation and set
+ * from here after, so a column and its label cannot drift apart.
+ */
+private val CLASSIC_COLUMNS = floatArrayOf(3.8f, 2f, 1.9f, 1.7f, 2.3f)
+
+/**
+ * The same on a 2-inch roll, where the item name is given a larger share.
+ *
+ * The figures need a fixed number of characters whatever the paper is - a price is
+ * a price - so on a narrow roll it is the name that has to give, and at these
+ * proportions it gives less: everything but the name is trimmed to what it actually
+ * needs, which buys the name back the room for a typical one to stay on its line.
+ */
+private val CLASSIC_NARROW_COLUMNS = floatArrayOf(4.6f, 1.9f, 1.8f, 1.5f, 2f)
+
+/**
+ * The same again for a 2-inch roll that also has a DISC column to fit.
+ *
+ * Five columns is more than that width comfortably takes, and something has to be
+ * squeezed. It is the name: a figure that wraps is unreadable - "145.00" broken
+ * after the "5" reads as two numbers - while a name that wraps is still the name,
+ * on a second line. So each figure column is widened to the characters it actually
+ * needs and the name takes what is left, wrapping where it must.
+ */
+private val CLASSIC_NARROW_DISC_COLUMNS = floatArrayOf(3.5f, 1.6f, 1.9f, 1.6f, 1.9f)
+
+/**
+ * Type size for a Classic line item on a 2-inch roll carrying a DISC column.
+ *
+ * A step down from [CLASSIC_NARROW_ITEM_SP], bought to widen the name column back
+ * to around a dozen characters. Below that the name does not merely wrap, it breaks
+ * mid-word - "TOOTHPASTE" split as "TOOT" / "HPASTE" - and a customer cannot read
+ * back what they were charged for.
+ */
+private const val CLASSIC_NARROW_DISC_ITEM_SP = 9f
+
+/**
+ * Column weights for the Tax wise short tax table: rate, base, SGST, CGST, total.
+ *
+ * The one source of truth for the table's headings and its rows alike, the same way
+ * [CLASSIC_COLUMNS] is for the item table.
+ */
+private val TAX_WISE_COLUMNS = floatArrayOf(2f, 2.4f, 1.9f, 1.9f, 2.3f)
+
+/**
+ * The same on a 2-inch roll. Every column here holds a money figure of much the same
+ * width, so unlike the item table there is no name to give up room - they are simply
+ * evened out, and the type is what shrinks ([CLASSIC_NARROW_ITEM_SP]).
+ */
+private val TAX_WISE_NARROW_COLUMNS = floatArrayOf(2.1f, 2.2f, 1.9f, 1.9f, 2.2f)
+
+/**
+ * What the item heading says on a 2-inch Classic roll carrying a DISC column - the
+ * name column is down to about nine characters there, and "SR.NO ITEM" wrapping
+ * would take the headings out of line with the figures under them.
+ */
+private const val CLASSIC_NARROW_ITEM_HEADING = "ITEM"
+
+/**
  * Fills a receipt layout from the bill tables.
  *
  * Split out of the bill screen so a receipt can be produced without one being on
@@ -122,7 +222,14 @@ class BillReceiptRenderer(context: Context) {
         val price: String,
         val netAmount: String,
         val hsn: String? = null,
-        val discount: String? = null
+        val discount: String? = null,
+        /**
+         * The unit the quantity was sold in - PKT, LTR, GM. Printed beside the
+         * quantity on a Classic slip and nowhere else, and only where the sale
+         * actually records one: a bill line with no unit prints the bare figure
+         * rather than a guessed unit.
+         */
+        val unit: String? = null
     )
 
     /**
@@ -205,7 +312,7 @@ class BillReceiptRenderer(context: Context) {
         paperDots: Int = REFERENCE_PAPER_DOTS,
         duplicate: Boolean = false
     ): Bitmap? = runCatching {
-        val root = LayoutInflater.from(ctx).inflate(R.layout.fragment_bill, null, false)
+        val root = LayoutInflater.from(ctx).inflate(layoutFor(ctx), null, false)
 
         // The print button floats over the receipt and would be drawn onto the paper.
         root.findViewById<View>(R.id.btnPrintBill)?.visibility = View.GONE
@@ -279,7 +386,9 @@ class BillReceiptRenderer(context: Context) {
             val sgstRate: Double = 0.0,
             val vatRate: Double = 0.0,
             val discountAmount: Double = 0.0,
-            val hsn: String? = null
+            val hsn: String? = null,
+            /** Unit symbol, printed beside the quantity on a Classic slip. */
+            val unit: String? = null
         )
     }
 
@@ -405,7 +514,34 @@ class BillReceiptRenderer(context: Context) {
                 }
             }
 
-            view.findViewById<TextView>(R.id.tvBillNo).text = "BILL NO: $billNumber"
+            // Which layout this is being drawn into. The format is a live setting
+            // rather than part of the bill's snapshot - it is how this till prints,
+            // not a term of the sale - so changing the template restyles reprints of
+            // old bills too, which is what "print Classic from now on" means.
+            //
+            // Confirmed against the view as well as the setting: a caller that
+            // inflated the Standard layout gets the Standard treatment whatever the
+            // setting says, rather than having its summary written into ids that
+            // are not there.
+            //
+            // Tax wise short is a Classic slip that reports its tax as a table
+            // rather than as a line per component per rate, so it takes the whole
+            // Classic treatment - head, item rows, totals - and diverges only where
+            // [taxWise] says so.
+            val format = liveSettings.billFormat
+            val classicFormat = format == BillSettingsDao.BillFormat.CLASSIC ||
+                format == BillSettingsDao.BillFormat.TAX_WISE_SHORT
+            val classic = classicFormat && view.findViewById<View>(R.id.llGrandTotal) != null
+            val taxWise = classic && format == BillSettingsDao.BillFormat.TAX_WISE_SHORT &&
+                view.findViewById<View>(R.id.llTaxRows) != null
+
+            // How tightly everything is packed - the item table, the totals and the
+            // head. Read here rather than at the item table because the Classic head
+            // is written above it and needs the same answer.
+            val narrow = paperDots < NARROW_PAPER_DOTS
+
+            val billNoLabel = if (classic && narrow) NARROW_BILL_NO_LABEL else "BILL NO:"
+            view.findViewById<TextView>(R.id.tvBillNo).text = "$billNoLabel $billNumber"
             // Moved to the foot of the bill, where "created by" belongs.
             view.findViewById<TextView>(R.id.tvBillCreatedBy).text =
                 "Created by: ${draft?.cashier ?: cashierName(db, operatorId, createdBy)}"
@@ -457,7 +593,6 @@ class BillReceiptRenderer(context: Context) {
             if (time.isNotEmpty()) view.findViewById<TextView>(R.id.tvTime).text = time
 
             // Line items, plus the totals summed from those same lines.
-            val narrow = paperDots < NARROW_PAPER_DOTS
             val raws = if (draft != null) {
                 draftRawLines(draft, hsnCode, taxRegime, inclusive, discountPreTax)
             } else {
@@ -476,15 +611,46 @@ class BillReceiptRenderer(context: Context) {
             // The headings are set at the size the figures beneath them are, so the
             // two stay in step - a heading left at full size on a 2-inch roll wraps
             // and takes the column alignment with it.
-            val headingSp = if (narrow) NARROW_ITEM_SP else WIDE_ITEM_SP
-            listOf(R.id.tvColSrItem, R.id.tvColQty, R.id.tvColPrice, R.id.tvColDisc, R.id.tvColNet)
-                .forEach { view.findViewById<TextView>(it).textSize = headingSp }
-            if (narrow) {
+            val headingSp = when {
+                classic && narrow && showDisc -> CLASSIC_NARROW_DISC_ITEM_SP
+                classic && narrow -> CLASSIC_NARROW_ITEM_SP
+                classic -> WIDE_ITEM_SP
+                narrow -> NARROW_ITEM_SP
+                else -> WIDE_ITEM_SP
+            }
+            val headings = listOf(
+                R.id.tvColSrItem, R.id.tvColQty, R.id.tvColPrice, R.id.tvColDisc, R.id.tvColNet
+            )
+            headings.forEach { view.findViewById<TextView>(it).textSize = headingSp }
+            val classicColumns = when {
+                narrow && showDisc -> CLASSIC_NARROW_DISC_COLUMNS
+                narrow -> CLASSIC_NARROW_COLUMNS
+                else -> CLASSIC_COLUMNS
+            }
+            if (classic) {
+                headings.forEachIndexed { i, id ->
+                    view.findViewById<TextView>(id).let { heading ->
+                        (heading.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+                            lp.weight = classicColumns[i]
+                            heading.layoutParams = lp
+                        }
+                    }
+                }
+                if (narrow && showDisc) {
+                    view.findViewById<TextView>(R.id.tvColSrItem).text = CLASSIC_NARROW_ITEM_HEADING
+                }
+            }
+            // Only Standard needs its headings shortened on a narrow roll; the
+            // Classic layout's own labels ("PRICE", "AMOUNT") already fit.
+            if (narrow && !classic) {
                 view.findViewById<TextView>(R.id.tvColPrice).text = NARROW_PRICE_HEADING
                 view.findViewById<TextView>(R.id.tvColNet).text = NARROW_NET_HEADING
             }
             items.forEach {
-                llItems.addView(buildItemRow(it, showDisc, narrow))
+                llItems.addView(
+                    if (classic) buildClassicItemRow(it, showDisc, headingSp, classicColumns, narrow)
+                    else buildItemRow(it, showDisc, narrow)
+                )
             }
 
             val totals = lineTotals.copy(discount = discount)
@@ -509,51 +675,51 @@ class BillReceiptRenderer(context: Context) {
             val netSize = if (totalAmountFontSize == BillSettingsDao.FontSize.BIG) 20f else 15f
             val llSummary = view.findViewById<LinearLayout>(R.id.llSummary)
             llSummary.removeAllViews()
-            // AMT is the AMOUNT column's own total - every line's gross - so the
-            // customer can add the column up and land on it.
-            // "ITEM: n  QTY: q" shares its line with the AMT figure, and on a
-            // 2-inch roll at this size the pair does not fit beside it - left to
-            // itself it breaks as "QTY:" / "3", splitting a label from its number.
-            // Stacked deliberately instead, each count stays with its own label.
-            val separator = if (narrow) "\n" else "  "
-            val counts = "ITEM: ${totals.itemCount}$separator" +
-                "QTY: ${qtyText(totals.qtyCount)}"
-            llSummary.addView(
-                summaryHead(counts, "AMT: ${money(totals.grossMrp)}", summarySp, narrow)
-            )
             // A pre-tax discount reduces the taxable value, so it reads before the
             // tax; a post-tax discount comes off after tax is charged on the full
-            // amount, so it reads after TOTAL GST.
+            // amount, so it reads after the tax total. True of either layout - only
+            // where the block sits and what its lines are called differ.
             val showDiscount = totals.totalDiscount > 0.005
-            if (showDiscount && discountPreTax) {
-                llSummary.addView(summaryRow("DISCOUNT", money(totals.totalDiscount), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
-            }
-            taxSlabs.forEach { slab ->
-                if (isGst) {
-                    llSummary.addView(summaryRow("CGST @${rate(slab.cgstRate)}%", money(slab.cgst), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
-                    llSummary.addView(summaryRow("SGST @${rate(slab.sgstRate)}%", money(slab.sgst), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
-                } else {
-                    llSummary.addView(summaryRow("VAT @${rate(slab.vatRate)}%", money(slab.vat), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
+
+            if (classic) {
+                // Tax wise short reports its tax in the table above the totals, so
+                // the block below them carries none: no line per rate, and no total
+                // of them either, since the table's own TOTAL column already states
+                // each rate's value with its tax on it.
+                if (taxWise) renderTaxWiseTable(view, taxSlabs, isGst, headingSp, narrow)
+                renderClassicSummary(
+                    llSummary, totals,
+                    taxSlabs = if (taxWise) emptyList() else taxSlabs,
+                    isGst = isGst, summarySp = summarySp, showTotalTax = !taxWise,
+                    showDiscount = showDiscount, discountPreTax = discountPreTax,
+                    roundOff = roundOff, showRoundOff = roundOffSetting, narrow = narrow
+                )
+                val big = totalAmountFontSize == BillSettingsDao.FontSize.BIG
+                val grandSp = when {
+                    narrow && big -> CLASSIC_NARROW_GRAND_TOTAL_BIG_SP
+                    narrow -> CLASSIC_NARROW_GRAND_TOTAL_SP
+                    big -> CLASSIC_GRAND_TOTAL_BIG_SP
+                    else -> CLASSIC_GRAND_TOTAL_SP
                 }
+                view.findViewById<TextView>(R.id.tvGrandTotalLabel)?.textSize = grandSp
+                view.findViewById<TextView>(R.id.tvGrandTotal)?.apply {
+                    textSize = grandSp
+                    text = money(payable)
+                }
+            } else {
+                renderStandardSummary(
+                    llSummary, totals, taxSlabs, isGst, summarySp, netSize,
+                    showDiscount = showDiscount, discountPreTax = discountPreTax,
+                    roundOff = roundOff, showRoundOff = roundOffSetting,
+                    payable = payable, narrow = narrow
+                )
             }
-            if (totals.tax > 0.005) {
-                llSummary.addView(summaryRow(if (isGst) "TOTAL GST" else "TOTAL VAT", money(totals.tax), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
-            }
-            if (showDiscount && !discountPreTax) {
-                llSummary.addView(summaryRow("DISCOUNT", money(totals.totalDiscount), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
-            }
-            llSummary.addView(summaryRow("TOTAL", money(totals.grandTotal), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
-            if (roundOffSetting) {
-                llSummary.addView(summaryRow("ROUND OFF", money(roundOff), valueSize = summarySp, labelSize = summarySp, narrow = narrow))
-            }
-            llSummary.addView(summaryRow("NET AMT", money(payable), bold = true, valueSize = netSize, labelSize = summarySp, narrow = narrow))
 
             // Prefer what the bill stored, so a reprint reads exactly as the original.
             if (amountInWordsSetting) {
-                setIfPresent(
-                    view, R.id.tvAmountWords,
-                    amountInWords?.takeIf { it.isNotBlank() } ?: AmountInWords.of(payable)
-                )
+                val words = amountInWords?.takeIf { it.isNotBlank() } ?: AmountInWords.of(payable)
+                // Classic sets the whole slip in capitals, this line included.
+                setIfPresent(view, R.id.tvAmountWords, if (classic) words.uppercase() else words)
             } else {
                 view.findViewById<TextView>(R.id.tvAmountWords).visibility = View.GONE
             }
@@ -565,10 +731,225 @@ class BillReceiptRenderer(context: Context) {
                 DatabaseHelper.Tables.MD_FOOTERS, "footer_text", "footer_number", "footer_type"
             )
 
-            if (narrow) enlargeBodyForNarrowPaper(view)
+            if (narrow) enlargeBodyForNarrowPaper(view, classic)
         } catch (e: Exception) {
             android.util.Log.e(TAG, "Error loading bill $receiptNo", e)
         }
+    }
+
+    /**
+     * The Standard totals block: item count / qty / gross, each tax rate on its own
+     * line, discount and the totals - "label : value" all the way down to NET AMT.
+     */
+    private fun renderStandardSummary(
+        llSummary: LinearLayout,
+        totals: BillTotals,
+        taxSlabs: List<TaxSlab>,
+        isGst: Boolean,
+        summarySp: Float,
+        netSize: Float,
+        showDiscount: Boolean,
+        discountPreTax: Boolean,
+        roundOff: Double,
+        showRoundOff: Boolean,
+        payable: Double,
+        narrow: Boolean
+    ) {
+        fun row(label: String, value: String, bold: Boolean = false, valueSize: Float = summarySp) {
+            llSummary.addView(
+                summaryRow(label, value, bold, valueSize, labelSize = summarySp, narrow = narrow)
+            )
+        }
+
+        // AMT is the AMOUNT column's own total - every line's gross - so the
+        // customer can add the column up and land on it.
+        // "ITEM: n  QTY: q" shares its line with the AMT figure, and on a
+        // 2-inch roll at this size the pair does not fit beside it - left to
+        // itself it breaks as "QTY:" / "3", splitting a label from its number.
+        // Stacked deliberately instead, each count stays with its own label.
+        val separator = if (narrow) "\n" else "  "
+        val counts = "ITEM: ${totals.itemCount}$separator" +
+            "QTY: ${qtyText(totals.qtyCount)}"
+        llSummary.addView(
+            summaryHead(counts, "AMT: ${money(totals.grossMrp)}", summarySp, narrow)
+        )
+        if (showDiscount && discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        taxSlabs.forEach { slab ->
+            if (isGst) {
+                row("CGST @${rate(slab.cgstRate)}%", money(slab.cgst))
+                row("SGST @${rate(slab.sgstRate)}%", money(slab.sgst))
+            } else {
+                row("VAT @${rate(slab.vatRate)}%", money(slab.vat))
+            }
+        }
+        if (totals.tax > 0.005) row(if (isGst) "TOTAL GST" else "TOTAL VAT", money(totals.tax))
+        if (showDiscount && !discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        row("TOTAL", money(totals.grandTotal))
+        if (showRoundOff) row("ROUND OFF", money(roundOff))
+        row("NET AMT", money(payable), bold = true, valueSize = netSize)
+    }
+
+    /**
+     * The Classic totals block: tax broken out per rate, then TOTAL TAX, TOTAL
+     * AMOUNT and ROUNDED OFF. The payable figure is not part of this block - it is
+     * the GRAND TOTAL line set apart below its own rule, which the caller fills.
+     *
+     * Three things differ from [renderStandardSummary] beyond the labels, and each
+     * is what the Classic slip has always shown:
+     *
+     *  * no item-count/gross header - the block is the tax and the totals, nothing
+     *    else;
+     *  * rates ascending, the lowest slab first, and each stated to two decimals
+     *    ("2.50%", "5.00%") so the column of rates reads straight down;
+     *  * SGST above CGST within a slab.
+     *
+     * Everything conditional stays conditional: a bill with no tax prints no tax
+     * lines and no TOTAL TAX, an undiscounted one prints no DISCOUNT, and ROUNDED
+     * OFF appears only where Bill Settings asks for it.
+     */
+    private fun renderClassicSummary(
+        llSummary: LinearLayout,
+        totals: BillTotals,
+        taxSlabs: List<TaxSlab>,
+        isGst: Boolean,
+        summarySp: Float,
+        showTotalTax: Boolean,
+        showDiscount: Boolean,
+        discountPreTax: Boolean,
+        roundOff: Double,
+        showRoundOff: Boolean,
+        narrow: Boolean
+    ) {
+        val rows = mutableListOf<Pair<String, String>>()
+        fun row(label: String, value: String) { rows.add(label to value) }
+
+        if (showDiscount && discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        // [loadItems] orders the slabs highest-rate first, the Standard order; the
+        // Classic slip lists them the other way up.
+        taxSlabs.asReversed().forEach { slab ->
+            if (isGst) {
+                row("SGST @ ${classicRate(slab.sgstRate)}%", money(slab.sgst))
+                row("CGST @ ${classicRate(slab.cgstRate)}%", money(slab.cgst))
+            } else {
+                row("VAT @ ${classicRate(slab.vatRate)}%", money(slab.vat))
+            }
+        }
+        if (showTotalTax && totals.tax > 0.005) row("TOTAL TAX", money(totals.tax))
+        if (showDiscount && !discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        // Stated before the rounding adjustment, so TOTAL AMOUNT + ROUNDED OFF is
+        // visibly the GRAND TOTAL below.
+        row("TOTAL AMOUNT", money(totals.grandTotal))
+        if (showRoundOff) row("ROUNDED OFF", money(roundOff))
+
+        // The colons line up in a column, and that column sits directly after the
+        // longest label rather than at a fixed fraction of the paper: padding to
+        // this bill's own widest label is what puts "TOTAL TAX    :" under
+        // "SGST @ 2.50%:". Done by padding a monospace string rather than by giving
+        // the colon a weighted column of its own, so the label block takes only the
+        // width it needs and leaves the rest of a narrow roll to the figures.
+        val pad = rows.maxOf { it.first.length }
+        rows.forEach { (label, value) ->
+            llSummary.addView(classicSummaryRow(label.padEnd(pad) + " :", value, summarySp, narrow))
+        }
+    }
+
+    /**
+     * The Tax wise short tax table: a row per rate, every line taxed at that rate
+     * clubbed into it.
+     *
+     *     TAX%          B.AMT      SGST      CGST     TOTAL
+     *     5.00%        118.00      2.95      2.95    123.90
+     *     10.00%        56.00      2.80      2.80     61.60
+     *
+     * TAX% is the *combined* rate the customer was charged - SGST plus CGST, so two
+     * halves of 2.50% report as one 5.00% row - because that is the rate the goods
+     * are taxed at, and the halves are already given their own columns beside it.
+     * B.AMT is the taxable value of those lines and TOTAL is that value with its tax
+     * on it, so the TOTAL column adds up to the TOTAL AMOUNT below the table.
+     *
+     * Under VAT there is no split to report, so the CGST column is dropped and the
+     * one beside it is headed VAT. A bill with no tax at all prints no table -
+     * headings and rules included.
+     */
+    private fun renderTaxWiseTable(
+        view: View,
+        taxSlabs: List<TaxSlab>,
+        isGst: Boolean,
+        sizeSp: Float,
+        narrow: Boolean
+    ) {
+        val table = view.findViewById<LinearLayout>(R.id.llTaxTable) ?: return
+        val rows = view.findViewById<LinearLayout>(R.id.llTaxRows) ?: return
+        rows.removeAllViews()
+
+        if (taxSlabs.isEmpty()) {
+            table.visibility = View.GONE
+            return
+        }
+        table.visibility = View.VISIBLE
+
+        val columns = if (narrow) TAX_WISE_NARROW_COLUMNS else TAX_WISE_COLUMNS
+        val headings = listOf(
+            R.id.tvTaxColRate, R.id.tvTaxColBase, R.id.tvTaxColSgst,
+            R.id.tvTaxColCgst, R.id.tvTaxColTotal
+        )
+        headings.forEachIndexed { i, id ->
+            view.findViewById<TextView>(id).let { heading ->
+                heading.textSize = sizeSp
+                (heading.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+                    lp.weight = columns[i]
+                    heading.layoutParams = lp
+                }
+            }
+        }
+        // Under VAT the tax is not split, so the second tax column goes and the
+        // first is headed for what it holds.
+        view.findViewById<TextView>(R.id.tvTaxColSgst).text = if (isGst) "SGST" else "VAT"
+        view.findViewById<TextView>(R.id.tvTaxColCgst).visibility =
+            if (isGst) View.VISIBLE else View.GONE
+
+        // Lowest rate first, as the Classic slip lists its own tax lines.
+        taxSlabs.asReversed().forEach { slab ->
+            val row = classicRow(narrow)
+            val rate = if (isGst) slab.cgstRate + slab.sgstRate else slab.vatRate
+            row.addView(cell("${classicRate(rate)}%", columns[0], Gravity.START, sizeSp))
+            row.addView(cell(money(slab.base), columns[1], Gravity.END, sizeSp))
+            row.addView(
+                cell(money(if (isGst) slab.sgst else slab.vat), columns[2], Gravity.END, sizeSp)
+            )
+            if (isGst) row.addView(cell(money(slab.cgst), columns[3], Gravity.END, sizeSp))
+            row.addView(cell(money(slab.base + slab.tax), columns[4], Gravity.END, sizeSp))
+            rows.addView(row)
+        }
+    }
+
+    /**
+     * One Classic totals line: the label with its colon already aligned into it, and
+     * the figure right against the far edge.
+     *
+     * The label takes only the width it needs - unlike [summaryRow], which splits the
+     * line into weighted columns. On a 2-inch roll a weighted label column is wider
+     * than the label and narrower than it needs to be at once, so "SGST @ 2.50%"
+     * breaks after the "@" while half the line sits empty.
+     */
+    private fun classicSummaryRow(
+        label: String,
+        value: String,
+        sizeSp: Float,
+        narrow: Boolean
+    ): View {
+        val row = summaryRowContainer(narrow)
+        row.addView(TextView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            text = label
+            typeface = Typeface.MONOSPACE
+            textSize = sizeSp
+            setTextColor(0xFF222222.toInt())
+        })
+        row.addView(summaryCell(value, 1f, Gravity.END, bold = false, size = sizeSp))
+        return row
     }
 
     /**
@@ -589,7 +970,8 @@ class BillReceiptRenderer(context: Context) {
         val cgstRate: Double,
         val sgstRate: Double,
         val vatRate: Double,
-        val hsn: String?
+        val hsn: String?,
+        val unit: String? = null
     )
 
     /**
@@ -607,7 +989,15 @@ class BillReceiptRenderer(context: Context) {
             """
             SELECT i.product_id, i.quantity, i.rate, i.item_subtotal, i.item_total, p.product_name,
                    i.discount_amount, i.cgst_amount, i.sgst_amount, i.igst_amount, i.vat_amount, p.hsn_code,
-                   i.cgst_rate, i.sgst_rate, i.vat_rate
+                   i.cgst_rate, i.sgst_rate, i.vat_rate,
+                   COALESCE(
+                       (SELECT u.unit_symbol FROM ${DatabaseHelper.Tables.MD_UNITS} u
+                         WHERE u.id = i.unit_id),
+                       (SELECT u.unit_symbol FROM ${DatabaseHelper.Tables.MD_UNITS} u
+                          JOIN ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r ON r.unit_id = u.id
+                         WHERE r.product_id = i.product_id
+                         ORDER BY r.id ASC LIMIT 1)
+                   )
             FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
             LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCTS} p ON i.product_id = p.id
             WHERE i.bill_id = ?
@@ -633,7 +1023,11 @@ class BillReceiptRenderer(context: Context) {
                         cgstRate = c.getDouble(12),
                         sgstRate = c.getDouble(13),
                         vatRate = c.getDouble(14),
-                        hsn = if (includeHsn) c.getString(11)?.takeIf { it.isNotBlank() } else null
+                        hsn = if (includeHsn) c.getString(11)?.takeIf { it.isNotBlank() } else null,
+                        // Read whatever the sale recorded, falling back to the
+                        // product's own unit. Only the Classic slip prints it, and
+                        // it prints nothing where there is nothing to print.
+                        unit = c.getString(15)?.takeIf { it.isNotBlank() }?.uppercase()
                     )
                 )
             }
@@ -677,7 +1071,8 @@ class BillReceiptRenderer(context: Context) {
             cgstRate = item.cgstRate,
             sgstRate = item.sgstRate,
             vatRate = item.vatRate,
-            hsn = if (includeHsn) item.hsn?.takeIf { it.isNotBlank() } else null
+            hsn = if (includeHsn) item.hsn?.takeIf { it.isNotBlank() } else null,
+            unit = item.unit?.takeIf { it.isNotBlank() }?.uppercase()
         )
     }
 
@@ -771,7 +1166,8 @@ class BillReceiptRenderer(context: Context) {
                         price = money(rate),
                         netAmount = money(lineNetListed),
                         hsn = hsn,
-                        discount = disc
+                        discount = disc,
+                        unit = raw.unit
                     )
                 )
             }
@@ -872,9 +1268,16 @@ class BillReceiptRenderer(context: Context) {
      * header and the separator rules are left alone: the header is already sized to
      * stand out, and a wider rule only overflows the card sooner.
      */
-    private fun enlargeBodyForNarrowPaper(view: View) {
+    private fun enlargeBodyForNarrowPaper(view: View, classic: Boolean = false) {
+        // Classic puts the bill number, date and time on one line, so those three
+        // are the one part of the body a narrow roll has to set *smaller* rather
+        // than larger - enlarged, the date wraps under the bill number.
+        val head = listOf(R.id.tvDate, R.id.tvTime, R.id.tvBillNo)
+        head.forEach {
+            view.findViewById<TextView>(it)?.textSize =
+                if (classic) CLASSIC_NARROW_HEAD_SP else NARROW_BODY_SP
+        }
         listOf(
-            R.id.tvDate, R.id.tvTime, R.id.tvBillNo,
             R.id.tvCustMobile, R.id.tvName, R.id.tvCustGstin,
             R.id.tvCustAddress, R.id.tvCustOutstanding,
             R.id.tvAmountWords, R.id.tvBillCreatedBy
@@ -936,6 +1339,13 @@ class BillReceiptRenderer(context: Context) {
                 val size = BillHeaderFooterDao.FontSize.fromStored(c.getString(1))
                 val bold = c.getInt(2) == 1
                 container.addView(TextView(ctx).apply {
+                    // Full width, so a line too long for the roll wraps onto the next
+                    // one as a centred block. Left to wrap_content it is centred line
+                    // by line inside a box only as wide as its longest line, which on
+                    // a narrow roll leaves the second line sitting off to one side.
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
                     this.text = text
                     gravity = Gravity.CENTER
                     textSize = size.sp
@@ -1122,6 +1532,64 @@ class BillReceiptRenderer(context: Context) {
         return container
     }
 
+    /**
+     * A row of a Classic table - a line item or a line of the tax table.
+     *
+     * Set tighter than [baseRow]: these rows are read as a block down the page, and
+     * the space that keeps two payment lines apart only spreads a table out.
+     */
+    private fun classicRow(narrow: Boolean): LinearLayout {
+        val density = ctx.resources.displayMetrics.density
+        val gap = 3 * density * (if (narrow) NARROW_ROW_SPACING else 1f)
+        return LinearLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, gap.toInt(), 0, gap.toInt())
+        }
+    }
+
+    /**
+     * A Classic line item: serial and name, the quantity with its unit, the unit
+     * price and the amount, all on one row under the headings.
+     *
+     * [columns] and [sizeSp] are the weights and the size the headings were laid out
+     * to, passed in rather than restated so a figure cannot end up in a different
+     * column, or at a different size, from the label above it.
+     *
+     * A long item name wraps within its own cell rather than pushing the figures
+     * along, so the columns hold whatever the name is. HSN, when Bill Settings asks
+     * for it, goes underneath the name in that same cell.
+     */
+    private fun buildClassicItemRow(
+        item: BillItem,
+        showDisc: Boolean,
+        sizeSp: Float,
+        columns: FloatArray,
+        narrow: Boolean
+    ): View {
+        val row = classicRow(narrow)
+
+        val name = buildString {
+            append("${item.sr} ${item.name}")
+            if (item.hsn != null) append("\nHSN: ${item.hsn}")
+        }
+        row.addView(cell(name, columns[0], Gravity.START, sizeSp))
+        // The unit trails the quantity - "1 PKT", "1.00 LTR" - and is simply left
+        // off where the sale did not record one, rather than assuming pieces.
+        row.addView(
+            cell(
+                item.unit?.let { "${item.qty} $it" } ?: item.qty,
+                columns[1], Gravity.CENTER, sizeSp
+            )
+        )
+        row.addView(cell(item.price, columns[2], Gravity.END, sizeSp))
+        if (showDisc) row.addView(cell(item.discount ?: "-", columns[3], Gravity.END, sizeSp))
+        row.addView(cell(item.netAmount, columns[4], Gravity.END, sizeSp))
+        return row
+    }
+
     /** A summary line without a colon column: left label and a right-aligned value
      *  (used for the "ITEM: n QTY: q ... AMT: x" header of the summary block). */
     private fun summaryHead(
@@ -1179,6 +1647,15 @@ class BillReceiptRenderer(context: Context) {
     private fun rate(v: Double): String =
         if (v % 1.0 == 0.0) v.toInt().toString() else String.format(Locale.US, "%.2f", v)
 
+    /**
+     * A tax rate for the Classic slip, always to two decimals.
+     *
+     * Unlike [rate], nothing is trimmed: the rates stack one under another there
+     * ("2.50%" above "5.00%"), and a rate printed as "5" would sit a character short
+     * and break the column.
+     */
+    private fun classicRate(v: Double): String = String.format(Locale.US, "%.2f", v)
+
     private fun baseRow(narrow: Boolean = false): LinearLayout {
         val density = ctx.resources.displayMetrics.density
         val gap = 6 * density * (if (narrow) NARROW_ROW_SPACING else 1f)
@@ -1225,6 +1702,25 @@ class BillReceiptRenderer(context: Context) {
 
     companion object {
         private const val TAG = "BillReceiptRenderer"
+
+        /**
+         * The receipt layout for a bill format - what every screen that shows or
+         * prints a bill has to inflate, so the till's Print Template choice reaches
+         * all of them and not just the printer.
+         *
+         * A format whose layout has not been built yet falls back to Standard, which
+         * is what Printer Settings > Print Template tells the operator will happen.
+         */
+        fun layoutFor(format: BillSettingsDao.BillFormat): Int = when (format) {
+            BillSettingsDao.BillFormat.CLASSIC -> R.layout.fragment_bill_classic
+            BillSettingsDao.BillFormat.TAX_WISE_SHORT -> R.layout.fragment_bill_tax_wise
+            else -> R.layout.fragment_bill
+        }
+
+        /** The receipt layout for the format this till is currently set to. */
+        fun layoutFor(context: Context): Int =
+            layoutFor(runCatching { BillSettingsDao(context).load().billFormat }
+                .getOrDefault(BillSettingsDao.BillFormat.STANDARD))
 
         /**
          * Logs the print against the bill. The first one is the ORIGINAL; anything

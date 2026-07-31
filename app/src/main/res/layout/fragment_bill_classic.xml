@@ -1,0 +1,421 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The Classic bill layout, the "Classic" choice in Printer Settings > Print
+    Template. Same receipt as fragment_bill.xml off the same data, arranged the
+    older way tills print it:
+
+      * bill number, date and time share one line at the head, instead of the
+        date/time row sitting above a bill-number line of its own;
+      * a line item is one row - serial and name, quantity with its unit, unit
+        price, and the amount - rather than the name taking a row to itself with
+        its figures in columns underneath;
+      * the totals read down as "label : value" to a GRAND TOTAL set apart below
+        its own rule, with the tax broken out per rate above it.
+
+    Ids are deliberately the same as fragment_bill.xml wherever the two hold the
+    same thing, so BillReceiptRenderer fills either from one body of code and only
+    the parts that genuinely differ are branched on.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_light">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none">
+
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardReceipt"
+            android:layout_width="360dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="28dp"
+            app:cardCornerRadius="6dp"
+            app:cardElevation="6dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="22dp">
+
+                <!-- Header logo (md_logos BILL_HEADER), hidden when none is set -->
+                <ImageView
+                    android:id="@+id/ivBillHeaderLogo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxHeight="76dp"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:layout_marginBottom="8dp"
+                    android:contentDescription="Store logo"
+                    android:visibility="gone" />
+
+                <!-- Store name -->
+                <TextView
+                    android:id="@+id/tvStoreName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="JAI HANUMAN"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="18sp"
+                    android:textColor="#111111" />
+
+                <!-- Store address / phone / GSTIN, hidden individually when unset -->
+                <TextView
+                    android:id="@+id/tvStoreAddress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvStorePhone"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvStoreGstin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="11sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <!-- Configurable header lines (md_headers) -->
+                <LinearLayout
+                    android:id="@+id/llBillHeaderLines"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <!-- Captions (md_captions): BILL / DUPLICATE / CREDIT, empty unless
+                     the operator has set them up. -->
+                <LinearLayout
+                    android:id="@+id/llBillCaptions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <!-- Bill no | Date | Time, all on one line - the Classic head.
+
+                     The date is centred on the paper, not merely placed between the
+                     other two: it is a bare wrap_content cell flanked by two of
+                     equal weight, so whatever room the line has left over is split
+                     evenly either side of it and the date sits dead centre however
+                     long the bill number is. The bill number gets the left half and
+                     is the only field here that can outgrow it - a long one wraps
+                     under itself rather than pushing the date off centre. -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="4dp">
+
+                    <TextView
+                        android:id="@+id/tvBillNo"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="BILL NO: 1"
+                        android:gravity="start"
+                        android:fontFamily="monospace"
+                        android:textSize="13sp"
+                        android:textColor="#222222" />
+
+                    <TextView
+                        android:id="@+id/tvDate"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginHorizontal="8dp"
+                        android:text="31-07-2026"
+                        android:gravity="center"
+                        android:fontFamily="monospace"
+                        android:textSize="13sp"
+                        android:textColor="#222222" />
+
+                    <TextView
+                        android:id="@+id/tvTime"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="10:24"
+                        android:gravity="end"
+                        android:fontFamily="monospace"
+                        android:textSize="13sp"
+                        android:textColor="#222222" />
+                </LinearLayout>
+
+                <!-- Customer details, shown per Bill Settings' "Customer Details" mode -->
+                <TextView
+                    android:id="@+id/tvCustMobile"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvCustGstin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <!-- Customer address, shown when Bill Settings' "Customer Address Printing" is on -->
+                <TextView
+                    android:id="@+id/tvCustAddress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <!-- What the customer owes once this bill is on their account.
+                     Credit sales only - a settled sale leaves nothing outstanding. -->
+                <TextView
+                    android:id="@+id/tvCustOutstanding"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView style="@style/BillDashLineClassic" />
+
+                <!-- Item columns. A Classic line item is a single row, so the
+                     headings are a single row too. The weights below are the
+                     3-inch ones and are here to make the layout previewable;
+                     BillReceiptRenderer sets them - and the rows beneath - from
+                     CLASSIC_COLUMNS, which is what actually decides them, since a
+                     2-inch roll splits the same line up differently. -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tvColSrItem"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="3.8"
+                        android:text="SR.NO ITEM"
+                        android:fontFamily="monospace"
+                        android:textSize="12.5sp"
+                        android:textColor="#222222" />
+
+                    <TextView
+                        android:id="@+id/tvColQty"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2"
+                        android:text="QTY"
+                        android:gravity="center"
+                        android:fontFamily="monospace"
+                        android:textSize="12.5sp"
+                        android:textColor="#222222" />
+
+                    <TextView
+                        android:id="@+id/tvColPrice"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1.9"
+                        android:text="PRICE"
+                        android:gravity="end"
+                        android:fontFamily="monospace"
+                        android:textSize="12.5sp"
+                        android:textColor="#222222" />
+
+                    <!-- Hidden by the renderer when no line carries a discount - a
+                         bill-wise discount comes off the total, not the lines, so
+                         its column would be nothing but dashes. -->
+                    <TextView
+                        android:id="@+id/tvColDisc"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1.7"
+                        android:text="DISC"
+                        android:gravity="end"
+                        android:fontFamily="monospace"
+                        android:textSize="12.5sp"
+                        android:textColor="#222222"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/tvColNet"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2.3"
+                        android:text="AMOUNT"
+                        android:gravity="end"
+                        android:fontFamily="monospace"
+                        android:textSize="12.5sp"
+                        android:textColor="#222222" />
+                </LinearLayout>
+
+                <TextView style="@style/BillDashLineClassic" />
+
+                <!-- Items -->
+                <LinearLayout
+                    android:id="@+id/llItems"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView style="@style/BillDashLineClassic" />
+
+                <!-- Tax per rate, total tax, discount, total and round off, as
+                     "label : value" lines built in code. -->
+                <LinearLayout
+                    android:id="@+id/llSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="2dp" />
+
+                <TextView style="@style/BillDashLineClassic" />
+
+                <!-- The payable figure, set apart between two rules: on a Classic
+                     slip this is the one line the customer looks for. -->
+                <LinearLayout
+                    android:id="@+id/llGrandTotal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <!-- Sized to the words, not to half the paper: on a 2-inch roll
+                         a weighted label column is too narrow to hold "GRAND TOTAL:"
+                         and breaks it over two lines. -->
+                    <TextView
+                        android:id="@+id/tvGrandTotalLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="GRAND TOTAL:"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="17sp"
+                        android:textColor="#111111" />
+
+                    <TextView
+                        android:id="@+id/tvGrandTotal"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="0.00"
+                        android:gravity="end"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="17sp"
+                        android:textColor="#111111" />
+                </LinearLayout>
+
+                <TextView style="@style/BillDashLineClassic" />
+
+                <!-- Amount in words -->
+                <TextView
+                    android:id="@+id/tvAmountWords"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="2dp"
+                    android:textColor="#333333"
+                    android:visibility="gone" />
+
+                <!-- Payment mode, one row per payment recorded against the bill -->
+                <LinearLayout
+                    android:id="@+id/llBillPayment"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <!-- Who rang the sale up -->
+                <TextView
+                    android:id="@+id/tvBillCreatedBy"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Created by: ---"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textColor="#222222" />
+
+                <TextView style="@style/BillDashLineClassic" />
+
+                <!-- Configurable footer lines (md_footers) -->
+                <LinearLayout
+                    android:id="@+id/llBillFooterLines"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <!-- Footer logo (md_logos BILL_FOOTER), hidden when none is set -->
+                <ImageView
+                    android:id="@+id/ivBillFooterLogo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxHeight="56dp"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:layout_marginTop="8dp"
+                    android:contentDescription="Footer logo"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </ScrollView>
+
+    <!-- Floats over the receipt so it stays reachable while the bill scrolls -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnPrintBill"
+        android:layout_width="wrap_content"
+        android:layout_height="46dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="16dp"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
+        android:minHeight="0dp"
+        android:text="Print"
+        android:textColor="@color/white"
+        app:icon="@drawable/ic_print"
+        app:iconTint="@color/white"
+        app:cornerRadius="12dp"
+        app:elevation="4dp" />
+</FrameLayout>

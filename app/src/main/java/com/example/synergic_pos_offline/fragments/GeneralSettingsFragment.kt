@@ -19,6 +19,7 @@ import android.widget.ArrayAdapter
 import android.widget.RadioGroup
 import androidx.core.view.isVisible
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.ItemRate
+import com.example.synergic_pos_offline.database.GeneralSettingsDao.LandingScreen
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.Mode
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.ReturnMode
 import com.google.android.material.button.MaterialButton
@@ -47,6 +48,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swQuantityStatus: SwitchMaterial
     private lateinit var swCustomerInfo: SwitchMaterial
     private lateinit var rgItemRate: RadioGroup
+    private lateinit var rgLandingScreen: RadioGroup
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -66,6 +68,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         swQuantityStatus = view.findViewById(R.id.swQuantityStatus)
         swCustomerInfo = view.findViewById(R.id.swCustomerInfo)
         rgItemRate = view.findViewById(R.id.rgItemRate)
+        rgLandingScreen = view.findViewById(R.id.rgLandingScreen)
 
         val s = dao.load()
         swLastBillStatus.isChecked = s.lastBillStatus
@@ -73,6 +76,9 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         swCustomerInfo.isChecked = s.customerInfo
         rgItemRate.check(
             if (s.itemRate == ItemRate.MULTIPLE) R.id.rbItemRateMultiple else R.id.rbItemRateSingle
+        )
+        rgLandingScreen.check(
+            if (s.landingScreen == LandingScreen.HOME) R.id.rbLandingHome else R.id.rbLandingSale
         )
 
         // Mode dropdown (always shows every option). Displays labels; stores G / R.
@@ -117,6 +123,25 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 itemRate = if (rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple)
                     ItemRate.MULTIPLE else ItemRate.SINGLE,
                 customerInfo = swCustomerInfo.isChecked
+            dao.save(
+                GeneralSettings(
+                    mode = mode,
+                    saleReturn = swSaleReturn.isChecked,
+                    returnMode = returnMode,
+                    saleReturnDays = days,
+                    lastBillStatus = swLastBillStatus.isChecked,
+                    quantityStatus = swQuantityStatus.isChecked,
+                    itemRate = if (rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple)
+                        ItemRate.MULTIPLE else ItemRate.SINGLE,
+                    customerInfo = swCustomerInfo.isChecked,
+                    landingScreen = if (rgLandingScreen.checkedRadioButtonId == R.id.rbLandingHome)
+                        LandingScreen.HOME else LandingScreen.SALE
+                )
+            )
+            DialogUtils.showSuccess(
+                context = requireContext(),
+                title = "Saved",
+                message = "General settings saved successfully."
             )
 
             // Switching mode wipes the mode-specific business data — confirm first.

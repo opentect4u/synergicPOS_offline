@@ -39,6 +39,15 @@ class MaxHeightScrollView @JvmOverloads constructor(
     }
 
     private companion object {
-        const val MAX_SCREEN_FRACTION = 0.88f
+        /**
+         * The most of the screen this may take.
+         *
+         * Deliberately well short of the whole screen, because this is never the
+         * whole dialog: a title sits above it and a button row below, both outside
+         * the scrolling area and neither able to shrink. Claiming 88% left the card
+         * taller than the display on a short screen, so the buttons - the only way
+         * to submit or cancel - were pushed off the bottom edge.
+         */
+        const val MAX_SCREEN_FRACTION = 0.62f
     }
 }

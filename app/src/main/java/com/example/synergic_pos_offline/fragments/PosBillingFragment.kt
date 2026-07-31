@@ -72,6 +72,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
      */
     private data class Product(
         val id: String, val name: String, val sku: String,
+        /**
+         * The scanned code, kept apart from [sku] now that the SKU is the product's
+         * own id. They used to be one field, so a product with no barcode had no SKU
+         * either and the tile showed a blank where its number should be. Both are
+         * still searched on, so scanning into the search box finds the product.
+         */
+        val barcode: String = "",
         val category: String, val categoryId: Long, val price: Double, val stock: String = "ok",
         val hsn: String = "0000", val cgst: Double = 0.0, val sgst: Double = 0.0, val vat: Double = 0.0,
         val unit: String = "pcs",
@@ -613,7 +620,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
                     val product = Product(
                         id = productId,
                         name = productName,
-                        sku = barcode,
+                        // The SKU is the product's own id - md_products.sku holds the
+                        // same value, set by a trigger - so every product has one,
+                        // whether or not it was ever given a barcode.
+                        sku = productId,
+                        barcode = barcode,
                         category = categoryName,
                         categoryId = categoryId,
                         price = price,
@@ -665,7 +676,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
         shownProducts.clear()
         shownProducts.addAll(menu.filter { p ->
             (activeCategory == "All" || p.categoryId == activeCategoryId) &&
-                (query.isEmpty() || p.name.contains(query, true) || p.sku.contains(query))
+                (query.isEmpty() || p.name.contains(query, true) ||
+                    p.sku.contains(query) || p.barcode.contains(query))
         })
         productAdapter.notifyDataSetChanged()
         tvNoProducts.visibility = if (shownProducts.isEmpty()) View.VISIBLE else View.GONE
@@ -690,11 +702,34 @@ class PosBillingFragment : Fragment(), TitledScreen {
         
         lastAddedId = p.id
         cartAdapter.notifyDataSetChanged()
-        
+
         // Scroll to top to show the most recent item
         view?.findViewById<RecyclerView>(R.id.rvCart)?.scrollToPosition(0)
 
         updateTotals()
+
+        // That item is dealt with, so the grid goes back to showing everything: the
+        // next one is searched for from scratch, and a search left in the box would
+        // otherwise have to be cleared by hand before it could be. Only on a
+        // completed add - a cancelled dialog leaves the operator's search alone.
+        resetBrowsing()
+    }
+
+    /**
+     * Puts the product grid back to "All Items" with an empty search box.
+     *
+     * The search text, the active category and the highlighted category chip are
+     * three separate pieces of state that have to move together; every caller that
+     * wants a clean grid goes through here so none of them can drift apart.
+     */
+    private fun resetBrowsing() {
+        query = ""
+        view?.findViewById<TextInputEditText>(R.id.etSearch)?.setText("")
+        activeCategory = "All"
+        activeCategoryId = null
+        categoryAdapter.notifyDataSetChanged()
+        applyFilter()
+        view?.findViewById<RecyclerView>(R.id.rvProducts)?.scrollToPosition(0)
     }
 
     /**
@@ -737,9 +772,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
         }
     }
 
+    // The photo comes from the grid's own cache, already decoded for the tile, so
+    // opening the dialog costs nothing beyond the lookup.
     private fun Product.toDialogProduct() = ProductEntryDialog.Product(
         id = id, name = name, sku = sku, category = category,
-        price = price, hsn = hsn, unit = unit, cgst = cgst, sgst = sgst, vat = vat,
+        price = price, hsn = hsn, unit = unit, photo = photoCache[id],
+        cgst = cgst, sgst = sgst, vat = vat,
         discValue = discValue, discType = discType, rates = rates
     )
 
@@ -1341,18 +1379,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun startNewSale() {
         clearSale()
 
-        query = ""
-        view?.findViewById<TextInputEditText>(R.id.etSearch)?.setText("")
-        activeCategory = "All"
-        activeCategoryId = null
-
         // Re-read the masters so anything edited mid-sale shows up, photos included.
         loadCategoriesAndProducts()
 
-        applyFilter()
+        resetBrowsing()
         updateHeldButton()
         updateOrderNo()
-        view?.findViewById<RecyclerView>(R.id.rvProducts)?.scrollToPosition(0)
     }
 
     private fun clearSale() {

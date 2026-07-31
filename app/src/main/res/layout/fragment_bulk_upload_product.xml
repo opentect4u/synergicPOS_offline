@@ -41,30 +41,9 @@
                     android:textSize="14sp"
                     android:textColor="@color/text_secondary"
                     android:lineSpacingExtra="3dp"
-                    android:text="1. Pick a category.\n2. Download the template to see the column structure.\n3. Fill it in a spreadsheet app and save as CSV.\n4. Upload it — every row is added under the selected category." />
+                    android:text="1. Download the template to see the column structure.\n2. Fill it in a spreadsheet app and save as CSV — each row carries its own category and unit, by name.\n3. Upload it, and choose whether to add to the products already here or replace them." />
 
-                <!-- Category -->
-                <com.google.android.material.textfield.TextInputLayout
-                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="18dp"
-                    android:hint="Category"
-                    app:boxCornerRadiusTopStart="12dp"
-                    app:boxCornerRadiusTopEnd="12dp"
-                    app:boxCornerRadiusBottomStart="12dp"
-                    app:boxCornerRadiusBottomEnd="12dp">
-
-                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
-                        android:id="@+id/actBulkCategory"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:inputType="none"
-                        android:focusable="false"
-                        android:maxLines="1" />
-                </com.google.android.material.textfield.TextInputLayout>
-
-                <!-- <com.google.android.material.button.MaterialButton
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnBulkDownload"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="match_parent"
@@ -75,7 +54,7 @@
                     android:minHeight="0dp"
                     android:text="Download Template"
                     app:icon="@drawable/ic_download"
-                    app:cornerRadius="12dp" /> -->
+                    app:cornerRadius="12dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnBulkUpload"

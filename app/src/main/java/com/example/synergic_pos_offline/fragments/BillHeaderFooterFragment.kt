@@ -35,10 +35,15 @@ class BillHeaderFooterFragment : DataTableFragment() {
     // The Status column renders as an inline ON/OFF switch.
     override val switchColumn: Int? = COL_STATUS
 
+    // A header or footer is a whole printed sentence, so a long one runs onto the
+    // next line here rather than being cut off - what the row says is what the paper
+    // will say, and it has to be readable without opening the row to check.
+    override val wrappingColumns: Set<Int> = setOf(COL_TEXT)
+
     private companion object {
+        const val COL_TEXT = 0
         const val COL_STATUS = 3
         const val MAX_PER_SECTION = 10
-        const val MAX_TEXT_LEN = 32
     }
 
     private val dao: BillHeaderFooterDao by lazy { BillHeaderFooterDao(requireContext()) }

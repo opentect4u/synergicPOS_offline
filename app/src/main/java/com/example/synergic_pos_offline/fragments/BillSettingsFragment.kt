@@ -157,7 +157,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         customerDetails = CustomerDetails.fromStored(actCustomerDetails.text?.toString()) ?: CustomerDetails.ONLY_MOBILE,
         customerAddressPrinting = swCustomerAddress.isChecked,
         totalAmountFontSize = FontSize.fromStored(actTotalFontSize.text?.toString()) ?: FontSize.REGULAR,
-        billFormat = BillFormat.fromStored(actBillFormat.text?.toString()) ?: BillFormat.NORMAL
+        billFormat = BillFormat.fromStored(actBillFormat.text?.toString()) ?: BillFormat.STANDARD
     )
 
     /** Shows what the next bill number will look like with the current inputs. */

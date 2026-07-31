@@ -10,6 +10,7 @@ import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import android.graphics.Bitmap
 import com.example.synergic_pos_offline.R
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -34,6 +35,13 @@ object ProductEntryDialog {
         val price: Double,
         val hsn: String = "0000",
         val unit: String = "pcs",
+        /**
+         * The product's picture, already decoded by whichever screen is showing the
+         * grid - those screens keep a cache of them for the tiles, and decoding the
+         * same JPEG again to open a dialog would be work for nothing. Null where the
+         * product has no image, and the slot then takes no space.
+         */
+        val photo: Bitmap? = null,
         val cgst: Double = 0.0,
         val sgst: Double = 0.0,
         val vat: Double = 0.0,
@@ -85,6 +93,15 @@ object ProductEntryDialog {
         val accent = ThemeManager.getThemeColor(context)
         val view = inflater.inflate(R.layout.dialog_product_entry, null)
 
+        view.findViewById<android.widget.ImageView>(R.id.ivDialogPhoto).apply {
+            if (product.photo != null) {
+                setImageBitmap(product.photo)
+                visibility = android.view.View.VISIBLE
+            } else {
+                setImageDrawable(null)
+                visibility = android.view.View.GONE
+            }
+        }
         view.findViewById<TextView>(R.id.tvDialogTitle).text = product.name
         view.findViewById<TextView>(R.id.tvDialogCategory).text = product.category
         view.findViewById<TextView>(R.id.tvDetSku).text = product.sku

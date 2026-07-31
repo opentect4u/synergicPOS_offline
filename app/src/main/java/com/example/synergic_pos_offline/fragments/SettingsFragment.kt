@@ -42,7 +42,10 @@ class SettingsFragment : Fragment() {
         val bill = { BillSettingsFragment() as Fragment }
         val tax = { TaxSettingsFragment() as Fragment }
         val app = { AppSettingsFragment() as Fragment }
-        val printer = { OperatingPrinterFragment() as Fragment }
+        val printer = { PrintSettingsFragment() as Fragment }
+        val printTemplate = {
+            PrintSettingsFragment.newInstance(PrintSettingsFragment.TAB_TEMPLATE) as Fragment
+        }
         fun e(name: String, screen: String, open: () -> Fragment, match: String = name) =
             SettingEntry(name, screen, open, match)
         listOf(
@@ -54,6 +57,8 @@ class SettingsFragment : Fragment() {
             e("Last Bill Status", "General Settings", general),
             e("Enter Quantity Status", "General Settings", general),
             e("Item Rate", "General Settings", general),
+            e("After Login", "General Settings", general),
+            e("Landing Screen", "General Settings", general, match = "After Login"),
             // Bill Settings
             e("Bill No. Character", "Bill Settings", bill),
             e("Reset Bill No.", "Bill Settings", bill),
@@ -80,7 +85,9 @@ class SettingsFragment : Fragment() {
             e("Other Charges", "App Settings", app),
             e("Payment Mode", "App Settings", app),
             // Printer
-            e("Printer", "Printer Settings", printer)
+            e("Printer", "Printer Settings", printer),
+            e("Print Template", "Printer Settings", printTemplate),
+            e("Bill Template", "Printer Settings", printTemplate, match = "Print Template")
         )
     }
 
@@ -161,7 +168,7 @@ class SettingsFragment : Fragment() {
             else Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             when (item.key) {
                 "Printer Settings" -> openFragment(PrinterSettingsFragment())
-                "Operating Printer" -> openFragment(OperatingPrinterFragment())
+                "Operating Printer" -> openFragment(PrintSettingsFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             }
         }

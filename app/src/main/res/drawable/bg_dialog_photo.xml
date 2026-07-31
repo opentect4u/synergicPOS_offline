@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Backing for the product photo at the head of the add-to-cart dialog. Rounded to
+    match the dialog card, and filled so a photo that does not cover the whole slot
+    sits on a panel rather than on the dialog's own white.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#F1F3F5" />
+    <corners android:radius="12dp" />
+</shape>

@@ -440,7 +440,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** A grid entry: the popup product plus its restaurant attributes (food type + spice). */
     private data class GridProduct(
-        val product: ProductEntryDialog.Product, val foodType: String, val spice: String
+        val product: ProductEntryDialog.Product, val foodType: String, val spice: String,
+        /** The scanned code, kept beside the product now that its SKU is its own id
+         *  - both are searched on, so a scan into the search box still finds it. */
+        val barcode: String = ""
     )
 
     /** Loads the current store's products (rate + tax split + category + food/spice), for the grid. */
@@ -461,7 +464,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             while (c.moveToNext()) {
                 val id = c.getLong(0).toString()
                 val name = c.getString(1).orEmpty()
-                val sku = c.getString(2).orEmpty()
+                // The SKU is the product's own id; the barcode is searched on too.
+                val sku = id
+                val barcode = c.getString(2).orEmpty()
                 val hsn = c.getString(3)?.takeIf { it.isNotBlank() } ?: "0000"
                 val catName = cats[c.getLong(4)].orEmpty()
                 val foodType = c.getString(5).orEmpty()
@@ -490,7 +495,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                             hsn = hsn, unit = "", cgst = cgst, sgst = sgst, vat = vat,
                             discValue = disc, discType = discType, rates = rates
                         ),
-                        foodType = foodType, spice = spice
+                        foodType = foodType, spice = spice, barcode = barcode
                     )
                 )
             }
@@ -563,7 +568,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val q = query.trim().lowercase()
             adapter.submit(products.filter {
                 (selectedCat == "All" || it.product.category == selectedCat) &&
-                    (q.isEmpty() || it.product.name.lowercase().contains(q) || it.product.sku.contains(q))
+                    (q.isEmpty() || it.product.name.lowercase().contains(q) || it.product.sku.contains(q) || it.barcode.contains(q))
             })
         }
 

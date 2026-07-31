@@ -350,8 +350,8 @@ class ReturnDao(context: Context) {
         ).use { c -> if (c.moveToFirst()) c.getString(0) else null }
 
     /**
-     * Whether [receiptNo] is still inside the Sale Return Days window, or null when
-     * no limit is set. Bill-wise only - an item-wise return has no bill to date from.
+     * Whether [receiptNo] is still inside the Sale Return Days window. Bill-wise
+     * only - an item-wise return has no bill to date from.
      */
     fun withinReturnWindow(receiptNo: Long, days: Int): Boolean {
         if (days <= 0) return true
@@ -361,9 +361,7 @@ class ReturnDao(context: Context) {
         ).use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: return true
 
         return runCatching {
-            val sold = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(billDate) ?: return true
-            val elapsed = (System.currentTimeMillis() - sold.time) / MILLIS_PER_DAY
-            elapsed <= days
+            withinReturnWindow(SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(billDate), days)
         }.getOrDefault(true)
     }
 
@@ -509,6 +507,22 @@ class ReturnDao(context: Context) {
     companion object {
         private const val RETURN_PREFIX = "RT"
         private const val MILLIS_PER_DAY = 24L * 60 * 60 * 1000
+
+        /**
+         * Whether a bill sold on [soldOn] can still be returned against, under a
+         * limit of [days]. No limit set (0 or less) means no limit at all, and a bill
+         * whose date cannot be read is allowed rather than refused - a return should
+         * not be blocked by a date the till failed to parse.
+         *
+         * The one rule, shared: the return picker filters its list with it and the
+         * bill-wise screen checks it again on the way in, so a bill cannot be listed
+         * as returnable and then refused, or the other way round.
+         */
+        fun withinReturnWindow(soldOn: Date?, days: Int): Boolean {
+            if (days <= 0 || soldOn == null) return true
+            val elapsed = (System.currentTimeMillis() - soldOn.time) / MILLIS_PER_DAY
+            return elapsed <= days
+        }
 
         /**
          * How a return totals up: the count, what the goods came to, what came off,

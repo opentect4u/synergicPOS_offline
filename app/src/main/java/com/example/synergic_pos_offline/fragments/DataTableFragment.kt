@@ -14,6 +14,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.CheckBox
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -31,6 +32,7 @@ import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 
 /** Largest edge, in px, decoded for the full-size image preview. */
@@ -92,6 +94,18 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     /** Column index (into [columns]) rendered as an inline ON/OFF switch, if any. */
     open val switchColumn: Int? = null
+
+    /**
+     * Columns (indices into [columns]) whose cells wrap onto as many lines as their
+     * text needs, instead of being cut off with an ellipsis on one line.
+     *
+     * One line per cell is what keeps a table of short values - names, codes, amounts -
+     * scannable, so it stays the default. A column holding a whole sentence, like a
+     * printed header or footer line, is the opposite case: truncated it is unreadable,
+     * and the operator cannot tell what will come out on the paper without opening the
+     * row. Opting a column in here is saying it holds prose, not a value.
+     */
+    open val wrappingColumns: Set<Int> get() = emptySet()
 
     /** Invoked when a row's inline switch is toggled. Persist + reflect the new state. */
     open fun onSwitchToggled(row: DataRow, isOn: Boolean) {}
@@ -157,6 +171,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             onThumbnailClick = { onThumbnailClick(it) },
             showsThumbnails,
             switchColumn,
+            wrappingColumns,
             onSwitchToggled = { row, isOn -> onSwitchToggled(row, isOn) },
             onEdit = { onEditRow(it) },
             onThumbClick = { showImagePreview(it) },
@@ -184,6 +199,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
+
+        setUpColumnFilter(view)
 
         view.findViewById<View>(R.id.btnAdd).setOnClickListener { onAddRow() }
 
@@ -265,16 +282,62 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         suppressSelectAll = false
     }
 
+    /**
+     * The column a screen can offer a dropdown filter on, as its index into
+     * [columns]; null - the default - leaves the dropdown off the screen entirely.
+     *
+     * Filtering by a whole column is a different question from searching: a search
+     * for "Dairy" also matches a product happening to be *called* Dairy Milk, which
+     * is not what someone narrowing a table by category is asking for. The dropdown
+     * matches the cell exactly, and its options are whatever values that column
+     * actually holds - so it cannot offer a category the table has nothing under.
+     */
+    protected open val filterColumnIndex: Int? = null
+
+    /** The dropdown's "no filter" entry, and what it is set to until one is picked. */
+    private val allFilterValues = "All"
+
+    /** The value picked in the column dropdown, or [allFilterValues] for no filter. */
+    private var filterValue: String = allFilterValues
+
+    /**
+     * Fills the column dropdown from the rows on screen and wires it to the filter.
+     *
+     * Rebuilt from [allRows] rather than queried, so it lists exactly the values the
+     * table holds and needs no knowledge of where they came from.
+     */
+    private fun setUpColumnFilter(view: View) {
+        val index = filterColumnIndex ?: return
+        val til = view.findViewById<View>(R.id.tilFilter) ?: return
+        val act = view.findViewById<MaterialAutoCompleteTextView>(R.id.actFilter) ?: return
+        til.visibility = View.VISIBLE
+        (til as? com.google.android.material.textfield.TextInputLayout)?.hint = columns.getOrNull(index)
+
+        val values = listOf(allFilterValues) + allRows
+            .mapNotNull { it.cells.getOrNull(index)?.takeIf { cell -> cell.isNotBlank() } }
+            .distinct()
+            .sortedBy { it.lowercase() }
+        act.setAdapter(ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, values))
+        act.setText(filterValue.takeIf { it in values } ?: allFilterValues, false)
+        act.setOnItemClickListener { _, _, pos, _ ->
+            filterValue = values[pos]
+            applyFilter(query)
+        }
+    }
+
     private fun applyFilter(q: String) {
         query = q.trim()
+        val index = filterColumnIndex
         shownRows.clear()
-        if (query.isEmpty()) {
-            shownRows.addAll(allRows)
-        } else {
-            shownRows.addAll(allRows.filter { row ->
-                row.cells.any { it.contains(query, ignoreCase = true) }
-            })
-        }
+        shownRows.addAll(
+            allRows.filter { row ->
+                val matchesFilter = index == null || filterValue == allFilterValues ||
+                    row.cells.getOrNull(index).equals(filterValue, ignoreCase = true)
+                val matchesQuery = query.isEmpty() ||
+                    row.cells.any { it.contains(query, ignoreCase = true) }
+                matchesFilter && matchesQuery
+            }
+        )
         adapter.notifyDataSetChanged()
         tvEmpty.visibility = if (shownRows.isEmpty()) View.VISIBLE else View.GONE
         if (::cbSelectAll.isInitialized) updateSelectionUI()
@@ -332,6 +395,10 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         allRows.clear()
         allRows.addAll(loadRows())
         selectedIds.clear()
+        // The dropdown lists the values the rows actually hold, so it is rebuilt
+        // with them - a product added under a brand-new category would otherwise
+        // leave that category unofferable until the screen was reopened.
+        view?.let { setUpColumnFilter(it) }
         applyFilter(query)
     }
 
@@ -444,6 +511,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         private val onThumbnailClick: (DataRow) -> Unit,
         private val showsThumbnails: Boolean,
         private val switchColumn: Int?,
+        private val wrappingColumns: Set<Int>,
         private val onSwitchToggled: (DataRow, Boolean) -> Unit,
         private val onEdit: (DataRow) -> Unit,
         private val onThumbClick: (DataRow) -> Unit,
@@ -490,8 +558,15 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
                 tv.text = row.cells.getOrNull(i).orEmpty()
                 tv.setTextColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.text_main))
                 tv.textSize = 16f
-                tv.maxLines = 1
-                tv.ellipsize = android.text.TextUtils.TruncateAt.END
+                // Recycled cells carry the last row's setting, so both branches always
+                // run rather than only the one that turns wrapping on.
+                if (i in wrappingColumns) {
+                    tv.maxLines = Int.MAX_VALUE
+                    tv.ellipsize = null
+                } else {
+                    tv.maxLines = 1
+                    tv.ellipsize = android.text.TextUtils.TruncateAt.END
+                }
                 tv.setPadding(0, 0, (8 * ctx.resources.displayMetrics.density).toInt(), 0)
                 holder.llCells.addView(tv)
             }
