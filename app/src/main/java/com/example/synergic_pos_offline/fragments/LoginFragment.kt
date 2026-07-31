@@ -16,6 +16,7 @@ import androidx.fragment.app.Fragment
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.DatabaseHelper
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.models.User
 import com.example.synergic_pos_offline.models.UserRole
 import com.example.synergic_pos_offline.utils.ApiClient
@@ -293,9 +294,17 @@ class LoginFragment : Fragment() {
         val roleText = if (user.role == UserRole.ADMIN) "Admin" else "General User"
         Toast.makeText(requireContext(), "Welcome $roleText!", Toast.LENGTH_SHORT).show()
 
+        // Whichever screen General Settings says to land on - the Sale screen by
+        // default, since a cashier logs in to sell and that saves them a tap every
+        // shift; Home for a till that is also a back office. Either way it is
+        // committed as the root of the back stack, not pushed over the login form,
+        // which is nowhere to go back to.
+        val landing: Fragment = when (GeneralSettingsDao(requireContext()).load().landingScreen) {
+            GeneralSettingsDao.LandingScreen.HOME -> DashboardFragment()
+            GeneralSettingsDao.LandingScreen.SALE -> PosBillingFragment()
+        }
         requireActivity().supportFragmentManager.beginTransaction()
-            .replace(R.id.fragment_container, DashboardFragment())
-            .addToBackStack(null)
+            .replace(R.id.fragment_container, landing)
             .commit()
     }
 

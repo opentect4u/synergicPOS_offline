@@ -59,6 +59,25 @@ class GeneralSettingsDao(context: Context) {
         }
     }
 
+    /**
+     * Where the app lands once a user logs in. Persisted as a single-letter [code]
+     * (S / H).
+     *
+     * [SALE] is the default: a cashier signs in to sell, and the till opening on the
+     * Sale screen saves them a tap every shift. [HOME] is for a till that is also
+     * someone's back office - the Dashboard first, with Sale a menu away - and is how
+     * the app behaved before this setting existed.
+     */
+    enum class LandingScreen(val code: String, val label: String) {
+        SALE("S", "Sale"), HOME("H", "Home");
+        companion object {
+            /** Accepts the stored code (S/H) or the display label. */
+            fun fromStored(value: String?): LandingScreen? = value?.let { v ->
+                values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
+            }
+        }
+    }
+
     /** The general-settings configuration with defaults. */
     data class GeneralSettings(
         val mode: Mode = Mode.GROCERY,
@@ -79,7 +98,9 @@ class GeneralSettingsDao(context: Context) {
          *
          * Defaults on, which is how the till behaved before the setting existed.
          */
-        val customerInfo: Boolean = true
+        val customerInfo: Boolean = true,
+        /** Which screen a login lands on - see [LandingScreen]. */
+        val landingScreen: LandingScreen = LandingScreen.SALE
     )
 
     /** Reads every general setting for the current store, applying defaults. */
@@ -94,7 +115,8 @@ class GeneralSettingsDao(context: Context) {
             lastBillStatus = m[KEY_LAST_BILL_STATUS]?.toBool() ?: d.lastBillStatus,
             quantityStatus = m[KEY_QUANTITY_STATUS]?.toBool() ?: d.quantityStatus,
             itemRate = ItemRate.fromStored(m[KEY_ITEM_RATE]) ?: d.itemRate,
-            customerInfo = m[KEY_CUSTOMER_INFO]?.toBool() ?: d.customerInfo
+            customerInfo = m[KEY_CUSTOMER_INFO]?.toBool() ?: d.customerInfo,
+            landingScreen = LandingScreen.fromStored(m[KEY_LANDING_SCREEN]) ?: d.landingScreen
         )
     }
 
@@ -111,6 +133,7 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_QUANTITY_STATUS, s.quantityStatus.b())
         put(KEY_ITEM_RATE, s.itemRate.code)
         put(KEY_CUSTOMER_INFO, s.customerInfo.b())
+        put(KEY_LANDING_SCREEN, s.landingScreen.code)
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "General settings save (type G)")
     }
@@ -192,5 +215,6 @@ class GeneralSettingsDao(context: Context) {
         const val KEY_QUANTITY_STATUS = "Quantity Status"
         const val KEY_ITEM_RATE = "Item Rate"
         const val KEY_CUSTOMER_INFO = "Customer Info"
+        const val KEY_LANDING_SCREEN = "Landing Screen"
     }
 }

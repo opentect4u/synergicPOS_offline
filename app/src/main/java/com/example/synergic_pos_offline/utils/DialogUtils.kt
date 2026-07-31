@@ -19,10 +19,45 @@ import com.google.android.material.textfield.TextInputLayout
 
 /**
  * Reusable, theme-aware dialogs used across the app.
+ *
+ * These cards are a fixed number of `dp` across - 380 for a message, 450 for a form
+ * - which is what keeps a two-field dialog from stretching over a tablet. It also
+ * means the card cannot grow when its contents do, so both ways a device can change
+ * the size of things are pinned down here:
+ *
+ *  * **font size** is neutralised outright ([FixedFontScale]), because a dialog set
+ *    to the largest text has the same width to fit it in and the surplus comes off
+ *    the ends of the labels;
+ *  * **display size** is followed but bounded ([fitToScreen]) - it changes how many
+ *    `dp` the screen has, so at the largest setting a 450dp card is wider than the
+ *    display it has to appear on.
+ *
+ * A dialog therefore reads the same on every device, and on a small screen it is
+ * the card that gives way rather than its contents.
  */
 object DialogUtils {
 
     private const val DESTRUCTIVE_COLOR = "#D93025"
+
+    /** Room left either side of the card, matching the layouts' own 24dp margin. */
+    private const val SCREEN_MARGIN_DP = 24
+
+    /**
+     * Narrows [content] to the width the screen actually has, when its designed
+     * width does not fit.
+     *
+     * Only ever narrows: a dialog that fits keeps the width it was drawn at, so
+     * this cannot stretch a small form across a tablet.
+     */
+    private fun fitToScreen(context: Context, content: android.view.View?) {
+        val params = content?.layoutParams ?: return
+        val metrics = context.resources.displayMetrics
+        val available = metrics.widthPixels - (2 * SCREEN_MARGIN_DP * metrics.density).toInt()
+        if (available > 0 && params.width > available) {
+            params.width = available
+            content.layoutParams = params
+        }
+    }
 
     /** Shows a two-button confirmation dialog (Logout, Delete, Print confirmation, etc). */
     fun showConfirm(
@@ -36,8 +71,10 @@ object DialogUtils {
         onCancel: () -> Unit = {},
         onConfirm: () -> Unit
     ) {
-        val view = LayoutInflater.from(context).inflate(R.layout.dialog_common, null)
-        val dialog = AlertDialog.Builder(context).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
+        val ctx = FixedFontScale.wrap(context)
+        val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_common, null)
+        fitToScreen(ctx, view.findViewById(R.id.llDialogContent))
+        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val accent = ThemeManager.getThemeColor(context)
@@ -88,8 +125,10 @@ object DialogUtils {
         iconRes: Int? = R.drawable.ic_check,
         onDismiss: () -> Unit = {}
     ) {
-        val view = LayoutInflater.from(context).inflate(R.layout.dialog_common, null)
-        val dialog = AlertDialog.Builder(context).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
+        val ctx = FixedFontScale.wrap(context)
+        val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_common, null)
+        fitToScreen(ctx, view.findViewById(R.id.llDialogContent))
+        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val accent = ThemeManager.getThemeColor(context)
@@ -145,9 +184,11 @@ object DialogUtils {
         mandatoryFields: List<Int> = emptyList(),
         onSave: (List<String>) -> Unit
     ) {
-        val inflater = LayoutInflater.from(context)
+        val ctx = FixedFontScale.wrap(context)
+        val inflater = LayoutInflater.from(ctx)
         val view = inflater.inflate(R.layout.dialog_form, null)
-        val dialog = AlertDialog.Builder(context).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
+        fitToScreen(ctx, view.findViewById(R.id.llFormContent))
+        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val accent = ThemeManager.getThemeColor(context)

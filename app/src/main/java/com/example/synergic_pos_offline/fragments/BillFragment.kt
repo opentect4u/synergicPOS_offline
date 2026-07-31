@@ -43,7 +43,9 @@ class BillFragment : Fragment(), TitledScreen {
         // would grow and shrink with the device's text size while the paper did not,
         // and the two would stop being the same slip. See [ReceiptContext].
         .from(ReceiptContext.standardFontScale(requireContext()))
-        .inflate(R.layout.fragment_bill, container, false)
+        // Whichever layout the till's Print Template is set to, so the bill screen
+        // shows the slip that will come out of the printer - not a Standard one.
+        .inflate(BillReceiptRenderer.layoutFor(requireContext()), container, false)
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -111,7 +113,7 @@ class BillFragment : Fragment(), TitledScreen {
         config: ThermalPrinter.Config,
         receiptNo: Long
     ) {
-        toast("Printing to ${config.ip}…")
+        toast("Printing to ${config.description}…")
         // Bill Settings' "Two Copy" toggle - sent as two separate jobs off the one
         // rendered bitmap, not two renders.
         val copies = if (BillSettingsDao(requireContext()).load().twoCopyBill) 2 else 1
@@ -129,7 +131,7 @@ class BillFragment : Fragment(), TitledScreen {
                     toast("Sent to printer")
                     if (receiptNo > 0) BillReceiptRenderer.recordPrint(requireContext(), receiptNo)
                 }
-                is ThermalPrinter.Result.Failure -> showPrintFailed(result.message, receiptNo)
+                is ThermalPrinter.Result.Failure -> showPrintFailed(result.message, receiptNo, config)
             }
         }
     }
@@ -137,14 +139,22 @@ class BillFragment : Fragment(), TitledScreen {
     /**
      * Offers a way out when the printer cannot be reached: correct the address, or
      * fall back to the system print dialog so the sale is not held up by hardware.
+     *
+     * What to go and check depends on how the printer is attached, so [config] is
+     * passed in rather than the advice being the same either way - "on the same
+     * network" is no help to someone whose printer is on a cable.
      */
-    private fun showPrintFailed(message: String, receiptNo: Long) {
+    private fun showPrintFailed(message: String, receiptNo: Long, config: ThermalPrinter.Config) {
         val card = view?.findViewById<View>(R.id.cardReceipt) ?: return
+        val checkThis = if (config.isUsb) {
+            "Check the printer is powered on and its USB cable is properly connected"
+        } else {
+            "Check the printer is powered on and on the same network"
+        }
         DialogUtils.showConfirm(
             context = requireContext(),
             title = "Printer not reachable",
-            message = "$message\n\nCheck the printer is powered on and on the same " +
-                "network, or print another way.",
+            message = "$message\n\n$checkThis, or print another way.",
             positiveText = "Printer settings",
             negativeText = "Use system print",
             iconRes = android.R.drawable.ic_dialog_alert,

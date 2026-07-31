@@ -8,7 +8,11 @@
     app:cardElevation="16dp"
     app:cardBackgroundColor="@color/white">
 
+    <!-- A fixed width, narrowed by DialogUtils to whatever the screen actually has
+         when the device is set to a large display size and 450dp no longer fits
+         across it. -->
     <LinearLayout
+        android:id="@+id/llFormContent"
         android:layout_width="450dp"
         android:layout_height="wrap_content"
         android:orientation="vertical"
@@ -62,8 +66,10 @@
             </LinearLayout>
         </com.example.synergic_pos_offline.utils.MaxHeightScrollView>
 
-        <!-- Fixed height, and unweighted, so a long form can never squeeze the
-             buttons down to a sliver with their labels clipped away. -->
+        <!-- Unweighted, so a long form can never squeeze the buttons down to a
+             sliver with their labels clipped away. The buttons stand 48dp tall at
+             minimum but are free to grow: a height fixed at 48dp clips the label
+             inside instead, which is the same clipping one row up. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -75,11 +81,12 @@
                 android:id="@+id/btnFormNegative"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
-                android:layout_height="48dp"
+                android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
                 android:minHeight="48dp"
+                android:maxLines="2"
                 android:text="Cancel"
                 android:textAllCaps="false"
                 app:cornerRadius="12dp" />
@@ -87,12 +94,13 @@
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnFormPositive"
                 android:layout_width="0dp"
-                android:layout_height="48dp"
+                android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:layout_marginStart="16dp"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
                 android:minHeight="48dp"
+                android:maxLines="2"
                 android:text="Save"
                 android:textColor="@color/white"
                 android:textAllCaps="false"

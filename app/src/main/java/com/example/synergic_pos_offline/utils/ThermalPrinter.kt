@@ -19,12 +19,14 @@ import java.util.concurrent.Executors
 import print.Print
 
 /**
- * Prints a receipt to a PR-55 style ESC/POS thermal printer over WiFi.
+ * Prints a receipt to a PR-55 style ESC/POS thermal printer over WiFi/LAN,
+ * Bluetooth or USB.
  *
- * The printer listens on a TCP socket (9100 by convention), so every call here
- * blocks and must stay off the main thread. Connections are opened per job and
- * closed again: a till may be shared, and holding the socket open would lock
- * other devices out of the printer between sales.
+ * Every call here blocks - a network printer listens on a TCP socket (9100 by
+ * convention), and a USB one is written to over a bulk endpoint - so all of it must
+ * stay off the main thread. Connections are opened per job and closed again: a till
+ * may be shared, and holding the socket open would lock other devices out of the
+ * printer between sales.
  */
 object ThermalPrinter {
 
@@ -75,9 +77,10 @@ object ThermalPrinter {
     private val main = Handler(Looper.getMainLooper())
 
     /**
-     * A printer to send to. [address] is an IP for WIFI/LAN or a device MAC for
-     * BLUETOOTH; [connection] selects which transport is opened. Paper width is held
-     * in mm - what the operator knows - and derived to dots.
+     * A printer to send to. [ip] is an IP for WIFI/LAN, a device MAC for BLUETOOTH or
+     * a "VVVV:PPPP" vendor/product pair for USB ([UsbPrinters.addressOf]);
+     * [connection] selects which transport is opened. Paper width is held in mm -
+     * what the operator knows - and derived to dots.
      */
     data class Config(
         val ip: String,
@@ -87,6 +90,15 @@ object ThermalPrinter {
     ) {
         val paperDots: Int get() = dotsForMm(paperMm)
         val isBluetooth: Boolean get() = connection.equals("BLUETOOTH", ignoreCase = true)
+        val isUsb: Boolean get() = connection.equals("USB", ignoreCase = true)
+
+        /**
+         * How this printer reads to an operator. A network printer is known by its
+         * address, which is worth showing - it is what they typed in and what they
+         * would check. A USB printer's address is a vendor/product pair that means
+         * nothing to anyone, so it is named by the port it is on instead.
+         */
+        val description: String get() = if (isUsb) "the USB printer" else ip
     }
 
     sealed class Result {
@@ -118,6 +130,28 @@ object ThermalPrinter {
                 "port=${config.port} paperMm=${config.paperMm} paperDots=${config.paperDots} " +
                 "bitmap=${receipt.width}x${receipt.height} ===="
         )
+        // A USB printer cannot be opened until the user has allowed this app to talk
+        // to that device, and the prompt that asks is Android's own - it needs a live
+        // main thread, so it is dealt with here rather than from the print worker. It
+        // is asked for once per plug-in, so an operator sees it when they connect the
+        // printer and not again for the rest of the shift.
+        if (config.isUsb) {
+            UsbPrinters.ensurePermission(context, config.ip) { granted, reason ->
+                if (!granted) {
+                    PrintLog.d(context, TAG, "USB not available: $reason")
+                    copy.recycle()
+                    onResult(Result.Failure(reason))
+                } else {
+                    dispatch(context, copy, config, onResult)
+                }
+            }
+            return
+        }
+        dispatch(context, copy, config, onResult)
+    }
+
+    /** Queues an already-owned bitmap on the print worker. */
+    private fun dispatch(context: Context, copy: Bitmap, config: Config, onResult: (Result) -> Unit) {
         worker.execute {
             val result = runCatching { sendWithRetry(context, copy, config) }
                 .getOrElse { e ->
@@ -253,21 +287,43 @@ object ThermalPrinter {
 
         // Open the transport the printer is set to; 0 means connected. Bluetooth
         // takes the device MAC (the SDK prepends "Bluetooth,"); WiFi/LAN take the
-        // "WiFi,<ip>,<port>" descriptor. The close below must cover this too: a failed
-        // open can still leave a half-open connection behind, so each retry would
-        // wedge the printer further.
+        // "WiFi,<ip>,<port>" descriptor; USB takes the attached UsbDevice itself,
+        // resolved from the saved vendor/product pair. The close below must cover this
+        // too: a failed open can still leave a half-open connection behind, so each
+        // retry would wedge the printer further.
         try {
             PrintLog.d(
                 context, TAG,
-                if (config.isBluetooth) "opening Bluetooth port to ${config.ip}"
-                else "opening WiFi port to ${config.ip}:${config.port}"
+                when {
+                    config.isUsb -> "opening USB port to ${config.ip}"
+                    config.isBluetooth -> "opening Bluetooth port to ${config.ip}"
+                    else -> "opening WiFi port to ${config.ip}:${config.port}"
+                }
             )
-            val opened =
-                if (config.isBluetooth) Print.portOpenBT(context, config.ip)
-                else Print.PortOpen(context, "WiFi,${config.ip},${config.port}")
+            // The device is re-resolved per attempt rather than held: it may have been
+            // unplugged and plugged back in between them, which hands out a different
+            // UsbDevice for the same printer.
+            val usbDevice = if (config.isUsb) UsbPrinters.find(context, config.ip) else null
+            if (config.isUsb && usbDevice == null) {
+                return Attempt(
+                    Result.Failure("USB printer not connected - plug it in and try again"),
+                    retryable = false
+                )
+            }
+            val opened = when {
+                // The SDK keeps this context in a static field for the life of the
+                // process, so it gets the application's, never an Activity's.
+                usbDevice != null -> Print.PortOpen(context.applicationContext, usbDevice)
+                config.isBluetooth -> Print.portOpenBT(context, config.ip)
+                else -> Print.PortOpen(context, "WiFi,${config.ip},${config.port}")
+            }
             PrintLog.d(context, TAG, "port open result=$opened (0 = connected)")
             if (opened != 0) {
-                val where = if (config.isBluetooth) config.ip else "${config.ip}:${config.port}"
+                val where = when {
+                    config.isUsb -> "USB ${config.ip}"
+                    config.isBluetooth -> config.ip
+                    else -> "${config.ip}:${config.port}"
+                }
                 return Attempt(
                     Result.Failure("Cannot reach printer at $where"),
                     retryable = true
@@ -426,8 +482,9 @@ object ThermalPrinter {
         if (flag.isEmpty()) return null
         val printer = OperatingPrinterDao(context).getDefault(flag) ?: return null
         val type = printer.printerType?.takeIf { it.isNotBlank() } ?: return null
-        // USB has no address to open a socket against yet.
-        if (type.equals("USB", ignoreCase = true)) return null
+        // An address is what every transport is opened by, USB included - for it, the
+        // vendor/product pair of the device that was picked when the printer was set
+        // up. A row saved without one is not usable, whatever its type.
         val address = printer.value?.takeIf { it.isNotBlank() } ?: return null
         return Config(
             ip = address,

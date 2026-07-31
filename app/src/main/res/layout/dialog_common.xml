@@ -8,7 +8,11 @@
     app:cardElevation="16dp"
     app:cardBackgroundColor="@color/white">
 
+    <!-- A fixed width, narrowed by DialogUtils to whatever the screen actually has
+         when the device is set to a large display size and 380dp no longer fits
+         across it. -->
     <LinearLayout
+        android:id="@+id/llDialogContent"
         android:layout_width="380dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
@@ -52,16 +56,21 @@
             android:gravity="center"
             android:orientation="horizontal">
 
+            <!-- Left to wrap onto a second line rather than pinned to one and
+                 ellipsized: these labels are the caller's - "Print & Complete",
+                 "Delete permanently" - and a button reading "Delete perm..." is
+                 worse than a button two lines tall. minHeight keeps the tap target
+                 whatever the label does. -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnDialogNegative"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:minHeight="48dp"
+                android:maxLines="2"
                 android:text="Cancel"
                 android:textAllCaps="false"
-                android:maxLines="1"
-                android:ellipsize="end"
                 app:cornerRadius="12dp" />
 
             <com.google.android.material.button.MaterialButton
@@ -70,11 +79,11 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:layout_marginStart="12dp"
+                android:minHeight="48dp"
+                android:maxLines="2"
                 android:text="Confirm"
                 android:textColor="@color/white"
                 android:textAllCaps="false"
-                android:maxLines="1"
-                android:ellipsize="end"
                 app:cornerRadius="12dp" />
 
         </LinearLayout>

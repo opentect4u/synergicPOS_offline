@@ -43,6 +43,7 @@ import com.example.synergic_pos_offline.fragments.LoginFragment
 import com.example.synergic_pos_offline.fragments.MasterFragment
 import com.example.synergic_pos_offline.fragments.ComingSoonFragment
 import com.example.synergic_pos_offline.fragments.PosBillingFragment
+import com.example.synergic_pos_offline.fragments.PrintSettingsFragment
 import com.example.synergic_pos_offline.fragments.ProductsFragment
 import com.example.synergic_pos_offline.fragments.RegistrationFragment
 import com.example.synergic_pos_offline.fragments.ReportsFragment
@@ -142,12 +143,13 @@ class MainActivity : AppCompatActivity() {
         tvHeaderTitle.text = titleFor(f)
         val user = SessionManager.currentUser
         tvHeaderSubtitle.text = "Hello, ${user?.userId ?: "User"}"
-        // Back is hidden on the Dashboard (root), shown on sub-pages.
-        btnBack.visibility = if (f is com.example.synergic_pos_offline.fragments.DashboardFragment) {
-            View.GONE
-        } else {
-            View.VISIBLE
-        }
+        // Back is hidden on whatever screen is the root - the Sale screen after login,
+        // or the Dashboard after the home button - and shown on anything pushed over
+        // it. Decided from the back stack rather than by naming screens, so a screen
+        // that is the root in one place and a sub-page in another (Sale is both) gets
+        // the right answer either way.
+        btnBack.visibility =
+            if (supportFragmentManager.backStackEntryCount == 0) View.GONE else View.VISIBLE
     }
 
     private fun titleFor(f: Fragment): String = when (f) {
@@ -178,8 +180,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun logout() {
         SessionManager.logout()
-        // Clear the whole back stack to return to the login screen.
-        supportFragmentManager.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
+        // Clear the whole back stack and put the login form back up. Shown outright
+        // rather than popped back to: the screen logged into is the root of the stack,
+        // so there is nothing underneath to pop to.
+        val fm = supportFragmentManager
+        fm.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
+        fm.beginTransaction()
+            .replace(R.id.fragment_container, LoginFragment())
+            .commit()
     }
 
     // ---- Drawer control, called from any fragment's hamburger button --------
@@ -322,6 +330,8 @@ class MainActivity : AppCompatActivity() {
             "Bill Settings" -> navigateTo(BillSettingsFragment())
             "Tax Settings" -> navigateTo(TaxSettingsFragment())
             "App Settings" -> navigateTo(AppSettingsFragment())
+            // Opens on Connections; the Print Template tab is the other half of it.
+            "Printer Settings" -> navigateTo(PrintSettingsFragment())
             "Stock & Inventory" -> navigateTo(InventoryFragment())
             "Reports" -> navigateTo(ReportsFragment())
             "Sale" -> navigateTo(PosBillingFragment())
@@ -396,6 +406,9 @@ class MainActivity : AppCompatActivity() {
                 TreeNode("Bill Settings"),
                 TreeNode("Tax Settings"),
                // TreeNode("Inventory & Stock Settings"),
+                // Same position it holds in the Settings tile grid, so the two ways
+                // in list the screens in one order.
+                TreeNode("Printer Settings"),
                 TreeNode("App Settings")
             )),
             TreeNode("Stock & Inventory", listOf(

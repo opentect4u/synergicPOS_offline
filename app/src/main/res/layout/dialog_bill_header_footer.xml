@@ -41,7 +41,7 @@
                 android:layout_height="wrap_content"
                 android:hint="Text"
                 app:counterEnabled="true"
-                app:counterMaxLength="32"
+                app:counterMaxLength="120"
                 app:startIconDrawable="@android:drawable/ic_menu_edit"
                 app:boxCornerRadiusTopStart="12dp"
                 app:boxCornerRadiusTopEnd="12dp"
@@ -52,9 +52,9 @@
                     android:id="@+id/etText"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:inputType="textCapSentences"
-                    android:maxLength="32"
-                    android:maxLines="2"
+                    android:inputType="textCapSentences|textMultiLine"
+                    android:maxLength="120"
+                    android:maxLines="4"
                     android:textSize="16sp" />
             </com.google.android.material.textfield.TextInputLayout>
 

@@ -58,11 +58,27 @@ class BillSettingsDao(context: Context) {
         }
     }
 
-    /** Layout format of the printed bill. Persisted as [code] (N / C / T). */
+    /**
+     * Layout format of the printed bill - what Printer Settings > Print Template
+     * picks, and the format the whole app prints in. Persisted as [code] (N / L /
+     * C / T); the codes are unchanged from when this was only a Bill Settings
+     * dropdown, so a till that already chose one keeps it.
+     *
+     * [STANDARD], [CLASSIC] and [TAX_WISE_SHORT] are built; [CLUBBED] is named here
+     * because the choice is the operator's to make and store now, but its layout is
+     * still to come.
+     */
     enum class BillFormat(val code: String, val label: String) {
-        NORMAL("N", "Normal"), CLUBBED("C", "Clubbed"), TAX_WISE_SHORT("T", "Tax wise short");
+        STANDARD("N", "Standard"),
+        CLASSIC("L", "Classic"),
+        CLUBBED("C", "Clubbed"),
+        TAX_WISE_SHORT("T", "Tax wise short");
+
+        /** True once the layout for this format exists and can be previewed/printed. */
+        val implemented: Boolean get() = this != CLUBBED
+
         companion object {
-            /** Accepts the stored code (N/C/T) or the display label. */
+            /** Accepts the stored code (N/L/C/T) or the display label. */
             fun fromStored(value: String?): BillFormat? = value?.let { v ->
                 values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
             }
@@ -82,7 +98,7 @@ class BillSettingsDao(context: Context) {
         val customerDetails: CustomerDetails = CustomerDetails.ONLY_MOBILE,
         val customerAddressPrinting: Boolean = false,
         val totalAmountFontSize: FontSize = FontSize.REGULAR,
-        val billFormat: BillFormat = BillFormat.NORMAL
+        val billFormat: BillFormat = BillFormat.STANDARD
     )
 
     /** Reads every bill setting for the current store, applying defaults. */
@@ -120,6 +136,40 @@ class BillSettingsDao(context: Context) {
         put(KEY_CUSTOMER_ADDRESS_PRINTING, if (s.customerAddressPrinting) "1" else "0")
         put(KEY_TOTAL_FONT_SIZE, s.totalAmountFontSize.code)
         put(KEY_BILL_FORMAT, s.billFormat.code)
+        refreshCache()
+    }
+
+    /**
+     * Writes just the bill format, leaving every other bill setting as it is.
+     *
+     * The Print Template screen changes this one setting on each tap, and has no UI
+     * for the rest - going through [save] would write back whatever a stale
+     * [BillSettings] happened to hold for them.
+     */
+    fun saveBillFormat(format: BillFormat) {
+        put(KEY_BILL_FORMAT, format.code)
+        refreshCache()
+    }
+
+    /**
+     * Paper width the Print Template preview is drawn at, in mm.
+     *
+     * Kept apart from [BillSettings] deliberately: this chooses how the *preview* is
+     * laid out, not how a bill is printed. The paper actually loaded in a printer is
+     * that printer's own setting, in Printer Settings > Connections, since a till can
+     * run an 80mm bill printer and a 58mm kitchen printer at once.
+     */
+    fun loadTemplatePaperMm(): Int =
+        readAll()[KEY_TEMPLATE_PAPER]?.toIntOrNull()?.takeIf { it == 58 || it == 80 }
+            ?: DEFAULT_TEMPLATE_PAPER_MM
+
+    fun saveTemplatePaperMm(mm: Int) {
+        put(KEY_TEMPLATE_PAPER, mm.toString())
+        refreshCache()
+    }
+
+    /** Regroups the settings rows by type and republishes them to [SettingsCache]. */
+    private fun refreshCache() {
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "Bill settings save (type B)")
     }
@@ -220,18 +270,22 @@ class BillSettingsDao(context: Context) {
 
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
-    private companion object {
-        const val KEY_ROUND_OFF = "Bill Round Off"
-        const val KEY_AMOUNT_IN_WORDS = "Bill Amount In Words"
-        const val KEY_TWO_COPY = "Bill Two copy"
-        const val KEY_START_NO = "Bill Start No"
-        const val KEY_RESET_MODE = "Bill Reset Mode"
-        const val KEY_CHAR_ENABLED = "Bill No Char Enabled"
-        const val KEY_CHAR_PREFIX = "Bill No Char Prefix"
-        const val KEY_HSN_CODE = "Bill Hsn Code"
-        const val KEY_CUSTOMER_DETAILS = "Customer Details"
-        const val KEY_CUSTOMER_ADDRESS_PRINTING = "Customer Address Printing"
-        const val KEY_TOTAL_FONT_SIZE = "Total Amount Font Size"
-        const val KEY_BILL_FORMAT = "Bill Format"
+    companion object {
+        private const val KEY_ROUND_OFF = "Bill Round Off"
+        private const val KEY_AMOUNT_IN_WORDS = "Bill Amount In Words"
+        private const val KEY_TWO_COPY = "Bill Two copy"
+        private const val KEY_START_NO = "Bill Start No"
+        private const val KEY_RESET_MODE = "Bill Reset Mode"
+        private const val KEY_CHAR_ENABLED = "Bill No Char Enabled"
+        private const val KEY_CHAR_PREFIX = "Bill No Char Prefix"
+        private const val KEY_HSN_CODE = "Bill Hsn Code"
+        private const val KEY_CUSTOMER_DETAILS = "Customer Details"
+        private const val KEY_CUSTOMER_ADDRESS_PRINTING = "Customer Address Printing"
+        private const val KEY_TOTAL_FONT_SIZE = "Total Amount Font Size"
+        private const val KEY_BILL_FORMAT = "Bill Format"
+        private const val KEY_TEMPLATE_PAPER = "Bill Template Paper Width"
+
+        /** 3-inch paper, the size most bill printers on this app run. */
+        const val DEFAULT_TEMPLATE_PAPER_MM = 80
     }
 }
