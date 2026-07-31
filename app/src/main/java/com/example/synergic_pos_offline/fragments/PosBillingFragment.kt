@@ -394,6 +394,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
         btnAddCustomer.setTextColor(accent)
         
         // Checkout button: Solid theme color
+        val isRestaurant = SettingsCache.value(ctx, "G", "Mode") == "R"
+        if (isRestaurant) {
+            btnCharge.text = "Bill & Print"
+        }
         btnCharge.backgroundTintList = ColorStateList.valueOf(accent)
         btnCharge.setTextColor(Color.WHITE)
         btnCharge.strokeWidth = 0
@@ -1334,6 +1338,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         // Hand the current sale to the checkout screen.
         CheckoutSession.lines = cart.map { it.toSessionLine() }.toMutableList()
+        // ... (rest of the original onCheckout)
         // Passed through as entered when there's no coupon to fold in - checkout has
         // no notion of a coupon of its own, so a coupon sale is instead resolved to a
         // flat rupee amount that already includes it, and checkout just charges
@@ -1637,7 +1642,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
             } else View.GONE
 
         tvTotal.text = money(computeTotal())
-        btnCharge.text = "Checkout ${money(computeTotal())}"
+        val isRestaurant = SettingsCache.value(requireContext(), "G", "Mode") == "R"
+        btnCharge.text = if (isRestaurant) {
+            "Bill & Print ${money(computeTotal())}"
+        } else {
+            "Checkout ${money(computeTotal())}"
+        }
     }
 
     private fun money(v: Double): String = "₹" + String.format("%.2f", BillRounding.toPaise(v))

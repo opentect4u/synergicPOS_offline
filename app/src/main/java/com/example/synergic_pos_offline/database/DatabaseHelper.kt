@@ -53,6 +53,18 @@ class DatabaseHelper private constructor(context: Context) :
         runCatching { db.execSQL(SQL_CREATE_MD_TABLE) }
         runCatching { db.execSQL(SQL_CREATE_MD_TABLE_UNIT) }
         runCatching { db.execSQL(SQL_CREATE_TD_ASSIGN_WAITER) }
+        runCatching { db.execSQL(SQL_CREATE_TD_RUNNING_ORDER) }
+        runCatching { db.execSQL(SQL_CREATE_TD_RUNNING_ORDER_ITEMS) }
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "order_note", "TEXT")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "kot_qty", "REAL DEFAULT 0")
+        // Items already sent under the old flag must not be re-sent: mark their full
+        // quantity as already gone to the kitchen.
+        runCatching {
+            db.execSQL(
+                "UPDATE ${Tables.TD_RUNNING_ORDER_ITEMS} SET kot_qty = quantity " +
+                    "WHERE kot_printed = 1 AND kot_qty = 0"
+            )
+        }
         addColumnIfMissing(db, Tables.MD_TABLE, "no_of_tables", "INTEGER")
         addColumnIfMissing(db, Tables.MD_TABLE, "from_table_no", "INTEGER")
         addColumnIfMissing(db, Tables.MD_TABLE, "to_table_no", "INTEGER")
@@ -281,6 +293,8 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_MD_TABLE)
         db.execSQL(SQL_CREATE_MD_TABLE_UNIT)
         db.execSQL(SQL_CREATE_TD_ASSIGN_WAITER)
+        db.execSQL(SQL_CREATE_TD_RUNNING_ORDER)
+        db.execSQL(SQL_CREATE_TD_RUNNING_ORDER_ITEMS)
 
         // Transaction tables
         db.execSQL(SQL_CREATE_TD_PURCHASE)
@@ -743,6 +757,33 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_td_kot_items_kot ON td_kot_items(kot_id)")
     }
 
+    /**
+     * Wipes the mode-specific business data when the app switches Grocery ↔ Restaurant:
+     * the product/category masters, restaurant masters (section/table/waiter), and all
+     * sales transactions (bills, KOTs, payments, returns, running orders). Registration,
+     * users, and settings are left intact. Children are cleared before parents.
+     */
+    fun eraseBusinessDataForModeChange() {
+        val db = writableDatabase
+        val order = listOf(
+            Tables.TD_PAYMENTS, Tables.TD_RETURN_ITEMS, Tables.TD_SALE_RETURNS,
+            Tables.TD_BILL_PRINTS, Tables.TD_BILL_ITEMS, Tables.TD_BILLS,
+            Tables.TD_KOT_ITEMS, Tables.TD_KOT,
+            Tables.TD_RUNNING_ORDER_ITEMS, Tables.TD_RUNNING_ORDER,
+            Tables.TD_ASSIGN_WAITER,
+            Tables.MD_TABLE_UNIT, Tables.MD_TABLE, Tables.MD_SECTION,
+            Tables.MD_WAITERS,
+            Tables.MD_PRODUCT_RATES, Tables.MD_PRODUCTS, Tables.MD_CATEGORY
+        )
+        db.beginTransaction()
+        try {
+            order.forEach { runCatching { db.delete(it, null, null) } }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     /** Table names, in FK-safe creation order. */
     object Tables {
         const val MD_REGISTRATION = "md_registration"
@@ -784,6 +825,9 @@ class DatabaseHelper private constructor(context: Context) :
         const val TD_KOT_ITEMS = "td_kot_items"
         const val TD_BILL_PRINTS = "td_bill_prints"
         const val TD_ASSIGN_WAITER = "td_assign_waiter"
+        // Live restaurant billing: running (open) table orders + their items.
+        const val TD_RUNNING_ORDER = "td_running_order"
+        const val TD_RUNNING_ORDER_ITEMS = "td_running_order_items"
     }
 
     companion object {
@@ -1202,6 +1246,43 @@ class DatabaseHelper private constructor(context: Context) :
                 created_by TEXT,
                 modified_by TEXT,
                 FOREIGN KEY(waiter_id) REFERENCES md_waiters(id)
+            )
+        """
+
+        // A running (open) table order — the live bill before payment.
+        private const val SQL_CREATE_TD_RUNNING_ORDER = """
+            CREATE TABLE IF NOT EXISTS td_running_order (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                table_code TEXT,
+                section TEXT,
+                waiter_id INTEGER,
+                order_type TEXT,
+                customer_phone TEXT,
+                cashier TEXT,
+                order_note TEXT,
+                status TEXT NOT NULL DEFAULT 'RUNNING',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
+        // Items on a running order; kot_printed flags what has gone to the kitchen.
+        private const val SQL_CREATE_TD_RUNNING_ORDER_ITEMS = """
+            CREATE TABLE IF NOT EXISTS td_running_order_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                running_order_id INTEGER,
+                product_id INTEGER,
+                product_name TEXT,
+                quantity REAL DEFAULT 1,
+                rate REAL DEFAULT 0,
+                kot_printed INTEGER NOT NULL DEFAULT 0,
+                kot_qty REAL NOT NULL DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY(running_order_id) REFERENCES td_running_order(id)
             )
         """
 

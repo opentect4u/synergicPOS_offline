@@ -33,22 +33,63 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Sale"
 
-    // One line in an order's cart.
-    private data class CartItem(val product: ProductEntryDialog.Product, var qty: Int, var rate: Double)
+    // One line in an order's cart (backed by td_running_order_items).
+    private data class CartItem(
+        val productId: Long, val name: String, var qty: Int, var rate: Double,
+        var dbItemId: Long = 0, var kotQty: Double = 0.0
+    ) {
+        /** Quantity not yet sent to the kitchen. */
+        val pending: Int get() = (qty - kotQty).toInt().coerceAtLeast(0)
+    }
 
     private data class OrderCard(
-        val id: String, val type: String, val section: String, val phone: String,
+        val dbId: Long, val id: String, val type: String, val section: String, val phone: String,
         val time: String, var amount: String, val cashier: String,
-        val status: String, var selected: Boolean,
+        var status: String, var selected: Boolean, var note: String = "",
         // Each order keeps its own cart, so switching tables shows its own items.
         val items: MutableList<CartItem> = mutableListOf()
-    )
+    ) {
+        val completed: Boolean get() = status.equals("COMPLETED", ignoreCase = true)
+    }
 
-    // Dynamic order list — starts empty and grows as orders are created.
+    // Running orders — loaded from / persisted to the database (survive restarts).
     private val orders = mutableListOf<OrderCard>()
+    private val roDao by lazy { com.example.synergic_pos_offline.database.RunningOrderDao(requireContext()) }
+    private var suppressNoteWatcher = false   // guards programmatic note-field updates
 
-    /** The cart of the currently selected order, or null when none is selected. */
-    private fun currentCart(): MutableList<CartItem>? = orders.firstOrNull { it.selected }?.items
+    private fun currentOrder(): OrderCard? = orders.firstOrNull { it.selected }
+    private fun currentCart(): MutableList<CartItem>? = currentOrder()?.items
+
+    /** Reloads the running orders (and their items) from the database into [orders]. */
+    private fun loadRunningOrders() {
+        orders.clear()
+        roDao.allRunning().forEach { ro ->
+            val card = OrderCard(
+                dbId = ro.id, id = ro.tableCode, type = ro.orderType, section = ro.section,
+                phone = ro.phone, time = ro.time, amount = "₹ ${money(grandTotal(ro.total))}",
+                cashier = ro.cashier, status = ro.status, selected = false, note = ro.note
+            )
+            roDao.itemsFor(ro.id).forEach { ri ->
+                card.items.add(CartItem(ri.productId, ri.name, ri.qty.toInt(), ri.rate, ri.id, ri.kotQty))
+            }
+            orders.add(card)
+        }
+    }
+
+    /** Reloads one order's items from the database (after a DB mutation). */
+    private fun reloadItems(order: OrderCard) {
+        order.items.clear()
+        roDao.itemsFor(order.dbId).forEach { ri ->
+            order.items.add(CartItem(ri.productId, ri.name, ri.qty.toInt(), ri.rate, ri.id, ri.kotQty))
+        }
+    }
+
+    /** Subtotal → grand total (service 5% + CGST 2.5% + SGST 2.5%). */
+    private fun grandTotal(subtotal: Double): Double {
+        val service = subtotal * 0.05
+        val taxable = subtotal + service
+        return subtotal + service + taxable * 0.025 + taxable * 0.025
+    }
 
     // Tax configuration, resolved the same way the grocery billing screen does.
     private val taxSettings by lazy { TaxSettingsDao(requireContext()).load() }
@@ -73,6 +114,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         super.onViewCreated(view, savedInstanceState)
         val accent = ThemeManager.getThemeColor(requireContext())
 
+        loadRunningOrders()          // restore open tables from the database
         populateOrders(view, accent)
         clearDetail(view)
 
@@ -80,25 +122,57 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
             .check(R.id.btnDineIn)
 
+        // Order note: persist per-order as it's typed (guarded against programmatic sets).
+        view.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etOrderNote)
+            .addTextChangedListener {
+                if (suppressNoteWatcher) return@addTextChangedListener
+                val o = currentOrder() ?: return@addTextChangedListener
+                if (o.completed) return@addTextChangedListener   // billed order is locked
+                o.note = it?.toString().orEmpty()
+                roDao.setNote(o.dbId, o.note)
+            }
+
         // New Order → table/customer modal.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnNewOrder).setOnClickListener {
             showNewOrderDialog()
         }
 
-        // Add Item → product-grid modal (only when a table/order is active).
+        // Add Item → product-grid modal (only when a table/order is active and not billed).
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAddItem).setOnClickListener {
-            if (orders.none { it.selected }) {
-                toast("Create or select a table order first")
-            } else {
-                showAddItemDialog()
+            val order = currentOrder()
+            when {
+                order == null -> toast("Create or select a table order first")
+                order.completed -> toast("Table already billed — cannot add items")
+                else -> showAddItemDialog()
             }
         }
 
-        // When checkout confirms payment, close that table's order.
+        // Print KOT → resolve the kitchen printer, then cut a ticket for the new items.
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnPrintKot).setOnClickListener {
+            val order = currentOrder() ?: return@setOnClickListener toast("Select a table order first")
+            if (order.completed) return@setOnClickListener toast("Table already billed")
+            if (order.items.none { it.pending > 0 }) {
+                toast("No new items to send to kitchen"); return@setOnClickListener
+            }
+            resolveKotPrinterThenPrint(order)
+        }
+
+        // Bill & Print → print the bill on the default BILL printer (or choose one), then lock the table.
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPrint).setOnClickListener {
+            val order = currentOrder() ?: return@setOnClickListener toast("Select a table order first")
+            when {
+                order.items.isEmpty() -> toast("Add items before printing the bill")
+                order.completed -> toast("Table already billed")
+                else -> resolveBillPrinterThenPrint(order)
+            }
+        }
+
+        // When checkout confirms payment, close that table's order (in DB too).
         parentFragmentManager.setFragmentResultListener(
             RestaurantCheckoutFragment.RESULT_PAID, viewLifecycleOwner
         ) { _, bundle ->
             val paidTable = bundle.getString(RestaurantCheckoutFragment.ARG_TABLE)
+            orders.firstOrNull { it.id == paidTable }?.let { roDao.close(it.dbId) }
             orders.removeAll { it.id == paidTable }
             val root = view ?: return@setFragmentResultListener
             populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -112,7 +186,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 order == null -> toast("Select a table order first")
                 order.items.isEmpty() -> toast("Add items before billing")
                 else -> {
-                    val names = ArrayList(order.items.map { it.product.name })
+                    val names = ArrayList(order.items.map { it.name })
                     val qtys = order.items.map { it.qty }.toIntArray()
                     val rates = order.items.map { it.rate }.toDoubleArray()
                     requireActivity().supportFragmentManager.beginTransaction()
@@ -196,7 +270,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             card.findViewById<TextView>(R.id.tvOrderCashier).text = o.cashier
             card.findViewById<TextView>(R.id.tvOrderAmount).text = o.amount
             card.findViewById<TextView>(R.id.tvOrderStatus).apply {
-                text = o.status
+                text = if (o.completed) "Completed • Billed" else "In Progress"
                 setTextColor(accent)
                 backgroundTintList = ColorStateList.valueOf(soft)
             }
@@ -230,6 +304,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvDetailCustomer).text = order.phone.ifBlank { "Walk-in" }
         root.findViewById<TextView>(R.id.tvDetailGuests).text =
             if (order.section.isNotBlank()) "${order.section}  ·  ${order.type}" else order.type
+        setNoteField(root, order.note)
+    }
+
+    /** Sets the order-note field without triggering the persist watcher. */
+    private fun setNoteField(root: View, note: String) {
+        suppressNoteWatcher = true
+        root.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etOrderNote).setText(note)
+        suppressNoteWatcher = false
     }
 
     /** Neutral detail panel when no order is selected: empty cart + zeroed totals. */
@@ -237,6 +319,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvDetailTable).text = "—"
         root.findViewById<TextView>(R.id.tvDetailCustomer).text = "Walk-in"
         root.findViewById<TextView>(R.id.tvDetailGuests).text = "—"
+        setNoteField(root, "")
         root.findViewById<LinearLayout>(R.id.llOrderItems).removeAllViews()
         val zero = "₹ ${money(0.0)}"
         root.findViewById<TextView>(R.id.tvSubtotal).text = zero
@@ -333,7 +416,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         dialog.show()
     }
 
-    /** Adds a new order to the list, selects it, and starts it with a fresh empty cart. */
+    /** Persists a new running order, selects it, and starts it with a fresh empty cart. */
     private fun openNewOrder(table: String, section: String, phone: String) {
         val root = view ?: return
         val type = if (root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnTakeAway).isChecked)
@@ -341,10 +424,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val now = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
         val cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—"
 
+        val dbId = roDao.createOrder(table, section, null, type, phone, cashier)
+        if (dbId == -1L) { toast("Could not create order"); return }
+
         orders.forEach { it.selected = false }
         val order = OrderCard(
-            id = table, type = type, section = section, phone = phone, time = now,
-            amount = "₹ ${money(0.0)}", cashier = cashier, status = "In Progress", selected = true
+            dbId = dbId, id = table, type = type, section = section, phone = phone, time = now,
+            amount = "₹ ${money(0.0)}", cashier = cashier, status = "RUNNING", selected = true
         )
         orders.add(0, order)                                  // newest on top
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -621,9 +707,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     private fun addToCart(p: ProductEntryDialog.Product, qty: Int, rate: Double) {
-        val cart = currentCart() ?: run { toast("Select a table order first"); return }
-        val existing = cart.firstOrNull { it.product.id == p.id && it.rate == rate }
-        if (existing != null) existing.qty += qty else cart.add(CartItem(p, qty, rate))
+        val order = currentOrder() ?: run { toast("Select a table order first"); return }
+        roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty.toDouble(), rate)
+        reloadItems(order)
         renderCart()
     }
 
@@ -633,28 +719,187 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val container = root.findViewById<LinearLayout>(R.id.llOrderItems)
         val inflater = LayoutInflater.from(requireContext())
         container.removeAllViews()
-        val cart = currentCart() ?: emptyList<CartItem>()
-        cart.forEachIndexed { index, item ->
+        val accent = ThemeManager.getThemeColor(requireContext())
+        val order = currentOrder()
+        val locked = order?.completed == true      // billed → read-only
+        val cart = order?.items ?: emptyList<CartItem>()
+        cart.forEach { item ->
             val row = inflater.inflate(R.layout.item_order_line, container, false)
-            row.findViewById<TextView>(R.id.tvLineName).text = item.product.name
+            row.findViewById<TextView>(R.id.tvLineName).text = item.name
             row.findViewById<TextView>(R.id.tvLineQty).text = item.qty.toString()
             row.findViewById<TextView>(R.id.tvLineRate).text = money(item.rate)
             row.findViewById<TextView>(R.id.tvLineAmount).text = money(item.qty * item.rate)
-            row.findViewById<TextView>(R.id.tvLineNote).text = "—"
-            row.findViewById<ImageButton>(R.id.btnPlus).setOnClickListener {
-                item.qty++; renderCart()
+            // KOT status: any quantity not yet sent shows NEW ×n (accent); else ✓ Sent.
+            row.findViewById<TextView>(R.id.tvLineNote).apply {
+                if (item.pending > 0) { text = "NEW ×${item.pending}"; setTextColor(accent) }
+                else { text = "✓ Sent"; setTextColor(0xFF9AA0A6.toInt()) }
             }
-            row.findViewById<ImageButton>(R.id.btnMinus).setOnClickListener {
-                if (item.qty > 1) item.qty-- else currentCart()?.removeAt(index)
-                renderCart()
-            }
-            row.findViewById<ImageButton>(R.id.btnRemoveLine).setOnClickListener {
-                currentCart()?.removeAt(index); renderCart()
+            val btnPlus = row.findViewById<ImageButton>(R.id.btnPlus)
+            val btnMinus = row.findViewById<ImageButton>(R.id.btnMinus)
+            val btnRemove = row.findViewById<ImageButton>(R.id.btnRemoveLine)
+            if (locked) {
+                // Billed order — hide the editing controls entirely.
+                btnPlus.visibility = View.GONE
+                btnMinus.visibility = View.GONE
+                btnRemove.visibility = View.GONE
+            } else {
+                btnPlus.setOnClickListener {
+                    roDao.setItemQty(item.dbItemId, (item.qty + 1).toDouble()); order?.let { reloadItems(it) }; renderCart()
+                }
+                btnMinus.setOnClickListener {
+                    roDao.setItemQty(item.dbItemId, (item.qty - 1).toDouble()); order?.let { reloadItems(it) }; renderCart()
+                }
+                btnRemove.setOnClickListener {
+                    roDao.removeItem(item.dbItemId); order?.let { reloadItems(it) }; renderCart()
+                }
             }
             container.addView(row)
             ThemeManager.applyTheme(row)
         }
         updateTotals()
+    }
+
+    /**
+     * Picks the kitchen (KOT) printer from the Operating Printer master (print_flag = 'K'):
+     * a default one prints straight away; otherwise the operator chooses a counter.
+     */
+    private fun resolveKotPrinterThenPrint(order: OrderCard) {
+        val kotPrinters = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
+            .getAll().filter { it.printFlag.equals("K", ignoreCase = true) }
+        val default = kotPrinters.firstOrNull { it.isDefault }
+        when {
+            kotPrinters.isEmpty() ->
+                toast("No KOT printer set up — add one in Settings ▸ Operating Printer")
+            default != null -> doPrintKot(order, default)
+            else -> showPrinterChooser(kotPrinters, "Select kitchen counter") { doPrintKot(order, it) }
+        }
+    }
+
+    /**
+     * Picks the bill (BILL) printer from the Operating Printer master (print_flag = 'B'):
+     * a default one prints straight away; otherwise the operator chooses one.
+     */
+    private fun resolveBillPrinterThenPrint(order: OrderCard) {
+        val billPrinters = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
+            .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
+        val default = billPrinters.firstOrNull { it.isDefault }
+        when {
+            billPrinters.isEmpty() ->
+                toast("No bill printer set up — add one in Settings ▸ Operating Printer")
+            default != null -> doPrintBill(order, default)
+            else -> showPrinterChooser(billPrinters, "Select bill printer") { doPrintBill(order, it) }
+        }
+    }
+
+    /** Builds the bill and shows it in the app's global dialog, labelled with [printer]. */
+    private fun doPrintBill(
+        order: OrderCard,
+        printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter
+    ) {
+        val subtotal = order.items.sumOf { it.qty * it.rate }
+        val service = subtotal * 0.05
+        val taxable = subtotal + service
+        val cgst = taxable * 0.025
+        val sgst = taxable * 0.025
+        val total = subtotal + service + cgst + sgst
+        val body = buildString {
+            append("Printer: ${printer.printerName}\n")
+            append("Table ${order.id}   •   ${order.time}\n")
+            append("Customer: ${order.phone.ifBlank { "Walk-in" }}\n")
+            append("————————————————————————\n")
+            order.items.forEach { item ->
+                append("${item.qty} × ${item.name}".padEnd(22))
+                append("₹ ${money(item.qty * item.rate)}\n")
+            }
+            append("————————————————————————\n")
+            append("Subtotal".padEnd(22)).append("₹ ${money(subtotal)}\n")
+            append("Service Charge (5%)".padEnd(22)).append("₹ ${money(service)}\n")
+            append("CGST (2.5%)".padEnd(22)).append("₹ ${money(cgst)}\n")
+            append("SGST (2.5%)".padEnd(22)).append("₹ ${money(sgst)}\n")
+            append("TOTAL".padEnd(22)).append("₹ ${money(total)}")
+            if (order.note.isNotBlank()) append("\n————————————————————————\nNote: ${order.note}")
+        }
+        com.example.synergic_pos_offline.utils.DialogUtils.showSuccess(
+            context = requireContext(),
+            title = "Bill",
+            message = body,
+            buttonText = "OK",
+            iconRes = null,
+            onDismiss = { completeTable(order) }   // billed → table done, no more changes
+        )
+        toast("Bill printed to ${printer.printerName}")
+    }
+
+    /**
+     * Bill & Print result: mark the table COMPLETED (billed). It stays in the
+     * temporary running table (so it can still be paid), but is locked — no more
+     * items / qty / KOT changes. It's only removed after payment (Bill & Pay).
+     */
+    private fun completeTable(order: OrderCard) {
+        roDao.markCompleted(order.dbId)
+        order.status = "COMPLETED"
+        val root = view ?: return
+        populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+        renderCart()   // re-render locked (steppers hidden)
+        toast("Table ${order.id} billed — locked. Use Bill & Pay to settle.")
+    }
+
+    /** A picker of printers when no default is set for the flag (KOT counters / bill printers). */
+    private fun showPrinterChooser(
+        printers: List<com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter>,
+        title: String,
+        onPick: (com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter) -> Unit
+    ) {
+        val labels = printers.map { p ->
+            val extra = p.printerLabel.ifBlank { "" }
+            if (extra.isBlank()) p.printerName else "${p.printerName}  ($extra)"
+        }.toTypedArray()
+        AlertDialog.Builder(requireContext())
+            .setTitle(title)
+            .setItems(labels) { _, which -> onPick(printers[which]) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Cuts the KOT batch, refreshes the cart, and shows the ticket for [printer]. */
+    private fun doPrintKot(
+        order: OrderCard,
+        printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter
+    ) {
+        val note = view?.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etOrderNote)
+            ?.text?.toString()?.trim().orEmpty()
+        val batch = roDao.printKot(order.dbId, order.id, null, note) ?: run {
+            toast("No new items to send to kitchen"); return
+        }
+        reloadItems(order)
+        renderCart()
+        showKotPreview(batch, printer.printerName)
+        toast("${batch.kotNumber} sent to ${printer.printerName}")
+    }
+
+    /** KOT ticket preview after Print KOT — uses the app's global styled dialog. */
+    private fun showKotPreview(
+        batch: com.example.synergic_pos_offline.database.RunningOrderDao.KotBatch, printerName: String
+    ) {
+        val body = buildString {
+            append("Printer: $printerName\n")
+            append("${batch.kotNumber}   •   Table ${batch.tableCode}   •   ${batch.time}\n")
+            append("————————————————————————\n")
+            batch.lines.forEach { (name, qty) ->
+                append("${qty.toInt()} ×  $name\n")
+            }
+            if (batch.note.isNotBlank()) {
+                append("————————————————————————\n")
+                append("Note: ${batch.note}\n")
+            }
+        }
+        com.example.synergic_pos_offline.utils.DialogUtils.showSuccess(
+            context = requireContext(),
+            title = "Kitchen Order Ticket",
+            message = body.trimEnd(),
+            buttonText = "OK",
+            iconRes = null
+        )
     }
 
     private fun updateTotals() {

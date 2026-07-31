@@ -321,7 +321,11 @@ class ProductsFragment : DataTableFragment() {
 
         fun renumberRates() {
             for (i in 0 until llRates.childCount) {
-                llRates.getChildAt(i).findViewById<TextView>(R.id.tvRateTitle).text = "Rate ${i + 1}"
+                val name = "Rate ${i + 1}"
+                val child = llRates.getChildAt(i)
+                child.findViewById<TextView>(R.id.tvRateTitle).text = name
+                // Rate Name is fixed to the row's position and not editable.
+                child.findViewById<TextInputEditText>(R.id.etRateName).setText(name)
             }
         }
 
@@ -346,6 +350,14 @@ class ProductsFragment : DataTableFragment() {
             bindOptions(row.findViewById(R.id.actRateUnit), units, prefill?.unitId)
             bindDiscountType(row.findViewById(R.id.actRateDiscType), prefill?.discountType)
 
+            // Rate Name is a fixed label ("Rate 1", "Rate 2", …) — read-only.
+            row.findViewById<TextInputEditText>(R.id.etRateName).apply {
+                isFocusable = false
+                isFocusableInTouchMode = false
+                isCursorVisible = false
+                keyListener = null
+            }
+
             val etCgst = row.findViewById<TextInputEditText>(R.id.etRateCgst)
             val etSgst = row.findViewById<TextInputEditText>(R.id.etRateSgst)
             val etIgst = row.findViewById<TextInputEditText>(R.id.etRateIgst)
@@ -358,9 +370,9 @@ class ProductsFragment : DataTableFragment() {
             etDiscount.isEnabled = itemWiseDiscount
             actDiscType.isEnabled = itemWiseDiscount
 
-            // Prefill from an existing rate (edit). Sell price is left to recompute.
+            // Prefill from an existing rate (edit). The name is fixed by position
+            // (set in renumberRates), so it is not restored from the saved value.
             if (prefill != null) {
-                row.findViewById<TextInputEditText>(R.id.etRateName).setText(prefill.rateName)
                 row.findViewById<TextInputEditText>(R.id.etRate).setText(prefill.rate)
                 etCgst.setText(prefill.cgst)
                 etSgst.setText(prefill.sgst)
