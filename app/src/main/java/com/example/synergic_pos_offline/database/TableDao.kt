@@ -37,6 +37,34 @@ class TableDao(context: Context) {
     /** A waiter available to assign to a table. */
     data class WaiterOption(val id: Long, val name: String)
 
+    /** Result of a table-code lookup: its section and assigned waiter (if any). */
+    data class TableLookup(val sectionName: String, val waiterName: String?)
+
+    /**
+     * Finds a table by its code (current store) and returns its section name and
+     * assigned waiter name. Null when no such table exists.
+     */
+    fun lookupByCode(code: String): TableLookup? {
+        val store = currentStoreId()
+        val where = if (store != null) "t.table_code = ? AND t.store_id = ?" else "t.table_code = ?"
+        val args = if (store != null) arrayOf(code, store.toString()) else arrayOf(code)
+        helper.readableDatabase.rawQuery(
+            "SELECT s.section_name, w.waiter_name FROM $table t " +
+                "LEFT JOIN ${DatabaseHelper.Tables.MD_SECTION} s ON s.id = t.section_id " +
+                "LEFT JOIN ${DatabaseHelper.Tables.MD_WAITERS} w ON w.id = t.waiter_id " +
+                "WHERE $where LIMIT 1",
+            args
+        ).use { c ->
+            if (c.moveToFirst()) {
+                return TableLookup(
+                    sectionName = c.getString(0).orEmpty(),
+                    waiterName = c.getString(1)?.takeIf { it.isNotBlank() }
+                )
+            }
+        }
+        return null
+    }
+
     /** One list row: a section's tables summarised (count + code range + waiter). */
     data class Allocation(
         val sectionId: Long?,

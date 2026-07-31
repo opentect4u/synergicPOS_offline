@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingVertical="12dp"
+    android:background="@drawable/bg_line_divider">
+
+    <!-- Item (name + thumb) -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="46dp"
+            android:layout_height="46dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="#EEF1F5">
+            <ImageView
+                android:id="@+id/ivLineThumb"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:src="@drawable/bg_thumb_placeholder" />
+        </com.google.android.material.card.MaterialCardView>
+
+        <TextView
+            android:id="@+id/tvLineName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="Chicken Biryani"
+            android:textSize="16sp"
+            android:textColor="@color/text_main" />
+    </LinearLayout>
+
+    <!-- Qty stepper -->
+    <LinearLayout
+        android:layout_width="112dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <ImageButton
+            android:id="@+id/btnMinus"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:background="@drawable/bg_stepper_btn"
+            android:src="@drawable/ic_minus"
+            app:tint="@color/text_main"
+            android:contentDescription="Decrease" />
+
+        <TextView
+            android:id="@+id/tvLineQty"
+            android:layout_width="34dp"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="1"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_main" />
+
+        <ImageButton
+            android:id="@+id/btnPlus"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:background="@drawable/bg_stepper_btn"
+            android:src="@drawable/ic_plus"
+            app:tint="@color/text_main"
+            android:contentDescription="Increase" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvLineRate"
+        android:layout_width="80dp"
+        android:layout_height="wrap_content"
+        android:gravity="end"
+        android:text="280.00"
+        android:textSize="14sp"
+        android:textColor="@color/text_main" />
+
+    <TextView
+        android:id="@+id/tvLineAmount"
+        android:layout_width="96dp"
+        android:layout_height="wrap_content"
+        android:gravity="end"
+        android:text="280.00"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_main" />
+
+    <TextView
+        android:id="@+id/tvLineNote"
+        android:layout_width="72dp"
+        android:layout_height="wrap_content"
+        android:paddingStart="10dp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="Normal"
+        android:textSize="13sp"
+        android:textColor="@color/text_secondary" />
+
+    <ImageButton
+        android:id="@+id/btnRemoveLine"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:src="@drawable/ic_delete"
+        app:tint="@color/primary_blue"
+        android:contentDescription="Remove" />
+</LinearLayout>

@@ -261,6 +261,14 @@ class ProductsFragment : DataTableFragment() {
             bindStrings(view.findViewById(R.id.actFoodType), listOf("Veg", "Non-Veg", "Egg"))
             bindStrings(view.findViewById(R.id.actAvailability), listOf("Available", "Unavailable"))
             bindStrings(view.findViewById(R.id.actSpiceLevel), listOf("Mild", "Medium", "Hot"))
+            existing?.foodType?.takeIf { it.isNotBlank() }
+                ?.let { view.findViewById<AutoCompleteTextView>(R.id.actFoodType).setText(it, false) }
+            existing?.spiceLevel?.takeIf { it.isNotBlank() }
+                ?.let { view.findViewById<AutoCompleteTextView>(R.id.actSpiceLevel).setText(it, false) }
+            existing?.prepTime?.takeIf { it.isNotBlank() }
+                ?.let { view.findViewById<TextInputEditText>(R.id.etPrepTime).setText(it) }
+            existing?.availability?.takeIf { it.isNotBlank() }
+                ?.let { view.findViewById<AutoCompleteTextView>(R.id.actAvailability).setText(it, false) }
         }
 
         existing?.image?.let { showImage(it) }
@@ -294,7 +302,10 @@ class ProductsFragment : DataTableFragment() {
                 val disc = r.findViewById<TextInputEditText>(R.id.etRateDiscount)
                 val discType = r.findViewById<AutoCompleteTextView>(R.id.actRateDiscType)
                 val tilDiscType = r.findViewById<TextInputLayout>(R.id.tilRateDiscType)
-                if (disc.isEnabled && !disc.text.isNullOrBlank() && discType.text.isNullOrBlank()) {
+                // A type is only required for a *real* discount (> 0). A stored 0
+                // shows up as "0" in the field, which must not block saving.
+                val discNum = disc.text?.toString()?.toDoubleOrNull() ?: 0.0
+                if (disc.isEnabled && discNum > 0.0 && discType.text.isNullOrBlank()) {
                     tilDiscType.error = "Required"
                     return@setOnClickListener
                 }
@@ -311,6 +322,10 @@ class ProductsFragment : DataTableFragment() {
                 stockAlert = text(view, R.id.etStockAlert),
                 categoryId = selectedId(actCategory),
                 batchNo = text(view, R.id.etBatchNo),
+                foodType = view.findViewById<TextView>(R.id.actFoodType).text?.toString()?.trim().orEmpty(),
+                spiceLevel = view.findViewById<TextView>(R.id.actSpiceLevel).text?.toString()?.trim().orEmpty(),
+                prepTime = text(view, R.id.etPrepTime),
+                availability = view.findViewById<TextView>(R.id.actAvailability).text?.toString()?.trim().orEmpty(),
                 rates = rateRows
             )
             saveProduct(productId, form)
@@ -728,12 +743,18 @@ class ProductsFragment : DataTableFragment() {
         val stockAlert: String,
         val categoryId: Int?,
         val batchNo: String,
+        val foodType: String,
+        val spiceLevel: String,
+        val prepTime: String,
+        val availability: String,
         val rates: List<RateRow>
     )
 
     private class ExistingProduct(
         val name: String, val hsn: String, val barcode: String, val stockAlert: String,
         val categoryId: Int?, val image: ByteArray?, val batchNo: String,
+        val foodType: String, val spiceLevel: String,
+        val prepTime: String, val availability: String,
         val rates: List<RateRow>
     )
 
@@ -768,7 +789,8 @@ class ProductsFragment : DataTableFragment() {
         }
 
         db.rawQuery(
-            "SELECT product_name, hsn_code, bar_code, stock_alert_qty, category_id, product_image " +
+            "SELECT product_name, hsn_code, bar_code, stock_alert_qty, category_id, product_image, " +
+                "food_type, spice_level, prep_time, availability " +
                 "FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE id = ? LIMIT 1",
             arrayOf(productId.toString())
         ).use { c ->
@@ -781,6 +803,10 @@ class ProductsFragment : DataTableFragment() {
                 categoryId = if (c.isNull(4)) null else c.getInt(4),
                 image = if (c.isNull(5)) null else c.getBlob(5),
                 batchNo = "",
+                foodType = c.getString(6).orEmpty(),
+                spiceLevel = c.getString(7).orEmpty(),
+                prepTime = c.getString(8).orEmpty(),
+                availability = c.getString(9).orEmpty(),
                 rates = rates
             )
         }
@@ -805,6 +831,10 @@ class ProductsFragment : DataTableFragment() {
                 put("product_name", form.name)
                 put("hsn_code", form.hsn.ifEmpty { null })
                 put("bar_code", form.barcode.ifEmpty { null })
+                put("food_type", form.foodType.ifEmpty { null })
+                put("spice_level", form.spiceLevel.ifEmpty { null })
+                put("prep_time", form.prepTime.ifEmpty { null })
+                put("availability", form.availability.ifEmpty { null })
                 putDouble(this, "stock_alert_qty", form.stockAlert)
                 if (form.categoryId != null) put("category_id", form.categoryId) else putNull("category_id")
                 // Only touch the image when the user picked a new one or cleared it.

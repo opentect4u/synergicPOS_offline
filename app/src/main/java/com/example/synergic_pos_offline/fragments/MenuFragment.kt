@@ -61,7 +61,11 @@ class MenuFragment : Fragment() {
             "Reports" -> openFragment(ReportsFragment())
             "Bill History" -> openFragment(BillListFragment())
             "Sale Return" -> openSaleReturn()
-            "Sale" -> openFragment(PosBillingFragment())
+            "Sale" -> openFragment(
+                if (com.example.synergic_pos_offline.utils.SettingsCache.value(requireContext(), "G", "Mode") == "R")
+                    RestaurantOrdersFragment()
+                else PosBillingFragment()
+            )
             "Advance Payment" -> openFragment(AdvancePaymentFragment())
             else -> Toast.makeText(requireContext(), "Opening $title...", Toast.LENGTH_SHORT).show()
         }
