@@ -137,7 +137,7 @@ class DashboardHomeFragment : Fragment() {
     }
 
     private fun money(v: Double): String =
-        "₹" + NumberFormat.getInstance(Locale("en", "IN")).format(v.toLong())
+        "₹" + NumberFormat.getInstance(Locale.Builder().setLanguage("en").setRegion("IN").build()).format(v.toLong())
 
     // ---- Assembly ----------------------------------------------------------
 

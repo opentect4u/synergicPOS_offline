@@ -181,7 +181,7 @@ class CheckoutFragment : Fragment(), TitledScreen {
         btnCancel.strokeWidth = (resources.displayMetrics.density * 1.2f).toInt()
         btnCancel.cornerRadius = (resources.displayMetrics.density * 12).toInt()
 
-        btnCancel.setOnClickListener { requireActivity().onBackPressed() }
+        btnCancel.setOnClickListener { requireActivity().onBackPressedDispatcher.onBackPressed() }
         btnSaveOrder.setOnClickListener { saveOrder() }
     }
 

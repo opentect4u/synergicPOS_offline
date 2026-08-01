@@ -5,6 +5,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.graphics.Bitmap
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -221,7 +222,7 @@ class LedgerReceiptRenderer(context: Context) {
         var charPx = 0f
         var gutterPx = 0f
         for (size in SIZES) {
-            paint.textSize = size * metrics.scaledDensity
+            paint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, size, metrics)
             val cw = paint.measureText("0")
             val gutter = (if (size <= 10f) 3f else 6f) * metrics.density
             val needed = (dateChars + paidChars + dueChars + balanceChars) * cw + gutter * 3

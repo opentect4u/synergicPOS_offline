@@ -221,6 +221,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Re-tints every currently inflated view + the status bar + the drawer. */
+    @Suppress("DEPRECATION")
     fun applyThemeEverywhere() {
         val color = ThemeManager.getThemeColor(this)
         window.statusBarColor = color

@@ -165,9 +165,9 @@ class CustomerDao(context: Context) {
             null, null, null, null, "store_id ASC", "1"
         )
         try {
-            if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) return cursor.getLong(0)
+            if (cursor.moveToFirst() && !cursor.isNull(0)) return cursor.getLong(0)
         } finally {
-            cursor?.close()
+            cursor.close()
         }
         return null
     }

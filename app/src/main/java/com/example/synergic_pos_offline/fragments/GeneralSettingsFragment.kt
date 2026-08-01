@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.GeneralSettings
 import com.example.synergic_pos_offline.database.UserDao
@@ -82,7 +83,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         )
 
         // Mode dropdown (always shows every option). Displays labels; stores G / R.
-        actMode.setAdapter(NoFilterAdapter(requireContext(), Mode.values().map { it.label }))
+        actMode.setAdapter(NoFilterAdapter(requireContext(), Mode.entries.map { it.label }))
         actMode.setText(s.mode.label, false)
 
         swSaleReturn.isChecked = s.saleReturn
@@ -112,60 +113,48 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 ReturnMode.ITEM_WISE else ReturnMode.BILL_WISE
             val daysApply = swSaleReturn.isChecked && returnMode == ReturnMode.BILL_WISE
             val days = if (daysApply) etSaleReturnDays.text?.toString()?.toIntOrNull() ?: 0 else 0
-            val mode = Mode.fromStored(actMode.text?.toString()) ?: Mode.GROCERY
+            val modeVal = Mode.fromStored(actMode.text?.toString()) ?: Mode.GROCERY
+            
+            val isMultipleRate = rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple
+            val itemRateVal = if (isMultipleRate) ItemRate.MULTIPLE else ItemRate.SINGLE
+            
+            val isLandingHome = rgLandingScreen.checkedRadioButtonId == R.id.rbLandingHome
+            val landingScreenVal = if (isLandingHome) LandingScreen.HOME else LandingScreen.SALE
+
             val settings = GeneralSettings(
-                mode = mode,
+                mode = modeVal,
                 saleReturn = swSaleReturn.isChecked,
                 returnMode = returnMode,
                 saleReturnDays = days,
                 lastBillStatus = swLastBillStatus.isChecked,
                 quantityStatus = swQuantityStatus.isChecked,
-                itemRate = if (rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple)
-                    ItemRate.MULTIPLE else ItemRate.SINGLE,
-                customerInfo = swCustomerInfo.isChecked
-            dao.save(
-                GeneralSettings(
-                    mode = mode,
-                    saleReturn = swSaleReturn.isChecked,
-                    returnMode = returnMode,
-                    saleReturnDays = days,
-                    lastBillStatus = swLastBillStatus.isChecked,
-                    quantityStatus = swQuantityStatus.isChecked,
-                    itemRate = if (rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple)
-                        ItemRate.MULTIPLE else ItemRate.SINGLE,
-                    customerInfo = swCustomerInfo.isChecked,
-                    landingScreen = if (rgLandingScreen.checkedRadioButtonId == R.id.rbLandingHome)
-                        LandingScreen.HOME else LandingScreen.SALE
-                )
-            )
-            DialogUtils.showSuccess(
-                context = requireContext(),
-                title = "Saved",
-                message = "General settings saved successfully."
+                itemRate = itemRateVal,
+                customerInfo = swCustomerInfo.isChecked,
+                landingScreen = landingScreenVal
             )
 
-            // Switching mode wipes the mode-specific business data — confirm first.
-            val originalMode = dao.load().mode
-            if (mode != originalMode) {
+            // Switching mode wipes the mode-specific business data - confirm first.
+            val currentMode = dao.load().mode
+            if (modeVal != currentMode) {
                 DialogUtils.showConfirm(
                     context = requireContext(),
-                    title = "Switch to ${mode.label}?",
-                    message = "Changing the mode will erase all current data — products, categories, " +
+                    title = "Switch to ${modeVal.label}?",
+                    message = "Changing the mode will erase all current data - products, categories, " +
                         "sections, tables, waiters, bills, KOTs, payments, sale returns and running " +
                         "orders. This cannot be undone.",
                     positiveText = "Erase & Switch",
                     negativeText = "Cancel",
-                    destructive = true
-                ) {
-                    com.example.synergic_pos_offline.database.DatabaseHelper
-                        .getInstance(requireContext()).eraseBusinessDataForModeChange()
-                    dao.save(settings)
-                    DialogUtils.showSuccess(
-                        context = requireContext(),
-                        title = "Mode changed",
-                        message = "Switched to ${mode.label}. All previous data was erased."
-                    )
-                }
+                    destructive = true,
+                    onConfirm = {
+                        DatabaseHelper.getInstance(requireContext()).eraseBusinessDataForModeChange()
+                        dao.save(settings)
+                        DialogUtils.showSuccess(
+                            context = requireContext(),
+                            title = "Mode changed",
+                            message = "Switched to ${modeVal.label}. All previous data was erased."
+                        )
+                    }
+                )
             } else {
                 dao.save(settings)
                 DialogUtils.showSuccess(
