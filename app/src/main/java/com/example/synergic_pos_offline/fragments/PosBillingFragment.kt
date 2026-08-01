@@ -53,6 +53,13 @@ import kotlin.math.min
 private const val PHOTO_PX = 320
 
 /**
+ * How many item lines the "restore held bill?" confirmation previews. The card it
+ * is drawn in does not scroll, so a long bill is summarised rather than listed in
+ * full and pushing the buttons off the screen.
+ */
+private const val HELD_PREVIEW_LINES = 8
+
+/**
  * Point-of-sale billing terminal, faithfully modelled on the shared design:
  * modular header, product region (search + Enter Price / Customer, category
  * tab strip, product grid, shortcut hints) and a live order ticket (customer,
@@ -1198,113 +1205,88 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private fun onHold() {
         if (cart.isEmpty()) { toast("Cart is empty"); return }
-        // Only one bill can be held at a time - replace existing if present
-        heldOrders.clear()
+        // Appended, never replaced: any number of sales can sit on hold at once, and
+        // each is picked back up by the bill number it is labelled with.
+        val label = CheckoutSession.holdLabel(tvOrderNo.text?.toString().orEmpty())
         heldOrders.add(
             CheckoutSession.HeldBill(
-                "Sale #1", cart.map { it.toSessionLine() }, discountMode, discountValue, couponApplied,
+                label, cart.map { it.toSessionLine() }, discountMode, discountValue, couponApplied,
                 customerName, customerPhone, currentCustomerData
             )
         )
         // Fully refresh the sale page for the next customer (clears cart, resets
         // filters, reloads the catalogue) - same reset as starting a new sale.
         startNewSale()
-        toast("Sale put on hold")
+        toast("$label put on hold")
     }
 
+    /** The parked sales, listed by bill number; picking one offers to restore it. */
     private fun showHeldDialog() {
         if (heldOrders.isEmpty()) { toast("No sales on hold"); return }
 
-        if (heldOrders.size == 1) {
-            // Only one held bill - show details directly
-            showHeldBillDetails(0)
-        } else {
-            // Multiple held bills - show as list
-            val labels = heldOrders.mapIndexed { index, h ->
-                "${h.label} · ${h.lines.sumOf { it.qty }} items · " +
-                    money(totalOf(h.toCartLines(), h.discountMode, h.discountValue, h.coupon))
-            }.toTypedArray()
-
-            AlertDialog.Builder(requireContext())
-                .setTitle("Held orders")
-                .setSingleChoiceItems(labels, -1) { dialog, which ->
-                    dialog.dismiss()
-                    showHeldBillDetails(which)
-                }
-                .setNegativeButton("Close", null)
-                .create()
-                .also { it.setCanceledOnTouchOutside(false); it.show() }
+        val items = heldOrders.map { h ->
+            val heldLines = h.toCartLines()
+            val details = listOfNotNull(
+                "${h.lines.sumOf { it.qty }} items",
+                h.customerName?.takeIf { it.isNotBlank() },
+                "held ${heldTime(h.heldAt)}"
+            ).joinToString(" · ")
+            DialogUtils.ListItem(
+                title = h.label,
+                subtitle = details,
+                trailing = money(totalOf(heldLines, h.discountMode, h.discountValue, h.coupon))
+            )
         }
+
+        DialogUtils.showList(
+            requireContext(),
+            title = "Held Bills",
+            items = items,
+            subtitle = "Tap a bill to restore it"
+        ) { index -> confirmRestoreHeld(index) }
     }
 
-    private fun showHeldBillDetails(index: Int) {
-        val heldBill = heldOrders[index]
+    /** Asks before a held bill replaces whatever is in the cart. */
+    private fun confirmRestoreHeld(index: Int) {
+        val heldBill = heldOrders.getOrNull(index) ?: return
         val heldLines = heldBill.toCartLines()
-        val ctx = requireContext()
-        val accent = ThemeManager.getThemeColor(ctx)
 
-        // Build bill details text
         val gross = heldLines.sumOf { it.product.price * it.qty }
         val manualDiscAmt = GstCalculator.discountAmount(gross, heldBill.discountMode, heldBill.discountValue)
         val couponAmt = if (heldBill.coupon) gross * 10.0 / 100.0 else 0.0
         val discountAmt = (manualDiscAmt + couponAmt).coerceAtMost(gross)
-        val billDetails = StringBuilder().apply {
-            append("${heldBill.label}\n\n")
-            append("ITEMS:\n")
-            heldLines.forEach { line ->
-                append("${line.product.name}\n")
-                append("  Qty: ${line.qty} × ${money(line.product.price)} = ${money(line.product.price * line.qty)}\n")
+        val message = StringBuilder().apply {
+            // Capped, because the card cannot scroll: a fifty-line bill would push
+            // the buttons off the screen.
+            heldLines.take(HELD_PREVIEW_LINES).forEach { line ->
+                append("${line.product.name}  ×${line.qty}   ${money(line.product.price * line.qty)}\n")
+            }
+            if (heldLines.size > HELD_PREVIEW_LINES) {
+                append("…and ${heldLines.size - HELD_PREVIEW_LINES} more\n")
             }
             append("\nSubtotal: ${money(gross)}\n")
-            if (discountAmt > 0.0) {
-                val label = if (heldBill.discountMode == GstCalculator.DiscountMode.PERCENT)
-                    "${heldBill.discountValue}%" else money(heldBill.discountValue)
-                append("Discount ($label): -${money(discountAmt)}\n")
-            }
+            if (discountAmt > 0.0) append("Discount: -${money(discountAmt)}\n")
             append("Tax: ${money(taxOf(heldLines, discountAmt))}\n")
-            append("\nTOTAL: ${money(totalOf(heldLines, heldBill.discountMode, heldBill.discountValue, heldBill.coupon))}")
+            append("Total: ${money(totalOf(heldLines, heldBill.discountMode, heldBill.discountValue, heldBill.coupon))}\n")
+            append(
+                if (cart.isEmpty()) "\nRestore this bill into the cart?"
+                else "\nRestore this bill? The sale in the cart will be replaced."
+            )
         }.toString()
 
-        val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_common, null)
-        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
-
-        val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
-        val tvMessage = view.findViewById<TextView>(R.id.tvDialogMessage)
-        val btnPositive = view.findViewById<MaterialButton>(R.id.btnDialogPositive)
-        val btnNegative = view.findViewById<MaterialButton>(R.id.btnDialogNegative)
-        val ivIcon = view.findViewById<ImageView>(R.id.ivDialogIcon)
-
-        tvTitle.text = "Held Bill"
-        tvMessage.text = billDetails
-
-        btnPositive.text = "Restore Held Bill"
-        btnNegative.text = "OK"
-        btnPositive.backgroundTintList = ColorStateList.valueOf(accent)
-        btnNegative.setTextColor(accent)
-        btnNegative.strokeColor = ColorStateList.valueOf(accent)
-        ivIcon.visibility = View.GONE
-
-        btnPositive.setOnClickListener {
-            resumeHeld(index)
-            dialog.dismiss()
-        }
-
-        btnNegative.setOnClickListener {
-            dialog.dismiss()
-        }
-
-        dialog.show()
-        val window = dialog.window
-        window?.setLayout(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        window?.setGravity(android.view.Gravity.CENTER)
+        DialogUtils.showConfirm(
+            requireContext(),
+            title = "Restore ${heldBill.label}?",
+            message = message,
+            positiveText = "Restore",
+            negativeText = "Cancel",
+            onCancel = { showHeldDialog() }
+        ) { resumeHeld(index) }
     }
 
     private fun resumeHeld(index: Int) {
-        val h = heldOrders.removeAt(index)
+        val h = heldOrders.getOrNull(index) ?: return
+        heldOrders.removeAt(index)
         cart.clear()
         cart.addAll(h.toCartLines())
         discountMode = h.discountMode
@@ -1315,9 +1297,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
         cartAdapter.notifyDataSetChanged()
         updateHeldButton()
         updateTotals()
+        toast("${h.label} restored")
     }
 
     private fun updateHeldButton() { btnHeld.text = "Held (${heldOrders.size})" }
+
+    /** Clock time a bill was parked at, for the held-bills picker. */
+    private fun heldTime(at: Long): String =
+        SimpleDateFormat("hh:mm a", Locale.US).format(Date(at))
 
     private fun onCheckout() {
         if (cart.isEmpty()) { toast("Cart is empty"); return }

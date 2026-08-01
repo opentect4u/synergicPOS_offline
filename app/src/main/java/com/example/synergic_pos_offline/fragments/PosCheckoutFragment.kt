@@ -45,6 +45,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * How many item lines the "restore held bill?" confirmation previews. The card it
+ * is drawn in does not scroll, so a long bill is summarised rather than listed in
+ * full and pushing the buttons off the screen.
+ */
+private const val HELD_PREVIEW_LINES = 8
+
 /** In-process hand-off of the current sale from billing to checkout. */
 object CheckoutSession {
     data class Line(
@@ -62,13 +69,18 @@ object CheckoutSession {
         val itemDiscType: String? = null
     )
     data class HeldBill(
+        /** The bill number the sale was carrying when it was parked - what the
+         *  operator picks it out by. See [holdLabel]. */
         val label: String, val lines: List<Line>,
         val discountMode: GstCalculator.DiscountMode = GstCalculator.DiscountMode.PERCENT,
         val discountValue: Double = 0.0,
         val coupon: Boolean,
         val customerName: String? = null,
         val customerPhone: String? = null,
-        val customerData: Map<String, Any?>? = null
+        val customerData: Map<String, Any?>? = null,
+        /** When it was parked, shown in the picker so two holds taken against the
+         *  same bill number can still be told apart. */
+        val heldAt: Long = System.currentTimeMillis()
     )
 
     var lines: MutableList<Line> = mutableListOf()
@@ -83,8 +95,29 @@ object CheckoutSession {
     var customerId: Long? = null
     // The order number is not held here: it is derived from the bills already
     // saved, so it survives a restart and cannot drift from what gets printed.
+
+    /**
+     * Every sale currently parked, in the order it was parked. There is no cap:
+     * a counter can hold as many bills as it needs to and pick any of them back up.
+     */
     var heldOrders: MutableList<HeldBill> = mutableListOf()
     var restoredBill: HeldBill? = null
+
+    /**
+     * The label a bill held right now should carry.
+     *
+     * [billNo] is the number the sale would have taken had it been charged. Held
+     * bills are never saved, so the counter does not move and a second hold reports
+     * the same number as the first - the suffix is what keeps two rows of the picker
+     * from reading identically.
+     */
+    fun holdLabel(billNo: String): String {
+        val base = if (billNo.isBlank()) "Bill" else "Bill $billNo"
+        if (heldOrders.none { it.label == base }) return base
+        var n = 2
+        while (heldOrders.any { it.label == "$base ($n)" }) n++
+        return "$base ($n)"
+    }
 
     /**
      * Set when a sale completes and the operator chooses to start another. The
@@ -1263,14 +1296,15 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
     private fun onHold() {
         if (lines.isEmpty()) { toast("Cart is empty"); return }
-        // Only one bill can be held at a time - replace existing if present
-        CheckoutSession.heldOrders.clear()
+        // Appended, never replaced: any number of sales can sit on hold at once, the
+        // same as on the billing screen - both work the one list on the session.
         val custData = CheckoutSession.customerId?.let {
             mapOf<String, Any?>("id" to it, "name" to CheckoutSession.customerName, "phone" to CheckoutSession.customerPhone)
         }
+        val label = CheckoutSession.holdLabel(id<TextView>(R.id.tvOrder).text?.toString().orEmpty())
         CheckoutSession.heldOrders.add(
             CheckoutSession.HeldBill(
-                "Sale #1", lines.map { it.copy() },
+                label, lines.map { it.copy() },
                 CheckoutSession.discountMode, CheckoutSession.discountValue, false,
                 CheckoutSession.customerName, CheckoutSession.customerPhone, custData
             )
@@ -1279,108 +1313,98 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         renderItems()
         refreshTotals()
         updateHeldButton()
-        toast("Sale put on hold")
+        toast("$label put on hold")
         // Refresh the billing page on the way back, so the held sale is cleared there
         // too - same flow as holding from the billing screen.
         CheckoutSession.startFreshSale = true
         parentFragmentManager.popBackStack()
     }
 
+    /** The parked sales, listed by bill number; picking one offers to restore it. */
     private fun showHeldDialog() {
         if (CheckoutSession.heldOrders.isEmpty()) { toast("No sales on hold"); return }
 
-        if (CheckoutSession.heldOrders.size == 1) {
-            showHeldBillDetails(0)
-        } else {
-            val labels = CheckoutSession.heldOrders.mapIndexed { index, h ->
-                "${h.label} · ${h.lines.sumOf { it.qty }} items · ${money(h.lines.sumOf { it.price * it.qty })}"
-            }.toTypedArray()
-            androidx.appcompat.app.AlertDialog.Builder(requireContext())
-                .setTitle("Held orders")
-                .setSingleChoiceItems(labels, -1) { dialog, which ->
-                    dialog.dismiss()
-                    showHeldBillDetails(which)
-                }
-                .setNegativeButton("Close", null)
-                .create()
-                .also { it.setCanceledOnTouchOutside(false); it.show() }
+        val items = CheckoutSession.heldOrders.map { h ->
+            val details = listOfNotNull(
+                "${h.lines.sumOf { it.qty }} items",
+                h.customerName?.takeIf { it.isNotBlank() },
+                "held ${heldTime(h.heldAt)}"
+            ).joinToString(" · ")
+            DialogUtils.ListItem(
+                title = h.label,
+                subtitle = details,
+                trailing = money(heldTotal(h))
+            )
         }
+
+        DialogUtils.showList(
+            requireContext(),
+            title = "Held Bills",
+            items = items,
+            subtitle = "Tap a bill to restore it"
+        ) { index -> confirmRestoreHeld(index) }
     }
 
-    private fun showHeldBillDetails(index: Int) {
-        val heldBill = CheckoutSession.heldOrders[index]
-        val ctx = requireContext()
-        val accent = ThemeManager.getThemeColor(ctx)
+    /** Asks before a held bill replaces the sale currently being charged. */
+    private fun confirmRestoreHeld(index: Int) {
+        val heldBill = CheckoutSession.heldOrders.getOrNull(index) ?: return
 
-        val billDetails = StringBuilder().apply {
-            append("${heldBill.label}\n\n")
-            append("ITEMS:\n")
-            heldBill.lines.forEach { line ->
-                append("${line.name}\n")
-                append("  Qty: ${line.qty} × ${money(line.price)} = ${money(line.price * line.qty)}\n")
+        val subtotal = heldBill.lines.sumOf { it.price * it.qty }
+        val discAmt = GstCalculator.discountAmount(subtotal, heldBill.discountMode, heldBill.discountValue)
+        val tax = heldBill.lines.map { lineTax(it, subtotal, discAmt) }.sumOf { it.cgst + it.sgst + it.vat }
+        val message = StringBuilder().apply {
+            // Capped, because the card cannot scroll: a fifty-line bill would push
+            // the buttons off the screen.
+            heldBill.lines.take(HELD_PREVIEW_LINES).forEach { line ->
+                append("${line.name}  ×${line.qty}   ${money(line.price * line.qty)}\n")
             }
-            val subtotal = heldBill.lines.sumOf { it.price * it.qty }
-            val discAmt = GstCalculator.discountAmount(subtotal, heldBill.discountMode, heldBill.discountValue)
+            if (heldBill.lines.size > HELD_PREVIEW_LINES) {
+                append("…and ${heldBill.lines.size - HELD_PREVIEW_LINES} more\n")
+            }
             append("\nSubtotal: ${money(subtotal)}\n")
-            if (discAmt > 0.0) {
-                val label = if (heldBill.discountMode == GstCalculator.DiscountMode.PERCENT)
-                    "${heldBill.discountValue}%" else money(heldBill.discountValue)
-                append("Discount ($label): -${money(discAmt)}\n")
-            }
-            val lineTaxes = heldBill.lines.map { lineTax(it, subtotal, discAmt) }
-            val taxable = lineTaxes.sumOf { it.taxable }
-            val tax = lineTaxes.sumOf { it.cgst + it.sgst + it.vat }
-            val itemwiseExtra = lineTaxes.sumOf { it.discount }
+            if (discAmt > 0.0) append("Discount: -${money(discAmt)}\n")
             append("${taxLabelText()}: ${money(tax)}\n")
-            val total = if (discountPreTax) {
-                (taxable + tax - itemwiseExtra).coerceAtLeast(0.0)
-            } else {
-                (taxable + tax - discAmt - itemwiseExtra).coerceAtLeast(0.0)
-            }
-            append("\nTOTAL: ${money(total)}")
+            append("Total: ${money(heldTotal(heldBill))}\n")
+            append(
+                if (lines.isEmpty()) "\nRestore this bill into the cart?"
+                else "\nRestore this bill? The sale being charged will be replaced."
+            )
         }.toString()
 
-        val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_common, null)
-        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
-
-        val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
-        val tvMessage = view.findViewById<TextView>(R.id.tvDialogMessage)
-        val btnPositive = view.findViewById<MaterialButton>(R.id.btnDialogPositive)
-        val btnNegative = view.findViewById<MaterialButton>(R.id.btnDialogNegative)
-        val ivIcon = view.findViewById<View>(R.id.ivDialogIcon)
-
-        tvTitle.text = "Held Bill"
-        tvMessage.text = billDetails
-
-        btnPositive.text = "Restore Held Bill"
-        btnNegative.text = "OK"
-        btnPositive.backgroundTintList = ColorStateList.valueOf(accent)
-        btnNegative.setTextColor(accent)
-        btnNegative.strokeColor = ColorStateList.valueOf(accent)
-        ivIcon.visibility = View.GONE
-
-        btnPositive.setOnClickListener {
-            resumeHeld(index)
-            dialog.dismiss()
-        }
-
-        btnNegative.setOnClickListener {
-            dialog.dismiss()
-        }
-
-        dialog.show()
-        val window = dialog.window
-        window?.setLayout(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        window?.setGravity(android.view.Gravity.CENTER)
+        DialogUtils.showConfirm(
+            requireContext(),
+            title = "Restore ${heldBill.label}?",
+            message = message,
+            positiveText = "Restore",
+            negativeText = "Cancel",
+            onCancel = { showHeldDialog() }
+        ) { resumeHeld(index) }
     }
 
+    /** What a held bill would be charged, taxed the way this screen taxes the live one. */
+    private fun heldTotal(held: CheckoutSession.HeldBill): Double {
+        val subtotal = held.lines.sumOf { it.price * it.qty }
+        val discAmt = GstCalculator.discountAmount(subtotal, held.discountMode, held.discountValue)
+        val lineTaxes = held.lines.map { lineTax(it, subtotal, discAmt) }
+        val taxable = lineTaxes.sumOf { it.taxable }
+        val tax = lineTaxes.sumOf { it.cgst + it.sgst + it.vat }
+        val itemwiseExtra = lineTaxes.sumOf { it.discount }
+        return if (discountPreTax) {
+            (taxable + tax - itemwiseExtra).coerceAtLeast(0.0)
+        } else {
+            (taxable + tax - discAmt - itemwiseExtra).coerceAtLeast(0.0)
+        }
+    }
+
+    /** Clock time a bill was parked at, for the held-bills picker. */
+    private fun heldTime(at: Long): String =
+        SimpleDateFormat("hh:mm a", Locale.US).format(Date(at))
+
     private fun resumeHeld(index: Int) {
-        val restoredBill = CheckoutSession.heldOrders.removeAt(index)
-        // Pass the restored bill back to billing fragment
+        val restoredBill = CheckoutSession.heldOrders.getOrNull(index) ?: return
+        CheckoutSession.heldOrders.removeAt(index)
+        // Handed back to the billing screen, which is where a cart is edited - this
+        // screen only ever charges what it was given.
         CheckoutSession.restoredBill = restoredBill
         updateHeldButton()
         requireActivity().supportFragmentManager.popBackStack()

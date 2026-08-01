@@ -171,6 +171,72 @@ object DialogUtils {
         centerWindow(dialog)
     }
 
+    /** A single tappable row in [showList]. */
+    data class ListItem(
+        val title: String,
+        val subtitle: String = "",
+        /** Right-hand value (a total, a count); drawn in the accent colour. */
+        val trailing: String = ""
+    )
+
+    /**
+     * Shows a reusable picker: a titled card of tappable rows, reporting the index
+     * of the row chosen. The list scrolls once it outgrows the card, so callers can
+     * pass as many rows as they have.
+     */
+    fun showList(
+        context: Context,
+        title: String,
+        items: List<ListItem>,
+        subtitle: String = "",
+        negativeText: String = "Close",
+        onPick: (Int) -> Unit
+    ) {
+        val ctx = FixedFontScale.wrap(context)
+        val inflater = LayoutInflater.from(ctx)
+        val view = inflater.inflate(R.layout.dialog_list, null)
+        fitToScreen(ctx, view.findViewById(R.id.llListContent))
+        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val accent = ThemeManager.getThemeColor(context)
+
+        view.findViewById<TextView>(R.id.tvListTitle).text = title
+        view.findViewById<TextView>(R.id.tvListSubtitle).apply {
+            text = subtitle
+            visibility = if (subtitle.isBlank()) android.view.View.GONE else android.view.View.VISIBLE
+        }
+
+        val container = view.findViewById<LinearLayout>(R.id.llListItems)
+        items.forEachIndexed { index, item ->
+            val row = inflater.inflate(R.layout.item_list_row, container, false)
+            row.findViewById<TextView>(R.id.tvRowTitle).text = item.title
+            row.findViewById<TextView>(R.id.tvRowSubtitle).apply {
+                text = item.subtitle
+                visibility = if (item.subtitle.isBlank()) android.view.View.GONE else android.view.View.VISIBLE
+            }
+            row.findViewById<TextView>(R.id.tvRowTrailing).apply {
+                text = item.trailing
+                setTextColor(accent)
+                visibility = if (item.trailing.isBlank()) android.view.View.GONE else android.view.View.VISIBLE
+            }
+            (row as? com.google.android.material.card.MaterialCardView)?.strokeColor = accent
+            row.setOnClickListener {
+                dialog.dismiss()
+                onPick(index)
+            }
+            container.addView(row)
+        }
+
+        val btnNegative = view.findViewById<MaterialButton>(R.id.btnListNegative)
+        btnNegative.text = negativeText
+        ThemeManager.styleDialogButtons(null, btnNegative)
+        btnNegative.setOnClickListener { dialog.dismiss() }
+
+        dialog.show()
+        centerWindow(dialog)
+    }
+
     /** A single labelled input field for [showForm]. */
     data class FormField(
         val label: String,
