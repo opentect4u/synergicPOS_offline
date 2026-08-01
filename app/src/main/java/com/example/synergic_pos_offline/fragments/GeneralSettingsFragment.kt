@@ -148,6 +148,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                     onConfirm = {
                         DatabaseHelper.getInstance(requireContext()).eraseBusinessDataForModeChange()
                         dao.save(settings)
+                        if (modeVal == Mode.RESTAURANT) enableRestaurantDefaults()
                         DialogUtils.showSuccess(
                             context = requireContext(),
                             title = "Mode changed",
@@ -169,6 +170,13 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         com.example.synergic_pos_offline.utils.SettingsHighlighter.apply(
             view, arguments?.getString(com.example.synergic_pos_offline.utils.SettingsHighlighter.ARG_SETTING)
         )
+    }
+
+    /** Turns on the restaurant App Settings by default when Restaurant mode is enabled. */
+    private fun enableRestaurantDefaults() {
+        val appDao = com.example.synergic_pos_offline.database.AppSettingsDao(requireContext())
+        val a = appDao.load()
+        appDao.save(a.copy(couponMode = true, kot = true, tableMerge = true, tableShift = true))
     }
 
     private fun showChangePasswordDialog() {

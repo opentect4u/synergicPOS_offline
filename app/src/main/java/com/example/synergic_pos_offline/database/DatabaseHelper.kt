@@ -30,6 +30,9 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "sku", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "brand", "TEXT")
+        // Rate-name master + the rate's link to it (non-destructive).
+        runCatching { db.execSQL(SQL_CREATE_MD_RATE_NAME) }
+        addColumnIfMissing(db, Tables.MD_PRODUCT_RATES, "rate_name_id", "INTEGER")
         // Restaurant-mode product attributes (Veg/Non-Veg/Egg, spice, prep time, availability).
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "food_type", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "spice_level", "TEXT")
@@ -270,6 +273,7 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_MD_USERS)
         db.execSQL(SQL_CREATE_MD_CATEGORY)
         db.execSQL(SQL_CREATE_MD_UNITS)
+        db.execSQL(SQL_CREATE_MD_RATE_NAME)
         db.execSQL(SQL_CREATE_MD_PRODUCTS)
         db.execSQL(SQL_CREATE_MD_PRODUCT_RATES)
         db.execSQL(SQL_CREATE_MD_CUSTOMERS)
@@ -790,6 +794,7 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_USERS = "md_users"
         const val MD_CATEGORY = "md_category"
         const val MD_UNITS = "md_units"
+        const val MD_RATE_NAME = "md_rate_name"
         const val MD_PRODUCTS = "md_products"
         const val MD_PRODUCT_RATES = "md_product_rates"
         const val MD_CUSTOMERS = "md_customers"
@@ -933,6 +938,20 @@ class DatabaseHelper private constructor(context: Context) :
             )
         """
 
+        // Master list of rate names (Rate 1 / Rate 2 / MRP …), chosen per product rate.
+        private const val SQL_CREATE_MD_RATE_NAME = """
+            CREATE TABLE IF NOT EXISTS md_rate_name (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                rate_name TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
         private val SQL_CREATE_MD_PRODUCTS = """
             CREATE TABLE IF NOT EXISTS md_products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -965,6 +984,7 @@ class DatabaseHelper private constructor(context: Context) :
                 sku TEXT,
                 batch_no TEXT,
                 rate_name TEXT,
+                rate_name_id INTEGER,
                 rate REAL,
                 unit_id INTEGER,
                 cgst_rate REAL,
