@@ -196,6 +196,17 @@ class RunningOrderDao(context: Context) {
         helper.writableDatabase.delete(items, "id = ?", arrayOf(itemId.toString()))
     }
 
+    /** The pending KOT for preview — same content [printKot] would cut, but writes nothing. */
+    fun peekPending(orderId: Long, tableCode: String, note: String = ""): KotBatch? {
+        val pending = itemsFor(orderId).filter { it.pending > 0.0 }
+        if (pending.isEmpty()) return null
+        return KotBatch(
+            kotNumber = nextKotNumber(), tableCode = tableCode,
+            time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date()),
+            lines = pending.map { it.name to it.pending }, note = note.trim()
+        )
+    }
+
     private fun totalOf(orderId: Long): Double {
         helper.readableDatabase.rawQuery(
             "SELECT COALESCE(SUM(quantity * rate), 0) FROM $items WHERE running_order_id = ?",

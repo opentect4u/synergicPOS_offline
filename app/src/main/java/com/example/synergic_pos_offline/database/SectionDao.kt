@@ -56,21 +56,17 @@ class SectionDao(context: Context) {
         return list
     }
 
-    /** Distinct product-rate tiers (Rate 1 / Rate 2 …) for the current store. */
+    /** Rate names from the master ([DatabaseHelper.Tables.MD_RATE_NAME]) for the current store. */
     fun priceLists(): List<PriceList> {
         val list = mutableListOf<PriceList>()
         val store = currentStoreId()
-        val storeClause = if (store != null) "AND store_id = ?" else ""
+        val where = if (store != null) "store_id = ? AND is_active = 1" else "is_active = 1"
         val args = if (store != null) arrayOf(store.toString()) else null
-        helper.readableDatabase.rawQuery(
-            "SELECT MIN(id) AS pid, rate_name FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} " +
-                "WHERE rate_name IS NOT NULL AND TRIM(rate_name) != '' $storeClause " +
-                "GROUP BY rate_name ORDER BY rate_name COLLATE NOCASE",
-            args
+        helper.readableDatabase.query(
+            DatabaseHelper.Tables.MD_RATE_NAME, arrayOf("id", "rate_name"),
+            where, args, null, null, "id ASC"
         ).use { c ->
-            while (c.moveToNext()) {
-                list.add(PriceList(c.getLong(0), c.getString(1).orEmpty()))
-            }
+            while (c.moveToNext()) list.add(PriceList(c.getLong(0), c.getString(1).orEmpty()))
         }
         return list
     }
