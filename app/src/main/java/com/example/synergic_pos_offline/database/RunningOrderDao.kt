@@ -31,14 +31,17 @@ class RunningOrderDao(context: Context) {
         val id: Long, val productId: Long, val name: String,
         var qty: Double, var rate: Double, val kotQty: Double
     ) {
-        /** Quantity not yet sent to the kitchen. */
+        /** Quantity newly added, not yet sent to the kitchen. */
         val pending: Double get() = (qty - kotQty).coerceAtLeast(0.0)
+        /** Quantity already sent to the kitchen but since removed — to be cancelled. */
+        val pendingCancel: Double get() = (kotQty - qty).coerceAtLeast(0.0)
     }
 
     /** One KOT batch produced by [printKot], ready to print. */
     data class KotBatch(
         val kotNumber: String, val tableCode: String, val section: String, val time: String,
-        val lines: List<Pair<String, Double>>,   // name -> qty
+        val lines: List<Pair<String, Double>>,          // newly-added:   name -> qty
+        val cancelLines: List<Pair<String, Double>> = emptyList(),  // cancelled: name -> qty
         val note: String = ""
     )
 
@@ -278,34 +281,58 @@ class RunningOrderDao(context: Context) {
         return list
     }
 
-    /** Sets a line's total quantity; a reduction below what's already sent caps kot_qty. */
+    /**
+     * Sets a line's total quantity. kot_qty (what's already gone to the kitchen) is
+     * kept, so reducing/removing a sent item leaves a pending cancellation to print.
+     * A line only vanishes when nothing was ever sent (kot_qty = 0).
+     */
     fun setItemQty(itemId: Long, qty: Double) {
         val orderId = orderIdOfItem(itemId)
-        if (qty <= 0) {
+        val kotQty = kotQtyOf(itemId)
+        if (qty <= 0 && kotQty <= 0.0) {
             helper.writableDatabase.delete(items, "id = ?", arrayOf(itemId.toString()))
         } else {
             helper.writableDatabase.execSQL(
-                "UPDATE $items SET quantity = ?, kot_qty = MIN(kot_qty, ?) WHERE id = ?",
-                arrayOf<Any>(qty, qty, itemId)
+                "UPDATE $items SET quantity = ? WHERE id = ?", arrayOf<Any>(qty.coerceAtLeast(0.0), itemId)
             )
         }
-        orderId?.let { syncPendingKot(it) }   // keep PENDING KOT items in step with the cart
+        orderId?.let { syncPendingKot(it) }
     }
 
     fun removeItem(itemId: Long) {
         val orderId = orderIdOfItem(itemId)
-        helper.writableDatabase.delete(items, "id = ?", arrayOf(itemId.toString()))
+        if (kotQtyOf(itemId) > 0.0) {
+            // Already sent — keep the row at qty 0 so the cancellation can be printed.
+            helper.writableDatabase.execSQL("UPDATE $items SET quantity = 0 WHERE id = ?", arrayOf<Any>(itemId))
+        } else {
+            helper.writableDatabase.delete(items, "id = ?", arrayOf(itemId.toString()))
+        }
         orderId?.let { syncPendingKot(it) }
+    }
+
+    /** True if the order has anything to send: newly-added or cancelled items. */
+    fun hasPendingKot(orderId: Long): Boolean =
+        itemsFor(orderId).any { it.pending > 0.0 || it.pendingCancel > 0.0 }
+
+    private fun kotQtyOf(itemId: Long): Double {
+        helper.readableDatabase.query(
+            items, arrayOf("kot_qty"), "id = ?", arrayOf(itemId.toString()), null, null, null, "1"
+        ).use { c -> if (c.moveToFirst()) return c.getDouble(0) }
+        return 0.0
     }
 
     /** The pending KOT for preview — same content [printKot] would cut, but writes nothing. */
     fun peekPending(orderId: Long, tableCode: String, section: String = "", note: String = ""): KotBatch? {
-        val pending = itemsFor(orderId).filter { it.pending > 0.0 }
-        if (pending.isEmpty()) return null
+        val all = itemsFor(orderId)
+        val adds = all.filter { it.pending > 0.0 }
+        val cancels = all.filter { it.pendingCancel > 0.0 }
+        if (adds.isEmpty() && cancels.isEmpty()) return null
         return KotBatch(
             kotNumber = nextKotNumber(), tableCode = tableCode, section = section,
             time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date()),
-            lines = pending.map { it.name to it.pending }, note = note.trim()
+            lines = adds.map { it.name to it.pending },
+            cancelLines = cancels.map { it.name to it.pendingCancel },
+            note = note.trim()
         )
     }
 
@@ -320,16 +347,18 @@ class RunningOrderDao(context: Context) {
     // ---- KOT ---------------------------------------------------------------
 
     /**
-     * Sends the PENDING items of a table's OPEN KOT to the kitchen: flips those
-     * items from PENDING to COMPLETE (the "print KOT → td_kot_item COMPLETE" step),
-     * bumps each running line's kot_qty to its full quantity so it can't be re-sent,
-     * and returns the batch to print. The KOT header stays OPEN — it's only CLOSED
-     * at Bill & Print (see [closeKot]). Null when nothing new is pending.
+     * Sends a table's KOT delta to the kitchen: newly-added items (PENDING → COMPLETE)
+     * plus cancellations for items that were sent and since removed/reduced. Each
+     * line's kot_qty is synced to its current quantity, and fully-removed lines are
+     * deleted afterwards. The KOT header stays OPEN (CLOSED only at Bill & Print).
+     * Null when there's nothing new to add or cancel.
      */
     fun printKot(orderId: Long, tableCode: String, waiterId: Long?, section: String = "", note: String = ""): KotBatch? {
         syncPendingKot(orderId)          // ensure PENDING reflects the current cart
-        val pending = itemsFor(orderId).filter { it.pending > 0.0 }
-        if (pending.isEmpty()) return null
+        val all = itemsFor(orderId)
+        val adds = all.filter { it.pending > 0.0 }
+        val cancels = all.filter { it.pendingCancel > 0.0 }
+        if (adds.isEmpty() && cancels.isEmpty()) return null
 
         val db = helper.writableDatabase
         val kotId = ensureOpenKot(orderId)
@@ -337,17 +366,31 @@ class RunningOrderDao(context: Context) {
 
         db.beginTransaction()
         try {
-            // Printing sends the pending items to the kitchen → mark them COMPLETE.
+            // Added items are now sent → flip their PENDING rows to COMPLETE.
             db.update(
                 DatabaseHelper.Tables.TD_KOT_ITEMS,
                 ContentValues().apply { put("status", "COMPLETE") },
                 "kot_id = ? AND status = 'PENDING'", arrayOf(kotId.toString())
             )
-            // Everything up to the current quantity is now sent.
-            pending.forEach { ri ->
-                db.update(items, ContentValues().apply {
-                    put("kot_qty", ri.qty); put("kot_printed", 1)
-                }, "id = ?", arrayOf(ri.id.toString()))
+            // Record a CANCELLED KOT row for each removed/reduced sent item.
+            cancels.forEach { ri ->
+                db.insert(DatabaseHelper.Tables.TD_KOT_ITEMS, null, ContentValues().apply {
+                    put("kot_id", kotId)
+                    put("product_id", ri.productId)
+                    put("quantity", ri.pendingCancel)
+                    put("status", "CANCELLED")
+                    put("created_by", currentUser())
+                })
+            }
+            // Sync each running line's kot_qty to its current quantity; drop emptied lines.
+            all.forEach { ri ->
+                if (ri.qty <= 0.0) {
+                    db.delete(items, "id = ?", arrayOf(ri.id.toString()))
+                } else if (ri.pending > 0.0 || ri.pendingCancel > 0.0) {
+                    db.update(items, ContentValues().apply {
+                        put("kot_qty", ri.qty); put("kot_printed", 1)
+                    }, "id = ?", arrayOf(ri.id.toString()))
+                }
             }
             db.setTransactionSuccessful()
         } finally {
@@ -356,7 +399,8 @@ class RunningOrderDao(context: Context) {
         return KotBatch(
             kotNumber = kotNumberOf(kotId), tableCode = tableCode, section = section,
             time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(now),
-            lines = pending.map { it.name to it.pending },
+            lines = adds.map { it.name to it.pending },
+            cancelLines = cancels.map { it.name to it.pendingCancel },
             note = note.trim()
         )
     }

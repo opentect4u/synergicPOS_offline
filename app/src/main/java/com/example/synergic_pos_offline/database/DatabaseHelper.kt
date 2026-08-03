@@ -214,7 +214,7 @@ class DatabaseHelper private constructor(context: Context) :
         val kotSql = tableSql(db, Tables.TD_KOT)
         val itemSql = tableSql(db, Tables.TD_KOT_ITEMS)
         val kotOld = kotSql != null && !(kotSql.contains("CLOSED") && kotSql.contains("running_order_id"))
-        val itemOld = itemSql != null && !itemSql.contains("COMPLETE")
+        val itemOld = itemSql != null && !(itemSql.contains("COMPLETE") && itemSql.contains("CANCELLED"))
         if (!kotOld && !itemOld) return
         runCatching {
             db.setForeignKeyConstraintsEnabled(false)
@@ -1719,7 +1719,7 @@ class DatabaseHelper private constructor(context: Context) :
                 product_id INTEGER,
                 quantity REAL,
                 special_instructions TEXT,
-                status TEXT CHECK(status IN ('PENDING','COMPLETE','PREPARED','DELIVERED')) DEFAULT 'PENDING',
+                status TEXT CHECK(status IN ('PENDING','COMPLETE','CANCELLED','PREPARED','DELIVERED')) DEFAULT 'PENDING',
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,

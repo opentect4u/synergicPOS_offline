@@ -45,7 +45,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        view.findViewById<TextView>(R.id.tvCoTable).text = "Table: $tableNo     Customer: $customer"
+        // Take-away carries a "TA-n" token, not a table — label it accordingly.
+        val heading = if (tableNo.startsWith("TA-", ignoreCase = true))
+            "Take Away  •  ${tableNo.replace("TA-", "Token #")}"
+        else "Table: $tableNo"
+        view.findViewById<TextView>(R.id.tvCoTable).text = "$heading     Customer: $customer"
         populateItems(view)
 
         // Payment method selection — always re-read the current theme colour.

@@ -247,6 +247,7 @@
                 android:paddingVertical="15dp">
 
                 <TextView
+                    android:id="@+id/tvDetailTableLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Table: "
@@ -565,7 +566,7 @@
                             android:layout_marginTop="10dp"
                             android:insetTop="0dp"
                             android:insetBottom="0dp"
-                            android:text="Bill &amp; Pay"
+                            android:text="Checkout"
                             android:textColor="@color/white"
                             android:textSize="16sp"
                             app:cornerRadius="12dp" />
