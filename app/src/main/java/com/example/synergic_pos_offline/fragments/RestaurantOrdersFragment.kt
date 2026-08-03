@@ -43,7 +43,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     private data class OrderCard(
-        val dbId: Long, val id: String, val type: String, val section: String, val phone: String,
+        val dbId: Long, var id: String, val type: String, val section: String, val phone: String,
         val time: String, var amount: String, val cashier: String,
         var status: String, var selected: Boolean, var note: String = "",
         // Each order keeps its own cart, so switching tables shows its own items.
@@ -156,6 +156,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 toast("No new items to send to kitchen"); return@setOnClickListener
             }
             resolveKotPrinterThenPrint(order)
+        }
+
+        // Transfer → move this order to another available table in the same section.
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnTransfer).setOnClickListener {
+            val order = currentOrder() ?: return@setOnClickListener toast("Select a table order first")
+            if (order.completed) return@setOnClickListener toast("Table already billed — cannot transfer")
+            showTransferDialog(order)
+        }
+
+        // Merge → open the popup and add the active tables (same section) to combine.
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnMerge).setOnClickListener {
+            showMergeDialog()
         }
 
         // Bill & Print → print the bill on the default BILL printer (or choose one), then lock the table.
@@ -406,6 +418,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 etTable.error = "Table $table already has an active order"
                 return@setOnClickListener
             }
+            // Nor for a table that isn't free (occupied/billing/merged into another order).
+            val status = TableDao(ctx).statusOf(table)
+            if (status != null && !status.equals("Available", ignoreCase = true)) {
+                etTable.error = "Table $table is $status"
+                return@setOnClickListener
+            }
             val section = etSection.text?.toString()?.trim().orEmpty()
             val phone = etPhone.text?.toString()?.trim().orEmpty()
             dialog.dismiss()
@@ -437,6 +455,175 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         showOrderDetail(order)
         renderCart()   // this order's (empty) cart + zeroed totals
+    }
+
+    // ---- Table Transfer ----------------------------------------------------
+
+    /**
+     * Transfer popup: From is the selected table (read-only); To is a dropdown of
+     * AVAILABLE tables in the SAME section. Validation: a target must be picked, be
+     * in the same section, and be currently available.
+     */
+    private fun showTransferDialog(order: OrderCard) {
+        val ctx = requireContext()
+        val accent = ThemeManager.getThemeColor(ctx)
+
+        // Valid targets: available tables in the same section, minus any that already
+        // hold an active order in memory (defensive, in case a status drifted).
+        val activeCodes = orders.map { it.id.lowercase() }.toSet()
+        val targets = tableDao.availableTablesSameSection(order.section, order.id)
+            .filter { it.lowercase() !in activeCodes }
+        if (targets.isEmpty()) {
+            toast("No available table in ${order.section.ifBlank { "this section" }}"); return
+        }
+
+        val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_transfer_table, null)
+        val dialog = AlertDialog.Builder(ctx).setView(v).create().also { it.setCanceledOnTouchOutside(false) }
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val etFrom = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etFromTable)
+        val etSection = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etTransferSection)
+        val actTo = v.findViewById<android.widget.AutoCompleteTextView>(R.id.actToTable)
+        val btnSave = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormPositive)
+        val btnCancel = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormNegative)
+
+        etFrom.setText(order.id)
+        etSection.setText(order.section.ifBlank { "—" })
+        actTo.setAdapter(android.widget.ArrayAdapter(ctx, android.R.layout.simple_list_item_1, targets))
+        actTo.setOnClickListener { actTo.showDropDown() }
+
+        ThemeManager.applyTheme(v)
+        btnSave.backgroundTintList = ColorStateList.valueOf(accent); btnSave.setTextColor(Color.WHITE)
+        btnCancel.setTextColor(accent); btnCancel.strokeColor = ColorStateList.valueOf(accent)
+
+        btnCancel.setOnClickListener { dialog.dismiss() }
+        btnSave.setOnClickListener {
+            val to = actTo.text?.toString()?.trim().orEmpty()
+            when {
+                to.isEmpty() -> actTo.error = "Select a table"
+                to.equals(order.id, ignoreCase = true) -> actTo.error = "Choose a different table"
+                !targets.contains(to) -> actTo.error = "Not an available table in this section"
+                else -> { dialog.dismiss(); performTransfer(order, to) }
+            }
+        }
+        dialog.show()
+    }
+
+    /** Applies the transfer: move the order, free the old table, occupy the new one. */
+    private fun performTransfer(order: OrderCard, to: String) {
+        val from = order.id
+        roDao.transferTable(order.dbId, to)
+        tableDao.setStatusByCode(from, "Available")   // old table freed
+        tableDao.setStatusByCode(to, "Occupied")      // new table taken
+        order.id = to
+        val root = view ?: return
+        populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+        showOrderDetail(order)                         // refresh the detail header
+        toast("Order moved from table $from to $to")
+    }
+
+    // ---- Table Merge -------------------------------------------------------
+
+    /**
+     * Merge popup — opens without any table pre-selected. You add active (running,
+     * not billed) tables from a dropdown; the FIRST one added is kept and the rest
+     * merge into it. Once a table is added, the section locks and the dropdown only
+     * offers same-section tables. Needs at least two tables.
+     */
+    private fun showMergeDialog() {
+        val ctx = requireContext()
+        val accent = ThemeManager.getThemeColor(ctx)
+
+        // Every active table (running, not billed) is a candidate at first.
+        val activeTables = orders.filter { !it.completed }
+        if (activeTables.size < 2) { toast("Need at least two active tables to merge"); return }
+
+        val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_merge_table, null)
+        val dialog = AlertDialog.Builder(ctx).setView(v).create().also { it.setCanceledOnTouchOutside(false) }
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val etSection = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etMergeSection)
+        val actWith = v.findViewById<android.widget.AutoCompleteTextView>(R.id.actMergeWith)
+        val btnAdd = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAddMergeTable)
+        val llTables = v.findViewById<LinearLayout>(R.id.llMergeTables)
+        val tvEmpty = v.findViewById<TextView>(R.id.tvMergeEmpty)
+        val btnSave = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormPositive)
+        val btnCancel = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormNegative)
+
+        val added = mutableListOf<String>()   // tables queued to merge (first = kept)
+        fun sectionOf(code: String) = orders.firstOrNull { it.id == code }?.section.orEmpty()
+
+        // Candidates: before any add — all active tables; after — same section as the first.
+        fun candidates(): List<String> {
+            val base = if (added.isEmpty()) activeTables
+            else activeTables.filter { it.section.equals(sectionOf(added.first()), ignoreCase = true) }
+            return base.map { it.id }.filter { it !in added }
+        }
+        fun refreshDropdown() {
+            actWith.setAdapter(android.widget.ArrayAdapter(ctx, android.R.layout.simple_list_item_1, candidates()))
+            actWith.setText("", false)
+        }
+        fun renderAdded() {
+            llTables.removeAllViews()
+            tvEmpty.visibility = if (added.isEmpty()) View.VISIBLE else View.GONE
+            etSection.setText(if (added.isEmpty()) "" else sectionOf(added.first()).ifBlank { "—" })
+            added.forEachIndexed { index, code ->
+                val row = LayoutInflater.from(ctx).inflate(R.layout.item_merge_table, llTables, false)
+                row.findViewById<TextView>(R.id.tvMergeTableName).text =
+                    if (index == 0) "Table $code  (Kept)" else "Table $code"
+                val count = orders.firstOrNull { it.id == code }?.items?.size ?: 0
+                row.findViewById<TextView>(R.id.tvMergeTableInfo).text = "$count item${if (count == 1) "" else "s"}"
+                row.findViewById<android.widget.ImageView>(R.id.btnRemoveMergeTable).setOnClickListener {
+                    added.remove(code); renderAdded(); refreshDropdown()
+                }
+                llTables.addView(row)
+            }
+        }
+
+        actWith.setOnClickListener { actWith.showDropDown() }
+        btnAdd.setOnClickListener {
+            val pick = actWith.text?.toString()?.trim().orEmpty()
+            when {
+                pick.isEmpty() -> actWith.error = "Select a table"
+                pick !in candidates() -> actWith.error = "Not an active table in this section"
+                else -> { added.add(pick); renderAdded(); refreshDropdown() }
+            }
+        }
+
+        ThemeManager.applyTheme(v)
+        btnAdd.setTextColor(accent); btnAdd.strokeColor = ColorStateList.valueOf(accent); btnAdd.iconTint = ColorStateList.valueOf(accent)
+        btnSave.backgroundTintList = ColorStateList.valueOf(accent); btnSave.setTextColor(Color.WHITE)
+        btnCancel.setTextColor(accent); btnCancel.strokeColor = ColorStateList.valueOf(accent)
+
+        refreshDropdown()
+        renderAdded()
+
+        btnCancel.setOnClickListener { dialog.dismiss() }
+        btnSave.setOnClickListener {
+            if (added.size < 2) { toast("Add at least two tables to merge"); return@setOnClickListener }
+            dialog.dismiss()
+            performMerge(added.first(), added.drop(1))
+        }
+        dialog.show()
+    }
+
+    /** Applies the merge: fold each source table's items into the kept table. The
+     *  merged tables stay Occupied (part of the merge) and are freed only when the
+     *  kept order is settled. */
+    private fun performMerge(keepCode: String, sourceCodes: List<String>) {
+        val target = orders.firstOrNull { it.id == keepCode } ?: return
+        sourceCodes.forEach { code ->
+            val source = orders.firstOrNull { it.id == code } ?: return@forEach
+            roDao.mergeOrders(target.dbId, source.dbId)   // records the merged table + keeps it Occupied
+            orders.removeAll { it.id == source.id }        // its own order card is gone (shares the kept bill)
+        }
+        reloadItems(target)                                    // pull the combined items
+        orders.forEach { it.selected = it.id == target.id }    // focus the kept table
+        val root = view ?: return
+        populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+        showOrderDetail(target)
+        renderCart()                                           // combined items + totals
+        toast("${sourceCodes.size} table${if (sourceCodes.size == 1) "" else "s"} merged into ${target.id}")
     }
 
     /** A grid entry: the popup product plus its restaurant attributes (food type + spice). */
@@ -890,8 +1077,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private fun settlePaidOrder(order: OrderCard, payMethod: String) {
         persistBill(order, payMethod)                   // save to td_bills / td_bill_items / td_payments
+        val mergedTables = roDao.mergedTablesOf(order.dbId)
         roDao.close(order.dbId)                          // payment done → remove from temp table
         tableDao.setStatusByCode(order.id, "Available")  // table freed for the next guest
+        mergedTables.forEach { tableDao.setStatusByCode(it, "Available") }   // merged tables freed too
         orders.removeAll { it.id == order.id }
         view?.let { root ->
             populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -927,8 +1116,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * items / qty / KOT changes. It's only removed after payment (Bill & Pay).
      */
     private fun completeTable(order: OrderCard) {
+        val mergedBefore = roDao.mergedTablesOf(order.dbId)
         roDao.markCompleted(order.dbId)
         tableDao.setStatusByCode(order.id, "Billing")   // billed → awaiting payment
+        mergedBefore.forEach { tableDao.setStatusByCode(it, "Billing") }   // merged tables too
         order.status = "COMPLETED"
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
