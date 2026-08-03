@@ -59,6 +59,41 @@ class TableDao(context: Context) {
         )
     }
 
+    /** The live table_status for a table code (current store), or null if unknown. */
+    fun statusOf(code: String): String? {
+        val store = currentStoreId()
+        val where = if (store != null) "table_code = ? AND store_id = ?" else "table_code = ?"
+        val args = if (store != null) arrayOf(code, store.toString()) else arrayOf(code)
+        helper.readableDatabase.query(
+            table, arrayOf("table_status"), where, args, null, null, null, "1"
+        ).use { c -> if (c.moveToFirst()) return c.getString(0) }
+        return null
+    }
+
+    /**
+     * Available table codes in [sectionName] (current store), excluding [fromCode] —
+     * the valid transfer targets. Scoped by section (not just code, which can repeat
+     * across sections) so only same-section tables are offered. Ordered by code.
+     */
+    fun availableTablesSameSection(sectionName: String, fromCode: String): List<String> {
+        val store = currentStoreId()
+        val storeClause = if (store != null) "AND t.store_id = ?" else ""
+        val args = mutableListOf(sectionName, fromCode)
+        if (store != null) args.add(store.toString())
+        val out = mutableListOf<String>()
+        helper.readableDatabase.rawQuery(
+            "SELECT DISTINCT t.table_code FROM $table t " +
+                "JOIN ${DatabaseHelper.Tables.MD_SECTION} s ON s.id = t.section_id " +
+                "WHERE s.section_name = ? AND t.table_code <> ? $storeClause " +
+                "AND t.table_status = 'Available' " +
+                "ORDER BY CAST(t.table_code AS INTEGER), t.table_code",
+            args.toTypedArray()
+        ).use { c ->
+            while (c.moveToNext()) c.getString(0)?.takeIf { it.isNotBlank() }?.let { out.add(it) }
+        }
+        return out
+    }
+
     /**
      * Finds a table by its code (current store) and returns its section name and
      * assigned waiter name. Null when no such table exists.

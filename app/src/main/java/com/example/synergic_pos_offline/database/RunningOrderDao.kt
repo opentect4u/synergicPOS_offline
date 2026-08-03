@@ -106,6 +106,94 @@ class RunningOrderDao(context: Context) {
         closeKot(orderId)   // Bill & Print → the table's KOT is CLOSED
     }
 
+    /**
+     * Moves a running order to another table (same section): updates the running
+     * order's table_code and its OPEN KOT's table_number so the kitchen sees the new
+     * table. Section/waiter are unchanged (same-section transfer).
+     */
+    fun transferTable(orderId: Long, newTableCode: String) {
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            db.update(orders, ContentValues().apply { put("table_code", newTableCode) },
+                "id = ?", arrayOf(orderId.toString()))
+            db.update(
+                DatabaseHelper.Tables.TD_KOT, ContentValues().apply { put("table_number", newTableCode) },
+                "running_order_id = ? AND status = 'OPEN'", arrayOf(orderId.toString())
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /**
+     * Merges [sourceId]'s order into [targetId]: moves every source line into the
+     * target (merging same product+rate lines) while preserving each line's already-
+     * sent quantity (kot_qty), then removes the source order/items and closes its
+     * KOT. The target's PENDING KOT is refreshed so only not-yet-sent items remain
+     * to send. Section/waiter of the target are kept (same-section merge).
+     */
+    fun mergeOrders(targetId: Long, sourceId: Long) {
+        val sourceItems = itemsFor(sourceId)
+        // The source table (and any tables it had itself absorbed) now belong to the target.
+        val sourceCode = orderRef(sourceId).first
+        val carried = (listOf(sourceCode) + mergedTablesOf(sourceId)).filter { it.isNotBlank() }
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            sourceItems.forEach { src ->
+                val existing = db.query(
+                    items, arrayOf("id", "quantity", "kot_qty"),
+                    "running_order_id = ? AND product_id = ? AND rate = ?",
+                    arrayOf(targetId.toString(), src.productId.toString(), src.rate.toString()),
+                    null, null, "id ASC", "1"
+                ).use { c ->
+                    if (c.moveToFirst()) Triple(c.getLong(0), c.getDouble(1), c.getDouble(2)) else null
+                }
+                if (existing != null) {
+                    db.update(items, ContentValues().apply {
+                        put("quantity", existing.second + src.qty)
+                        put("kot_qty", existing.third + src.kotQty)
+                        if (existing.third + src.kotQty > 0) put("kot_printed", 1)
+                    }, "id = ?", arrayOf(existing.first.toString()))
+                } else {
+                    db.insert(items, null, ContentValues().apply {
+                        put("running_order_id", targetId)
+                        put("product_id", src.productId)
+                        put("product_name", src.name)
+                        put("quantity", src.qty)
+                        put("rate", src.rate)
+                        put("kot_qty", src.kotQty)
+                        put("kot_printed", if (src.kotQty > 0) 1 else 0)
+                    })
+                }
+            }
+            // Remember the merged-away tables on the target so they can be freed only
+            // when the target order is settled (they stay occupied as part of the merge).
+            val merged = (mergedTablesOf(targetId) + carried).distinct().joinToString(",")
+            db.update(orders, ContentValues().apply { put("merged_tables", merged) },
+                "id = ?", arrayOf(targetId.toString()))
+            closeKot(sourceId)   // the merged-away table's KOT is closed (kept as history)
+            db.delete(items, "running_order_id = ?", arrayOf(sourceId.toString()))
+            db.delete(orders, "id = ?", arrayOf(sourceId.toString()))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        syncPendingKot(targetId)   // refresh the target's PENDING KOT items
+    }
+
+    /** Table codes merged into [orderId] (empty if none) — they share this order's bill. */
+    fun mergedTablesOf(orderId: Long): List<String> {
+        helper.readableDatabase.query(
+            orders, arrayOf("merged_tables"), "id = ?", arrayOf(orderId.toString()), null, null, null, "1"
+        ).use { c ->
+            if (c.moveToFirst()) return c.getString(0).orEmpty().split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        }
+        return emptyList()
+    }
+
     /** Saves the order note for a running order (shown when the table is re-selected). */
     fun setNote(orderId: Long, note: String) {
         helper.writableDatabase.update(

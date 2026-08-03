@@ -84,6 +84,7 @@ class DatabaseHelper private constructor(context: Context) :
         runCatching { db.execSQL(SQL_CREATE_TD_RUNNING_ORDER) }
         runCatching { db.execSQL(SQL_CREATE_TD_RUNNING_ORDER_ITEMS) }
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "order_note", "TEXT")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "merged_tables", "TEXT")
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "kot_qty", "REAL DEFAULT 0")
         // KOT lifecycle: link a KOT to its running order, and allow the CLOSED /
         // COMPLETE statuses the restaurant flow sets (see [ensureKotStatusSchema]).
@@ -1377,6 +1378,7 @@ class DatabaseHelper private constructor(context: Context) :
                 customer_phone TEXT,
                 cashier TEXT,
                 order_note TEXT,
+                merged_tables TEXT,
                 status TEXT NOT NULL DEFAULT 'RUNNING',
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
