@@ -46,10 +46,10 @@
         <!-- Row: Rate Name | Rate | Unit -->
         <LinearLayout style="@style/ProductFormRow" android:layout_marginTop="6dp">
             <com.google.android.material.textfield.TextInputLayout
-                style="@style/ProductFormField" android:layout_marginEnd="6dp" android:hint="Rate Name">
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etRateName" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:inputType="text" android:maxLines="1" />
+                style="@style/ProductFormDropdown" android:layout_marginEnd="6dp" android:hint="Rate Name">
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                    android:id="@+id/actRateName" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:inputType="none" android:maxLines="1" />
             </com.google.android.material.textfield.TextInputLayout>
             <com.google.android.material.textfield.TextInputLayout
                 style="@style/ProductFormField" android:layout_marginHorizontal="6dp" android:hint="Rate">

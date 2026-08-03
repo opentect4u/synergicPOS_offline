@@ -44,7 +44,8 @@ class DatabaseSettingsFragment : Fragment() {
             DatabaseItem("Products", android.R.drawable.ic_menu_agenda, R.color.menu_sale, R.color.menu_sale_icon),
             DatabaseItem("Customers", android.R.drawable.ic_menu_myplaces, R.color.menu_report, R.color.menu_report_icon),
             DatabaseItem("Description/Ledger", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon),
-            DatabaseItem("Units", android.R.drawable.ic_menu_crop, R.color.menu_settings, R.color.menu_settings_icon)
+            DatabaseItem("Units", android.R.drawable.ic_menu_crop, R.color.menu_settings, R.color.menu_settings_icon),
+            DatabaseItem("Rate Name", android.R.drawable.ic_menu_sort_by_size, R.color.menu_inventory, R.color.menu_inventory_icon)
         )
         // Restaurant-only masters.
         if (!isGrocery) {
@@ -57,6 +58,7 @@ class DatabaseSettingsFragment : Fragment() {
             when (item.title) {
                 "Category/Department" -> openFragment(CategoryDepartmentFragment())
                 "Units" -> openFragment(UnitFragment())
+                "Rate Name" -> openFragment(RateNameFragment())
                 "Waiter" -> openFragment(WaiterFragment())
                 "Customers" -> openFragment(CustomerFragment())
                 "Description/Ledger" -> openFragment(DescriptionLedgerFragment())

@@ -75,7 +75,11 @@ class BillDao(context: Context) {
         val roundOffAmount: Double = 0.0,
         val waiterId: Long? = null,
         val isMrpBilling: Boolean = false,
-        val isReturnBill: Boolean = false
+        val isReturnBill: Boolean = false,
+        // Restaurant-mode fields (null/0 for grocery bills).
+        val tableNumber: String? = null,
+        val orderType: String? = null,
+        val serviceChargeAmount: Double = 0.0
     )
 
     /** Result of a successful generation. */
@@ -143,6 +147,9 @@ class BillDao(context: Context) {
                 put("gst_flag", if (bill.cgstAmount + bill.sgstAmount + bill.igstAmount > 0) 1 else 0)
                 put("vat_flag", if (bill.vatAmount > 0) 1 else 0)
                 if (bill.waiterId != null) put("waiter_id", bill.waiterId)
+                bill.tableNumber?.takeIf { it.isNotBlank() }?.let { put("table_number", it) }
+                bill.orderType?.takeIf { it.isNotBlank() }?.let { put("order_type", it) }
+                put("service_charge_amount", bill.serviceChargeAmount)
                 put("is_mrp_billing", if (bill.isMrpBilling) 1 else 0)
                 put("is_return_bill", if (bill.isReturnBill) 1 else 0)
                 put("is_duplicate", 0)
@@ -174,6 +181,7 @@ class BillDao(context: Context) {
                 val vatAmt = priced.vat
                 val itemTotal = priced.itemTotal
                 val itemValues = ContentValues().apply {
+                    put("store_id", storeId)
                     put("receipt_no", receiptNo)
                     put("trans_dt", nowDateTime)
                     put("bill_id", receiptNo)
@@ -196,6 +204,7 @@ class BillDao(context: Context) {
 
             // 3) Payment.
             val paymentValues = ContentValues().apply {
+                put("store_id", storeId)
                 put("receipt_no", receiptNo)
                 put("bill_id", receiptNo)
                 put("payment_mode", bill.payment.mode)
@@ -537,9 +546,8 @@ class BillDao(context: Context) {
     private fun loadItemsByBill(): Map<Long, MutableList<String>> {
         val map = hashMapOf<Long, MutableList<String>>()
         val store = currentStoreId()
-        // Restrict to items whose bill belongs to the current store.
-        val storeClause = if (store != null)
-            "WHERE bi.bill_id IN (SELECT receipt_no FROM td_bills WHERE store_id = ?)" else ""
+        // Restrict to the current store's bill lines (scoped directly by store_id).
+        val storeClause = if (store != null) "WHERE bi.store_id = ?" else ""
         val args = store?.let { arrayOf(it.toString()) }
         val sql = """
             SELECT bi.bill_id, p.product_name

@@ -55,6 +55,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     // Running orders — loaded from / persisted to the database (survive restarts).
     private val orders = mutableListOf<OrderCard>()
     private val roDao by lazy { com.example.synergic_pos_offline.database.RunningOrderDao(requireContext()) }
+    private val tableDao by lazy { com.example.synergic_pos_offline.database.TableDao(requireContext()) }
     private var suppressNoteWatcher = false   // guards programmatic note-field updates
 
     private fun currentOrder(): OrderCard? = orders.firstOrNull { it.selected }
@@ -167,16 +168,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
         }
 
-        // When checkout confirms payment, close that table's order (in DB too).
+        // When checkout confirms payment, settle the table: close it (in DB too),
+        // then print the receipt with a preview — the same as the grocery bill flow.
         parentFragmentManager.setFragmentResultListener(
             RestaurantCheckoutFragment.RESULT_PAID, viewLifecycleOwner
         ) { _, bundle ->
             val paidTable = bundle.getString(RestaurantCheckoutFragment.ARG_TABLE)
-            orders.firstOrNull { it.id == paidTable }?.let { roDao.close(it.dbId) }
-            orders.removeAll { it.id == paidTable }
-            val root = view ?: return@setFragmentResultListener
-            populateOrders(root, ThemeManager.getThemeColor(requireContext()))
-            clearDetail(root)
+            val payMethod = bundle.getString(RestaurantCheckoutFragment.ARG_PAY_METHOD).orEmpty()
+            val order = orders.firstOrNull { it.id == paidTable } ?: return@setFragmentResultListener
+            settlePaidOrder(order, payMethod)
         }
 
         // Bill & Pay → restaurant checkout with the selected order's items.
@@ -426,6 +426,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         val dbId = roDao.createOrder(table, section, null, type, phone, cashier)
         if (dbId == -1L) { toast("Could not create order"); return }
+        tableDao.setStatusByCode(table, "Occupied")   // table now has a live order
 
         orders.forEach { it.selected = false }
         val order = OrderCard(
@@ -791,43 +792,133 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
     }
 
-    /** Builds the bill and shows it in the app's global dialog, labelled with [printer]. */
-    private fun doPrintBill(
-        order: OrderCard,
-        printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter
-    ) {
+    /** Builds a bill ticket from an order's items (service charge + flat GST). */
+    private fun buildBillTicket(
+        order: OrderCard, payment: String
+    ): com.example.synergic_pos_offline.utils.RestaurantBillPrinter.BillTicket {
         val subtotal = order.items.sumOf { it.qty * it.rate }
         val service = subtotal * 0.05
         val taxable = subtotal + service
         val cgst = taxable * 0.025
         val sgst = taxable * 0.025
         val total = subtotal + service + cgst + sgst
-        val body = buildString {
-            append("Printer: ${printer.printerName}\n")
-            append("Table ${order.id}   •   ${order.time}\n")
-            append("Customer: ${order.phone.ifBlank { "Walk-in" }}\n")
-            append("————————————————————————\n")
-            order.items.forEach { item ->
-                append("${item.qty} × ${item.name}".padEnd(22))
-                append("₹ ${money(item.qty * item.rate)}\n")
-            }
-            append("————————————————————————\n")
-            append("Subtotal".padEnd(22)).append("₹ ${money(subtotal)}\n")
-            append("Service Charge (5%)".padEnd(22)).append("₹ ${money(service)}\n")
-            append("CGST (2.5%)".padEnd(22)).append("₹ ${money(cgst)}\n")
-            append("SGST (2.5%)".padEnd(22)).append("₹ ${money(sgst)}\n")
-            append("TOTAL".padEnd(22)).append("₹ ${money(total)}")
-            if (order.note.isNotBlank()) append("\n————————————————————————\nNote: ${order.note}")
-        }
-        com.example.synergic_pos_offline.utils.DialogUtils.showSuccess(
-            context = requireContext(),
-            title = "Bill",
-            message = body,
-            buttonText = "OK",
-            iconRes = null,
-            onDismiss = { completeTable(order) }   // billed → table done, no more changes
+        return com.example.synergic_pos_offline.utils.RestaurantBillPrinter.BillTicket(
+            table = order.id,
+            customer = order.phone.ifBlank { "Walk-in" },
+            cashier = order.cashier,
+            time = order.time,
+            items = order.items.map {
+                com.example.synergic_pos_offline.utils.RestaurantBillPrinter.Line(it.name, it.qty, it.rate, it.qty * it.rate)
+            },
+            subtotal = subtotal, service = service, cgst = cgst, sgst = sgst, total = total,
+            note = order.note, payment = payment
         )
-        toast("Bill printed to ${printer.printerName}")
+    }
+
+    /** Previews the rendered bill, then prints it and completes the table on Print. */
+    private fun doPrintBill(
+        order: OrderCard,
+        printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter
+    ) {
+        val ticket = buildBillTicket(order, payment = "")
+        com.example.synergic_pos_offline.utils.RestaurantBillPrinter.print(requireContext(), ticket, printer) { msg -> toast(msg) }
+        completeTable(order)   // billed → locked (stays until paid)
+    }
+
+    /**
+     * Persists a paid restaurant order as a completed sale across td_bills /
+     * td_bill_items / td_payments — the same store the grocery bill writes to, plus
+     * the restaurant columns (table_number, order_type, service_charge_amount). The
+     * service charge is booked as an "other charge" so the net reconciles, and lines
+     * carry no per-item GST (the bill uses a flat service + GST model).
+     */
+    private fun persistBill(order: OrderCard, payMethod: String) {
+        val billDao = com.example.synergic_pos_offline.database.BillDao(requireContext())
+        val subtotal = order.items.sumOf { it.qty * it.rate }
+        val service = subtotal * 0.05
+        val taxable = subtotal + service
+        val cgst = taxable * 0.025
+        val sgst = taxable * 0.025
+        val total = subtotal + service + cgst + sgst
+
+        val billType = when (payMethod.lowercase(java.util.Locale.US)) {
+            "card" -> "CARD"; "online" -> "ONLINE"; else -> "CASH"
+        }
+        val custId = billDao.findCustomerIdByPhone(order.phone.takeIf { it.isNotBlank() })
+        val waiterId = roDao.findByTable(order.id)?.waiterId
+
+        val result = runCatching {
+            billDao.createBill(
+                com.example.synergic_pos_offline.database.BillDao.NewBill(
+                    billType = billType,
+                    customerId = custId,
+                    items = order.items.map {
+                        com.example.synergic_pos_offline.database.BillDao.Item(
+                            productId = it.productId.takeIf { id -> id > 0 },
+                            name = it.name,
+                            quantity = it.qty.toDouble(),
+                            rate = it.rate
+                        )
+                    },
+                    payment = com.example.synergic_pos_offline.database.BillDao.Payment(
+                        mode = billType, amountPaid = total, changeAmount = 0.0,
+                        custPhone = order.phone.takeIf { it.isNotBlank() }, custId = custId
+                    ),
+                    totalPrice = subtotal,
+                    discountAmount = 0.0,
+                    discountPercentage = 0.0,
+                    cgstAmount = cgst,
+                    sgstAmount = sgst,
+                    netAmount = total,
+                    otherChargesAmount = service,   // so net reconciles with stored components
+                    waiterId = waiterId,
+                    tableNumber = order.id,
+                    orderType = order.type,
+                    serviceChargeAmount = service
+                )
+            )
+        }.getOrNull()
+
+        if (result == null) toast("Warning: bill could not be saved to history")
+    }
+
+    /**
+     * Payment confirmed (Bill & Pay ▸ Confirm): settle the table — save the bill,
+     * close it in the DB and remove it — then show the receipt preview + print, like
+     * the grocery bill flow. Settlement happens regardless of whether the receipt
+     * is printed.
+     */
+    private fun settlePaidOrder(order: OrderCard, payMethod: String) {
+        persistBill(order, payMethod)                   // save to td_bills / td_bill_items / td_payments
+        roDao.close(order.dbId)                          // payment done → remove from temp table
+        tableDao.setStatusByCode(order.id, "Available")  // table freed for the next guest
+        orders.removeAll { it.id == order.id }
+        view?.let { root ->
+            populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+            clearDetail(root)
+        }
+        // Then the receipt: resolve the BILL printer and preview like the grocery flow.
+        val billPrinters = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
+            .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
+        val default = billPrinters.firstOrNull { it.isDefault }
+        when {
+            billPrinters.isEmpty() ->
+                toast("Paid — no bill printer set up to print the receipt")
+            default != null -> previewPaidReceipt(order, default, payMethod)
+            else -> showPrinterChooser(billPrinters, "Select bill printer") {
+                previewPaidReceipt(order, it, payMethod)
+            }
+        }
+    }
+
+    /** Prints the paid receipt directly (table already settled). */
+    private fun previewPaidReceipt(
+        order: OrderCard,
+        printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter,
+        payMethod: String
+    ) {
+        val ticket = buildBillTicket(order, payment = payMethod)
+        com.example.synergic_pos_offline.utils.RestaurantBillPrinter.print(requireContext(), ticket, printer) { msg -> toast(msg) }
     }
 
     /**
@@ -837,6 +928,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private fun completeTable(order: OrderCard) {
         roDao.markCompleted(order.dbId)
+        tableDao.setStatusByCode(order.id, "Billing")   // billed → awaiting payment
         order.status = "COMPLETED"
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -868,38 +960,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     ) {
         val note = view?.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etOrderNote)
             ?.text?.toString()?.trim().orEmpty()
-        val batch = roDao.printKot(order.dbId, order.id, null, note) ?: run {
+        // Cut the KOT (marks items sent) and send it straight to the printer.
+        val batch = roDao.printKot(order.dbId, order.id, null, order.section, note) ?: run {
             toast("No new items to send to kitchen"); return
         }
         reloadItems(order)
         renderCart()
-        showKotPreview(batch, printer.printerName)
-        toast("${batch.kotNumber} sent to ${printer.printerName}")
-    }
-
-    /** KOT ticket preview after Print KOT — uses the app's global styled dialog. */
-    private fun showKotPreview(
-        batch: com.example.synergic_pos_offline.database.RunningOrderDao.KotBatch, printerName: String
-    ) {
-        val body = buildString {
-            append("Printer: $printerName\n")
-            append("${batch.kotNumber}   •   Table ${batch.tableCode}   •   ${batch.time}\n")
-            append("————————————————————————\n")
-            batch.lines.forEach { (name, qty) ->
-                append("${qty.toInt()} ×  $name\n")
-            }
-            if (batch.note.isNotBlank()) {
-                append("————————————————————————\n")
-                append("Note: ${batch.note}\n")
-            }
-        }
-        com.example.synergic_pos_offline.utils.DialogUtils.showSuccess(
-            context = requireContext(),
-            title = "Kitchen Order Ticket",
-            message = body.trimEnd(),
-            buttonText = "OK",
-            iconRes = null
-        )
+        com.example.synergic_pos_offline.utils.KotPrinter.print(requireContext(), batch, printer) { msg -> toast(msg) }
     }
 
     private fun updateTotals() {

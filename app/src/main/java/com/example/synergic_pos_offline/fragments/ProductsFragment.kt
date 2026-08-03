@@ -220,6 +220,7 @@ class ProductsFragment : DataTableFragment() {
 
         val categories = loadOptions(DatabaseHelper.Tables.MD_CATEGORY, "category_name")
         val units = loadOptions(DatabaseHelper.Tables.MD_UNITS, "unit_name")
+        val rateNames = loadRateNames()   // master rate names (Rate 1 / Rate 2 / MRP …)
 
         val actCategory = view.findViewById<AutoCompleteTextView>(R.id.actCategory)
 
@@ -321,11 +322,7 @@ class ProductsFragment : DataTableFragment() {
 
         fun renumberRates() {
             for (i in 0 until llRates.childCount) {
-                val name = "Rate ${i + 1}"
-                val child = llRates.getChildAt(i)
-                child.findViewById<TextView>(R.id.tvRateTitle).text = name
-                // Rate Name is fixed to the row's position and not editable.
-                child.findViewById<TextInputEditText>(R.id.etRateName).setText(name)
+                llRates.getChildAt(i).findViewById<TextView>(R.id.tvRateTitle).text = "Rate ${i + 1}"
             }
         }
 
@@ -347,16 +344,9 @@ class ProductsFragment : DataTableFragment() {
 
         fun addRateRow(prefill: RateRow? = null) {
             val row = LayoutInflater.from(context).inflate(R.layout.item_product_rate, llRates, false)
+            bindOptions(row.findViewById(R.id.actRateName), rateNames, prefill?.rateNameId)
             bindOptions(row.findViewById(R.id.actRateUnit), units, prefill?.unitId)
             bindDiscountType(row.findViewById(R.id.actRateDiscType), prefill?.discountType)
-
-            // Rate Name is a fixed label ("Rate 1", "Rate 2", …) — read-only.
-            row.findViewById<TextInputEditText>(R.id.etRateName).apply {
-                isFocusable = false
-                isFocusableInTouchMode = false
-                isCursorVisible = false
-                keyListener = null
-            }
 
             val etCgst = row.findViewById<TextInputEditText>(R.id.etRateCgst)
             val etSgst = row.findViewById<TextInputEditText>(R.id.etRateSgst)
@@ -587,6 +577,34 @@ class ProductsFragment : DataTableFragment() {
 
     // ---- Dropdown helpers ----------------------------------------------------
 
+    /** The current store's active rate-name master, seeding defaults on first use. */
+    private fun loadRateNames(): List<Option> {
+        val db = DatabaseHelper.getInstance(requireContext()).writableDatabase
+        val store = storeId()
+        // Seed this store's defaults the first time it has none.
+        val count = db.rawQuery(
+            "SELECT COUNT(*) FROM ${DatabaseHelper.Tables.MD_RATE_NAME} WHERE store_id = ?",
+            arrayOf(store.toString())
+        ).use { if (it.moveToFirst()) it.getLong(0) else 0L }
+        if (count == 0L) {
+            listOf("Rate 1", "Rate 2", "Rate 3", "MRP", "Wholesale").forEach { name ->
+                db.execSQL(
+                    "INSERT INTO ${DatabaseHelper.Tables.MD_RATE_NAME} (store_id, rate_name, is_active) VALUES (?, ?, 1)",
+                    arrayOf<Any>(store, name)
+                )
+            }
+        }
+        val options = mutableListOf<Option>()
+        db.rawQuery(
+            "SELECT id, rate_name FROM ${DatabaseHelper.Tables.MD_RATE_NAME} " +
+                "WHERE store_id = ? AND is_active = 1 ORDER BY id ASC",
+            arrayOf(store.toString())
+        ).use { c ->
+            while (c.moveToNext()) options.add(Option(c.getInt(0), c.getString(1).orEmpty()))
+        }
+        return options
+    }
+
     private fun loadOptions(table: String, nameColumn: String): List<Option> {
         val options = mutableListOf<Option>()
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
@@ -701,6 +719,7 @@ class ProductsFragment : DataTableFragment() {
     /** One rate card's values (raw strings, parsed on save). */
     private class RateRow(
         val rateName: String = "",
+        val rateNameId: Int? = null,
         val rate: String = "",
         val unitId: Int? = null,
         val cgst: String = "",
@@ -715,7 +734,8 @@ class ProductsFragment : DataTableFragment() {
 
     /** Reads one inflated rate card back into a [RateRow]. */
     private fun collectRate(row: android.view.View): RateRow = RateRow(
-        rateName = text(row, R.id.etRateName),
+        rateName = row.findViewById<AutoCompleteTextView>(R.id.actRateName).text?.toString()?.trim().orEmpty(),
+        rateNameId = row.findViewById<AutoCompleteTextView>(R.id.actRateName).tag as? Int,
         rate = text(row, R.id.etRate),
         unitId = row.findViewById<AutoCompleteTextView>(R.id.actRateUnit).tag as? Int,
         cgst = text(row, R.id.etRateCgst),
@@ -758,7 +778,7 @@ class ProductsFragment : DataTableFragment() {
         db.rawQuery(
             """
             SELECT rate_name, rate, unit_id, cgst_rate, sgst_rate, igst_rate, vat_rate,
-                   discount, discount_type, sell_price, purchase_price
+                   discount, discount_type, sell_price, purchase_price, rate_name_id
             FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES}
             WHERE product_id = ?
             ORDER BY "default" DESC, id ASC
@@ -774,7 +794,8 @@ class ProductsFragment : DataTableFragment() {
                         cgst = num(c, 3), sgst = num(c, 4), igst = num(c, 5), vat = num(c, 6),
                         discount = num(c, 7),
                         discountType = if (c.isNull(8)) null else c.getString(8),
-                        sellPrice = num(c, 9), purchasePrice = num(c, 10)
+                        sellPrice = num(c, 9), purchasePrice = num(c, 10),
+                        rateNameId = if (c.isNull(11)) null else c.getInt(11)
                     )
                 )
             }
@@ -859,6 +880,7 @@ class ProductsFragment : DataTableFragment() {
                     if (outletId != null) put("outlet_id", outletId) else putNull("outlet_id")
                     put("product_id", id)
                     put("rate_name", r.rateName.ifEmpty { null })
+                    if (r.rateNameId != null) put("rate_name_id", r.rateNameId) else putNull("rate_name_id")
                     putDouble(this, "rate", r.rate)
                     if (r.unitId != null) put("unit_id", r.unitId) else putNull("unit_id")
                     putDouble(this, "cgst_rate", r.cgst)

@@ -44,12 +44,13 @@ class TableFragment : DataTableFragment() {
         val allocations = dao.allocations()
         return allocations.mapNotNull { a ->
             val sid = a.sectionId ?: return@mapNotNull null
-            cache[sid.toString()] = a
+            val key = groupKey(sid, a.waiterId)
+            cache[key] = a
             DataRow(
-                sid.toString(),
+                key,
                 listOf(
                     a.sectionName.ifBlank { "Sec-%03d".format(sid) },
-                    a.noOfTables.toString(),
+                    a.count.toString(),
                     if (a.fromCode != null && a.toCode != null) "${a.fromCode}-${a.toCode}" else "—",
                     a.waiterId?.let { waiterNames[it] } ?: "—"
                 )
@@ -57,12 +58,18 @@ class TableFragment : DataTableFragment() {
         }.toMutableList()
     }
 
+    /** A section+waiter row key, e.g. "3|7" (waiter 7) or "3|-1" (no waiter). */
+    private fun groupKey(sectionId: Long, waiterId: Long?) = "$sectionId|${waiterId ?: -1L}"
+
     override fun onAddRow() = showAddDialog()
 
     override fun onEditRow(row: DataRow) = showSectionTablesEditor(row)
 
     override fun onRowsDeleted(ids: Set<String>) {
-        dao.deleteSections(ids.mapNotNull { it.toLongOrNull() })
+        ids.forEach { key ->
+            val a = cache[key] ?: return@forEach
+            a.sectionId?.let { dao.deleteGroup(it, a.waiterId) }
+        }
     }
 
     // ---- Add: generate a table per code across From..To ---------------------
@@ -165,7 +172,8 @@ class TableFragment : DataTableFragment() {
         val accent = ThemeManager.getThemeColor(ctx)
         val alloc = cache[row.id] ?: return
         val sectionId = alloc.sectionId ?: return
-        val cap = alloc.noOfTables
+        val cap = alloc.sectionCapacity
+        val groupWaiterId = alloc.waiterId
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_table_units, null)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
@@ -175,24 +183,26 @@ class TableFragment : DataTableFragment() {
         val info = view.findViewById<TextView>(R.id.tvUnitsInfo)
         val container = view.findViewById<LinearLayout>(R.id.llTableUnits)
 
-        // Editable waiter for this section (prefilled with the current one).
+        // Editable waiter for this group (prefilled with the group's waiter).
         val actWaiter = view.findViewById<MaterialAutoCompleteTextView>(R.id.actUnitsWaiter)
         val waiterOptions = dao.waiters()
         actWaiter.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, waiterOptions.map { it.name }))
         actWaiter.setOnItemClickListener { _, _, pos, _ -> actWaiter.tag = waiterOptions[pos].id }
-        val currentWaiter = dao.sectionWaiter(sectionId)
-        if (currentWaiter != null) {
-            actWaiter.tag = currentWaiter
-            waiterOptions.firstOrNull { it.id == currentWaiter }?.let { actWaiter.setText(it.name, false) }
+        if (groupWaiterId != null) {
+            actWaiter.tag = groupWaiterId
+            waiterOptions.firstOrNull { it.id == groupWaiterId }?.let { actWaiter.setText(it.name, false) }
         }
 
-        val tables = dao.tablesForSection(sectionId)
+        val tables = dao.tablesForGroup(sectionId, groupWaiterId)
         val floor = tables.firstOrNull()?.floorNo.orEmpty()
+        // Tables of this section held by OTHER waiter groups (for the section-wide "left").
+        val otherGroupTables = (dao.sectionUsage(sectionId).count - tables.size).coerceAtLeast(0)
 
         fun updateInfo() {
-            val left = (cap - container.childCount).coerceAtLeast(0)
-            info.text = "Section: ${alloc.sectionName}   •   Floor: ${floor.ifBlank { "—" }}   •   " +
-                "No. of Tables: $cap   •   No. of Left: $left"
+            val left = (cap - (otherGroupTables + container.childCount)).coerceAtLeast(0)
+            val waiterName = groupWaiterId?.let { waiterNames[it] } ?: "—"
+            info.text = "Section: ${alloc.sectionName}   •   Waiter: $waiterName   •   " +
+                "No. of Tables: ${container.childCount}   •   No. of Left: $left"
         }
 
         // Serial removal: only the last table can be removed, so codes stay contiguous.
@@ -253,7 +263,7 @@ class TableFragment : DataTableFragment() {
                     status = c.findViewById<AutoCompleteTextView>(R.id.actUnitStatus).text?.toString()?.ifBlank { "Available" } ?: "Available"
                 )
             }
-            dao.replaceSectionTables(sectionId, tables, actWaiter.tag as? Long)
+            dao.replaceGroupTables(sectionId, groupWaiterId, tables, actWaiter.tag as? Long)
             dialog.dismiss()
             refreshRows()
             toast("Tables saved")

@@ -66,14 +66,14 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             requireActivity().supportFragmentManager.popBackStack()
         }
         view.findViewById<MaterialButton>(R.id.btnConfirmPay).setOnClickListener {
-            // Close the table's order back on the Orders screen, then return to it.
+            // Hand the paid table + method back to the Orders screen, which prints the
+            // receipt (with preview) and settles/removes the table — like the grocery flow.
             parentFragmentManager.setFragmentResult(
-                RESULT_PAID, android.os.Bundle().apply { putString(ARG_TABLE, tableNo) }
+                RESULT_PAID, android.os.Bundle().apply {
+                    putString(ARG_TABLE, tableNo)
+                    putString(ARG_PAY_METHOD, payMethod)
+                }
             )
-            android.widget.Toast.makeText(
-                requireContext(), "Payment confirmed for table $tableNo ($payMethod)",
-                android.widget.Toast.LENGTH_SHORT
-            ).show()
             parentFragmentManager.popBackStack()
         }
 
@@ -146,6 +146,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     companion object {
         const val RESULT_PAID = "restaurant_checkout_paid"
         const val ARG_TABLE = "table"
+        const val ARG_PAY_METHOD = "pay_method"
         private const val ARG_CUSTOMER = "customer"
         private const val ARG_NAMES = "names"
         private const val ARG_QTYS = "qtys"

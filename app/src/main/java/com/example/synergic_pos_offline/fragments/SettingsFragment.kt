@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.MainActivity
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.textfield.TextInputEditText
@@ -88,6 +89,18 @@ class SettingsFragment : Fragment() {
             e("Printer", "Printer Settings", printer),
             e("Print Template", "Printer Settings", printTemplate),
             e("Bill Template", "Printer Settings", printTemplate, match = "Print Template")
+        ) + restaurantAppSettings(app)
+    }
+
+    /** Restaurant-only App Settings toggles — searchable only when Mode = Restaurant. */
+    private fun restaurantAppSettings(app: () -> Fragment): List<SettingEntry> {
+        if (SettingsCache.value(requireContext(), "G", "Mode") != "R") return emptyList()
+        return listOf(
+            SettingEntry("Coupon Mode", "App Settings", app),
+            SettingEntry("KOT", "App Settings", app),
+            SettingEntry("Table Merge", "App Settings", app),
+            SettingEntry("Table Shift", "App Settings", app),
+            SettingEntry("Table Split", "App Settings", app)
         )
     }
 
