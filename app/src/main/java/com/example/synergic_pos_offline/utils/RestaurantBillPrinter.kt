@@ -32,7 +32,8 @@ object RestaurantBillPrinter {
         val cgst: Double,
         val sgst: Double,
         val total: Double,
-        val note: String
+        val note: String,
+        val payment: String = ""
     )
 
     private data class Store(val name: String, val address: String, val phone: String, val gstin: String)
@@ -169,6 +170,7 @@ object RestaurantBillPrinter {
         totalRow("SGST (2.5%)", money(ticket.sgst), totLabel, false)
         rule()
         totalRow("TOTAL", money(ticket.total), grand, true)
+        if (ticket.payment.isNotBlank()) totalRow("Paid via", ticket.payment, totLabel, false)
         if (ticket.note.isNotBlank()) { rule(); left("Note: ${ticket.note}", meta) }
         rule()
         center("Thank you! Visit again", footer)

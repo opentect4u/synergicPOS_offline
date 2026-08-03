@@ -55,6 +55,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     // Running orders — loaded from / persisted to the database (survive restarts).
     private val orders = mutableListOf<OrderCard>()
     private val roDao by lazy { com.example.synergic_pos_offline.database.RunningOrderDao(requireContext()) }
+    private val tableDao by lazy { com.example.synergic_pos_offline.database.TableDao(requireContext()) }
     private var suppressNoteWatcher = false   // guards programmatic note-field updates
 
     private fun currentOrder(): OrderCard? = orders.firstOrNull { it.selected }
@@ -167,16 +168,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
         }
 
-        // When checkout confirms payment, close that table's order (in DB too).
+        // When checkout confirms payment, settle the table: close it (in DB too),
+        // then print the receipt with a preview — the same as the grocery bill flow.
         parentFragmentManager.setFragmentResultListener(
             RestaurantCheckoutFragment.RESULT_PAID, viewLifecycleOwner
         ) { _, bundle ->
             val paidTable = bundle.getString(RestaurantCheckoutFragment.ARG_TABLE)
-            orders.firstOrNull { it.id == paidTable }?.let { roDao.close(it.dbId) }
-            orders.removeAll { it.id == paidTable }
-            val root = view ?: return@setFragmentResultListener
-            populateOrders(root, ThemeManager.getThemeColor(requireContext()))
-            clearDetail(root)
+            val payMethod = bundle.getString(RestaurantCheckoutFragment.ARG_PAY_METHOD).orEmpty()
+            val order = orders.firstOrNull { it.id == paidTable } ?: return@setFragmentResultListener
+            settlePaidOrder(order, payMethod)
         }
 
         // Bill & Pay → restaurant checkout with the selected order's items.
@@ -426,6 +426,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         val dbId = roDao.createOrder(table, section, null, type, phone, cashier)
         if (dbId == -1L) { toast("Could not create order"); return }
+        tableDao.setStatusByCode(table, "Occupied")   // table now has a live order
 
         orders.forEach { it.selected = false }
         val order = OrderCard(
@@ -791,18 +792,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
     }
 
-    /** Previews the rendered bill, then prints it and completes the table on Print. */
-    private fun doPrintBill(
-        order: OrderCard,
-        printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter
-    ) {
+    /** Builds a bill ticket from an order's items (service charge + flat GST). */
+    private fun buildBillTicket(
+        order: OrderCard, payment: String
+    ): com.example.synergic_pos_offline.utils.RestaurantBillPrinter.BillTicket {
         val subtotal = order.items.sumOf { it.qty * it.rate }
         val service = subtotal * 0.05
         val taxable = subtotal + service
         val cgst = taxable * 0.025
         val sgst = taxable * 0.025
         val total = subtotal + service + cgst + sgst
-        val ticket = com.example.synergic_pos_offline.utils.RestaurantBillPrinter.BillTicket(
+        return com.example.synergic_pos_offline.utils.RestaurantBillPrinter.BillTicket(
             table = order.id,
             customer = order.phone.ifBlank { "Walk-in" },
             cashier = order.cashier,
@@ -811,14 +811,114 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 com.example.synergic_pos_offline.utils.RestaurantBillPrinter.Line(it.name, it.qty, it.rate, it.qty * it.rate)
             },
             subtotal = subtotal, service = service, cgst = cgst, sgst = sgst, total = total,
-            note = order.note
+            note = order.note, payment = payment
         )
-        val width = com.example.synergic_pos_offline.utils.ThermalPrinter.configFor(printer)?.paperDots ?: 576
-        val preview = com.example.synergic_pos_offline.utils.RestaurantBillPrinter.render(requireContext(), ticket, width)
-        showReceiptPreview("Bill", preview) {
-            com.example.synergic_pos_offline.utils.RestaurantBillPrinter.print(requireContext(), ticket, printer) { msg -> toast(msg) }
-            completeTable(order)   // billed → locked (stays until paid)
+    }
+
+    /** Previews the rendered bill, then prints it and completes the table on Print. */
+    private fun doPrintBill(
+        order: OrderCard,
+        printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter
+    ) {
+        val ticket = buildBillTicket(order, payment = "")
+        com.example.synergic_pos_offline.utils.RestaurantBillPrinter.print(requireContext(), ticket, printer) { msg -> toast(msg) }
+        completeTable(order)   // billed → locked (stays until paid)
+    }
+
+    /**
+     * Persists a paid restaurant order as a completed sale across td_bills /
+     * td_bill_items / td_payments — the same store the grocery bill writes to, plus
+     * the restaurant columns (table_number, order_type, service_charge_amount). The
+     * service charge is booked as an "other charge" so the net reconciles, and lines
+     * carry no per-item GST (the bill uses a flat service + GST model).
+     */
+    private fun persistBill(order: OrderCard, payMethod: String) {
+        val billDao = com.example.synergic_pos_offline.database.BillDao(requireContext())
+        val subtotal = order.items.sumOf { it.qty * it.rate }
+        val service = subtotal * 0.05
+        val taxable = subtotal + service
+        val cgst = taxable * 0.025
+        val sgst = taxable * 0.025
+        val total = subtotal + service + cgst + sgst
+
+        val billType = when (payMethod.lowercase(java.util.Locale.US)) {
+            "card" -> "CARD"; "online" -> "ONLINE"; else -> "CASH"
         }
+        val custId = billDao.findCustomerIdByPhone(order.phone.takeIf { it.isNotBlank() })
+        val waiterId = roDao.findByTable(order.id)?.waiterId
+
+        val result = runCatching {
+            billDao.createBill(
+                com.example.synergic_pos_offline.database.BillDao.NewBill(
+                    billType = billType,
+                    customerId = custId,
+                    items = order.items.map {
+                        com.example.synergic_pos_offline.database.BillDao.Item(
+                            productId = it.productId.takeIf { id -> id > 0 },
+                            name = it.name,
+                            quantity = it.qty.toDouble(),
+                            rate = it.rate
+                        )
+                    },
+                    payment = com.example.synergic_pos_offline.database.BillDao.Payment(
+                        mode = billType, amountPaid = total, changeAmount = 0.0,
+                        custPhone = order.phone.takeIf { it.isNotBlank() }, custId = custId
+                    ),
+                    totalPrice = subtotal,
+                    discountAmount = 0.0,
+                    discountPercentage = 0.0,
+                    cgstAmount = cgst,
+                    sgstAmount = sgst,
+                    netAmount = total,
+                    otherChargesAmount = service,   // so net reconciles with stored components
+                    waiterId = waiterId,
+                    tableNumber = order.id,
+                    orderType = order.type,
+                    serviceChargeAmount = service
+                )
+            )
+        }.getOrNull()
+
+        if (result == null) toast("Warning: bill could not be saved to history")
+    }
+
+    /**
+     * Payment confirmed (Bill & Pay ▸ Confirm): settle the table — save the bill,
+     * close it in the DB and remove it — then show the receipt preview + print, like
+     * the grocery bill flow. Settlement happens regardless of whether the receipt
+     * is printed.
+     */
+    private fun settlePaidOrder(order: OrderCard, payMethod: String) {
+        persistBill(order, payMethod)                   // save to td_bills / td_bill_items / td_payments
+        roDao.close(order.dbId)                          // payment done → remove from temp table
+        tableDao.setStatusByCode(order.id, "Available")  // table freed for the next guest
+        orders.removeAll { it.id == order.id }
+        view?.let { root ->
+            populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+            clearDetail(root)
+        }
+        // Then the receipt: resolve the BILL printer and preview like the grocery flow.
+        val billPrinters = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
+            .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
+        val default = billPrinters.firstOrNull { it.isDefault }
+        when {
+            billPrinters.isEmpty() ->
+                toast("Paid — no bill printer set up to print the receipt")
+            default != null -> previewPaidReceipt(order, default, payMethod)
+            else -> showPrinterChooser(billPrinters, "Select bill printer") {
+                previewPaidReceipt(order, it, payMethod)
+            }
+        }
+    }
+
+    /** Prints the paid receipt directly (table already settled). */
+    private fun previewPaidReceipt(
+        order: OrderCard,
+        printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter,
+        payMethod: String
+    ) {
+        val ticket = buildBillTicket(order, payment = payMethod)
+        com.example.synergic_pos_offline.utils.RestaurantBillPrinter.print(requireContext(), ticket, printer) { msg -> toast(msg) }
     }
 
     /**
@@ -828,6 +928,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private fun completeTable(order: OrderCard) {
         roDao.markCompleted(order.dbId)
+        tableDao.setStatusByCode(order.id, "Billing")   // billed → awaiting payment
         order.status = "COMPLETED"
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -859,72 +960,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     ) {
         val note = view?.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etOrderNote)
             ?.text?.toString()?.trim().orEmpty()
-        // Preview the exact ticket (peek — nothing is sent yet).
-        val peek = roDao.peekPending(order.dbId, order.id, note) ?: run {
+        // Cut the KOT (marks items sent) and send it straight to the printer.
+        val batch = roDao.printKot(order.dbId, order.id, null, order.section, note) ?: run {
             toast("No new items to send to kitchen"); return
         }
-        val width = com.example.synergic_pos_offline.utils.ThermalPrinter.configFor(printer)?.paperDots ?: 576
-        val preview = com.example.synergic_pos_offline.utils.KotPrinter.render(peek, width)
-        showReceiptPreview("Kitchen Order Ticket", preview) {
-            // On Print: cut the KOT (marks items sent) and send it.
-            val batch = roDao.printKot(order.dbId, order.id, null, note) ?: return@showReceiptPreview
-            reloadItems(order)
-            renderCart()
-            com.example.synergic_pos_offline.utils.KotPrinter.print(requireContext(), batch, printer) { msg -> toast(msg) }
-        }
+        reloadItems(order)
+        renderCart()
+        com.example.synergic_pos_offline.utils.KotPrinter.print(requireContext(), batch, printer) { msg -> toast(msg) }
     }
-
-    /** Shows the rendered receipt bitmap in a dialog with a Print button. */
-    private fun showReceiptPreview(title: String, bitmap: android.graphics.Bitmap, onPrint: () -> Unit) {
-        val ctx = requireContext()
-        val accent = ThemeManager.getThemeColor(ctx)
-        val d = resources.displayMetrics.density
-        fun dp(v: Int) = (v * d).toInt()
-
-        val root = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(android.graphics.Color.WHITE)
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-        }
-        root.addView(TextView(ctx).apply {
-            text = title; textSize = 18f; setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(0xFF202124.toInt()); gravity = android.view.Gravity.CENTER
-        })
-        // The receipt image, scaled to a comfortable preview width, scrollable.
-        val previewW = dp(300)
-        val scaled = android.graphics.Bitmap.createScaledBitmap(
-            bitmap, previewW, (bitmap.height.toFloat() / bitmap.width * previewW).toInt().coerceAtLeast(1), true
-        )
-        val iv = android.widget.ImageView(ctx).apply { setImageBitmap(scaled); setBackgroundColor(android.graphics.Color.WHITE) }
-        val scroll = android.widget.ScrollView(ctx).apply { addView(iv); scrollBarSize = 0 }
-        root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(12) })
-
-        val dialog = AlertDialog.Builder(ctx).setView(root).create()
-        dialog.setCanceledOnTouchOutside(false)
-
-        val buttons = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.END
-            setPadding(0, dp(14), 0, 0)
-        }
-        val btnClose = com.google.android.material.button.MaterialButton(
-            ctx, null, com.google.android.material.R.attr.materialButtonOutlinedStyle
-        ).apply {
-            text = "Close"; setTextColor(accent); strokeColor = ColorStateList.valueOf(accent)
-            setOnClickListener { dialog.dismiss() }
-        }
-        val btnPrint = com.google.android.material.button.MaterialButton(ctx).apply {
-            text = "Print"; backgroundTintList = ColorStateList.valueOf(accent)
-            setTextColor(android.graphics.Color.WHITE)
-            setOnClickListener { dialog.dismiss(); onPrint() }
-        }
-        buttons.addView(btnClose)
-        buttons.addView(btnPrint, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(12) })
-        root.addView(buttons)
-
-        dialog.show()
-        dialog.window?.setLayout(dp(360), (resources.displayMetrics.heightPixels * 0.9f).toInt())
-    }
-
 
     private fun updateTotals() {
         val root = view ?: return

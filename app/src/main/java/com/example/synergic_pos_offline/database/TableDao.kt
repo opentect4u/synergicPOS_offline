@@ -41,6 +41,25 @@ class TableDao(context: Context) {
     data class TableLookup(val sectionName: String, val waiterName: String?)
 
     /**
+     * Sets a table's live [table_status] by its code (current store) — e.g.
+     * Occupied when an order opens, Billing when it's billed, Available when
+     * settled. No-op when the code isn't a known table.
+     */
+    fun setStatusByCode(code: String, status: String) {
+        val store = currentStoreId()
+        val where = if (store != null) "table_code = ? AND store_id = ?" else "table_code = ?"
+        val args = if (store != null) arrayOf(code, store.toString()) else arrayOf(code)
+        helper.writableDatabase.update(
+            table,
+            ContentValues().apply {
+                put("table_status", status)
+                put("modified_at", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
+            },
+            where, args
+        )
+    }
+
+    /**
      * Finds a table by its code (current store) and returns its section name and
      * assigned waiter name. Null when no such table exists.
      */

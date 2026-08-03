@@ -64,6 +64,7 @@ object KotPrinter {
         val lines = mutableListOf<Line>()
         lines += Line("KOT", title, center = true)
         lines += Line(batch.kotNumber, sub, center = true)
+        if (batch.section.isNotBlank()) lines += Line("Section: ${batch.section}", sub, center = true)
         lines += Line("Table: ${batch.tableCode}    ${batch.time}", sub, center = true)
         val ruleAfterHeader = lines.size
         batch.lines.forEach { (name, qty) -> lines += Line("${qty.toInt()} x  $name", item, center = false) }
