@@ -19,40 +19,15 @@
         android:textSize="16sp"
         android:textColor="@color/text_main" />
 
-    <LinearLayout
+    <TextView
+        android:id="@+id/tvLineQty"
         android:layout_width="112dp"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center">
-
-        <ImageButton
-            android:id="@+id/btnMinus"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:background="@drawable/bg_stepper_btn"
-            android:src="@drawable/ic_minus"
-            app:tint="@color/text_main"
-            android:contentDescription="Decrease" />
-
-        <TextView
-            android:id="@+id/tvLineQty"
-            android:layout_width="34dp"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="1"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_main" />
-
-        <ImageButton
-            android:id="@+id/btnPlus"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:background="@drawable/bg_stepper_btn"
-            android:src="@drawable/ic_plus"
-            app:tint="@color/text_main"
-            android:contentDescription="Increase" />
-    </LinearLayout>
+        android:gravity="center"
+        android:text="1"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_main" />
 
     <TextView
         android:id="@+id/tvLineRate"
@@ -72,14 +47,4 @@
         android:textSize="16sp"
         android:textStyle="bold"
         android:textColor="@color/text_main" />
-
-    <ImageButton
-        android:id="@+id/btnRemoveLine"
-        android:layout_width="44dp"
-        android:layout_height="44dp"
-        android:layout_marginStart="4dp"
-        android:background="?attr/selectableItemBackgroundBorderless"
-        android:src="@drawable/ic_delete"
-        app:tint="@color/primary_blue"
-        android:contentDescription="Remove" />
 </LinearLayout>
