@@ -29,7 +29,8 @@ class RunningOrderDao(context: Context) {
 
     data class RunningItem(
         val id: Long, val productId: Long, val name: String,
-        var qty: Double, var rate: Double, val kotQty: Double
+        var qty: Double, var rate: Double, val kotQty: Double,
+        val cgstRate: Double = 0.0, val sgstRate: Double = 0.0
     ) {
         /** Quantity newly added, not yet sent to the kitchen. */
         val pending: Double get() = (qty - kotQty).coerceAtLeast(0.0)
@@ -167,6 +168,8 @@ class RunningOrderDao(context: Context) {
                         put("product_name", src.name)
                         put("quantity", src.qty)
                         put("rate", src.rate)
+                        put("cgst_rate", src.cgstRate)
+                        put("sgst_rate", src.sgstRate)
                         put("kot_qty", src.kotQty)
                         put("kot_printed", if (src.kotQty > 0) 1 else 0)
                     })
@@ -197,6 +200,13 @@ class RunningOrderDao(context: Context) {
         return emptyList()
     }
 
+    /** Sets a running order's status (e.g. RUNNING ↔ HOLD). */
+    fun setStatus(orderId: Long, status: String) {
+        helper.writableDatabase.update(
+            orders, ContentValues().apply { put("status", status) }, "id = ?", arrayOf(orderId.toString())
+        )
+    }
+
     /** Saves the order note for a running order (shown when the table is re-selected). */
     fun setNote(orderId: Long, note: String) {
         helper.writableDatabase.update(
@@ -207,6 +217,13 @@ class RunningOrderDao(context: Context) {
 
     fun findByTable(tableCode: String): RunningOrder? =
         allRunning().firstOrNull { it.tableCode.equals(tableCode, ignoreCase = true) }
+
+    /** Empties an order (deletes its items, closes its KOT) but keeps the order row —
+     *  used to reset a split sub-table so it stays available to re-order. */
+    fun clearItems(orderId: Long) {
+        closeKot(orderId)
+        helper.writableDatabase.delete(items, "running_order_id = ?", arrayOf(orderId.toString()))
+    }
 
     /** Deletes a running order and its items (called after payment). */
     fun close(orderId: Long) {
@@ -228,7 +245,10 @@ class RunningOrderDao(context: Context) {
      * Adds [qty] of a product to the order, merging into the existing line for the
      * same product+rate (the extra quantity becomes pending, tracked vs [RunningItem.kotQty]).
      */
-    fun addItem(orderId: Long, productId: Long, name: String, qty: Double, rate: Double): Long {
+    fun addItem(
+        orderId: Long, productId: Long, name: String, qty: Double, rate: Double,
+        cgstRate: Double = 0.0, sgstRate: Double = 0.0
+    ): Long {
         val db = helper.writableDatabase
         val lineId = db.query(
             items, arrayOf("id", "quantity"),
@@ -248,6 +268,8 @@ class RunningOrderDao(context: Context) {
                     put("product_name", name)
                     put("quantity", qty)
                     put("rate", rate)
+                    put("cgst_rate", cgstRate)
+                    put("sgst_rate", sgstRate)
                     put("kot_printed", 0)
                     put("kot_qty", 0)
                 })
@@ -262,7 +284,7 @@ class RunningOrderDao(context: Context) {
     fun itemsFor(orderId: Long): List<RunningItem> {
         val list = mutableListOf<RunningItem>()
         helper.readableDatabase.query(
-            items, arrayOf("id", "product_id", "product_name", "quantity", "rate", "kot_qty"),
+            items, arrayOf("id", "product_id", "product_name", "quantity", "rate", "kot_qty", "cgst_rate", "sgst_rate"),
             "running_order_id = ?", arrayOf(orderId.toString()), null, null, "id ASC"
         ).use { c ->
             while (c.moveToNext()) {
@@ -273,7 +295,9 @@ class RunningOrderDao(context: Context) {
                         name = c.getString(2).orEmpty(),
                         qty = c.getDouble(3),
                         rate = c.getDouble(4),
-                        kotQty = c.getDouble(5)
+                        kotQty = c.getDouble(5),
+                        cgstRate = c.getDouble(6),
+                        sgstRate = c.getDouble(7)
                     )
                 )
             }
@@ -313,6 +337,14 @@ class RunningOrderDao(context: Context) {
     /** True if the order has anything to send: newly-added or cancelled items. */
     fun hasPendingKot(orderId: Long): Boolean =
         itemsFor(orderId).any { it.pending > 0.0 || it.pendingCancel > 0.0 }
+
+    /**
+     * True if any item has been sent to the kitchen and is still on the order (not
+     * yet cancelled). An order can only be cancelled outright when this is false —
+     * i.e. before any KOT, or once every sent item has been cancelled.
+     */
+    fun hasSentActiveItems(orderId: Long): Boolean =
+        itemsFor(orderId).any { it.kotQty > 0.0 && it.qty > 0.0 }
 
     private fun kotQtyOf(itemId: Long): Double {
         helper.readableDatabase.query(

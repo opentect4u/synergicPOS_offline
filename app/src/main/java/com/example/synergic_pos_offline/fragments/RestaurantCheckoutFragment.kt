@@ -22,18 +22,26 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Checkout"
 
-    private data class Line(val name: String, val qty: Int, val rate: Double)
+    private data class Line(val name: String, val qty: Int, val rate: Double, val cgstRate: Double, val sgstRate: Double)
 
     // The selected order's items, passed in from the Orders screen.
     private val lines: List<Line> by lazy {
         val names = arguments?.getStringArrayList(ARG_NAMES) ?: arrayListOf()
         val qtys = arguments?.getIntArray(ARG_QTYS) ?: IntArray(0)
         val rates = arguments?.getDoubleArray(ARG_RATES) ?: DoubleArray(0)
-        names.mapIndexed { i, n -> Line(n, qtys.getOrElse(i) { 1 }, rates.getOrElse(i) { 0.0 }) }
+        val cgsts = arguments?.getDoubleArray(ARG_CGSTS) ?: DoubleArray(0)
+        val sgsts = arguments?.getDoubleArray(ARG_SGSTS) ?: DoubleArray(0)
+        names.mapIndexed { i, n ->
+            Line(n, qtys.getOrElse(i) { 1 }, rates.getOrElse(i) { 0.0 },
+                cgsts.getOrElse(i) { 0.0 }, sgsts.getOrElse(i) { 0.0 })
+        }
     }
 
     private val tableNo get() = arguments?.getString(ARG_TABLE).orEmpty()
     private val customer get() = arguments?.getString(ARG_CUSTOMER)?.ifBlank { "Walk-in" } ?: "Walk-in"
+    private val serviceRate get() = arguments?.getDouble(ARG_SERVICE_RATE) ?: 0.0
+    private val gstEnabled get() = arguments?.getBoolean(ARG_GST_ON) ?: true
+    private val taxInclusive get() = arguments?.getBoolean(ARG_INCLUSIVE) ?: false
 
     private var total = 0.0
     private var payMethod = "Cash"
@@ -66,6 +74,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             tvChange.text = if (tendered != null && tendered >= total) "₹ ${money(tendered - total)}" else "—"
         }
 
+        view.findViewById<MaterialButton>(R.id.btnReceiptPreview).setOnClickListener {
+            showReceiptPreview()
+        }
         view.findViewById<MaterialButton>(R.id.btnBackToBilling).setOnClickListener {
             requireActivity().supportFragmentManager.popBackStack()
         }
@@ -95,10 +106,76 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         view?.let { v -> v.post { restyle(v) } }
     }
 
+    /** Renders the bill in the grocery format and shows it in a scrollable dialog. */
+    private fun showReceiptPreview() {
+        val ctx = requireContext()
+        val regime = if (gstEnabled) com.example.synergic_pos_offline.utils.GstCalculator.TaxRegime.GST
+        else com.example.synergic_pos_offline.utils.GstCalculator.TaxRegime.NONE
+        var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0
+        lines.forEach { l ->
+            val p = com.example.synergic_pos_offline.utils.BillPricing.price(
+                l.rate, l.qty.toDouble(), l.cgstRate, l.sgstRate, 0.0, 0.0, regime, taxInclusive, false
+            )
+            subtotal += l.qty * l.rate; cgst += p.cgst; sgst += p.sgst
+        }
+        val service = subtotal * serviceRate / 100.0
+        val netTotal = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
+
+        val tableLabel = if (tableNo.startsWith("TA-", ignoreCase = true))
+            "Take Away ${tableNo.replace("TA-", "Token #")}" else "Table $tableNo"
+        val draft = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft(
+            billNumber = com.example.synergic_pos_offline.database.BillDao(ctx).nextBillNumber(),
+            dateTime = java.text.SimpleDateFormat("dd-MM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date()),
+            cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—",
+            customer = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Customer(
+                name = tableLabel, phone = customer.takeIf { it != "Walk-in" && it.isNotBlank() }
+            ),
+            items = lines.map {
+                com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
+                    it.name, it.qty.toDouble(), it.rate, it.cgstRate, it.sgstRate
+                )
+            },
+            discount = 0.0, roundOff = 0.0, netAmount = netTotal,
+            paymentModes = listOf(payMethod.uppercase(java.util.Locale.US)),
+            serviceCharge = service
+        )
+        val paperDots = com.example.synergic_pos_offline.database.OperatingPrinterDao(ctx).getAll()
+            .firstOrNull { it.printFlag.equals("B", ignoreCase = true) }
+            ?.let { com.example.synergic_pos_offline.utils.ThermalPrinter.configFor(it)?.paperDots } ?: 576
+        val bmp = com.example.synergic_pos_offline.utils.BillReceiptRenderer(ctx).renderDraftToBitmap(draft, paperDots)
+        if (bmp == null) {
+            android.widget.Toast.makeText(ctx, "Could not render the receipt", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        showPreviewDialog(bmp)
+    }
+
+    /** A simple scrollable image dialog for the receipt bitmap. */
+    private fun showPreviewDialog(bitmap: android.graphics.Bitmap) {
+        val ctx = requireContext()
+        val d = resources.displayMetrics.density
+        fun dp(v: Int) = (v * d).toInt()
+        val previewW = dp(300)
+        val scaled = android.graphics.Bitmap.createScaledBitmap(
+            bitmap, previewW, (bitmap.height.toFloat() / bitmap.width * previewW).toInt().coerceAtLeast(1), true
+        )
+        val iv = android.widget.ImageView(ctx).apply { setImageBitmap(scaled); setBackgroundColor(android.graphics.Color.WHITE) }
+        val scroll = android.widget.ScrollView(ctx).apply {
+            addView(iv); setPadding(dp(16), dp(16), dp(16), dp(16)); setBackgroundColor(android.graphics.Color.WHITE)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Receipt Preview")
+            .setView(scroll)
+            .setPositiveButton("Close", null)
+            .show()
+    }
+
     private fun populateItems(root: View) {
         val container = root.findViewById<LinearLayout>(R.id.llCheckoutItems)
         val inflater = LayoutInflater.from(requireContext())
-        var subtotal = 0.0
+        val regime = if (gstEnabled) com.example.synergic_pos_offline.utils.GstCalculator.TaxRegime.GST
+        else com.example.synergic_pos_offline.utils.GstCalculator.TaxRegime.NONE
+        var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0
         lines.forEach { l ->
             val row = inflater.inflate(R.layout.item_rest_checkout_line, container, false)
             row.findViewById<TextView>(R.id.tvLineName).text = l.name
@@ -106,13 +183,16 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             row.findViewById<TextView>(R.id.tvLineRate).text = money(l.rate)
             row.findViewById<TextView>(R.id.tvLineAmount).text = money(l.qty * l.rate)
             container.addView(row)
+            // Per-product GST honouring the store Tax Settings (GST on/off, inclusive).
+            val p = com.example.synergic_pos_offline.utils.BillPricing.price(
+                l.rate, l.qty.toDouble(), l.cgstRate, l.sgstRate, 0.0, 0.0, regime, taxInclusive, false
+            )
             subtotal += l.qty * l.rate
+            cgst += p.cgst
+            sgst += p.sgst
         }
-        val service = subtotal * 0.05
-        val taxable = subtotal + service
-        val cgst = taxable * 0.025
-        val sgst = taxable * 0.025
-        total = subtotal + service + cgst + sgst
+        val service = subtotal * serviceRate / 100.0   // section-wise service charge
+        total = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
         root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(subtotal)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(service)}"
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(cgst)}"
@@ -155,11 +235,18 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_NAMES = "names"
         private const val ARG_QTYS = "qtys"
         private const val ARG_RATES = "rates"
+        private const val ARG_CGSTS = "cgsts"
+        private const val ARG_SGSTS = "sgsts"
+        private const val ARG_SERVICE_RATE = "service_rate"
+        private const val ARG_GST_ON = "gst_on"
+        private const val ARG_INCLUSIVE = "inclusive"
 
-        /** Builds a checkout for [table]'s order, carrying its items. */
+        /** Builds a checkout for [table]'s order, carrying its items and tax. */
         fun newInstance(
             table: String, customer: String,
-            names: ArrayList<String>, qtys: IntArray, rates: DoubleArray
+            names: ArrayList<String>, qtys: IntArray, rates: DoubleArray,
+            cgsts: DoubleArray, sgsts: DoubleArray, serviceRate: Double,
+            gstEnabled: Boolean, inclusive: Boolean
         ): RestaurantCheckoutFragment = RestaurantCheckoutFragment().apply {
             arguments = android.os.Bundle().apply {
                 putString(ARG_TABLE, table)
@@ -167,6 +254,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putStringArrayList(ARG_NAMES, names)
                 putIntArray(ARG_QTYS, qtys)
                 putDoubleArray(ARG_RATES, rates)
+                putDoubleArray(ARG_CGSTS, cgsts)
+                putDoubleArray(ARG_SGSTS, sgsts)
+                putDouble(ARG_SERVICE_RATE, serviceRate)
+                putBoolean(ARG_GST_ON, gstEnabled)
+                putBoolean(ARG_INCLUSIVE, inclusive)
             }
         }
     }

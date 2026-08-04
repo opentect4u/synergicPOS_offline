@@ -165,9 +165,9 @@ object RestaurantBillPrinter {
         rule()
         // ---- Totals ----
         totalRow("Subtotal", money(ticket.subtotal), totLabel, false)
-        totalRow("Service Charge (5%)", money(ticket.service), totLabel, false)
-        totalRow("CGST (2.5%)", money(ticket.cgst), totLabel, false)
-        totalRow("SGST (2.5%)", money(ticket.sgst), totLabel, false)
+        if (ticket.service > 0) totalRow("Service Charge", money(ticket.service), totLabel, false)
+        if (ticket.cgst > 0) totalRow("CGST", money(ticket.cgst), totLabel, false)
+        if (ticket.sgst > 0) totalRow("SGST", money(ticket.sgst), totLabel, false)
         rule()
         totalRow("TOTAL", money(ticket.total), grand, true)
         if (ticket.payment.isNotBlank()) totalRow("Paid via", ticket.payment, totLabel, false)

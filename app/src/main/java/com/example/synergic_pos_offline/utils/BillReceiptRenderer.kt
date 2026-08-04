@@ -311,12 +311,28 @@ class BillReceiptRenderer(context: Context) {
         receiptNo: Long,
         paperDots: Int = REFERENCE_PAPER_DOTS,
         duplicate: Boolean = false
-    ): Bitmap? = runCatching {
+    ): Bitmap? = renderInternal(paperDots) { root ->
+        populate(root, receiptNo, paperDots, duplicate = duplicate)
+    }
+
+    /**
+     * Renders an in-memory [draft] to a bitmap through exactly the same layout, font
+     * sizes and settings the saved bill uses — so a restaurant bill printed from a
+     * draft is byte-for-byte the grocery bill's format. The service charge should be
+     * folded into the draft's items so it is part of the printed total.
+     */
+    fun renderDraftToBitmap(draft: Draft, paperDots: Int = REFERENCE_PAPER_DOTS): Bitmap? =
+        renderInternal(paperDots) { root ->
+            populate(root, receiptNo = 0, paperDots = paperDots, draft = draft)
+        }
+
+    /** Inflates the receipt layout, runs [fill], then measures and captures the card. */
+    private fun renderInternal(paperDots: Int, fill: (View) -> Unit): Bitmap? = runCatching {
         val root = LayoutInflater.from(ctx).inflate(layoutFor(ctx), null, false)
 
         // The print button floats over the receipt and would be drawn onto the paper.
         root.findViewById<View>(R.id.btnPrintBill)?.visibility = View.GONE
-        populate(root, receiptNo, paperDots, duplicate = duplicate)
+        fill(root)
 
         val card = root.findViewById<View>(R.id.cardReceipt) ?: return null
         (card.parent as? ViewGroup)?.removeView(card)
@@ -332,7 +348,7 @@ class BillReceiptRenderer(context: Context) {
 
         ReceiptPrinter.capture(card)
     }.getOrElse {
-        android.util.Log.e(TAG, "Could not render bill $receiptNo", it)
+        android.util.Log.e(TAG, "Could not render bill", it)
         null
     }
 
@@ -356,7 +372,9 @@ class BillReceiptRenderer(context: Context) {
         val discount: Double,
         val roundOff: Double,
         val netAmount: Double,
-        val paymentModes: List<String>
+        val paymentModes: List<String>,
+        /** Restaurant service charge — shown as its own totals line, added to the net. */
+        val serviceCharge: Double = 0.0
     ) {
         /** As captured on the sale; each field printed only where the settings ask. */
         data class Customer(
@@ -454,6 +472,7 @@ class BillReceiptRenderer(context: Context) {
             var discount = 0.0
             var storedNetAmount = 0.0
             var roundOff = 0.0
+            var serviceCharge = 0.0
             var settingsSnapshotJson: String? = null
             if (draft != null) {
                 billNumber = draft.billNumber
@@ -461,16 +480,19 @@ class BillReceiptRenderer(context: Context) {
                 roundOff = draft.roundOff
                 discount = draft.discount
                 storedNetAmount = draft.netAmount
+                serviceCharge = draft.serviceCharge
             } else db.rawQuery(
                 """
                 SELECT bill_number, bill_date_time, bill_date, customer_id,
                        tot_discount_amount, net_amount, operator_id, created_by, bill_type,
-                       tot_round_off_amount, amount_in_words, settings_snapshot
+                       tot_round_off_amount, amount_in_words, settings_snapshot,
+                       COALESCE(service_charge_amount, 0)
                 FROM ${DatabaseHelper.Tables.TD_BILLS} WHERE receipt_no = ?
                 """.trimIndent(),
                 arrayOf(receiptNo.toString())
             ).use { c ->
                 if (!c.moveToFirst()) return
+                serviceCharge = c.getDouble(12)
                 billNumber = c.getString(0) ?: receiptNo.toString()
                 dateTime = c.getString(1) ?: c.getString(2) ?: ""
                 customerId = if (c.isNull(3)) null else c.getLong(3)
@@ -662,7 +684,7 @@ class BillReceiptRenderer(context: Context) {
             // net_amount is stored already rounded, so the adjustment is only added
             // to a total summed from the line items - adding it to the stored figure
             // would count it twice.
-            val payable = if (items.isEmpty()) storedNetAmount else totals.grandTotal + roundOff
+            val payable = if (items.isEmpty()) storedNetAmount else totals.grandTotal + roundOff + serviceCharge
 
             // Bill summary: item count / qty / gross, each tax rate on its own line,
             // discount and totals - laid out as "label : value" lines. Replaces the
@@ -692,7 +714,8 @@ class BillReceiptRenderer(context: Context) {
                     taxSlabs = if (taxWise) emptyList() else taxSlabs,
                     isGst = isGst, summarySp = summarySp, showTotalTax = !taxWise,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
-                    roundOff = roundOff, showRoundOff = roundOffSetting, narrow = narrow
+                    roundOff = roundOff, showRoundOff = roundOffSetting, narrow = narrow,
+                    serviceCharge = serviceCharge
                 )
                 val big = totalAmountFontSize == BillSettingsDao.FontSize.BIG
                 val grandSp = when {
@@ -711,7 +734,7 @@ class BillReceiptRenderer(context: Context) {
                     llSummary, totals, taxSlabs, isGst, summarySp, netSize,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
                     roundOff = roundOff, showRoundOff = roundOffSetting,
-                    payable = payable, narrow = narrow
+                    payable = payable, narrow = narrow, serviceCharge = serviceCharge
                 )
             }
 
@@ -753,7 +776,8 @@ class BillReceiptRenderer(context: Context) {
         roundOff: Double,
         showRoundOff: Boolean,
         payable: Double,
-        narrow: Boolean
+        narrow: Boolean,
+        serviceCharge: Double = 0.0
     ) {
         fun row(label: String, value: String, bold: Boolean = false, valueSize: Float = summarySp) {
             llSummary.addView(
@@ -785,6 +809,7 @@ class BillReceiptRenderer(context: Context) {
         if (totals.tax > 0.005) row(if (isGst) "TOTAL GST" else "TOTAL VAT", money(totals.tax))
         if (showDiscount && !discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
         row("TOTAL", money(totals.grandTotal))
+        if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
         if (showRoundOff) row("ROUND OFF", money(roundOff))
         row("NET AMT", money(payable), bold = true, valueSize = netSize)
     }
@@ -818,7 +843,8 @@ class BillReceiptRenderer(context: Context) {
         discountPreTax: Boolean,
         roundOff: Double,
         showRoundOff: Boolean,
-        narrow: Boolean
+        narrow: Boolean,
+        serviceCharge: Double = 0.0
     ) {
         val rows = mutableListOf<Pair<String, String>>()
         fun row(label: String, value: String) { rows.add(label to value) }
@@ -836,9 +862,10 @@ class BillReceiptRenderer(context: Context) {
         }
         if (showTotalTax && totals.tax > 0.005) row("TOTAL TAX", money(totals.tax))
         if (showDiscount && !discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
-        // Stated before the rounding adjustment, so TOTAL AMOUNT + ROUNDED OFF is
-        // visibly the GRAND TOTAL below.
+        // Stated before the rounding adjustment, so TOTAL AMOUNT + SERVICE CHARGE +
+        // ROUNDED OFF is visibly the GRAND TOTAL below.
         row("TOTAL AMOUNT", money(totals.grandTotal))
+        if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
         if (showRoundOff) row("ROUNDED OFF", money(roundOff))
 
         // The colons line up in a column, and that column sits directly after the
