@@ -80,12 +80,16 @@ class DatabaseHelper private constructor(context: Context) :
         runCatching { db.execSQL(SQL_CREATE_MD_SECTION) }
         runCatching { db.execSQL(SQL_CREATE_MD_TABLE) }
         runCatching { db.execSQL(SQL_CREATE_MD_TABLE_UNIT) }
+        runCatching { db.execSQL(SQL_CREATE_MD_SUBTABLE) }
         runCatching { db.execSQL(SQL_CREATE_TD_ASSIGN_WAITER) }
         runCatching { db.execSQL(SQL_CREATE_TD_RUNNING_ORDER) }
         runCatching { db.execSQL(SQL_CREATE_TD_RUNNING_ORDER_ITEMS) }
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "order_note", "TEXT")
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "merged_tables", "TEXT")
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "kot_qty", "REAL DEFAULT 0")
+        // Per-item GST captured at order time, so the bill taxes each product dynamically.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "cgst_rate", "REAL DEFAULT 0")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "sgst_rate", "REAL DEFAULT 0")
         // KOT lifecycle: link a KOT to its running order, and allow the CLOSED /
         // COMPLETE statuses the restaurant flow sets (see [ensureKotStatusSchema]).
         ensureKotStatusSchema(db)
@@ -214,7 +218,7 @@ class DatabaseHelper private constructor(context: Context) :
         val kotSql = tableSql(db, Tables.TD_KOT)
         val itemSql = tableSql(db, Tables.TD_KOT_ITEMS)
         val kotOld = kotSql != null && !(kotSql.contains("CLOSED") && kotSql.contains("running_order_id"))
-        val itemOld = itemSql != null && !itemSql.contains("COMPLETE")
+        val itemOld = itemSql != null && !(itemSql.contains("COMPLETE") && itemSql.contains("CANCELLED"))
         if (!kotOld && !itemOld) return
         runCatching {
             db.setForeignKeyConstraintsEnabled(false)
@@ -392,6 +396,7 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_MD_SECTION)
         db.execSQL(SQL_CREATE_MD_TABLE)
         db.execSQL(SQL_CREATE_MD_TABLE_UNIT)
+        db.execSQL(SQL_CREATE_MD_SUBTABLE)
         db.execSQL(SQL_CREATE_TD_ASSIGN_WAITER)
         db.execSQL(SQL_CREATE_TD_RUNNING_ORDER)
         db.execSQL(SQL_CREATE_TD_RUNNING_ORDER_ITEMS)
@@ -871,7 +876,7 @@ class DatabaseHelper private constructor(context: Context) :
             Tables.TD_KOT_ITEMS, Tables.TD_KOT,
             Tables.TD_RUNNING_ORDER_ITEMS, Tables.TD_RUNNING_ORDER,
             Tables.TD_ASSIGN_WAITER,
-            Tables.MD_TABLE_UNIT, Tables.MD_TABLE, Tables.MD_SECTION,
+            Tables.MD_SUBTABLE, Tables.MD_TABLE_UNIT, Tables.MD_TABLE, Tables.MD_SECTION,
             Tables.MD_WAITERS,
             Tables.MD_PRODUCT_RATES, Tables.MD_PRODUCTS, Tables.MD_CATEGORY
         )
@@ -910,6 +915,7 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_SECTION = "md_section"
         const val MD_TABLE = "md_table"
         const val MD_TABLE_UNIT = "md_table_unit"
+        const val MD_SUBTABLE = "md_subtable"
 
         const val TD_PURCHASE = "td_purchase"
         const val TD_PURCHASE_RETURN = "td_purchase_return"
@@ -1396,6 +1402,8 @@ class DatabaseHelper private constructor(context: Context) :
                 product_name TEXT,
                 quantity REAL DEFAULT 1,
                 rate REAL DEFAULT 0,
+                cgst_rate REAL DEFAULT 0,
+                sgst_rate REAL DEFAULT 0,
                 kot_printed INTEGER NOT NULL DEFAULT 0,
                 kot_qty REAL NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
@@ -1421,6 +1429,25 @@ class DatabaseHelper private constructor(context: Context) :
                 modified_by TEXT,
                 FOREIGN KEY(table_id) REFERENCES md_table(id),
                 FOREIGN KEY(section_id) REFERENCES md_section(id)
+            )
+        """
+
+        // Split sub-tables: parts of a table (101 A, 101 B, …) created on Table Split.
+        private const val SQL_CREATE_MD_SUBTABLE = """
+            CREATE TABLE IF NOT EXISTS md_subtable (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                table_id INTEGER,
+                parent_code TEXT,
+                sub_code TEXT,
+                suffix TEXT,
+                table_status TEXT CHECK(table_status IN
+                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked')) DEFAULT 'Occupied',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(table_id) REFERENCES md_table(id)
             )
         """
 
@@ -1719,7 +1746,7 @@ class DatabaseHelper private constructor(context: Context) :
                 product_id INTEGER,
                 quantity REAL,
                 special_instructions TEXT,
-                status TEXT CHECK(status IN ('PENDING','COMPLETE','PREPARED','DELIVERED')) DEFAULT 'PENDING',
+                status TEXT CHECK(status IN ('PENDING','COMPLETE','CANCELLED','PREPARED','DELIVERED')) DEFAULT 'PENDING',
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,

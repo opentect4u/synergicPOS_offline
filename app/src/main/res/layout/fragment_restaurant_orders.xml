@@ -105,40 +105,6 @@
                     android:textStyle="bold"
                     android:textColor="@color/white" />
 
-                <TextView
-                    android:id="@+id/tabHold"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="14dp"
-                    android:maxLines="1"
-                    android:text="Hold Orders"
-                    android:textSize="13sp"
-                    android:textColor="@color/text_secondary" />
-
-                <TextView
-                    android:id="@+id/badgeHold"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="5dp"
-                    android:minWidth="18dp"
-                    android:gravity="center"
-                    android:paddingHorizontal="5dp"
-                    android:paddingVertical="1dp"
-                    android:background="@drawable/bg_badge_grey"
-                    android:text="1"
-                    android:textSize="11sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_main" />
-
-                <TextView
-                    android:id="@+id/tabCompleted"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="14dp"
-                    android:maxLines="1"
-                    android:text="Completed"
-                    android:textSize="13sp"
-                    android:textColor="@color/text_secondary" />
             </LinearLayout>
 
             <View
@@ -247,6 +213,7 @@
                 android:paddingVertical="15dp">
 
                 <TextView
+                    android:id="@+id/tvDetailTableLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Table: "
@@ -285,11 +252,12 @@
                     android:textColor="@color/text_secondary" />
 
                 <TextView
+                    android:id="@+id/tvDetailOrderTime"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:gravity="end"
-                    android:text="Order Time: 10:28 AM"
+                    android:text="Order Time: —"
                     android:textSize="13sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
@@ -313,17 +281,6 @@
                     android:textColor="@color/white"
                     app:icon="@drawable/ic_plus"
                     app:iconGravity="textStart"
-                    app:cornerRadius="10dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnHold"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="44dp"
-                    android:layout_marginStart="10dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:text="Hold"
                     app:cornerRadius="10dp" />
 
                 <com.google.android.material.button.MaterialButton
@@ -495,17 +452,17 @@
                         </LinearLayout>
 
                         <LinearLayout style="@style/OrderSummaryRow">
-                            <TextView style="@style/OrderSummaryLabel" android:text="Service Charge (5%)" />
+                            <TextView style="@style/OrderSummaryLabel" android:text="Service Charge" />
                             <TextView android:id="@+id/tvService" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                         </LinearLayout>
 
                         <LinearLayout style="@style/OrderSummaryRow">
-                            <TextView style="@style/OrderSummaryLabel" android:text="CGST (2.5%)" />
+                            <TextView style="@style/OrderSummaryLabel" android:text="CGST" />
                             <TextView android:id="@+id/tvCgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                         </LinearLayout>
 
                         <LinearLayout style="@style/OrderSummaryRow">
-                            <TextView style="@style/OrderSummaryLabel" android:text="SGST (2.5%)" />
+                            <TextView style="@style/OrderSummaryLabel" android:text="SGST" />
                             <TextView android:id="@+id/tvSgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                         </LinearLayout>
 
@@ -565,7 +522,7 @@
                             android:layout_marginTop="10dp"
                             android:insetTop="0dp"
                             android:insetBottom="0dp"
-                            android:text="Bill &amp; Pay"
+                            android:text="Checkout"
                             android:textColor="@color/white"
                             android:textSize="16sp"
                             app:cornerRadius="12dp" />

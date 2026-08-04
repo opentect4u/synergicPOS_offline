@@ -56,6 +56,18 @@ class SectionDao(context: Context) {
         return list
     }
 
+    /** The service-charge percentage configured for a section (by name), or 0. */
+    fun serviceChargeForName(name: String): Double {
+        if (name.isBlank()) return 0.0
+        val store = currentStoreId()
+        val where = if (store != null) "section_name = ? AND store_id = ?" else "section_name = ?"
+        val args = if (store != null) arrayOf(name, store.toString()) else arrayOf(name)
+        helper.readableDatabase.query(table, arrayOf("service_charge"), where, args, null, null, null, "1").use { c ->
+            if (c.moveToFirst()) return c.getDouble(0)
+        }
+        return 0.0
+    }
+
     /** Rate names from the master ([DatabaseHelper.Tables.MD_RATE_NAME]) for the current store. */
     fun priceLists(): List<PriceList> {
         val list = mutableListOf<PriceList>()

@@ -178,17 +178,17 @@
                     </LinearLayout>
 
                     <LinearLayout style="@style/OrderSummaryRow">
-                        <TextView style="@style/OrderSummaryLabel" android:text="Service Charge (5%)" />
+                        <TextView style="@style/OrderSummaryLabel" android:text="Service Charge" />
                         <TextView android:id="@+id/tvService" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                     </LinearLayout>
 
                     <LinearLayout style="@style/OrderSummaryRow">
-                        <TextView style="@style/OrderSummaryLabel" android:text="CGST (2.5%)" />
+                        <TextView style="@style/OrderSummaryLabel" android:text="CGST" />
                         <TextView android:id="@+id/tvCgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                     </LinearLayout>
 
                     <LinearLayout style="@style/OrderSummaryRow">
-                        <TextView style="@style/OrderSummaryLabel" android:text="SGST (2.5%)" />
+                        <TextView style="@style/OrderSummaryLabel" android:text="SGST" />
                         <TextView android:id="@+id/tvSgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                     </LinearLayout>
 

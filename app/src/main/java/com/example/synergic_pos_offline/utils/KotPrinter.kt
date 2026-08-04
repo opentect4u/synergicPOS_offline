@@ -52,6 +52,7 @@ object KotPrinter {
         val title = paint(0.095f, true)
         val sub = paint(0.05f, false)
         val item = paint(0.058f, true)
+        val cancelHdr = paint(0.05f, true)
         val note = paint(0.048f, false)
         val ruleH = maxOf(2, width / 200)
 
@@ -60,22 +61,31 @@ object KotPrinter {
         val padBottom = width * 0.10f     // feed margin before the cut
         val gap = width * 0.012f
 
-        // Build the line list top-to-bottom.
+        // Build the line list top-to-bottom; ruleBefore holds indices to draw a rule above.
         val lines = mutableListOf<Line>()
+        val ruleBefore = mutableSetOf<Int>()
         lines += Line("KOT", title, center = true)
         lines += Line(batch.kotNumber, sub, center = true)
         if (batch.section.isNotBlank()) lines += Line("Section: ${batch.section}", sub, center = true)
         lines += Line("Table: ${batch.tableCode}    ${batch.time}", sub, center = true)
-        val ruleAfterHeader = lines.size
+        if (batch.lines.isNotEmpty()) ruleBefore += lines.size
         batch.lines.forEach { (name, qty) -> lines += Line("${qty.toInt()} x  $name", item, center = false) }
-        val ruleBeforeNote = if (batch.note.isNotBlank()) lines.size else -1
-        if (batch.note.isNotBlank()) lines += Line("Note: ${batch.note}", note, center = false)
+        // Cancelled items — a clearly separated section.
+        if (batch.cancelLines.isNotEmpty()) {
+            ruleBefore += lines.size
+            lines += Line("** CANCELLED **", cancelHdr, center = true)
+            batch.cancelLines.forEach { (name, qty) -> lines += Line("${qty.toInt()} x  $name", item, center = false) }
+        }
+        if (batch.note.isNotBlank()) {
+            ruleBefore += lines.size
+            lines += Line("Note: ${batch.note}", note, center = false)
+        }
 
-        // Measure total height (each line + a gap; two rules add their own height).
+        // Measure total height (each line + a gap; each rule adds its own height).
         fun lineHeight(p: Paint) = p.descent() - p.ascent()
         var height = padTop + padBottom
         lines.forEach { height += lineHeight(it.paint) + gap }
-        height += ruleH * 2 + gap * 2   // header rule + note rule (harmless if unused)
+        height += ruleBefore.size * (ruleH + gap)
 
         val bmp = Bitmap.createBitmap(width, height.toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp).apply { drawColor(Color.WHITE) }
@@ -83,7 +93,7 @@ object KotPrinter {
 
         var y = padTop
         lines.forEachIndexed { index, line ->
-            if (index == ruleAfterHeader || index == ruleBeforeNote) {
+            if (index in ruleBefore) {
                 y += gap
                 canvas.drawLine(padX, y, width - padX, y, rule)
                 y += ruleH + gap
