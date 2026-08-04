@@ -25,11 +25,9 @@
             android:textColor="@color/text_main"
             android:layout_marginBottom="20dp" />
 
-        <ScrollView
+        <com.example.synergic_pos_offline.utils.MaxHeightScrollView
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:minHeight="300dp"
+            android:layout_height="wrap_content"
             android:layout_marginBottom="20dp"
             android:scrollbars="vertical">
 
@@ -569,7 +567,7 @@
                 <!-- end legacy hidden fields -->
 
             </LinearLayout>
-        </ScrollView>
+        </com.example.synergic_pos_offline.utils.MaxHeightScrollView>
 
         <LinearLayout
             android:layout_width="match_parent"

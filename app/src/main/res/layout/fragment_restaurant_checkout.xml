@@ -125,8 +125,6 @@
                 <TextView android:layout_width="112dp" android:layout_height="wrap_content"
                     android:gravity="end" android:text="AMOUNT (₹)"
                     android:textSize="11sp" android:textColor="@color/text_secondary" />
-                <TextView android:layout_width="48dp" android:layout_height="wrap_content"
-                    android:text="" />
             </LinearLayout>
 
             <View
