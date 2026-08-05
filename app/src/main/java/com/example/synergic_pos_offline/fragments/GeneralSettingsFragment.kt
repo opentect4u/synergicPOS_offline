@@ -185,6 +185,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
 
         val accent = ThemeManager.getThemeColor(requireContext())
         val view = layoutInflater.inflate(R.layout.dialog_change_password, null)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val etCurrent = view.findViewById<TextInputEditText>(R.id.etCurrentPwd)
         val etNew = view.findViewById<TextInputEditText>(R.id.etNewPwd)
         val etConfirm = view.findViewById<TextInputEditText>(R.id.etConfirmPwd)

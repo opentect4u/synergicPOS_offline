@@ -356,7 +356,7 @@ object ProductBulkImporter {
         return names
     }
 
-    private fun currentUserId(): String? = SessionManager.currentUser?.userId
+    private fun currentUserId(): String? = SessionManager.auditUser
 
     /** store_id (signed-in user's store) + outlet_id, so uploads land in the list. */
     private fun storeAndOutlet(context: Context): Pair<Int?, Int?> {

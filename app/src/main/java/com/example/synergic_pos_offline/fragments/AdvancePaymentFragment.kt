@@ -304,12 +304,15 @@ class AdvancePaymentFragment : Fragment(), TitledScreen {
     }
 
     private fun sendToPrinter(receipt: PaymentReceiptRenderer.Receipt, config: ThermalPrinter.Config) {
-        val capture = PaymentReceiptRenderer(requireContext()).renderToBitmap(receipt, config.paperDots)
+        // May run from the printer-setup dialog's callback after this screen is gone;
+        // use the current context and bail rather than crash on requireContext().
+        val ctx = context ?: return
+        val capture = PaymentReceiptRenderer(ctx).renderToBitmap(receipt, config.paperDots)
         if (capture == null) {
             toast("Could not render the receipt")
             return
         }
-        ThermalPrinter.print(requireContext(), capture, config) { result ->
+        ThermalPrinter.print(ctx, capture, config) { result ->
             if (!isAdded) return@print
             when (result) {
                 is ThermalPrinter.Result.Success -> toast("Printed")

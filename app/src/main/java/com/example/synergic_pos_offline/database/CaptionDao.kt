@@ -2,6 +2,10 @@ package com.example.synergic_pos_offline.database
 
 import android.content.ContentValues
 import android.content.Context
+import com.example.synergic_pos_offline.utils.SessionManager
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Data-access layer for printed caption lines, which live in
@@ -76,10 +80,16 @@ class CaptionDao(context: Context) {
     }
 
     private fun read(types: Collection<Type>?): List<Entry> {
-        val selection = types?.let {
-            "caption_type IN (${it.joinToString(",") { "?" }})"
+        val store = currentStoreId()
+        val clauses = mutableListOf<String>()
+        val argList = mutableListOf<String>()
+        if (types != null) {
+            clauses.add("caption_type IN (${types.joinToString(",") { "?" }})")
+            types.forEach { argList.add(it.stored) }
         }
-        val args = types?.map { it.stored }?.toTypedArray()
+        if (store != null) { clauses.add("store_id = ?"); argList.add(store.toString()) }
+        val selection = clauses.takeIf { it.isNotEmpty() }?.joinToString(" AND ")
+        val args = argList.takeIf { it.isNotEmpty() }?.toTypedArray()
         val list = mutableListOf<Entry>()
         helper.readableDatabase.query(
             table,
@@ -118,6 +128,8 @@ class CaptionDao(context: Context) {
             put("is_bold", if (bold) 1 else 0)
             put("is_enabled", if (enabled) 1 else 0)
             put("caption_type", type.stored)
+            put("created_at", now())
+            put("created_by", currentUser())
         }
         val id = helper.writableDatabase.insert(table, null, values)
         return if (id == -1L) null else id.toString()
@@ -143,6 +155,8 @@ class CaptionDao(context: Context) {
             put("is_enabled", if (enabled) 1 else 0)
             put("caption_type", type.stored)
             if (existing != null && existing.type != type) put("caption_number", nextNumber(type))
+            put("modified_at", now())
+            put("modified_by", currentUser())
         }
         return helper.writableDatabase.update(table, values, "id = ?", arrayOf(id.toString()))
     }
@@ -150,14 +164,21 @@ class CaptionDao(context: Context) {
     /** Toggles the enabled flag for the caption identified by [rowKey]. */
     fun setEnabled(rowKey: String, enabled: Boolean): Int {
         val id = rowKey.toLongOrNull() ?: return 0
-        val values = ContentValues().apply { put("is_enabled", if (enabled) 1 else 0) }
+        val values = ContentValues().apply {
+            put("is_enabled", if (enabled) 1 else 0)
+            put("modified_at", now())
+            put("modified_by", currentUser())
+        }
         return helper.writableDatabase.update(table, values, "id = ?", arrayOf(id.toString()))
     }
 
-    /** Number of captions of a type (used to cap at 10). */
+    /** Number of captions of a type (used to cap at 10), this store only. */
     fun count(type: Type): Int {
+        val store = currentStoreId()
+        val storeClause = if (store != null) " AND store_id = ?" else ""
+        val args = if (store != null) arrayOf(type.stored, store.toString()) else arrayOf(type.stored)
         helper.readableDatabase.rawQuery(
-            "SELECT COUNT(*) FROM $table WHERE caption_type = ?", arrayOf(type.stored)
+            "SELECT COUNT(*) FROM $table WHERE caption_type = ?$storeClause", args
         ).use { c ->
             return if (c.moveToFirst()) c.getInt(0) else 0
         }
@@ -172,10 +193,13 @@ class CaptionDao(context: Context) {
         }
     }
 
-    /** Next line number (1..10) for a type, based on the current max. */
+    /** Next line number (1..10) for a type, based on the current max (this store). */
     private fun nextNumber(type: Type): Int {
+        val store = currentStoreId()
+        val storeClause = if (store != null) " AND store_id = ?" else ""
+        val args = if (store != null) arrayOf(type.stored, store.toString()) else arrayOf(type.stored)
         helper.readableDatabase.rawQuery(
-            "SELECT MAX(caption_number) FROM $table WHERE caption_type = ?", arrayOf(type.stored)
+            "SELECT MAX(caption_number) FROM $table WHERE caption_type = ?$storeClause", args
         ).use { c ->
             val max = if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else 0
             return (max + 1).coerceIn(1, 10)
@@ -183,6 +207,7 @@ class CaptionDao(context: Context) {
     }
 
     private fun currentStoreId(): Long? {
+        SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
             null, null, null, null, "store_id ASC", "1"
@@ -191,4 +216,7 @@ class CaptionDao(context: Context) {
         }
         return null
     }
+
+    private fun currentUser(): String? = SessionManager.auditUser
+    private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 }

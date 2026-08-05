@@ -323,11 +323,16 @@ object DialogUtils {
                 else -> et.inputType = android.text.InputType.TYPE_CLASS_TEXT
             }
 
-            // Apply max length if specified
-            if (field.maxLength > 0) {
-                val filters = arrayOf(android.text.InputFilter.LengthFilter(field.maxLength))
-                et.filters = filters
+            // Cap the field length. An explicit maxLength wins; otherwise a sensible
+            // default keeps every form field bounded (text areas get more room),
+            // so no input can grow without limit.
+            val cap = if (field.maxLength > 0) field.maxLength else when {
+                field.isTextArea -> InputLimits.TEXT_AREA
+                field.inputType == "phone" -> InputLimits.PHONE
+                field.inputType == "number" -> InputLimits.NUMBER
+                else -> InputLimits.TEXT
             }
+            et.filters = arrayOf(android.text.InputFilter.LengthFilter(cap))
 
             // Set textarea properties if needed
             if (field.isTextArea) {

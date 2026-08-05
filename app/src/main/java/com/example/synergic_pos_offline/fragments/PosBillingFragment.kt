@@ -89,6 +89,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val category: String, val categoryId: Long, val price: Double, val stock: String = "ok",
         val hsn: String = "0000", val cgst: Double = 0.0, val sgst: Double = 0.0, val vat: Double = 0.0,
         val unit: String = "pcs",
+        /** Whether the product's unit allows fractional quantities (unit fraction_flag). */
+        val allowFraction: Boolean = false,
         /** The rate's own pre-configured discount (Tax Settings' item-wise discount).
          *  [discType] is "P"/"A" (percent/amount) or null when none is configured. */
         val discValue: Double = 0.0, val discType: String? = null,
@@ -99,7 +101,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val gst: Double get() = cgst + sgst
     }
 
-    private data class CartLine(val product: Product, var qty: Int)
+    private data class CartLine(val product: Product, var qty: Double)
     private fun CartLine.toSessionLine() = CheckoutSession.Line(
         product.name, product.sku, product.price, qty,
         product.id.toLongOrNull(), product.cgst, product.sgst, product.vat,
@@ -600,7 +602,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 // Query the product's default rate row (rate + its own tax split).
                 db.query(
                     "md_product_rates",
-                    arrayOf("rate", "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type"),
+                    arrayOf("rate", "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type", "unit_id"),
                     "product_id = ?",
                     arrayOf(productId),
                     null, null, "\"default\" DESC, id ASC", "1"
@@ -611,6 +613,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
                     var vat = 0.0
                     var discValue = 0.0
                     var discType: String? = null
+                    var unitId: Long? = null
                     if (rateCursor.moveToFirst()) {
                         price = if (rateCursor.isNull(0)) 0.0 else rateCursor.getDouble(0)
                         cgst = if (rateCursor.isNull(1)) 0.0 else rateCursor.getDouble(1)
@@ -618,7 +621,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
                         vat = if (rateCursor.isNull(3)) 0.0 else rateCursor.getDouble(3)
                         discValue = if (rateCursor.isNull(4)) 0.0 else rateCursor.getDouble(4)
                         discType = rateCursor.getString(5)
+                        unitId = if (rateCursor.isNull(6)) null else rateCursor.getLong(6)
                     }
+                    val (unitSymbol, allowFraction) = unitInfo(db, unitId)
 
                     // In Multiple mode, gather every rate for the popup's dropdown.
                     val rates = if (multipleRates) loadRates(db, productId) else emptyList()
@@ -639,6 +644,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
                         cgst = cgst,
                         sgst = sgst,
                         vat = vat,
+                        unit = unitSymbol.ifBlank { "pcs" },
+                        allowFraction = allowFraction,
                         discValue = discValue,
                         discType = discType,
                         rates = rates
@@ -647,6 +654,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 }
             }
         }
+    }
+
+    /** A unit's symbol and whether it allows fractional quantities (fraction_flag). */
+    private fun unitInfo(db: android.database.sqlite.SQLiteDatabase, unitId: Long?): Pair<String, Boolean> {
+        if (unitId == null) return "" to false
+        db.query("md_units", arrayOf("unit_symbol", "fraction_flag"),
+            "id = ?", arrayOf(unitId.toString()), null, null, null, "1").use { c ->
+            if (c.moveToFirst()) return (c.getString(0).orEmpty() to (c.getInt(1) == 1))
+        }
+        return "" to false
     }
 
     /** Every rate row for a product (default first), for the popup's rate dropdown. */
@@ -692,7 +709,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     /** Adds [qty] units of [p] at [rate]. Merges with an existing line only when
      *  the same product is already in the cart at the same rate. */
-    private fun addToCart(p: Product, qty: Int, rate: Double) {
+    private fun addToCart(p: Product, qty: Double, rate: Double) {
         if (p.stock == "out") { toast("${p.name} is out of stock"); return }
         val priced = if (rate == p.price) p else p.copy(price = rate)
         
@@ -753,8 +770,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val quantityStatusOn = SettingsCache.value(requireContext(), "G", "Quantity Status") == "1"
         val startQty = when {
             editing -> cart[editIndex].qty
-            quantityStatusOn -> 0
-            else -> 1
+            quantityStatusOn -> 0.0
+            else -> 1.0
         }
 
         // Manual Rate off (App Settings): the rate field is read-only.
@@ -783,13 +800,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
     // opening the dialog costs nothing beyond the lookup.
     private fun Product.toDialogProduct() = ProductEntryDialog.Product(
         id = id, name = name, sku = sku, category = category,
-        price = price, hsn = hsn, unit = unit, photo = photoCache[id],
+        price = price, hsn = hsn, unit = unit, allowFraction = allowFraction, photo = photoCache[id],
         cgst = cgst, sgst = sgst, vat = vat,
         discValue = discValue, discType = discType, rates = rates
     )
 
     /** Replaces a cart line's rate and quantity (from the edit dialog). */
-    private fun updateCartLine(index: Int, qty: Int, rate: Double) {
+    private fun updateCartLine(index: Int, qty: Double, rate: Double) {
         if (index !in cart.indices) return
         val base = cart[index].product
         val priced = if (rate == base.price) base else base.copy(price = rate)
@@ -903,7 +920,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
                                         put("credit_enabled", 0)
                                         put("credit_limit", 0.0)
                                         put("balance_amount", 0.0)
-                                        put("created_by", SessionManager.currentUser?.userId ?: "System")
+                                        put("created_by", SessionManager.auditUser ?: "System")
                                         put("created_at", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()))
                                     }
                                     val result = db.insert("md_customers", null, values)
@@ -1014,7 +1031,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
                             put("phone_number", phone)
                             put("customer_address", address)
                             put("gstin", gstin)
-                            put("modified_by", SessionManager.currentUser?.userId)
+                            put("modified_by", SessionManager.auditUser)
                             put("modified_at", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
                         }
                         db.update("md_customers", cv, "id=?", arrayOf(id.toString()))
@@ -1227,7 +1244,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val items = heldOrders.map { h ->
             val heldLines = h.toCartLines()
             val details = listOfNotNull(
-                "${h.lines.sumOf { it.qty }} items",
+                "${qtyText(h.lines.sumOf { it.qty })} items",
                 h.customerName?.takeIf { it.isNotBlank() },
                 "held ${heldTime(h.heldAt)}"
             ).joinToString(" · ")
@@ -1608,7 +1625,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvCartEmpty.visibility = if (cart.isEmpty()) View.VISIBLE else View.GONE
 
         val totalQty = cart.sumOf { it.qty }
-        tvItemCount.text = "$totalQty item${if (totalQty != 1) "s" else ""}"
+        tvItemCount.text = "${qtyText(totalQty)} item${if (totalQty != 1.0) "s" else ""}"
 
         tvSubtotal.text = money(subtotal())
         // Item-wise discount has no single whole-bill figure to show here - each
@@ -1638,6 +1655,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
     }
 
     private fun money(v: Double): String = "₹" + String.format("%.2f", BillRounding.toPaise(v))
+
+    /** Whole quantities show without decimals; fractional ones keep up to 3 places. */
+    private fun qtyText(v: Double): String =
+        if (v % 1.0 == 0.0) v.toLong().toString()
+        else String.format("%.3f", v).trimEnd('0').trimEnd('.')
 
     private fun toast(msg: String) =
         android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_SHORT).show()
@@ -1778,7 +1800,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             
             holder.name.text = line.product.name
             holder.each.text = "${money(line.product.price)} each"
-            holder.qty.text = line.qty.toString()
+            holder.qty.text = qtyText(line.qty)
             holder.total.text = money(lineSalePrice(line))
             
             // Show marker for the most recently added/updated item

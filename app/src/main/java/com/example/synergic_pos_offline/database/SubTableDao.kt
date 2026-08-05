@@ -26,7 +26,7 @@ class SubTableDao(context: Context) {
             put("sub_code", subCode)
             put("suffix", suffix)
             put("table_status", status)
-            put("created_by", SessionManager.currentUser?.userId)
+            put("created_by", SessionManager.auditUser)
         })
         return subCode
     }

@@ -41,6 +41,36 @@ object KotPrinter {
     /** One printed line: its text, the paint to draw it with, and whether it centers. */
     private class Line(val text: String, val paint: Paint, val center: Boolean)
 
+    /**
+     * Breaks [text] into lines that each fit within [maxWidth] when drawn with [paint],
+     * splitting on spaces and hard-splitting any single word too long to fit.
+     */
+    private fun wrapToWidth(text: String, paint: Paint, maxWidth: Float): List<String> {
+        if (maxWidth <= 0f) return listOf(text)
+        val out = mutableListOf<String>()
+        val current = StringBuilder()
+        fun flush() { if (current.isNotEmpty()) { out.add(current.toString()); current.clear() } }
+        for (word in text.split(" ")) {
+            val candidate = if (current.isEmpty()) word else "$current $word"
+            if (paint.measureText(candidate) <= maxWidth) {
+                current.clear(); current.append(candidate)
+            } else {
+                flush()
+                var rest = word
+                // A single word wider than the line is chopped to fit.
+                while (paint.measureText(rest) > maxWidth && rest.length > 1) {
+                    var cut = 1
+                    while (cut < rest.length && paint.measureText(rest.substring(0, cut + 1)) <= maxWidth) cut++
+                    out.add(rest.substring(0, cut))
+                    rest = rest.substring(cut)
+                }
+                current.append(rest)
+            }
+        }
+        flush()
+        return out.ifEmpty { listOf(text) }
+    }
+
     /** Draws the ticket at [width] dots (the printer's printable width) and returns it. */
     fun render(batch: RunningOrderDao.KotBatch, width: Int): Bitmap {
         val black = Color.BLACK
@@ -78,7 +108,11 @@ object KotPrinter {
         }
         if (batch.note.isNotBlank()) {
             ruleBefore += lines.size
-            lines += Line("Note: ${batch.note}", note, center = false)
+            // Wrap the note to the paper width so a long note prints in full instead
+            // of running off the edge and being cut.
+            wrapToWidth("Note: ${batch.note}", note, width - padX * 2).forEach {
+                lines += Line(it, note, center = false)
+            }
         }
 
         // Measure total height (each line + a gap; each rule adds its own height).

@@ -322,7 +322,7 @@ class LoginFragment : Fragment() {
 
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
         val sql = """
-            SELECT u.password, u.role, u.is_blocked, u.store_id
+            SELECT u.password, u.role, u.is_blocked, u.store_id, u.id
             FROM ${DatabaseHelper.Tables.MD_USERS} u
             JOIN ${DatabaseHelper.Tables.MD_REGISTRATION} r ON r.store_id = u.store_id
             WHERE u.user_id = ? AND r.verify_flag = 1
@@ -343,13 +343,15 @@ class LoginFragment : Fragment() {
             val roleCode = cursor.getString(cursor.getColumnIndexOrThrow("role"))
             val isBlocked = cursor.getInt(cursor.getColumnIndexOrThrow("is_blocked")) == 1
             val storeId = cursor.getInt(cursor.getColumnIndexOrThrow("store_id"))
+            val serialNo = cursor.getLong(cursor.getColumnIndexOrThrow("id"))
             val role = if (roleCode == "G") UserRole.GENERAL_USER else UserRole.ADMIN
             return User(
                 userId = userId,
                 password = password,
                 role = role,
                 isBlocked = isBlocked,
-                storeId = storeId
+                storeId = storeId,
+                serialNo = serialNo
             )
         }
     }

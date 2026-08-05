@@ -2,6 +2,10 @@ package com.example.synergic_pos_offline.database
 
 import android.content.ContentValues
 import android.content.Context
+import com.example.synergic_pos_offline.utils.SessionManager
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Data-access layer for bill header/footer lines, which live in two tables:
@@ -60,10 +64,13 @@ class BillHeaderFooterDao(context: Context) {
     private fun readSection(section: Section): List<Entry> {
         val cfg = config(section)
         val list = mutableListOf<Entry>()
+        val store = currentStoreId()
+        val where = if (store != null) "${cfg.typeCol} = ? AND store_id = ?" else "${cfg.typeCol} = ?"
+        val args = if (store != null) arrayOf("BILL", store.toString()) else arrayOf("BILL")
         helper.readableDatabase.query(
             cfg.table,
             arrayOf("id", cfg.numberCol, cfg.textCol, "font_size", "is_bold", "is_enabled"),
-            "${cfg.typeCol} = ?", arrayOf("BILL"), null, null, "${cfg.numberCol} ASC"
+            where, args, null, null, "${cfg.numberCol} ASC"
         ).use { c ->
             while (c.moveToNext()) {
                 list.add(
@@ -98,6 +105,8 @@ class BillHeaderFooterDao(context: Context) {
             put("is_bold", if (bold) 1 else 0)
             put("is_enabled", if (enabled) 1 else 0)
             put(cfg.typeCol, "BILL")
+            put("created_at", now())
+            put("created_by", currentUser())
         }
         val id = helper.writableDatabase.insert(cfg.table, null, values)
         return if (id == -1L) null else (if (section == Section.HEADER) "H" else "F") + id
@@ -115,6 +124,8 @@ class BillHeaderFooterDao(context: Context) {
             put("font_size", fontSize.stored)
             put("is_bold", if (bold) 1 else 0)
             put("is_enabled", if (enabled) 1 else 0)
+            put("modified_at", now())
+            put("modified_by", currentUser())
         }
         return helper.writableDatabase.update(cfg.table, values, "id = ?", arrayOf(id.toString()))
     }
@@ -122,15 +133,22 @@ class BillHeaderFooterDao(context: Context) {
     /** Toggles the enabled flag for the line identified by [rowKey]. */
     fun setEnabled(rowKey: String, enabled: Boolean): Int {
         val (section, id) = parseKey(rowKey) ?: return 0
-        val values = ContentValues().apply { put("is_enabled", if (enabled) 1 else 0) }
+        val values = ContentValues().apply {
+            put("is_enabled", if (enabled) 1 else 0)
+            put("modified_at", now())
+            put("modified_by", currentUser())
+        }
         return helper.writableDatabase.update(config(section).table, values, "id = ?", arrayOf(id.toString()))
     }
 
-    /** Number of BILL lines currently in a section (used to cap at 10). */
+    /** Number of BILL lines currently in a section (used to cap at 10), this store only. */
     fun count(section: Section): Int {
         val cfg = config(section)
+        val store = currentStoreId()
+        val storeClause = if (store != null) " AND store_id = ?" else ""
+        val args = store?.let { arrayOf(it.toString()) }
         helper.readableDatabase.rawQuery(
-            "SELECT COUNT(*) FROM ${cfg.table} WHERE ${cfg.typeCol} = 'BILL'", null
+            "SELECT COUNT(*) FROM ${cfg.table} WHERE ${cfg.typeCol} = 'BILL'$storeClause", args
         ).use { c ->
             return if (c.moveToFirst()) c.getInt(0) else 0
         }
@@ -145,11 +163,14 @@ class BillHeaderFooterDao(context: Context) {
         }
     }
 
-    /** Next line number (1..10) for a section, based on the current max. */
+    /** Next line number (1..10) for a section, based on the current max (this store). */
     private fun nextNumber(section: Section): Int {
         val cfg = config(section)
+        val store = currentStoreId()
+        val storeClause = if (store != null) " AND store_id = ?" else ""
+        val args = store?.let { arrayOf(it.toString()) }
         helper.readableDatabase.rawQuery(
-            "SELECT MAX(${cfg.numberCol}) FROM ${cfg.table} WHERE ${cfg.typeCol} = 'BILL'", null
+            "SELECT MAX(${cfg.numberCol}) FROM ${cfg.table} WHERE ${cfg.typeCol} = 'BILL'$storeClause", args
         ).use { c ->
             val max = if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else 0
             return (max + 1).coerceIn(1, 10)
@@ -183,6 +204,7 @@ class BillHeaderFooterDao(context: Context) {
     }
 
     private fun currentStoreId(): Long? {
+        SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
             null, null, null, null, "store_id ASC", "1"
@@ -191,4 +213,7 @@ class BillHeaderFooterDao(context: Context) {
         }
         return null
     }
+
+    private fun currentUser(): String? = SessionManager.auditUser
+    private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 }

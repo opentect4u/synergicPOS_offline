@@ -25,7 +25,7 @@ import java.util.Locale
  * [DatabaseHelper.Tables.TD_RETURN_ITEMS]; an item-wise return simply has no
  * original bill against it.
  */
-class ReturnDao(context: Context) {
+class ReturnDao(private val context: Context) {
 
     private val helper = DatabaseHelper.getInstance(context)
     private val taxSettingsDao = TaxSettingsDao(context)
@@ -458,11 +458,16 @@ class ReturnDao(context: Context) {
             )
             if (id == -1L) return null
 
-            // Numbered off its own row id, so the number on the paper is the row.
-            val returnNumber = RETURN_PREFIX + String.format(Locale.US, "%06d", id)
+            // Numbered off the shared bill sequence, so returns run continuously with
+            // normal sales (and recoveries); bill_seq_no advances that same counter.
+            val shared = BillDao(context).nextSharedBillNumber()
+            val returnNumber = shared.number
             db.update(
                 DatabaseHelper.Tables.TD_SALE_RETURNS,
-                ContentValues().apply { put("return_bill_number", returnNumber) },
+                ContentValues().apply {
+                    put("return_bill_number", returnNumber)
+                    put("bill_seq_no", shared.seq)
+                },
                 "id = ?", arrayOf(id.toString())
             )
 
@@ -499,7 +504,7 @@ class ReturnDao(context: Context) {
         }
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 
     private fun now(): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())

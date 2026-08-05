@@ -33,6 +33,13 @@ class DatabaseHelper private constructor(context: Context) :
         // Rate-name master + the rate's link to it (non-destructive).
         runCatching { db.execSQL(SQL_CREATE_MD_RATE_NAME) }
         addColumnIfMissing(db, Tables.MD_PRODUCT_RATES, "rate_name_id", "INTEGER")
+        // sell_price / sale_price are duplicate columns for the selling price. Reads
+        // use COALESCE(sell_price, sale_price) and writes set both; backfill legacy
+        // rows so whichever one was populated fills the other.
+        runCatching {
+            db.execSQL("UPDATE ${Tables.MD_PRODUCT_RATES} SET sell_price = sale_price WHERE sell_price IS NULL AND sale_price IS NOT NULL")
+            db.execSQL("UPDATE ${Tables.MD_PRODUCT_RATES} SET sale_price = sell_price WHERE sale_price IS NULL AND sell_price IS NOT NULL")
+        }
         // Restaurant-mode product attributes (Veg/Non-Veg/Egg, spice, prep time, availability).
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "food_type", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "spice_level", "TEXT")
@@ -111,6 +118,17 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_TD_ADVANCE_PAYMENTS)
         addColumnIfMissing(db, Tables.TD_ADVANCE_PAYMENTS, "receipt_number", "TEXT")
         addColumnIfMissing(db, Tables.TD_ADVANCE_PAYMENTS, "payment_mode", "TEXT")
+        // Sale returns and credit recoveries share one continuous bill-number sequence
+        // with normal sales — bill_seq_no is the shared counter (see BillDao).
+        addColumnIfMissing(db, Tables.TD_ADVANCE_PAYMENTS, "bill_seq_no", "INTEGER")
+        addColumnIfMissing(db, Tables.TD_SALE_RETURNS, "bill_seq_no", "INTEGER")
+        // Audit trail for header / footer / caption masters.
+        listOf(Tables.MD_HEADERS, Tables.MD_FOOTERS, Tables.MD_CAPTIONS).forEach { t ->
+            addColumnIfMissing(db, t, "created_at", "TEXT")
+            addColumnIfMissing(db, t, "modified_at", "TEXT")
+            addColumnIfMissing(db, t, "created_by", "TEXT")
+            addColumnIfMissing(db, t, "modified_by", "TEXT")
+        }
         ensureProductsSchema(db)
         recreateProductRatesIfOldSchema(db)
         // "default" is a reserved word, so it must be quoted in the ALTER.
@@ -1168,7 +1186,11 @@ class DatabaseHelper private constructor(context: Context) :
                 font_size TEXT CHECK(font_size IN ('SMALL','MEDIUM','BIG','EXTRA_LARGE')),
                 is_bold INTEGER NOT NULL DEFAULT 0,
                 is_enabled INTEGER NOT NULL DEFAULT 1,
-                header_type TEXT CHECK(header_type IN ('BILL','KOT'))
+                header_type TEXT CHECK(header_type IN ('BILL','KOT')),
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
             )
         """
 
@@ -1181,7 +1203,11 @@ class DatabaseHelper private constructor(context: Context) :
                 font_size TEXT CHECK(font_size IN ('SMALL','MEDIUM','BIG','EXTRA_LARGE')),
                 is_bold INTEGER NOT NULL DEFAULT 0,
                 is_enabled INTEGER NOT NULL DEFAULT 1,
-                footer_type TEXT CHECK(footer_type IN ('BILL','KOT'))
+                footer_type TEXT CHECK(footer_type IN ('BILL','KOT')),
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
             )
         """
 
@@ -1199,7 +1225,11 @@ class DatabaseHelper private constructor(context: Context) :
                 font_size TEXT CHECK(font_size IN ('SMALL','MEDIUM','BIG','EXTRA_LARGE')),
                 is_bold INTEGER NOT NULL DEFAULT 0,
                 is_enabled INTEGER NOT NULL DEFAULT 1,
-                caption_type TEXT CHECK(caption_type IN ('BILL','DUPLICATE','CREDIT'))
+                caption_type TEXT CHECK(caption_type IN ('BILL','DUPLICATE','CREDIT')),
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
             )
         """
 

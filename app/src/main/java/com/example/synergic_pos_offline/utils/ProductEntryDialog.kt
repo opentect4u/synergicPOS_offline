@@ -35,6 +35,8 @@ object ProductEntryDialog {
         val price: Double,
         val hsn: String = "0000",
         val unit: String = "pcs",
+        /** Whether this product's unit allows fractional quantities (unit fraction_flag). */
+        val allowFraction: Boolean = false,
         /**
          * The product's picture, already decoded by whichever screen is showing the
          * grid - those screens keep a cache of them for the tiles, and decoding the
@@ -77,7 +79,7 @@ object ProductEntryDialog {
         inflater: LayoutInflater,
         product: Product,
         startRate: Double = product.price,
-        startQty: Int = 1,
+        startQty: Double = 1.0,
         confirmLabel: String = "Add to cart",
         focusQty: Boolean = false,
         focusRate: Boolean = false,
@@ -88,7 +90,7 @@ object ProductEntryDialog {
          *  pre-configured discount applies, priced per [discountPreTax]. */
         itemwiseDiscountActive: Boolean = false,
         discountPreTax: Boolean = true,
-        onConfirm: (qty: Int, rate: Double) -> Unit
+        onConfirm: (qty: Double, rate: Double) -> Unit
     ) {
         val accent = ThemeManager.getThemeColor(context)
         val view = inflater.inflate(R.layout.dialog_product_entry, null)
@@ -168,7 +170,11 @@ object ProductEntryDialog {
         val tvAmount = view.findViewById<TextView>(R.id.tvLineAmount)
 
         etRate.setText(String.format("%.2f", startRate))
-        etQty.setText(startQty.toString())
+        etQty.setText(qtyText(startQty))
+        // A unit that allows fractions accepts decimals; otherwise whole numbers only.
+        etQty.inputType = if (product.allowFraction)
+            (android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL)
+        else android.text.InputType.TYPE_CLASS_NUMBER
 
         // Manual rate off: the rate is fixed to the product's price and can't be edited.
         if (!rateEditable) {
@@ -180,7 +186,7 @@ object ProductEntryDialog {
 
         fun refreshAmount() {
             val rate = etRate.text?.toString()?.toDoubleOrNull() ?: 0.0
-            val qty = etQty.text?.toString()?.toIntOrNull() ?: 0
+            val qty = etQty.text?.toString()?.toDoubleOrNull() ?: 0.0
             val mrp = rate * qty
             val combinedRate = curCgst + curSgst
 
@@ -260,10 +266,12 @@ object ProductEntryDialog {
         btnCancel.setOnClickListener { dialog.dismiss() }
         btnAdd.setOnClickListener {
             val rate = etRate.text?.toString()?.toDoubleOrNull()
-            val qty = etQty.text?.toString()?.toIntOrNull()
+            val qty = etQty.text?.toString()?.toDoubleOrNull()
             when {
                 rate == null || rate <= 0 -> toast(context, "Enter a valid rate")
                 qty == null || qty <= 0 -> toast(context, "Enter a valid quantity")
+                !product.allowFraction && qty % 1.0 != 0.0 ->
+                    toast(context, "Whole quantity only for ${product.unit}")
                 else -> {
                     onConfirm(qty, rate)
                     dialog.dismiss()
@@ -283,6 +291,11 @@ object ProductEntryDialog {
             focusQty -> { etQty.requestFocus(); etQty.selectAll() }
         }
     }
+
+    /** Whole quantities show without decimals; fractional ones keep up to 3 places. */
+    private fun qtyText(v: Double): String =
+        if (v % 1.0 == 0.0) v.toLong().toString()
+        else v.toString().trimEnd('0').trimEnd('.')
 
     private fun money(v: Double): String = "₹" + String.format("%.2f", v)
 
