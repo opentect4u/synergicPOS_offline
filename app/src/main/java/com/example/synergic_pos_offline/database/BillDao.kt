@@ -77,7 +77,11 @@ class BillDao(context: Context) {
         val roundOffAmount: Double = 0.0,
         val waiterId: Long? = null,
         val isMrpBilling: Boolean = false,
-        val isReturnBill: Boolean = false
+        val isReturnBill: Boolean = false,
+        // Restaurant-mode fields (null/0 for grocery bills).
+        val tableNumber: String? = null,
+        val orderType: String? = null,
+        val serviceChargeAmount: Double = 0.0
     )
 
     /** Result of a successful generation. */
@@ -145,6 +149,9 @@ class BillDao(context: Context) {
                 put("gst_flag", if (bill.cgstAmount + bill.sgstAmount + bill.igstAmount > 0) 1 else 0)
                 put("vat_flag", if (bill.vatAmount > 0) 1 else 0)
                 if (bill.waiterId != null) put("waiter_id", bill.waiterId)
+                bill.tableNumber?.takeIf { it.isNotBlank() }?.let { put("table_number", it) }
+                bill.orderType?.takeIf { it.isNotBlank() }?.let { put("order_type", it) }
+                put("service_charge_amount", bill.serviceChargeAmount)
                 put("is_mrp_billing", if (bill.isMrpBilling) 1 else 0)
                 put("is_return_bill", if (bill.isReturnBill) 1 else 0)
                 put("is_duplicate", 0)
@@ -176,10 +183,12 @@ class BillDao(context: Context) {
                 val vatAmt = priced.vat
                 val itemTotal = priced.itemTotal
                 val itemValues = ContentValues().apply {
+                    put("store_id", storeId)
                     put("receipt_no", receiptNo)
                     put("trans_dt", nowDateTime)
                     put("bill_id", receiptNo)
                     if (item.productId != null) put("product_id", item.productId)
+                    unitIdForProduct(db, item.productId)?.let { put("unit_id", it) }
                     put("quantity", item.quantity)
                     put("rate", item.rate)
                     put("item_subtotal", priced.subtotal)
@@ -198,6 +207,7 @@ class BillDao(context: Context) {
 
             // 3) Payment.
             val paymentValues = ContentValues().apply {
+                put("store_id", storeId)
                 put("receipt_no", receiptNo)
                 put("bill_id", receiptNo)
                 put("payment_mode", bill.payment.mode)
@@ -379,6 +389,17 @@ class BillDao(context: Context) {
         return null
     }
 
+    /** The unit_id for a product, taken from its default rate (else its first rate). */
+    private fun unitIdForProduct(db: SQLiteDatabase, productId: Long?): Long? {
+        if (productId == null) return null
+        db.rawQuery(
+            "SELECT unit_id FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} " +
+                "WHERE product_id = ? AND unit_id IS NOT NULL ORDER BY \"default\" DESC, id ASC LIMIT 1",
+            arrayOf(productId.toString())
+        ).use { c -> if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0) }
+        return null
+    }
+
     /** Looks up a customer's id by phone number, or null if not found. */
     fun findCustomerIdByPhone(phone: String?): Long? {
         if (phone.isNullOrBlank()) return null
@@ -402,23 +423,51 @@ class BillDao(context: Context) {
      * numbering continues indefinitely, or 1 when a new period is starting fresh.
      */
     private fun nextBillSequence(db: SQLiteDatabase, settings: BillSettingsDao.BillSettings, nowDate: String): Int {
-        val periodWhere = when (settings.resetMode) {
-            BillSettingsDao.ResetMode.DAILY -> "bill_date = ?" to nowDate
-            BillSettingsDao.ResetMode.MONTHLY -> "substr(bill_date, 1, 7) = ?" to nowDate.take(7)
-            BillSettingsDao.ResetMode.YEARLY -> "substr(bill_date, 1, 4) = ?" to nowDate.take(4)
-            BillSettingsDao.ResetMode.CONTINUE -> null
-        }
-        val sql = "SELECT MAX(bill_seq_no) FROM ${DatabaseHelper.Tables.TD_BILLS}" +
-            (periodWhere?.let { " WHERE ${it.first}" } ?: "")
-        val args = periodWhere?.let { arrayOf(it.second) }
-        val maxSeq = db.rawQuery(sql, args).use { c ->
-            if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null
-        }
+        // The sequence is shared across sales, sale returns and credit recoveries, so
+        // each document's number continues on from the last of ANY of them. Each table
+        // dates its rows on its own column, but all carry the same bill_seq_no counter.
+        val maxSeq = listOfNotNull(
+            maxSeqIn(db, DatabaseHelper.Tables.TD_BILLS, "bill_date", settings.resetMode, nowDate),
+            maxSeqIn(db, DatabaseHelper.Tables.TD_SALE_RETURNS, "return_date", settings.resetMode, nowDate),
+            maxSeqIn(db, DatabaseHelper.Tables.TD_ADVANCE_PAYMENTS, "payment_date", settings.resetMode, nowDate)
+        ).maxOrNull()
         return when {
             maxSeq != null -> maxSeq + 1
             settings.resetMode == BillSettingsDao.ResetMode.CONTINUE -> settings.startBillNo + 1
             else -> 1
         }
+    }
+
+    /** Highest bill_seq_no in [table] within the reset period (dated on [dateCol]). */
+    private fun maxSeqIn(
+        db: SQLiteDatabase, table: String, dateCol: String,
+        resetMode: BillSettingsDao.ResetMode, nowDate: String
+    ): Int? {
+        val periodWhere = when (resetMode) {
+            BillSettingsDao.ResetMode.DAILY -> "$dateCol = ?" to nowDate
+            BillSettingsDao.ResetMode.MONTHLY -> "substr($dateCol, 1, 7) = ?" to nowDate.take(7)
+            BillSettingsDao.ResetMode.YEARLY -> "substr($dateCol, 1, 4) = ?" to nowDate.take(4)
+            BillSettingsDao.ResetMode.CONTINUE -> null
+        }
+        val sql = "SELECT MAX(bill_seq_no) FROM $table" + (periodWhere?.let { " WHERE ${it.first}" } ?: "")
+        val args = periodWhere?.let { arrayOf(it.second) }
+        return runCatching {
+            db.rawQuery(sql, args).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null }
+        }.getOrNull()
+    }
+
+    /** A shared bill number for a sale return / credit recovery, continuous with sales. */
+    data class SharedNumber(val seq: Int, val number: String)
+
+    /**
+     * The next continuous bill number to stamp on a sale return or credit recovery,
+     * drawn from the SAME sequence as normal sales (and advancing it). Store [seq] as
+     * that document's bill_seq_no so the next sale continues past it.
+     */
+    fun nextSharedBillNumber(): SharedNumber {
+        val settings = settingsDao.load()
+        val seq = nextBillSequence(helper.readableDatabase, settings, today())
+        return SharedNumber(seq, formatBillNumber(seq, settings))
     }
 
     private fun formatBillNumber(seq: Int, settings: BillSettingsDao.BillSettings): String {
@@ -467,7 +516,7 @@ class BillDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 
     private fun now(): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
@@ -555,9 +604,8 @@ class BillDao(context: Context) {
     private fun loadItemsByBill(): Map<Long, MutableList<String>> {
         val map = hashMapOf<Long, MutableList<String>>()
         val store = currentStoreId()
-        // Restrict to items whose bill belongs to the current store.
-        val storeClause = if (store != null)
-            "WHERE bi.bill_id IN (SELECT receipt_no FROM td_bills WHERE store_id = ?)" else ""
+        // Restrict to the current store's bill lines (scoped directly by store_id).
+        val storeClause = if (store != null) "WHERE bi.store_id = ?" else ""
         val args = store?.let { arrayOf(it.toString()) }
         val sql = """
             SELECT bi.bill_id, p.product_name

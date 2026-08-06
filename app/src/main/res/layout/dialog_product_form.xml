@@ -25,11 +25,9 @@
             android:textColor="@color/text_main"
             android:layout_marginBottom="20dp" />
 
-        <ScrollView
+        <com.example.synergic_pos_offline.utils.MaxHeightScrollView
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:minHeight="300dp"
+            android:layout_height="wrap_content"
             android:layout_marginBottom="20dp"
             android:scrollbars="vertical">
 
@@ -120,6 +118,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="textCapWords"
+                            android:maxLength="80"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
 
@@ -134,6 +133,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="text"
+                            android:maxLength="8"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
@@ -152,6 +152,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="text"
+                            android:maxLength="40"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
 
@@ -615,7 +616,7 @@
                 <!-- end legacy hidden fields -->
 
             </LinearLayout>
-        </ScrollView>
+        </com.example.synergic_pos_offline.utils.MaxHeightScrollView>
 
         <LinearLayout
             android:layout_width="match_parent"

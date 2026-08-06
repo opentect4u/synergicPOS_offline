@@ -56,21 +56,29 @@ class SectionDao(context: Context) {
         return list
     }
 
-    /** Distinct product-rate tiers (Rate 1 / Rate 2 …) for the current store. */
+    /** The service-charge percentage configured for a section (by name), or 0. */
+    fun serviceChargeForName(name: String): Double {
+        if (name.isBlank()) return 0.0
+        val store = currentStoreId()
+        val where = if (store != null) "section_name = ? AND store_id = ?" else "section_name = ?"
+        val args = if (store != null) arrayOf(name, store.toString()) else arrayOf(name)
+        helper.readableDatabase.query(table, arrayOf("service_charge"), where, args, null, null, null, "1").use { c ->
+            if (c.moveToFirst()) return c.getDouble(0)
+        }
+        return 0.0
+    }
+
+    /** Rate names from the master ([DatabaseHelper.Tables.MD_RATE_NAME]) for the current store. */
     fun priceLists(): List<PriceList> {
         val list = mutableListOf<PriceList>()
         val store = currentStoreId()
-        val storeClause = if (store != null) "AND store_id = ?" else ""
+        val where = if (store != null) "store_id = ? AND is_active = 1" else "is_active = 1"
         val args = if (store != null) arrayOf(store.toString()) else null
-        helper.readableDatabase.rawQuery(
-            "SELECT MIN(id) AS pid, rate_name FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} " +
-                "WHERE rate_name IS NOT NULL AND TRIM(rate_name) != '' $storeClause " +
-                "GROUP BY rate_name ORDER BY rate_name COLLATE NOCASE",
-            args
+        helper.readableDatabase.query(
+            DatabaseHelper.Tables.MD_RATE_NAME, arrayOf("id", "rate_name"),
+            where, args, null, null, "id ASC"
         ).use { c ->
-            while (c.moveToNext()) {
-                list.add(PriceList(c.getLong(0), c.getString(1).orEmpty()))
-            }
+            while (c.moveToNext()) list.add(PriceList(c.getLong(0), c.getString(1).orEmpty()))
         }
         return list
     }
@@ -113,7 +121,7 @@ class SectionDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 }

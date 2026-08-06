@@ -18,7 +18,7 @@ import java.util.Locale
  * those two figures and the transaction history behind them, so the master and the
  * screen cannot disagree.
  */
-class AdvancePaymentDao(context: Context) {
+class AdvancePaymentDao(private val context: Context) {
 
     private val helper = DatabaseHelper.getInstance(context)
     private val customerDao = CustomerDao(context)
@@ -88,7 +88,7 @@ class AdvancePaymentDao(context: Context) {
     fun collect(customerId: Long, amount: Double, mode: String, notes: String? = null): Collection? {
         if (amount <= 0.0) return null
         val db = helper.writableDatabase
-        val user = SessionManager.currentUser?.userId
+        val user = SessionManager.auditUser
         val nowDateTime = now()
 
         db.beginTransaction()
@@ -152,11 +152,16 @@ class AdvancePaymentDao(context: Context) {
             )
             if (id == -1L) return null
 
-            // Numbered off its own row id, so the number on the paper is the row.
-            val receiptNumber = RECEIPT_PREFIX + String.format(Locale.US, "%06d", id)
+            // Numbered off the shared bill sequence, so recoveries run continuously
+            // with normal sales (and returns); bill_seq_no advances that same counter.
+            val shared = BillDao(context).nextSharedBillNumber()
+            val receiptNumber = shared.number
             db.update(
                 DatabaseHelper.Tables.TD_ADVANCE_PAYMENTS,
-                ContentValues().apply { put("receipt_number", receiptNumber) },
+                ContentValues().apply {
+                    put("receipt_number", receiptNumber)
+                    put("bill_seq_no", shared.seq)
+                },
                 "id = ?", arrayOf(id.toString())
             )
 

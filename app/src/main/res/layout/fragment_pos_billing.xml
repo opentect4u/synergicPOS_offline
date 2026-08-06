@@ -210,27 +210,6 @@
                     android:visibility="gone" />
             </FrameLayout>
 
-            <!-- Shortcut hints -->
-            <HorizontalScrollView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@color/white"
-                android:scrollbars="none"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="8dp">
-
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-
-                    <TextView style="@style/PosHint" android:text="F2 Hold" />
-                    <TextView style="@style/PosHint" android:text="F4 Held Orders" />
-                    <TextView style="@style/PosHint" android:text="F8 Customer" />
-                    <TextView style="@style/PosHint" android:text="Enter Scan/Add" />
-                    <TextView style="@style/PosHint" android:text="F9 Charge" />
-                </LinearLayout>
-            </HorizontalScrollView>
         </LinearLayout>
 
         <View android:layout_width="2dp" android:layout_height="match_parent" android:background="#E0E0E0" />

@@ -5,7 +5,7 @@
     android:layout_height="wrap_content">
 
     <com.google.android.material.card.MaterialCardView
-    android:layout_width="460dp"
+    android:layout_width="440dp"
     android:layout_height="wrap_content"
     android:layout_gravity="center_horizontal"
     android:layout_margin="24dp"
@@ -22,48 +22,25 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="New Order"
+            android:text="Split Table"
             android:textSize="21sp"
             android:textStyle="bold"
             android:textColor="@color/text_main" />
 
         <TextView
-            android:id="@+id/tvNewOrderSubtitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Enter the table and customer to open a new order."
+            android:text="Split this table into separate sub-tables (e.g. 101 A, 101 B)."
             android:textSize="13sp"
             android:textColor="@color/text_secondary" />
 
-        <!-- Table No -->
-        <com.google.android.material.textfield.TextInputLayout
-            android:id="@+id/tilTableNo"
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:hint="Table No"
-            app:boxCornerRadiusTopStart="12dp"
-            app:boxCornerRadiusTopEnd="12dp"
-            app:boxCornerRadiusBottomStart="12dp"
-            app:boxCornerRadiusBottomEnd="12dp">
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etTableNo"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="text"
-                android:maxLines="1"
-                android:textSize="16sp" />
-        </com.google.android.material.textfield.TextInputLayout>
-
-        <!-- Auto-filled: Section | Waiter -->
+        <!-- Table (read-only) | Number of parts -->
         <LinearLayout
-            android:id="@+id/llSectionWaiter"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="18dp"
             android:baselineAligned="false">
 
             <com.google.android.material.textfield.TextInputLayout
@@ -72,13 +49,13 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:layout_marginEnd="8dp"
-                android:hint="Section"
+                android:hint="Table"
                 app:boxCornerRadiusTopStart="12dp"
                 app:boxCornerRadiusTopEnd="12dp"
                 app:boxCornerRadiusBottomStart="12dp"
                 app:boxCornerRadiusBottomEnd="12dp">
                 <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etSection"
+                    android:id="@+id/etSplitTable"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:focusable="false"
@@ -86,52 +63,52 @@
                     android:longClickable="false"
                     android:maxLines="1"
                     android:textColor="@color/text_main"
-                    android:textSize="15sp" />
+                    android:textSize="16sp" />
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:layout_marginStart="8dp"
-                android:hint="Waiter Name"
+                android:hint="No. of parts"
                 app:boxCornerRadiusTopStart="12dp"
                 app:boxCornerRadiusTopEnd="12dp"
                 app:boxCornerRadiusBottomStart="12dp"
                 app:boxCornerRadiusBottomEnd="12dp">
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etWaiter"
+                <AutoCompleteTextView
+                    android:id="@+id/actSplitCount"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:focusable="false"
-                    android:cursorVisible="false"
-                    android:longClickable="false"
+                    android:inputType="none"
                     android:maxLines="1"
                     android:textColor="@color/text_main"
-                    android:textSize="15sp" />
+                    android:textSize="16sp" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
 
-        <!-- Customer Phone No -->
-        <com.google.android.material.textfield.TextInputLayout
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+        <!-- Preview of the sub-tables to create -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Sub-tables"
+            android:textSize="12sp"
+            android:textColor="@color/text_secondary" />
+
+        <TextView
+            android:id="@+id/tvSplitPreview"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:hint="Customer Phone No"
-            app:boxCornerRadiusTopStart="12dp"
-            app:boxCornerRadiusTopEnd="12dp"
-            app:boxCornerRadiusBottomStart="12dp"
-            app:boxCornerRadiusBottomEnd="12dp">
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etPhone"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="phone"
-                android:maxLines="1"
-                android:textSize="16sp" />
-        </com.google.android.material.textfield.TextInputLayout>
+            android:layout_marginTop="6dp"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="12dp"
+            android:background="@drawable/bg_dropdown_field"
+            android:text="101 A,  101 B"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_main" />
 
         <!-- Buttons -->
         <LinearLayout
@@ -154,7 +131,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="16dp"
-                android:text="Create Order"
+                android:text="Split"
                 android:textColor="@color/white"
                 app:cornerRadius="12dp" />
         </LinearLayout>

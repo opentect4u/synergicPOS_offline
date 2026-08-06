@@ -22,116 +22,103 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="New Order"
+            android:text="Merge Tables"
             android:textSize="21sp"
             android:textStyle="bold"
             android:textColor="@color/text_main" />
 
         <TextView
-            android:id="@+id/tvNewOrderSubtitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Enter the table and customer to open a new order."
+            android:text="Add active tables in the same section. The first table is kept; the rest merge into it."
             android:textSize="13sp"
             android:textColor="@color/text_secondary" />
 
-        <!-- Table No -->
+        <!-- Section (read-only, set by the first added table) -->
         <com.google.android.material.textfield.TextInputLayout
-            android:id="@+id/tilTableNo"
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
-            android:hint="Table No"
+            android:hint="Section"
             app:boxCornerRadiusTopStart="12dp"
             app:boxCornerRadiusTopEnd="12dp"
             app:boxCornerRadiusBottomStart="12dp"
             app:boxCornerRadiusBottomEnd="12dp">
             <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etTableNo"
+                android:id="@+id/etMergeSection"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:inputType="text"
+                android:focusable="false"
+                android:cursorVisible="false"
+                android:longClickable="false"
                 android:maxLines="1"
-                android:textSize="16sp" />
+                android:textColor="@color/text_main"
+                android:textSize="15sp" />
         </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- Auto-filled: Section | Waiter -->
+        <!-- Add a table: dropdown + Add button -->
         <LinearLayout
-            android:id="@+id/llSectionWaiter"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:layout_marginTop="12dp"
+            android:gravity="center_vertical"
             android:baselineAligned="false">
 
             <com.google.android.material.textfield.TextInputLayout
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:id="@+id/tilMergeWith"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginEnd="8dp"
-                android:hint="Section"
+                android:layout_marginEnd="10dp"
+                android:hint="Select Table (Active)"
                 app:boxCornerRadiusTopStart="12dp"
                 app:boxCornerRadiusTopEnd="12dp"
                 app:boxCornerRadiusBottomStart="12dp"
                 app:boxCornerRadiusBottomEnd="12dp">
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etSection"
+                <AutoCompleteTextView
+                    android:id="@+id/actMergeWith"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:focusable="false"
-                    android:cursorVisible="false"
-                    android:longClickable="false"
+                    android:inputType="none"
                     android:maxLines="1"
                     android:textColor="@color/text_main"
-                    android:textSize="15sp" />
+                    android:textSize="16sp" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <com.google.android.material.textfield.TextInputLayout
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="8dp"
-                android:hint="Waiter Name"
-                app:boxCornerRadiusTopStart="12dp"
-                app:boxCornerRadiusTopEnd="12dp"
-                app:boxCornerRadiusBottomStart="12dp"
-                app:boxCornerRadiusBottomEnd="12dp">
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etWaiter"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:focusable="false"
-                    android:cursorVisible="false"
-                    android:longClickable="false"
-                    android:maxLines="1"
-                    android:textColor="@color/text_main"
-                    android:textSize="15sp" />
-            </com.google.android.material.textfield.TextInputLayout>
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnAddMergeTable"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="52dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="Add"
+                app:icon="@drawable/ic_plus"
+                app:iconGravity="textStart"
+                app:iconSize="16dp"
+                app:cornerRadius="12dp" />
         </LinearLayout>
 
-        <!-- Customer Phone No -->
-        <com.google.android.material.textfield.TextInputLayout
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+        <!-- Tables queued to merge -->
+        <TextView
+            android:id="@+id/tvMergeEmpty"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:hint="Customer Phone No"
-            app:boxCornerRadiusTopStart="12dp"
-            app:boxCornerRadiusTopEnd="12dp"
-            app:boxCornerRadiusBottomStart="12dp"
-            app:boxCornerRadiusBottomEnd="12dp">
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etPhone"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="phone"
-                android:maxLines="1"
-                android:textSize="16sp" />
-        </com.google.android.material.textfield.TextInputLayout>
+            android:layout_marginTop="14dp"
+            android:text="No tables added yet."
+            android:textSize="13sp"
+            android:textColor="@color/text_secondary" />
+
+        <LinearLayout
+            android:id="@+id/llMergeTables"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="8dp" />
 
         <!-- Buttons -->
         <LinearLayout
@@ -154,7 +141,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="16dp"
-                android:text="Create Order"
+                android:text="Merge"
                 android:textColor="@color/white"
                 app:cornerRadius="12dp" />
         </LinearLayout>

@@ -41,6 +41,60 @@ class TableDao(context: Context) {
     data class TableLookup(val sectionName: String, val waiterName: String?)
 
     /**
+     * Sets a table's live [table_status] by its code (current store) — e.g.
+     * Occupied when an order opens, Billing when it's billed, Available when
+     * settled. No-op when the code isn't a known table.
+     */
+    fun setStatusByCode(code: String, status: String) {
+        val store = currentStoreId()
+        val where = if (store != null) "table_code = ? AND store_id = ?" else "table_code = ?"
+        val args = if (store != null) arrayOf(code, store.toString()) else arrayOf(code)
+        helper.writableDatabase.update(
+            table,
+            ContentValues().apply {
+                put("table_status", status)
+                put("modified_at", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
+            },
+            where, args
+        )
+    }
+
+    /** The live table_status for a table code (current store), or null if unknown. */
+    fun statusOf(code: String): String? {
+        val store = currentStoreId()
+        val where = if (store != null) "table_code = ? AND store_id = ?" else "table_code = ?"
+        val args = if (store != null) arrayOf(code, store.toString()) else arrayOf(code)
+        helper.readableDatabase.query(
+            table, arrayOf("table_status"), where, args, null, null, null, "1"
+        ).use { c -> if (c.moveToFirst()) return c.getString(0) }
+        return null
+    }
+
+    /**
+     * Available table codes in [sectionName] (current store), excluding [fromCode] —
+     * the valid transfer targets. Scoped by section (not just code, which can repeat
+     * across sections) so only same-section tables are offered. Ordered by code.
+     */
+    fun availableTablesSameSection(sectionName: String, fromCode: String): List<String> {
+        val store = currentStoreId()
+        val storeClause = if (store != null) "AND t.store_id = ?" else ""
+        val args = mutableListOf(sectionName, fromCode)
+        if (store != null) args.add(store.toString())
+        val out = mutableListOf<String>()
+        helper.readableDatabase.rawQuery(
+            "SELECT DISTINCT t.table_code FROM $table t " +
+                "JOIN ${DatabaseHelper.Tables.MD_SECTION} s ON s.id = t.section_id " +
+                "WHERE s.section_name = ? AND t.table_code <> ? $storeClause " +
+                "AND t.table_status = 'Available' " +
+                "ORDER BY CAST(t.table_code AS INTEGER), t.table_code",
+            args.toTypedArray()
+        ).use { c ->
+            while (c.moveToNext()) c.getString(0)?.takeIf { it.isNotBlank() }?.let { out.add(it) }
+        }
+        return out
+    }
+
+    /**
      * Finds a table by its code (current store) and returns its section name and
      * assigned waiter name. Null when no such table exists.
      */
@@ -65,27 +119,33 @@ class TableDao(context: Context) {
         return null
     }
 
-    /** One list row: a section's tables summarised (count + code range + waiter). */
+    /**
+     * One list row: a section+waiter group summarised. The same section can appear
+     * more than once when different table ranges are assigned different waiters.
+     * [sectionCapacity] is the section's total; [count] is this group's tables.
+     */
     data class Allocation(
         val sectionId: Long?,
         val sectionName: String,
-        val noOfTables: Int,
+        val sectionCapacity: Int,
+        val count: Int,
         val fromCode: Int?,
         val toCode: Int?,
         val waiterId: Long?
     )
 
-    /** Tables grouped by section: section name, its total count, and code range. */
+    /** Tables grouped by section AND waiter — one row per (section, waiter). */
     fun allocations(): List<Allocation> {
         val list = mutableListOf<Allocation>()
         val store = currentStoreId()
         val where = if (store != null) "WHERE t.store_id = ?" else ""
         val args = if (store != null) arrayOf(store.toString()) else null
         helper.readableDatabase.rawQuery(
-            "SELECT t.section_id, s.section_name, s.no_of_tables, " +
-                "MIN(CAST(t.table_code AS INTEGER)), MAX(CAST(t.table_code AS INTEGER)), MAX(t.waiter_id) " +
+            "SELECT t.section_id, s.section_name, s.no_of_tables, COUNT(*), " +
+                "MIN(CAST(t.table_code AS INTEGER)), MAX(CAST(t.table_code AS INTEGER)), t.waiter_id " +
                 "FROM $table t LEFT JOIN ${DatabaseHelper.Tables.MD_SECTION} s ON s.id = t.section_id " +
-                "$where GROUP BY t.section_id ORDER BY s.section_name COLLATE NOCASE",
+                "$where GROUP BY t.section_id, t.waiter_id " +
+                "ORDER BY s.section_name COLLATE NOCASE, MIN(CAST(t.table_code AS INTEGER))",
             args
         ).use { c ->
             while (c.moveToNext()) {
@@ -93,15 +153,85 @@ class TableDao(context: Context) {
                     Allocation(
                         sectionId = if (c.isNull(0)) null else c.getLong(0),
                         sectionName = c.getString(1).orEmpty(),
-                        noOfTables = c.getInt(2),
-                        fromCode = if (c.isNull(3)) null else c.getInt(3),
-                        toCode = if (c.isNull(4)) null else c.getInt(4),
-                        waiterId = if (c.isNull(5)) null else c.getLong(5)
+                        sectionCapacity = c.getInt(2),
+                        count = c.getInt(3),
+                        fromCode = if (c.isNull(4)) null else c.getInt(4),
+                        toCode = if (c.isNull(5)) null else c.getInt(5),
+                        waiterId = if (c.isNull(6)) null else c.getLong(6)
                     )
                 )
             }
         }
         return list
+    }
+
+    /** Individual tables of one section+waiter group (current store), ordered by code. */
+    fun tablesForGroup(sectionId: Long, waiterId: Long?): List<TableRow> {
+        val list = mutableListOf<TableRow>()
+        val store = currentStoreId()
+        val cond = StringBuilder("section_id = ?")
+        val args = mutableListOf(sectionId.toString())
+        if (waiterId != null) { cond.append(" AND waiter_id = ?"); args.add(waiterId.toString()) }
+        else cond.append(" AND waiter_id IS NULL")
+        if (store != null) { cond.append(" AND store_id = ?"); args.add(store.toString()) }
+        helper.readableDatabase.query(
+            table,
+            arrayOf("id", "section_id", "table_code", "floor_no", "seating_capacity", "table_status"),
+            cond.toString(), args.toTypedArray(), null, null, "CAST(table_code AS INTEGER) ASC, id ASC"
+        ).use { c ->
+            while (c.moveToNext()) {
+                list.add(
+                    TableRow(
+                        id = c.getLong(0),
+                        sectionId = if (c.isNull(1)) null else c.getLong(1),
+                        tableCode = c.getString(2).orEmpty(),
+                        floorNo = c.getString(3).orEmpty(),
+                        seatingCapacity = c.getInt(4),
+                        status = c.getString(5).orEmpty().ifBlank { "Available" }
+                    )
+                )
+            }
+        }
+        return list
+    }
+
+    /** Replaces one section+waiter group's tables, re-inserting them under [newWaiterId]. */
+    fun replaceGroupTables(sectionId: Long, oldWaiterId: Long?, tables: List<TableRow>, newWaiterId: Long?) {
+        val db = helper.writableDatabase
+        val store = currentStoreId()
+        db.beginTransaction()
+        try {
+            val whereArgs = mutableListOf(sectionId.toString())
+            val where = StringBuilder("section_id = ?")
+            if (oldWaiterId != null) { where.append(" AND waiter_id = ?"); whereArgs.add(oldWaiterId.toString()) }
+            else where.append(" AND waiter_id IS NULL")
+            db.delete(table, where.toString(), whereArgs.toTypedArray())
+            for (t in tables) {
+                val v = ContentValues().apply {
+                    put("store_id", store)
+                    put("section_id", sectionId)
+                    put("table_code", t.tableCode.ifBlank { null })
+                    put("floor_no", t.floorNo.ifBlank { null })
+                    put("seating_capacity", t.seatingCapacity)
+                    put("table_status", t.status)
+                    if (newWaiterId != null) put("waiter_id", newWaiterId) else putNull("waiter_id")
+                    put("created_by", currentUser())
+                }
+                db.insert(table, null, v)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Deletes one section+waiter group's tables. */
+    fun deleteGroup(sectionId: Long, waiterId: Long?) {
+        val whereArgs = mutableListOf(sectionId.toString())
+        val where = StringBuilder("section_id = ?")
+        if (waiterId != null) { where.append(" AND waiter_id = ?"); whereArgs.add(waiterId.toString()) }
+        else where.append(" AND waiter_id IS NULL")
+        helper.writableDatabase.delete(table, where.toString(), whereArgs.toTypedArray())
     }
 
     /** Individual tables of one section (current store), ordered by code. */
@@ -310,7 +440,7 @@ class TableDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 }

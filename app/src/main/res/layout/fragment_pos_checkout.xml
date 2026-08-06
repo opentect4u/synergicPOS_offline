@@ -252,36 +252,6 @@
                             android:layout_height="wrap_content"
                             android:orientation="vertical" />
 
-                        <!-- Add line: type a product name, pick from the dropdown -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical"
-                            android:paddingVertical="12dp">
-
-                            <com.google.android.material.textfield.TextInputLayout
-                                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:hint="Add item — type a product name"
-                                app:startIconDrawable="@android:drawable/ic_menu_search"
-                                app:boxCornerRadiusTopStart="10dp"
-                                app:boxCornerRadiusTopEnd="10dp"
-                                app:boxCornerRadiusBottomStart="10dp"
-                                app:boxCornerRadiusBottomEnd="10dp">
-
-                                <com.google.android.material.textfield.MaterialAutoCompleteTextView
-                                    android:id="@+id/actAddItem"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:completionThreshold="1"
-                                    android:imeOptions="actionSearch"
-                                    android:inputType="text"
-                                    android:maxLines="1" />
-                            </com.google.android.material.textfield.TextInputLayout>
-                        </LinearLayout>
-
                         <View android:layout_width="match_parent" android:layout_height="2dp" android:background="#E0E0E0" />
                     </LinearLayout>
                 </ScrollView>

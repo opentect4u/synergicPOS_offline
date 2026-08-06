@@ -197,6 +197,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                     onConfirm = {
                         DatabaseHelper.getInstance(requireContext()).eraseBusinessDataForModeChange()
                         dao.save(settings)
+                        if (modeVal == Mode.RESTAURANT) enableRestaurantDefaults()
                         DialogUtils.showSuccess(
                             context = requireContext(),
                             title = "Mode changed",
@@ -220,12 +221,20 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         )
     }
 
+    /** Turns on the restaurant App Settings by default when Restaurant mode is enabled. */
+    private fun enableRestaurantDefaults() {
+        val appDao = com.example.synergic_pos_offline.database.AppSettingsDao(requireContext())
+        val a = appDao.load()
+        appDao.save(a.copy(couponMode = true, kot = true, tableMerge = true, tableShift = true))
+    }
+
     private fun showChangePasswordDialog() {
         val userId = SessionManager.currentUser?.userId
         if (userId.isNullOrBlank()) { toast("No signed-in user"); return }
 
         val accent = ThemeManager.getThemeColor(requireContext())
         val view = layoutInflater.inflate(R.layout.dialog_change_password, null)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val etCurrent = view.findViewById<TextInputEditText>(R.id.etCurrentPwd)
         val etNew = view.findViewById<TextInputEditText>(R.id.etNewPwd)
         val etConfirm = view.findViewById<TextInputEditText>(R.id.etConfirmPwd)

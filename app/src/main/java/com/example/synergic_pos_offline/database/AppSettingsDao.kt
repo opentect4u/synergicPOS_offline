@@ -21,6 +21,8 @@ class AppSettingsDao(context: Context) {
         val cashReception: Boolean = false,
         val paymentMode: Boolean = false,
         val otherCharges: Boolean = false,
+        /** Tap an item to add it straight to the cart (skip the quantity popup). */
+        val directAddToCart: Boolean = false,
         // Restaurant-only toggles.
         val couponMode: Boolean = false,
         val kot: Boolean = false,
@@ -36,6 +38,7 @@ class AppSettingsDao(context: Context) {
             cashReception = m[KEY_CASH_RECEPTION]?.toBool() ?: false,
             paymentMode = m[KEY_PAYMENT_MODE]?.toBool() ?: false,
             otherCharges = m[KEY_OTHER_CHARGES]?.toBool() ?: false,
+            directAddToCart = m[KEY_DIRECT_ADD_TO_CART]?.toBool() ?: false,
             couponMode = m[KEY_COUPON_MODE]?.toBool() ?: false,
             kot = m[KEY_KOT]?.toBool() ?: false,
             tableMerge = m[KEY_TABLE_MERGE]?.toBool() ?: false,
@@ -49,6 +52,7 @@ class AppSettingsDao(context: Context) {
         upsertAppSetting(KEY_CASH_RECEPTION, s.cashReception.b())
         upsertAppSetting(KEY_PAYMENT_MODE, s.paymentMode.b())
         upsertAppSetting(KEY_OTHER_CHARGES, s.otherCharges.b())
+        upsertAppSetting(KEY_DIRECT_ADD_TO_CART, s.directAddToCart.b())
         upsertAppSetting(KEY_COUPON_MODE, s.couponMode.b())
         upsertAppSetting(KEY_KOT, s.kot.b())
         upsertAppSetting(KEY_TABLE_MERGE, s.tableMerge.b())
@@ -146,7 +150,7 @@ class AppSettingsDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
     private companion object {
@@ -154,6 +158,7 @@ class AppSettingsDao(context: Context) {
         const val KEY_CASH_RECEPTION = "Cash Reception"
         const val KEY_PAYMENT_MODE = "Payment Mode"
         const val KEY_OTHER_CHARGES = "Other Charges"
+        const val KEY_DIRECT_ADD_TO_CART = "Direct Add to Cart"
         const val KEY_COUPON_MODE = "Coupon Mode"
         const val KEY_KOT = "KOT"
         const val KEY_TABLE_MERGE = "Table Merge"

@@ -476,6 +476,15 @@ object ThermalPrinter {
         )
     }
 
+    /** Builds a [Config] from a chosen operating-printer row, or null if unusable. */
+    fun configFor(printer: OperatingPrinterDao.OperatingPrinter): Config? {
+        val type = printer.printerType?.takeIf { it.isNotBlank() } ?: return null
+        val address = printer.value?.takeIf { it.isNotBlank() } ?: return null
+        return Config(
+            ip = address, port = DEFAULT_PORT, paperMm = printer.paperMm, connection = type.uppercase()
+        )
+    }
+
     /** The Operating Printer screen's default row for [purpose]'s flag, if fully configured. */
     private fun operatingDefaultConfig(context: Context, purpose: String): Config? {
         val flag = OperatingPrinterDao.flagFor(purpose)

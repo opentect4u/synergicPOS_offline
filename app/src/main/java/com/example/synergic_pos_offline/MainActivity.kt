@@ -353,6 +353,8 @@ class MainActivity : AppCompatActivity() {
     private fun buildMenuTree(): List<TreeNode> {
         val context = this
         val isGrocery = SettingsCache.value(context, "G", "Mode") == "G"
+        // Sale Return and Advance Payment are grocery-only flows; hidden in Restaurant.
+        val isRestaurant = SettingsCache.value(context, "G", "Mode") == "R"
 
         val reportTitles = listOf(
             "Bill Wise Report", "Item Wise Report", "Operator Wise Report", "Void Bill Report",
@@ -389,12 +391,13 @@ class MainActivity : AppCompatActivity() {
         return listOf(
             TreeNode("Master", listOf(
                 TreeNode("Captions"),
-                TreeNode("Header & Footer", listOf(
-                    TreeNode("Bill Header & Footer"),
-                    TreeNode("KOT Header & Footer"),
-                    TreeNode("Bill Header Footer Logo"),
-                    TreeNode("KOT Header Footer Logo")
-                )),
+                TreeNode("Header & Footer", buildList {
+                    // Bill header/footer + logo always; the KOT pair only in Restaurant.
+                    add(TreeNode("Bill Header & Footer"))
+                    if (isRestaurant) add(TreeNode("KOT Header & Footer"))
+                    add(TreeNode("Bill Header Footer Logo"))
+                    if (isRestaurant) add(TreeNode("KOT Header Footer Logo"))
+                }),
                 TreeNode("User Management"),
                 TreeNode("Database Settings", databaseSettingsNodes)
             )),
@@ -410,8 +413,11 @@ class MainActivity : AppCompatActivity() {
             )),
             *stockNodes.toTypedArray(),
             TreeNode("Sale"),
-            TreeNode("Sale Return"),
-            TreeNode("Advance Payment"),
+            // Sale Return + Advance Payment are grocery-only; omitted in Restaurant.
+            *(if (isRestaurant) emptyArray<TreeNode>() else arrayOf(
+                TreeNode("Sale Return"),
+                TreeNode("Advance Payment")
+            )),
             // TreeNode("Duplicate Bill"),
             // TreeNode("Delete Bill"),
             TreeNode("Reports", reportTitles.map { TreeNode(it) })

@@ -5,7 +5,10 @@ import android.content.res.ColorStateList
 import androidx.core.view.isVisible
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.text.Editable
@@ -29,6 +32,10 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.ThermalPrinter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
@@ -37,6 +44,16 @@ import com.google.android.material.textfield.TextInputEditText
 
 /** Largest edge, in px, decoded for the full-size image preview. */
 private const val PREVIEW_PX = 1200
+
+/**
+ * Rows shown before the list has to be scrolled to reveal more. The table renders
+ * one page at a time and appends the next page as the bottom nears, so a screen
+ * backed by a few thousand records still opens instantly and scrolls smoothly.
+ */
+private const val PAGE_SIZE = 50
+
+/** Start loading the next page this many rows before the current end is reached. */
+private const val LOAD_MORE_THRESHOLD = 10
 
 /** Decodes only as many pixels as needed, so large image BLOBs stay cheap to show. */
 private fun decodeSampledBitmap(bytes: ByteArray, targetPx: Int): Bitmap? = try {
@@ -160,7 +177,11 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     open val showsSelection: Boolean get() = true
 
     private val allRows = mutableListOf<DataRow>()
+    // The full result of the current search/filter. [visibleRows] is the paged slice
+    // of this that the adapter actually renders; select-all and the empty state still
+    // reason over the whole filtered set here.
     private val shownRows = mutableListOf<DataRow>()
+    private val visibleRows = mutableListOf<DataRow>()
     private val selectedIds = linkedSetOf<String>()
     private var query = ""
 
@@ -191,7 +212,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         tvEmpty = view.findViewById(R.id.tvEmpty)
 
         adapter = DataTableAdapter(
-            shownRows,
+            visibleRows,
             columns.size,
             selectedIds,
             thumbnailColumn,
@@ -215,6 +236,17 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         )
         rvTable.layoutManager = LinearLayoutManager(requireContext())
         rvTable.adapter = adapter
+
+        // Infinite scroll: append the next page as the bottom of the current one nears.
+        rvTable.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                if (dy <= 0) return
+                val lm = rv.layoutManager as? LinearLayoutManager ?: return
+                if (lm.findLastVisibleItemPosition() >= visibleRows.size - LOAD_MORE_THRESHOLD) {
+                    loadNextPage()
+                }
+            }
+        })
 
         buildHeader(view.findViewById(R.id.llTableHeader))
 
@@ -363,7 +395,13 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         }
     }
 
-    private fun applyFilter(q: String) {
+    /**
+     * Recomputes the filtered set and repaints the first page. A search or filter
+     * change resets the window to the top; an in-place edit / reload keeps roughly as
+     * many rows on screen as were already there ([resetWindow] = false), so the list
+     * does not collapse back to page one under the operator.
+     */
+    private fun applyFilter(q: String, resetWindow: Boolean = true) {
         query = q.trim()
         val index = filterColumnIndex
         shownRows.clear()
@@ -376,9 +414,23 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
                 matchesFilter && matchesQuery
             }
         )
+        // Show the first page (or keep the current depth on an in-place refresh).
+        val keep = if (resetWindow) PAGE_SIZE else maxOf(PAGE_SIZE, visibleRows.size)
+        visibleRows.clear()
+        visibleRows.addAll(shownRows.take(keep))
         adapter.notifyDataSetChanged()
+        if (resetWindow && ::rvTable.isInitialized) rvTable.scrollToPosition(0)
         tvEmpty.visibility = if (shownRows.isEmpty()) View.VISIBLE else View.GONE
         if (::cbSelectAll.isInitialized) updateSelectionUI()
+    }
+
+    /** Appends the next [PAGE_SIZE] filtered rows to the visible window, if any remain. */
+    private fun loadNextPage() {
+        if (visibleRows.size >= shownRows.size) return
+        val start = visibleRows.size
+        val end = minOf(start + PAGE_SIZE, shownRows.size)
+        for (i in start until end) visibleRows.add(shownRows[i])
+        adapter.notifyItemRangeInserted(start, end - start)
     }
 
     protected fun toast(msg: String) =
@@ -392,7 +444,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     /** Appends [row] and refreshes the visible list, keeping the active search. */
     protected fun addRow(row: DataRow) {
         allRows.add(row)
-        applyFilter(query)
+        applyFilter(query, resetWindow = false)
     }
 
     /** Replaces the cells of the row identified by [id], if it still exists. */
@@ -400,7 +452,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         val idx = allRows.indexOfFirst { it.id == id }
         if (idx >= 0) {
             allRows[idx] = DataRow(id, cells)
-            applyFilter(query)
+            applyFilter(query, resetWindow = false)
         }
     }
 
@@ -437,7 +489,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         // with them - a product added under a brand-new category would otherwise
         // leave that category unofferable until the screen was reopened.
         view?.let { setUpColumnFilter(it) }
-        applyFilter(query)
+        applyFilter(query, resetWindow = false)
     }
 
     // ---- Actions -----------------------------------------------------------
@@ -471,7 +523,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             val idx = allRows.indexOfFirst { it.id == row.id }
             if (idx >= 0) {
                 allRows[idx] = DataRow(row.id, values)
-                applyFilter(query)
+                applyFilter(query, resetWindow = false)
                 toast("Updated")
             }
         }
@@ -526,7 +578,17 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     protected open fun deleteBlockedReason(ids: Set<String>): String? = null
 
     protected open fun onBulkPrint() {
-        val count = selectedIds.size
+        val rows = allRows.filter { it.id in selectedIds }
+        if (rows.isEmpty()) { toast("Select at least one record to print"); return }
+
+        // Master lists go to the bill printer (the general-purpose slip printer).
+        val config = ThermalPrinter.configForPurpose(requireContext(), "BILL")
+        if (config == null) {
+            toast("No printer set up — configure a bill printer first")
+            return
+        }
+
+        val count = rows.size
         DialogUtils.showConfirm(
             context = requireContext(),
             title = "Print Selected",
@@ -536,8 +598,92 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             iconRes = android.R.drawable.ic_menu_set_as,
             destructive = false
         ) {
-            toast("Printing $count record(s)...")
+            toast("Printing $count record(s)…")
+            val bitmap = buildMasterListBitmap(screenTitle, columns, rows, config.paperDots)
+            ThermalPrinter.print(requireContext(), bitmap, config) { result ->
+                if (!isAdded) return@print
+                when (result) {
+                    is ThermalPrinter.Result.Failure -> toast("Print failed: ${result.message}")
+                    else -> toast("Sent $count record(s) to the printer")
+                }
+            }
         }
+    }
+
+    /** One rendered line of the master printout and whether it is emphasised. */
+    private data class PrintLine(val text: String, val bold: Boolean)
+
+    /** Wraps [text] to at most [maxChars] per line, breaking on spaces where it can. */
+    private fun wrapText(text: String, maxChars: Int): List<String> {
+        if (text.length <= maxChars) return listOf(text)
+        val out = ArrayList<String>()
+        var rest = text
+        while (rest.length > maxChars) {
+            val space = rest.lastIndexOf(' ', maxChars)
+            val cut = if (space > maxChars / 2) space else maxChars
+            out.add(rest.substring(0, cut).trimEnd())
+            rest = rest.substring(cut).trimStart()
+        }
+        if (rest.isNotEmpty()) out.add(rest)
+        return out
+    }
+
+    /**
+     * Renders the selected records as a printable slip: the screen's title, the date,
+     * a record count, then each record as "Column: value" lines under a bold heading.
+     * A thumbnail (image) column is skipped, since a paper list carries text only.
+     */
+    private fun buildMasterListBitmap(
+        title: String, headers: List<String>, rows: List<DataRow>, paperDots: Int
+    ): Bitmap {
+        val pad = 12f
+        val lineH = 34
+        val body = Paint().apply {
+            color = Color.BLACK; isAntiAlias = true; typeface = Typeface.MONOSPACE; textSize = 24f
+        }
+        val bold = Paint(body).apply { isFakeBoldText = true }
+        val titleP = Paint(body).apply {
+            textSize = 32f; isFakeBoldText = true; textAlign = Paint.Align.CENTER
+        }
+        val charW = body.measureText("M").coerceAtLeast(1f)
+        val maxChars = ((paperDots - pad * 2) / charW).toInt().coerceAtLeast(12)
+
+        val lines = ArrayList<PrintLine>()
+        lines.add(PrintLine(SimpleDateFormat("dd-MM-yyyy HH:mm", Locale.US).format(Date()), false))
+        lines.add(PrintLine("${rows.size} record(s)", false))
+        lines.add(PrintLine("=".repeat(maxChars), false))
+        rows.forEachIndexed { i, row ->
+            // Use the first non-thumbnail, non-empty cell as the record's heading.
+            val nameCol = headers.indices.firstOrNull {
+                it != thumbnailColumn && !row.cells.getOrNull(it).isNullOrBlank()
+            }
+            val name = nameCol?.let { row.cells.getOrNull(it) }.orEmpty()
+            wrapText("${i + 1}. $name", maxChars).forEach { lines.add(PrintLine(it, true)) }
+            headers.forEachIndexed { c, h ->
+                if (c == thumbnailColumn || c == nameCol) return@forEachIndexed
+                val value = row.cells.getOrNull(c).orEmpty().trim()
+                if (value.isEmpty()) return@forEachIndexed
+                wrapText("   $h: $value", maxChars).forEach { lines.add(PrintLine(it, false)) }
+            }
+            lines.add(PrintLine("-".repeat(maxChars), false))
+        }
+
+        val topMargin = lineH * 2
+        val titleH = lineH * 2
+        val bottomMargin = lineH * 3
+        val height = topMargin + titleH + lines.size * lineH + bottomMargin
+        val bitmap = Bitmap.createBitmap(paperDots, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+
+        var y = topMargin.toFloat() + lineH
+        canvas.drawText(title.uppercase(Locale.US), paperDots / 2f, y, titleP)
+        y += titleH
+        lines.forEach { line ->
+            canvas.drawText(line.text, pad, y, if (line.bold) bold else body)
+            y += lineH
+        }
+        return bitmap
     }
 
     private class DataTableAdapter(

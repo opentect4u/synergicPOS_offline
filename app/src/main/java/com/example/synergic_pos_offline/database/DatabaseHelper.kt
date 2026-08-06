@@ -30,6 +30,32 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "sku", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "brand", "TEXT")
+        // Rate-name master + the rate's link to it (non-destructive).
+        runCatching { db.execSQL(SQL_CREATE_MD_RATE_NAME) }
+        // Older installs created md_rate_name before it was store-scoped and audited;
+        // add the missing columns and attach any pre-existing rows to the registered
+        // store, so the list, add/edit/delete and store filtering all work on them.
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "store_id", "INTEGER")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "is_active", "INTEGER NOT NULL DEFAULT 1")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "created_at", "TEXT")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "modified_at", "TEXT")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "created_by", "TEXT")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "modified_by", "TEXT")
+        runCatching {
+            db.execSQL(
+                "UPDATE ${Tables.MD_RATE_NAME} SET store_id = " +
+                    "(SELECT store_id FROM ${Tables.MD_REGISTRATION} ORDER BY store_id ASC LIMIT 1) " +
+                    "WHERE store_id IS NULL"
+            )
+        }
+        addColumnIfMissing(db, Tables.MD_PRODUCT_RATES, "rate_name_id", "INTEGER")
+        // sell_price / sale_price are duplicate columns for the selling price. Reads
+        // use COALESCE(sell_price, sale_price) and writes set both; backfill legacy
+        // rows so whichever one was populated fills the other.
+        runCatching {
+            db.execSQL("UPDATE ${Tables.MD_PRODUCT_RATES} SET sell_price = sale_price WHERE sell_price IS NULL AND sale_price IS NOT NULL")
+            db.execSQL("UPDATE ${Tables.MD_PRODUCT_RATES} SET sale_price = sell_price WHERE sale_price IS NULL AND sell_price IS NOT NULL")
+        }
         // Restaurant-mode product attributes (Veg/Non-Veg/Egg, spice, prep time, availability).
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "food_type", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "spice_level", "TEXT")
@@ -46,6 +72,31 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.TD_STOCK_TRANSACTIONS, "stock_flow", "TEXT")
         addColumnIfMissing(db, Tables.TD_BILLS, "bill_seq_no", "INTEGER")
         addColumnIfMissing(db, Tables.TD_BILLS, "settings_snapshot", "TEXT")
+        // Restaurant-mode bill fields: which table/section it was, dine-in vs take-away,
+        // and the service charge kept separate from generic other-charges.
+        addColumnIfMissing(db, Tables.TD_BILLS, "table_number", "TEXT")
+        addColumnIfMissing(db, Tables.TD_BILLS, "order_type", "TEXT")
+        addColumnIfMissing(db, Tables.TD_BILLS, "service_charge_amount", "REAL DEFAULT 0")
+        // Store-scope bill lines and payments directly (not only via their bill), then
+        // backfill existing rows with the store of the bill they belong to.
+        if (addColumnIfMissing(db, Tables.TD_BILL_ITEMS, "store_id", "INTEGER")) {
+            runCatching {
+                db.execSQL(
+                    "UPDATE ${Tables.TD_BILL_ITEMS} SET store_id = " +
+                        "(SELECT store_id FROM ${Tables.TD_BILLS} WHERE ${Tables.TD_BILLS}.receipt_no = ${Tables.TD_BILL_ITEMS}.bill_id) " +
+                        "WHERE store_id IS NULL"
+                )
+            }
+        }
+        if (addColumnIfMissing(db, Tables.TD_PAYMENTS, "store_id", "INTEGER")) {
+            runCatching {
+                db.execSQL(
+                    "UPDATE ${Tables.TD_PAYMENTS} SET store_id = " +
+                        "(SELECT store_id FROM ${Tables.TD_BILLS} WHERE ${Tables.TD_BILLS}.receipt_no = ${Tables.TD_PAYMENTS}.bill_id) " +
+                        "WHERE store_id IS NULL"
+                )
+            }
+        }
         // Bills created before bill_seq_no existed carried a plain receipt_no-based
         // number (see BillDao's old formatBillNumber), so that is what continuing
         // the sequence from here has to match up with.
@@ -61,11 +112,19 @@ class DatabaseHelper private constructor(context: Context) :
         runCatching { db.execSQL(SQL_CREATE_MD_SECTION) }
         runCatching { db.execSQL(SQL_CREATE_MD_TABLE) }
         runCatching { db.execSQL(SQL_CREATE_MD_TABLE_UNIT) }
+        runCatching { db.execSQL(SQL_CREATE_MD_SUBTABLE) }
         runCatching { db.execSQL(SQL_CREATE_TD_ASSIGN_WAITER) }
         runCatching { db.execSQL(SQL_CREATE_TD_RUNNING_ORDER) }
         runCatching { db.execSQL(SQL_CREATE_TD_RUNNING_ORDER_ITEMS) }
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "order_note", "TEXT")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "merged_tables", "TEXT")
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "kot_qty", "REAL DEFAULT 0")
+        // Per-item GST captured at order time, so the bill taxes each product dynamically.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "cgst_rate", "REAL DEFAULT 0")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "sgst_rate", "REAL DEFAULT 0")
+        // KOT lifecycle: link a KOT to its running order, and allow the CLOSED /
+        // COMPLETE statuses the restaurant flow sets (see [ensureKotStatusSchema]).
+        ensureKotStatusSchema(db)
         // Items already sent under the old flag must not be re-sent: mark their full
         // quantity as already gone to the kitchen.
         runCatching {
@@ -84,6 +143,17 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_TD_ADVANCE_PAYMENTS)
         addColumnIfMissing(db, Tables.TD_ADVANCE_PAYMENTS, "receipt_number", "TEXT")
         addColumnIfMissing(db, Tables.TD_ADVANCE_PAYMENTS, "payment_mode", "TEXT")
+        // Sale returns and credit recoveries share one continuous bill-number sequence
+        // with normal sales — bill_seq_no is the shared counter (see BillDao).
+        addColumnIfMissing(db, Tables.TD_ADVANCE_PAYMENTS, "bill_seq_no", "INTEGER")
+        addColumnIfMissing(db, Tables.TD_SALE_RETURNS, "bill_seq_no", "INTEGER")
+        // Audit trail for header / footer / caption masters.
+        listOf(Tables.MD_HEADERS, Tables.MD_FOOTERS, Tables.MD_CAPTIONS).forEach { t ->
+            addColumnIfMissing(db, t, "created_at", "TEXT")
+            addColumnIfMissing(db, t, "modified_at", "TEXT")
+            addColumnIfMissing(db, t, "created_by", "TEXT")
+            addColumnIfMissing(db, t, "modified_by", "TEXT")
+        }
         ensureProductsSchema(db)
         recreateProductRatesIfOldSchema(db)
         // "default" is a reserved word, so it must be quoted in the ALTER.
@@ -178,6 +248,69 @@ class DatabaseHelper private constructor(context: Context) :
         }.onFailure { android.util.Log.e("DBMigrate", "Failed to recreate md_product_rates", it) }
     }
 
+    /**
+     * Brings td_kot / td_kot_items up to the restaurant KOT lifecycle: a
+     * `running_order_id` link and the `CLOSED` (kot) / `COMPLETE` (item) statuses.
+     * Both carry a CHECK on `status`, which SQLite can only widen by rebuilding the
+     * table, so this re-creates them (data preserved) when the stored schema is old.
+     * Foreign keys are toggled off around the rebuild, as SQLite requires.
+     */
+    private fun ensureKotStatusSchema(db: SQLiteDatabase) {
+        runCatching { db.execSQL(SQL_CREATE_TD_KOT) }
+        runCatching { db.execSQL(SQL_CREATE_TD_KOT_ITEMS) }
+        val kotSql = tableSql(db, Tables.TD_KOT)
+        val itemSql = tableSql(db, Tables.TD_KOT_ITEMS)
+        val kotOld = kotSql != null && !(kotSql.contains("CLOSED") && kotSql.contains("running_order_id"))
+        val itemOld = itemSql != null && !(itemSql.contains("COMPLETE") && itemSql.contains("CANCELLED"))
+        if (!kotOld && !itemOld) return
+        runCatching {
+            db.setForeignKeyConstraintsEnabled(false)
+            db.beginTransaction()
+            try {
+                if (kotOld) {
+                    db.execSQL("ALTER TABLE ${Tables.TD_KOT} RENAME TO td_kot_old")
+                    db.execSQL(SQL_CREATE_TD_KOT)
+                    db.execSQL(
+                        """
+                        INSERT INTO ${Tables.TD_KOT}
+                            (id, bill_id, kot_number, table_number, waiter_id, kot_date, kot_time,
+                             status, created_at, modified_at, created_by, modified_by)
+                        SELECT id, bill_id, kot_number, table_number, waiter_id, kot_date, kot_time,
+                               status, created_at, modified_at, created_by, modified_by
+                        FROM td_kot_old
+                        """.trimIndent()
+                    )
+                    db.execSQL("DROP TABLE td_kot_old")
+                }
+                if (itemOld) {
+                    db.execSQL("ALTER TABLE ${Tables.TD_KOT_ITEMS} RENAME TO td_kot_items_old")
+                    db.execSQL(SQL_CREATE_TD_KOT_ITEMS)
+                    db.execSQL(
+                        """
+                        INSERT INTO ${Tables.TD_KOT_ITEMS}
+                            (id, kot_id, product_id, quantity, special_instructions, status,
+                             created_at, modified_at, created_by, modified_by)
+                        SELECT id, kot_id, product_id, quantity, special_instructions, status,
+                               created_at, modified_at, created_by, modified_by
+                        FROM td_kot_items_old
+                        """.trimIndent()
+                    )
+                    db.execSQL("DROP TABLE td_kot_items_old")
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            db.setForeignKeyConstraintsEnabled(true)
+        }.onFailure { android.util.Log.e("DBMigrate", "Failed to rebuild KOT tables", it) }
+    }
+
+    /** The stored CREATE statement for [table], or null if it doesn't exist. */
+    private fun tableSql(db: SQLiteDatabase, table: String): String? =
+        db.rawQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", arrayOf(table)).use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+
     /** True if [table] has a column named [column]. */
     private fun columnExists(db: SQLiteDatabase, table: String, column: String): Boolean =
         db.rawQuery("PRAGMA table_info($table)", null).use { c ->
@@ -262,8 +395,11 @@ class DatabaseHelper private constructor(context: Context) :
         }
     }
 
-    /** Adds [column] to [table] if it isn't already present, leaving data intact. */
-    private fun addColumnIfMissing(db: SQLiteDatabase, table: String, column: String, type: String) {
+    /**
+     * Adds [column] to [table] if it isn't already present, leaving data intact.
+     * Returns true when the column was actually added (so callers can backfill it).
+     */
+    private fun addColumnIfMissing(db: SQLiteDatabase, table: String, column: String, type: String): Boolean {
         val exists = db.rawQuery("PRAGMA table_info($table)", null).use { c ->
             val nameIdx = c.getColumnIndex("name")
             generateSequence { if (c.moveToNext()) c.getString(nameIdx) else null }.any { it == column }
@@ -271,6 +407,7 @@ class DatabaseHelper private constructor(context: Context) :
         if (!exists) {
             db.execSQL("ALTER TABLE $table ADD COLUMN $column $type")
         }
+        return !exists
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -279,6 +416,7 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_MD_USERS)
         db.execSQL(SQL_CREATE_MD_CATEGORY)
         db.execSQL(SQL_CREATE_MD_UNITS)
+        db.execSQL(SQL_CREATE_MD_RATE_NAME)
         db.execSQL(SQL_CREATE_MD_PRODUCTS)
         db.execSQL(SQL_CREATE_MD_PRODUCT_RATES)
         db.execSQL(SQL_CREATE_MD_CUSTOMERS)
@@ -301,6 +439,7 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_MD_SECTION)
         db.execSQL(SQL_CREATE_MD_TABLE)
         db.execSQL(SQL_CREATE_MD_TABLE_UNIT)
+        db.execSQL(SQL_CREATE_MD_SUBTABLE)
         db.execSQL(SQL_CREATE_TD_ASSIGN_WAITER)
         db.execSQL(SQL_CREATE_TD_RUNNING_ORDER)
         db.execSQL(SQL_CREATE_TD_RUNNING_ORDER_ITEMS)
@@ -780,7 +919,7 @@ class DatabaseHelper private constructor(context: Context) :
             Tables.TD_KOT_ITEMS, Tables.TD_KOT,
             Tables.TD_RUNNING_ORDER_ITEMS, Tables.TD_RUNNING_ORDER,
             Tables.TD_ASSIGN_WAITER,
-            Tables.MD_TABLE_UNIT, Tables.MD_TABLE, Tables.MD_SECTION,
+            Tables.MD_SUBTABLE, Tables.MD_TABLE_UNIT, Tables.MD_TABLE, Tables.MD_SECTION,
             Tables.MD_WAITERS,
             Tables.MD_PRODUCT_RATES, Tables.MD_PRODUCTS, Tables.MD_CATEGORY
         )
@@ -799,6 +938,7 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_USERS = "md_users"
         const val MD_CATEGORY = "md_category"
         const val MD_UNITS = "md_units"
+        const val MD_RATE_NAME = "md_rate_name"
         const val MD_PRODUCTS = "md_products"
         const val MD_PRODUCT_RATES = "md_product_rates"
         const val MD_CUSTOMERS = "md_customers"
@@ -818,6 +958,7 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_SECTION = "md_section"
         const val MD_TABLE = "md_table"
         const val MD_TABLE_UNIT = "md_table_unit"
+        const val MD_SUBTABLE = "md_subtable"
 
         const val TD_PURCHASE = "td_purchase"
         const val TD_PURCHASE_RETURN = "td_purchase_return"
@@ -942,6 +1083,20 @@ class DatabaseHelper private constructor(context: Context) :
             )
         """
 
+        // Master list of rate names (Rate 1 / Rate 2 / MRP …), chosen per product rate.
+        private const val SQL_CREATE_MD_RATE_NAME = """
+            CREATE TABLE IF NOT EXISTS md_rate_name (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                rate_name TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
         private val SQL_CREATE_MD_PRODUCTS = """
             CREATE TABLE IF NOT EXISTS md_products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -974,6 +1129,7 @@ class DatabaseHelper private constructor(context: Context) :
                 sku TEXT,
                 batch_no TEXT,
                 rate_name TEXT,
+                rate_name_id INTEGER,
                 rate REAL,
                 unit_id INTEGER,
                 cgst_rate REAL,
@@ -1055,7 +1211,11 @@ class DatabaseHelper private constructor(context: Context) :
                 font_size TEXT CHECK(font_size IN ('SMALL','MEDIUM','BIG','EXTRA_LARGE')),
                 is_bold INTEGER NOT NULL DEFAULT 0,
                 is_enabled INTEGER NOT NULL DEFAULT 1,
-                header_type TEXT CHECK(header_type IN ('BILL','KOT'))
+                header_type TEXT CHECK(header_type IN ('BILL','KOT')),
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
             )
         """
 
@@ -1068,7 +1228,11 @@ class DatabaseHelper private constructor(context: Context) :
                 font_size TEXT CHECK(font_size IN ('SMALL','MEDIUM','BIG','EXTRA_LARGE')),
                 is_bold INTEGER NOT NULL DEFAULT 0,
                 is_enabled INTEGER NOT NULL DEFAULT 1,
-                footer_type TEXT CHECK(footer_type IN ('BILL','KOT'))
+                footer_type TEXT CHECK(footer_type IN ('BILL','KOT')),
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
             )
         """
 
@@ -1086,7 +1250,11 @@ class DatabaseHelper private constructor(context: Context) :
                 font_size TEXT CHECK(font_size IN ('SMALL','MEDIUM','BIG','EXTRA_LARGE')),
                 is_bold INTEGER NOT NULL DEFAULT 0,
                 is_enabled INTEGER NOT NULL DEFAULT 1,
-                caption_type TEXT CHECK(caption_type IN ('BILL','DUPLICATE','CREDIT'))
+                caption_type TEXT CHECK(caption_type IN ('BILL','DUPLICATE','CREDIT')),
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
             )
         """
 
@@ -1272,6 +1440,7 @@ class DatabaseHelper private constructor(context: Context) :
                 customer_phone TEXT,
                 cashier TEXT,
                 order_note TEXT,
+                merged_tables TEXT,
                 status TEXT NOT NULL DEFAULT 'RUNNING',
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
@@ -1289,6 +1458,8 @@ class DatabaseHelper private constructor(context: Context) :
                 product_name TEXT,
                 quantity REAL DEFAULT 1,
                 rate REAL DEFAULT 0,
+                cgst_rate REAL DEFAULT 0,
+                sgst_rate REAL DEFAULT 0,
                 kot_printed INTEGER NOT NULL DEFAULT 0,
                 kot_qty REAL NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
@@ -1314,6 +1485,25 @@ class DatabaseHelper private constructor(context: Context) :
                 modified_by TEXT,
                 FOREIGN KEY(table_id) REFERENCES md_table(id),
                 FOREIGN KEY(section_id) REFERENCES md_section(id)
+            )
+        """
+
+        // Split sub-tables: parts of a table (101 A, 101 B, …) created on Table Split.
+        private const val SQL_CREATE_MD_SUBTABLE = """
+            CREATE TABLE IF NOT EXISTS md_subtable (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                table_id INTEGER,
+                parent_code TEXT,
+                sub_code TEXT,
+                suffix TEXT,
+                table_status TEXT CHECK(table_status IN
+                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked')) DEFAULT 'Occupied',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(table_id) REFERENCES md_table(id)
             )
         """
 
@@ -1396,6 +1586,9 @@ class DatabaseHelper private constructor(context: Context) :
                 customer_id INTEGER,
                 operator_id INTEGER,
                 waiter_id INTEGER,
+                table_number TEXT,
+                order_type TEXT,
+                service_charge_amount REAL DEFAULT 0,
                 bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','VOID')),
                 settings_snapshot TEXT,
                 tot_price REAL DEFAULT 0,
@@ -1431,6 +1624,7 @@ class DatabaseHelper private constructor(context: Context) :
         private const val SQL_CREATE_TD_BILL_ITEMS = """
             CREATE TABLE IF NOT EXISTS td_bill_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
                 receipt_no INTEGER,
                 trans_dt TEXT,
                 bill_id INTEGER,
@@ -1465,6 +1659,7 @@ class DatabaseHelper private constructor(context: Context) :
         private const val SQL_CREATE_TD_PAYMENTS = """
             CREATE TABLE IF NOT EXISTS td_payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
                 receipt_no INTEGER,
                 bill_id INTEGER,
                 payment_mode TEXT CHECK(payment_mode IN ('CASH','UPI','CARD','CHEQUE','ONLINE','CREDIT')),
@@ -1585,12 +1780,13 @@ class DatabaseHelper private constructor(context: Context) :
             CREATE TABLE IF NOT EXISTS td_kot (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 bill_id INTEGER,
+                running_order_id INTEGER,
                 kot_number TEXT,
                 table_number TEXT,
                 waiter_id INTEGER,
                 kot_date TEXT,
                 kot_time TEXT,
-                status TEXT CHECK(status IN ('OPEN','RECEIVED','PREPARING','READY','SERVED','CANCELLED')) DEFAULT 'OPEN',
+                status TEXT CHECK(status IN ('OPEN','RECEIVED','PREPARING','READY','SERVED','CLOSED','CANCELLED')) DEFAULT 'OPEN',
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,
@@ -1607,7 +1803,7 @@ class DatabaseHelper private constructor(context: Context) :
                 product_id INTEGER,
                 quantity REAL,
                 special_instructions TEXT,
-                status TEXT CHECK(status IN ('PENDING','PREPARED','DELIVERED')) DEFAULT 'PENDING',
+                status TEXT CHECK(status IN ('PENDING','COMPLETE','CANCELLED','PREPARED','DELIVERED')) DEFAULT 'PENDING',
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,

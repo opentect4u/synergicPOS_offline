@@ -29,16 +29,20 @@ class RunningOrderDao(context: Context) {
 
     data class RunningItem(
         val id: Long, val productId: Long, val name: String,
-        var qty: Double, var rate: Double, val kotQty: Double
+        var qty: Double, var rate: Double, val kotQty: Double,
+        val cgstRate: Double = 0.0, val sgstRate: Double = 0.0
     ) {
-        /** Quantity not yet sent to the kitchen. */
+        /** Quantity newly added, not yet sent to the kitchen. */
         val pending: Double get() = (qty - kotQty).coerceAtLeast(0.0)
+        /** Quantity already sent to the kitchen but since removed — to be cancelled. */
+        val pendingCancel: Double get() = (kotQty - qty).coerceAtLeast(0.0)
     }
 
     /** One KOT batch produced by [printKot], ready to print. */
     data class KotBatch(
-        val kotNumber: String, val tableCode: String, val time: String,
-        val lines: List<Pair<String, Double>>,   // name -> qty
+        val kotNumber: String, val tableCode: String, val section: String, val time: String,
+        val lines: List<Pair<String, Double>>,          // newly-added:   name -> qty
+        val cancelLines: List<Pair<String, Double>> = emptyList(),  // cancelled: name -> qty
         val note: String = ""
     )
 
@@ -103,6 +107,104 @@ class RunningOrderDao(context: Context) {
             orders, ContentValues().apply { put("status", "COMPLETED") },
             "id = ?", arrayOf(orderId.toString())
         )
+        closeKot(orderId)   // Bill & Print → the table's KOT is CLOSED
+    }
+
+    /**
+     * Moves a running order to another table (same section): updates the running
+     * order's table_code and its OPEN KOT's table_number so the kitchen sees the new
+     * table. Section/waiter are unchanged (same-section transfer).
+     */
+    fun transferTable(orderId: Long, newTableCode: String) {
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            db.update(orders, ContentValues().apply { put("table_code", newTableCode) },
+                "id = ?", arrayOf(orderId.toString()))
+            db.update(
+                DatabaseHelper.Tables.TD_KOT, ContentValues().apply { put("table_number", newTableCode) },
+                "running_order_id = ? AND status = 'OPEN'", arrayOf(orderId.toString())
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /**
+     * Merges [sourceId]'s order into [targetId]: moves every source line into the
+     * target (merging same product+rate lines) while preserving each line's already-
+     * sent quantity (kot_qty), then removes the source order/items and closes its
+     * KOT. The target's PENDING KOT is refreshed so only not-yet-sent items remain
+     * to send. Section/waiter of the target are kept (same-section merge).
+     */
+    fun mergeOrders(targetId: Long, sourceId: Long) {
+        val sourceItems = itemsFor(sourceId)
+        // The source table (and any tables it had itself absorbed) now belong to the target.
+        val sourceCode = orderRef(sourceId).first
+        val carried = (listOf(sourceCode) + mergedTablesOf(sourceId)).filter { it.isNotBlank() }
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            sourceItems.forEach { src ->
+                val existing = db.query(
+                    items, arrayOf("id", "quantity", "kot_qty"),
+                    "running_order_id = ? AND product_id = ? AND rate = ?",
+                    arrayOf(targetId.toString(), src.productId.toString(), src.rate.toString()),
+                    null, null, "id ASC", "1"
+                ).use { c ->
+                    if (c.moveToFirst()) Triple(c.getLong(0), c.getDouble(1), c.getDouble(2)) else null
+                }
+                if (existing != null) {
+                    db.update(items, ContentValues().apply {
+                        put("quantity", existing.second + src.qty)
+                        put("kot_qty", existing.third + src.kotQty)
+                        if (existing.third + src.kotQty > 0) put("kot_printed", 1)
+                    }, "id = ?", arrayOf(existing.first.toString()))
+                } else {
+                    db.insert(items, null, ContentValues().apply {
+                        put("running_order_id", targetId)
+                        put("product_id", src.productId)
+                        put("product_name", src.name)
+                        put("quantity", src.qty)
+                        put("rate", src.rate)
+                        put("cgst_rate", src.cgstRate)
+                        put("sgst_rate", src.sgstRate)
+                        put("kot_qty", src.kotQty)
+                        put("kot_printed", if (src.kotQty > 0) 1 else 0)
+                    })
+                }
+            }
+            // Remember the merged-away tables on the target so they can be freed only
+            // when the target order is settled (they stay occupied as part of the merge).
+            val merged = (mergedTablesOf(targetId) + carried).distinct().joinToString(",")
+            db.update(orders, ContentValues().apply { put("merged_tables", merged) },
+                "id = ?", arrayOf(targetId.toString()))
+            closeKot(sourceId)   // the merged-away table's KOT is closed (kept as history)
+            db.delete(items, "running_order_id = ?", arrayOf(sourceId.toString()))
+            db.delete(orders, "id = ?", arrayOf(sourceId.toString()))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        syncPendingKot(targetId)   // refresh the target's PENDING KOT items
+    }
+
+    /** Table codes merged into [orderId] (empty if none) — they share this order's bill. */
+    fun mergedTablesOf(orderId: Long): List<String> {
+        helper.readableDatabase.query(
+            orders, arrayOf("merged_tables"), "id = ?", arrayOf(orderId.toString()), null, null, null, "1"
+        ).use { c ->
+            if (c.moveToFirst()) return c.getString(0).orEmpty().split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        }
+        return emptyList()
+    }
+
+    /** Sets a running order's status (e.g. RUNNING ↔ HOLD). */
+    fun setStatus(orderId: Long, status: String) {
+        helper.writableDatabase.update(
+            orders, ContentValues().apply { put("status", status) }, "id = ?", arrayOf(orderId.toString())
+        )
     }
 
     /** Saves the order note for a running order (shown when the table is re-selected). */
@@ -116,8 +218,16 @@ class RunningOrderDao(context: Context) {
     fun findByTable(tableCode: String): RunningOrder? =
         allRunning().firstOrNull { it.tableCode.equals(tableCode, ignoreCase = true) }
 
+    /** Empties an order (deletes its items, closes its KOT) but keeps the order row —
+     *  used to reset a split sub-table so it stays available to re-order. */
+    fun clearItems(orderId: Long) {
+        closeKot(orderId)
+        helper.writableDatabase.delete(items, "running_order_id = ?", arrayOf(orderId.toString()))
+    }
+
     /** Deletes a running order and its items (called after payment). */
     fun close(orderId: Long) {
+        closeKot(orderId)   // settled → ensure the KOT is CLOSED (kept as history)
         val db = helper.writableDatabase
         db.beginTransaction()
         try {
@@ -135,36 +245,46 @@ class RunningOrderDao(context: Context) {
      * Adds [qty] of a product to the order, merging into the existing line for the
      * same product+rate (the extra quantity becomes pending, tracked vs [RunningItem.kotQty]).
      */
-    fun addItem(orderId: Long, productId: Long, name: String, qty: Double, rate: Double): Long {
+    fun addItem(
+        orderId: Long, productId: Long, name: String, qty: Double, rate: Double,
+        cgstRate: Double = 0.0, sgstRate: Double = 0.0
+    ): Long {
         val db = helper.writableDatabase
-        db.query(
+        val lineId = db.query(
             items, arrayOf("id", "quantity"),
             "running_order_id = ? AND product_id = ? AND rate = ?",
             arrayOf(orderId.toString(), productId.toString(), rate.toString()),
             null, null, "id ASC", "1"
         ).use { c ->
             if (c.moveToFirst()) {
-                val lineId = c.getLong(0)
+                val id = c.getLong(0)
                 db.update(items, ContentValues().apply { put("quantity", c.getDouble(1) + qty) },
-                    "id = ?", arrayOf(lineId.toString()))
-                return lineId
+                    "id = ?", arrayOf(id.toString()))
+                id
+            } else {
+                db.insert(items, null, ContentValues().apply {
+                    put("running_order_id", orderId)
+                    put("product_id", productId)
+                    put("product_name", name)
+                    put("quantity", qty)
+                    put("rate", rate)
+                    put("cgst_rate", cgstRate)
+                    put("sgst_rate", sgstRate)
+                    put("kot_printed", 0)
+                    put("kot_qty", 0)
+                })
             }
         }
-        return db.insert(items, null, ContentValues().apply {
-            put("running_order_id", orderId)
-            put("product_id", productId)
-            put("product_name", name)
-            put("quantity", qty)
-            put("rate", rate)
-            put("kot_printed", 0)
-            put("kot_qty", 0)
-        })
+        // Adding an item opens a KOT (if not already) and mirrors the new items as
+        // PENDING under it — the "add item → td_kot OPEN, td_kot_item PENDING" step.
+        syncPendingKot(orderId)
+        return lineId
     }
 
     fun itemsFor(orderId: Long): List<RunningItem> {
         val list = mutableListOf<RunningItem>()
         helper.readableDatabase.query(
-            items, arrayOf("id", "product_id", "product_name", "quantity", "rate", "kot_qty"),
+            items, arrayOf("id", "product_id", "product_name", "quantity", "rate", "kot_qty", "cgst_rate", "sgst_rate"),
             "running_order_id = ?", arrayOf(orderId.toString()), null, null, "id ASC"
         ).use { c ->
             while (c.moveToNext()) {
@@ -175,7 +295,9 @@ class RunningOrderDao(context: Context) {
                         name = c.getString(2).orEmpty(),
                         qty = c.getDouble(3),
                         rate = c.getDouble(4),
-                        kotQty = c.getDouble(5)
+                        kotQty = c.getDouble(5),
+                        cgstRate = c.getDouble(6),
+                        sgstRate = c.getDouble(7)
                     )
                 )
             }
@@ -183,17 +305,67 @@ class RunningOrderDao(context: Context) {
         return list
     }
 
-    /** Sets a line's total quantity; a reduction below what's already sent caps kot_qty. */
+    /**
+     * Sets a line's total quantity. kot_qty (what's already gone to the kitchen) is
+     * kept, so reducing/removing a sent item leaves a pending cancellation to print.
+     * A line only vanishes when nothing was ever sent (kot_qty = 0).
+     */
     fun setItemQty(itemId: Long, qty: Double) {
-        if (qty <= 0) { helper.writableDatabase.delete(items, "id = ?", arrayOf(itemId.toString())); return }
-        helper.writableDatabase.execSQL(
-            "UPDATE $items SET quantity = ?, kot_qty = MIN(kot_qty, ?) WHERE id = ?",
-            arrayOf<Any>(qty, qty, itemId)
-        )
+        val orderId = orderIdOfItem(itemId)
+        val kotQty = kotQtyOf(itemId)
+        if (qty <= 0 && kotQty <= 0.0) {
+            helper.writableDatabase.delete(items, "id = ?", arrayOf(itemId.toString()))
+        } else {
+            helper.writableDatabase.execSQL(
+                "UPDATE $items SET quantity = ? WHERE id = ?", arrayOf<Any>(qty.coerceAtLeast(0.0), itemId)
+            )
+        }
+        orderId?.let { syncPendingKot(it) }
     }
 
     fun removeItem(itemId: Long) {
-        helper.writableDatabase.delete(items, "id = ?", arrayOf(itemId.toString()))
+        val orderId = orderIdOfItem(itemId)
+        if (kotQtyOf(itemId) > 0.0) {
+            // Already sent — keep the row at qty 0 so the cancellation can be printed.
+            helper.writableDatabase.execSQL("UPDATE $items SET quantity = 0 WHERE id = ?", arrayOf<Any>(itemId))
+        } else {
+            helper.writableDatabase.delete(items, "id = ?", arrayOf(itemId.toString()))
+        }
+        orderId?.let { syncPendingKot(it) }
+    }
+
+    /** True if the order has anything to send: newly-added or cancelled items. */
+    fun hasPendingKot(orderId: Long): Boolean =
+        itemsFor(orderId).any { it.pending > 0.0 || it.pendingCancel > 0.0 }
+
+    /**
+     * True if any item has been sent to the kitchen and is still on the order (not
+     * yet cancelled). An order can only be cancelled outright when this is false —
+     * i.e. before any KOT, or once every sent item has been cancelled.
+     */
+    fun hasSentActiveItems(orderId: Long): Boolean =
+        itemsFor(orderId).any { it.kotQty > 0.0 && it.qty > 0.0 }
+
+    private fun kotQtyOf(itemId: Long): Double {
+        helper.readableDatabase.query(
+            items, arrayOf("kot_qty"), "id = ?", arrayOf(itemId.toString()), null, null, null, "1"
+        ).use { c -> if (c.moveToFirst()) return c.getDouble(0) }
+        return 0.0
+    }
+
+    /** The pending KOT for preview — same content [printKot] would cut, but writes nothing. */
+    fun peekPending(orderId: Long, tableCode: String, section: String = "", note: String = ""): KotBatch? {
+        val all = itemsFor(orderId)
+        val adds = all.filter { it.pending > 0.0 }
+        val cancels = all.filter { it.pendingCancel > 0.0 }
+        if (adds.isEmpty() && cancels.isEmpty()) return null
+        return KotBatch(
+            kotNumber = nextKotNumber(), tableCode = tableCode, section = section,
+            time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date()),
+            lines = adds.map { it.name to it.pending },
+            cancelLines = cancels.map { it.name to it.pendingCancel },
+            note = note.trim()
+        )
     }
 
     private fun totalOf(orderId: Long): Double {
@@ -207,57 +379,144 @@ class RunningOrderDao(context: Context) {
     // ---- KOT ---------------------------------------------------------------
 
     /**
-     * Cuts a KOT for the PENDING quantity of each line (total − already sent):
-     * writes a [DatabaseHelper.Tables.TD_KOT] header + items with just the delta,
-     * bumps each line's kot_qty to its full quantity, and returns the batch to
-     * print. Null when nothing new is pending. This is what makes an item's added
-     * quantity go to the kitchen without re-sending what was already ordered.
+     * Sends a table's KOT delta to the kitchen: newly-added items (PENDING → COMPLETE)
+     * plus cancellations for items that were sent and since removed/reduced. Each
+     * line's kot_qty is synced to its current quantity, and fully-removed lines are
+     * deleted afterwards. The KOT header stays OPEN (CLOSED only at Bill & Print).
+     * Null when there's nothing new to add or cancel.
      */
-    fun printKot(orderId: Long, tableCode: String, waiterId: Long?, note: String = ""): KotBatch? {
-        val pending = itemsFor(orderId).filter { it.pending > 0.0 }
-        if (pending.isEmpty()) return null
+    fun printKot(orderId: Long, tableCode: String, waiterId: Long?, section: String = "", note: String = ""): KotBatch? {
+        syncPendingKot(orderId)          // ensure PENDING reflects the current cart
+        val all = itemsFor(orderId)
+        val adds = all.filter { it.pending > 0.0 }
+        val cancels = all.filter { it.pendingCancel > 0.0 }
+        if (adds.isEmpty() && cancels.isEmpty()) return null
 
         val db = helper.writableDatabase
-        val kotNumber = nextKotNumber()
+        val kotId = ensureOpenKot(orderId)
         val now = Date()
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(now)
-        val time = SimpleDateFormat("HH:mm:ss", Locale.US).format(now)
 
         db.beginTransaction()
         try {
-            val kotId = db.insert(DatabaseHelper.Tables.TD_KOT, null, ContentValues().apply {
-                putNull("bill_id")
-                put("kot_number", kotNumber)
-                put("table_number", tableCode)
-                if (waiterId != null) put("waiter_id", waiterId) else putNull("waiter_id")
-                put("kot_date", date)
-                put("kot_time", time)
-                put("status", "OPEN")
-                put("created_by", currentUser())
-            })
-            pending.forEach { it2 ->
+            // Added items are now sent → flip their PENDING rows to COMPLETE.
+            db.update(
+                DatabaseHelper.Tables.TD_KOT_ITEMS,
+                ContentValues().apply { put("status", "COMPLETE") },
+                "kot_id = ? AND status = 'PENDING'", arrayOf(kotId.toString())
+            )
+            // Record a CANCELLED KOT row for each removed/reduced sent item.
+            cancels.forEach { ri ->
                 db.insert(DatabaseHelper.Tables.TD_KOT_ITEMS, null, ContentValues().apply {
                     put("kot_id", kotId)
-                    put("product_id", it2.productId)
-                    put("quantity", it2.pending)          // only the added quantity
-                    put("status", "PENDING")
+                    put("product_id", ri.productId)
+                    put("quantity", ri.pendingCancel)
+                    put("status", "CANCELLED")
                     put("created_by", currentUser())
                 })
-                // Everything up to the current quantity is now sent.
-                db.update(items, ContentValues().apply {
-                    put("kot_qty", it2.qty); put("kot_printed", 1)
-                }, "id = ?", arrayOf(it2.id.toString()))
+            }
+            // Sync each running line's kot_qty to its current quantity; drop emptied lines.
+            all.forEach { ri ->
+                if (ri.qty <= 0.0) {
+                    db.delete(items, "id = ?", arrayOf(ri.id.toString()))
+                } else if (ri.pending > 0.0 || ri.pendingCancel > 0.0) {
+                    db.update(items, ContentValues().apply {
+                        put("kot_qty", ri.qty); put("kot_printed", 1)
+                    }, "id = ?", arrayOf(ri.id.toString()))
+                }
             }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
         return KotBatch(
-            kotNumber = kotNumber, tableCode = tableCode,
+            kotNumber = kotNumberOf(kotId), tableCode = tableCode, section = section,
             time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(now),
-            lines = pending.map { it.name to it.pending },
+            lines = adds.map { it.name to it.pending },
+            cancelLines = cancels.map { it.name to it.pendingCancel },
             note = note.trim()
         )
+    }
+
+    /** Marks a table's KOT(s) CLOSED — the "Bill & Print → td_kot CLOSED" step. */
+    fun closeKot(orderId: Long) {
+        helper.writableDatabase.update(
+            DatabaseHelper.Tables.TD_KOT,
+            ContentValues().apply { put("status", "CLOSED") },
+            "running_order_id = ? AND status <> 'CLOSED'", arrayOf(orderId.toString())
+        )
+    }
+
+    // ---- KOT internals -----------------------------------------------------
+
+    /** Finds the OPEN KOT for a running order, creating one (OPEN) if none exists. */
+    private fun ensureOpenKot(orderId: Long): Long {
+        val db = helper.writableDatabase
+        db.query(
+            DatabaseHelper.Tables.TD_KOT, arrayOf("id"),
+            "running_order_id = ? AND status = 'OPEN'", arrayOf(orderId.toString()),
+            null, null, "id ASC", "1"
+        ).use { c -> if (c.moveToFirst()) return c.getLong(0) }
+
+        val ref = orderRef(orderId)
+        val now = Date()
+        return db.insert(DatabaseHelper.Tables.TD_KOT, null, ContentValues().apply {
+            putNull("bill_id")
+            put("running_order_id", orderId)
+            put("kot_number", nextKotNumber())
+            put("table_number", ref.first)
+            if (ref.second != null) put("waiter_id", ref.second) else putNull("waiter_id")
+            put("kot_date", SimpleDateFormat("yyyy-MM-dd", Locale.US).format(now))
+            put("kot_time", SimpleDateFormat("HH:mm:ss", Locale.US).format(now))
+            put("status", "OPEN")
+            put("created_by", currentUser())
+        })
+    }
+
+    /**
+     * Mirrors the order's not-yet-sent items as PENDING rows under its OPEN KOT:
+     * clears the current PENDING set and re-inserts one row per pending line. Items
+     * already sent (COMPLETE) are untouched, so incremental KOTs stay intact.
+     */
+    private fun syncPendingKot(orderId: Long) {
+        val db = helper.writableDatabase
+        val kotId = ensureOpenKot(orderId)
+        db.delete(DatabaseHelper.Tables.TD_KOT_ITEMS, "kot_id = ? AND status = 'PENDING'", arrayOf(kotId.toString()))
+        itemsFor(orderId).filter { it.pending > 0.0 }.forEach { ri ->
+            db.insert(DatabaseHelper.Tables.TD_KOT_ITEMS, null, ContentValues().apply {
+                put("kot_id", kotId)
+                put("product_id", ri.productId)
+                put("quantity", ri.pending)
+                put("status", "PENDING")
+                put("created_by", currentUser())
+            })
+        }
+    }
+
+    /** table_code + waiter_id for a running order, for KOT headers. */
+    private fun orderRef(orderId: Long): Pair<String, Long?> {
+        helper.readableDatabase.query(
+            orders, arrayOf("table_code", "waiter_id"),
+            "id = ?", arrayOf(orderId.toString()), null, null, null, "1"
+        ).use { c ->
+            if (c.moveToFirst()) return c.getString(0).orEmpty() to (if (c.isNull(1)) null else c.getLong(1))
+        }
+        return "" to null
+    }
+
+    /** The running order an item line belongs to, or null. */
+    private fun orderIdOfItem(itemId: Long): Long? {
+        helper.readableDatabase.query(
+            items, arrayOf("running_order_id"), "id = ?", arrayOf(itemId.toString()), null, null, null, "1"
+        ).use { c -> if (c.moveToFirst()) return c.getLong(0) }
+        return null
+    }
+
+    /** The KOT number stored on a KOT row. */
+    private fun kotNumberOf(kotId: Long): String {
+        helper.readableDatabase.query(
+            DatabaseHelper.Tables.TD_KOT, arrayOf("kot_number"), "id = ?", arrayOf(kotId.toString()), null, null, null, "1"
+        ).use { c -> if (c.moveToFirst()) return c.getString(0).orEmpty() }
+        return nextKotNumber()
     }
 
     /** Next KOT number for the store, formatted like KOT-0007. */
@@ -284,5 +543,5 @@ class RunningOrderDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 }

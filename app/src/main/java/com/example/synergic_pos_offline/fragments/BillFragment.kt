@@ -181,7 +181,11 @@ class BillFragment : Fragment(), TitledScreen {
      */
     private fun showPrinterSetup(card: View, receiptNo: Long) {
         PrinterSetup.show(requireContext()) { config ->
-            val capture = BillReceiptRenderer(requireContext())
+            // The printer is saved after the dialog closes, by when the operator may
+            // have left this screen; use the current context and bail rather than
+            // crash on requireContext().
+            val ctx = context ?: return@show
+            val capture = BillReceiptRenderer(ctx)
                 .renderToBitmap(receiptNo, config.paperDots, duplicate = duplicate)
             if (capture == null) toast("Could not render the receipt")
             else sendToThermalPrinter(capture, config, receiptNo)
