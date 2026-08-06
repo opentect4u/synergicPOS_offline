@@ -992,8 +992,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Picking a product opens the qty dialog; once it's added, clear the search
         // box so the next item can be searched from a clean slate. Clearing the text
         // fires the watcher below, which resets the list back to the full menu.
+        //
+        // Direct Add to Cart (App Settings): skip the popup and add one of the tapped
+        // item at its default rate straight to the cart; each tap adds one more.
+        val directAdd = com.example.synergic_pos_offline.utils.SettingsCache
+            .value(ctx, "A", "Direct Add to Cart") == "1"
         val adapter = ProductAdapter(accent) { picked ->
-            showProductEntry(picked) { etSearch.setText("") }
+            if (directAdd) {
+                addToCart(picked, 1.0, picked.price)
+                etSearch.setText("")
+            } else {
+                showProductEntry(picked) { etSearch.setText("") }
+            }
         }
         rv.layoutManager = androidx.recyclerview.widget.GridLayoutManager(ctx, 4)
         rv.adapter = adapter
@@ -1126,6 +1136,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** Opens the shared grocery product popup; on confirm the item joins the cart. */
     private fun showProductEntry(p: ProductEntryDialog.Product, onAdded: (() -> Unit)? = null) {
+        // "Enter Quantity" general setting: on lets the quantity be typed in the popup,
+        // off fixes it to 1 (the default add). Off when the setting was never saved.
+        val qtyEditable = com.example.synergic_pos_offline.utils.SettingsCache
+            .value(requireContext(), "G", "Quantity Status") == "1"
         ProductEntryDialog.show(
             context = requireContext(),
             inflater = layoutInflater,
@@ -1133,6 +1147,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             startRate = p.price,
             startQty = 1.0,
             confirmLabel = "Add to cart",
+            qtyEditable = qtyEditable,
             taxRegime = taxRegime,
             taxInclusive = taxInclusive,
             itemwiseDiscountActive = itemwiseDiscountActive,
@@ -1292,7 +1307,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter
     ) {
         val nextNo = com.example.synergic_pos_offline.database.BillDao(requireContext()).nextBillNumber()
-        printGroceryStyleBill(order, printer, billNumber = nextNo, payment = "")
+        // No mode is chosen until Bill & Pay, but the printed bill still shows a payment
+        // mode line; default it to the settlement default (Cash), matching how the order
+        // settles if nothing else is picked. The paid receipt later shows the real mode.
+        printGroceryStyleBill(order, printer, billNumber = nextNo, payment = "Cash")
         completeTable(order)   // billed → locked (stays until paid)
     }
 

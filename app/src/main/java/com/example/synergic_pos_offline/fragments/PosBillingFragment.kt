@@ -765,6 +765,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
         if (editIndex < 0 && p.stock == "out") { toast("${p.name} is out of stock"); return }
         val editing = editIndex in cart.indices
 
+        // Direct Add to Cart (App Settings): tapping a product adds one straight to the
+        // cart with its default rate - no popup. Each tap adds one more. Only for a
+        // fresh add; editing an existing cart line still opens the dialog.
+        if (!editing && SettingsCache.value(requireContext(), "A", "Direct Add to Cart") == "1") {
+            addToCart(p, 1.0, p.price)
+            return
+        }
+
         // "Quantity Status" ON: a new item opens with quantity 0 and the cursor on
         // the quantity field so the operator must enter it. OFF: defaults to 1.
         val quantityStatusOn = SettingsCache.value(requireContext(), "G", "Quantity Status") == "1"

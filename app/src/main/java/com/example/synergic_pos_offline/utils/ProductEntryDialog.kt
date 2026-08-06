@@ -84,6 +84,9 @@ object ProductEntryDialog {
         focusQty: Boolean = false,
         focusRate: Boolean = false,
         rateEditable: Boolean = true,
+        /** When false the quantity is fixed (to [startQty]) and can't be typed into -
+         *  driven by the "Enter Quantity" general setting. */
+        qtyEditable: Boolean = true,
         taxRegime: GstCalculator.TaxRegime = GstCalculator.TaxRegime.GST,
         taxInclusive: Boolean = false,
         /** Tax Settings' Discount on and set to Item wise - each product's own
@@ -182,6 +185,15 @@ object ProductEntryDialog {
             etRate.isFocusableInTouchMode = false
             etRate.isCursorVisible = false
             etRate.keyListener = null
+        }
+
+        // Enter Quantity off: the quantity is fixed to what the dialog opened with
+        // (1 for a fresh add) and can't be typed into.
+        if (!qtyEditable) {
+            etQty.isFocusable = false
+            etQty.isFocusableInTouchMode = false
+            etQty.isCursorVisible = false
+            etQty.keyListener = null
         }
 
         fun refreshAmount() {

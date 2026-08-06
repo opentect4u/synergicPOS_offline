@@ -36,19 +36,15 @@ class HeaderFooterFragment : Fragment() {
         val columns = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) 4 else 2
         rvHeaderFooter.layoutManager = GridLayoutManager(requireContext(), columns)
 
-        // Mode decides which set shows: Grocery -> Bill header/footer + logo;
-        // Restaurant -> KOT header/footer + logo.
+        // Mode decides which set shows: Grocery -> Bill header/footer + logo only;
+        // Restaurant -> all four (Bill + KOT header/footer + logos), since a restaurant
+        // prints both a bill and a kitchen ticket.
         val restaurant = GeneralSettingsDao(requireContext()).load().mode == GeneralSettingsDao.Mode.RESTAURANT
-        val items = if (restaurant) {
-            listOf(
-                HeaderFooterItem("KOT Header & Footer", android.R.drawable.ic_menu_agenda, R.color.menu_sale, R.color.menu_sale_icon),
-                HeaderFooterItem("KOT Header Footer Logo", android.R.drawable.ic_menu_gallery, R.color.menu_inventory, R.color.menu_inventory_icon)
-            )
-        } else {
-            listOf(
-                HeaderFooterItem("Bill Header & Footer", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon),
-                HeaderFooterItem("Bill Header Footer Logo", android.R.drawable.ic_menu_gallery, R.color.menu_report, R.color.menu_report_icon)
-            )
+        val items = buildList {
+            add(HeaderFooterItem("Bill Header & Footer", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon))
+            if (restaurant) add(HeaderFooterItem("KOT Header & Footer", android.R.drawable.ic_menu_agenda, R.color.menu_sale, R.color.menu_sale_icon))
+            add(HeaderFooterItem("Bill Header Footer Logo", android.R.drawable.ic_menu_gallery, R.color.menu_report, R.color.menu_report_icon))
+            if (restaurant) add(HeaderFooterItem("KOT Header Footer Logo", android.R.drawable.ic_menu_gallery, R.color.menu_inventory, R.color.menu_inventory_icon))
         }
 
         rvHeaderFooter.adapter = HeaderFooterAdapter(items) { item ->

@@ -32,6 +32,22 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "brand", "TEXT")
         // Rate-name master + the rate's link to it (non-destructive).
         runCatching { db.execSQL(SQL_CREATE_MD_RATE_NAME) }
+        // Older installs created md_rate_name before it was store-scoped and audited;
+        // add the missing columns and attach any pre-existing rows to the registered
+        // store, so the list, add/edit/delete and store filtering all work on them.
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "store_id", "INTEGER")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "is_active", "INTEGER NOT NULL DEFAULT 1")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "created_at", "TEXT")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "modified_at", "TEXT")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "created_by", "TEXT")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "modified_by", "TEXT")
+        runCatching {
+            db.execSQL(
+                "UPDATE ${Tables.MD_RATE_NAME} SET store_id = " +
+                    "(SELECT store_id FROM ${Tables.MD_REGISTRATION} ORDER BY store_id ASC LIMIT 1) " +
+                    "WHERE store_id IS NULL"
+            )
+        }
         addColumnIfMissing(db, Tables.MD_PRODUCT_RATES, "rate_name_id", "INTEGER")
         // sell_price / sale_price are duplicate columns for the selling price. Reads
         // use COALESCE(sell_price, sale_price) and writes set both; backfill legacy

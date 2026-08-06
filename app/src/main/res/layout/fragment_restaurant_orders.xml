@@ -515,7 +515,7 @@
                             android:layout_height="48dp"
                             android:insetTop="0dp"
                             android:insetBottom="0dp"
-                            android:text="Bill &amp; Print"
+                            android:text="Print Bill"
                             app:cornerRadius="12dp" />
 
                         <com.google.android.material.button.MaterialButton
