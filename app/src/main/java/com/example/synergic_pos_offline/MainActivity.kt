@@ -25,45 +25,17 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.example.synergic_pos_offline.fragments.AdvancePaymentFragment
-import com.example.synergic_pos_offline.fragments.BillHeaderFooterFragment
-import com.example.synergic_pos_offline.fragments.BillLogoFragment
-import com.example.synergic_pos_offline.fragments.CaptionFragment
-import com.example.synergic_pos_offline.fragments.CategoryDepartmentFragment
-import com.example.synergic_pos_offline.fragments.CustomerFragment
-import com.example.synergic_pos_offline.fragments.CustomerLedgerFragment
-import com.example.synergic_pos_offline.fragments.DashboardFragment
-import com.example.synergic_pos_offline.fragments.CategoryProductsFragment
-import com.example.synergic_pos_offline.fragments.DatabaseSettingsFragment
-import com.example.synergic_pos_offline.fragments.DescriptionLedgerFragment
-import com.example.synergic_pos_offline.fragments.HeaderFooterFragment
-import com.example.synergic_pos_offline.fragments.InventoryFragment
-import com.example.synergic_pos_offline.fragments.ItemwiseSearchFragment
-import com.example.synergic_pos_offline.fragments.LoginFragment
-import com.example.synergic_pos_offline.fragments.MasterFragment
-import com.example.synergic_pos_offline.fragments.ComingSoonFragment
-import com.example.synergic_pos_offline.fragments.PosBillingFragment
-import com.example.synergic_pos_offline.fragments.PrintSettingsFragment
-import com.example.synergic_pos_offline.fragments.ProductsFragment
-import com.example.synergic_pos_offline.fragments.RegistrationFragment
-import com.example.synergic_pos_offline.fragments.ReportsFragment
-import com.example.synergic_pos_offline.fragments.SaleReturnRouter
-import com.example.synergic_pos_offline.fragments.SalesFragment
-import com.example.synergic_pos_offline.fragments.SettingsFragment
-import com.example.synergic_pos_offline.fragments.BillSettingsFragment
-import com.example.synergic_pos_offline.fragments.GeneralSettingsFragment
-import com.example.synergic_pos_offline.fragments.TaxSettingsFragment
-import com.example.synergic_pos_offline.fragments.AppSettingsFragment
-import com.example.synergic_pos_offline.fragments.UnitFragment
-import com.example.synergic_pos_offline.fragments.UserManagementFragment
-import com.example.synergic_pos_offline.fragments.WaiterFragment
-import com.example.synergic_pos_offline.utils.DatabaseSeeder
-import com.example.synergic_pos_offline.utils.DialogUtils
-import com.example.synergic_pos_offline.utils.SessionManager
-import com.example.synergic_pos_offline.utils.SettingsCache
-import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.fragments.*
+import com.example.synergic_pos_offline.utils.*
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        init {
+            android.util.Log.e("SynergicPOS", "MainActivity CLASS LOADED")
+        }
+    }
 
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var rvSidebar: RecyclerView
@@ -77,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvHeaderSubtitle: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        android.util.Log.e("SynergicPOS", "!!! MainActivity onCreate START !!!")
         // The UI is designed light-only (hardcoded white backgrounds). Force day
         // mode so uncolored EditText input text stays dark and remains visible.
         androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
@@ -136,6 +109,7 @@ class MainActivity : AppCompatActivity() {
                 .replace(R.id.fragment_container, LoginFragment())
                 .commit()
         }
+        android.util.Log.e("SynergicPOS", "!!! MainActivity onCreate FINISHED !!!")
     }
 
     /** Updates the global header title/subtitle and back-button for [f]. */
@@ -339,6 +313,8 @@ class MainActivity : AppCompatActivity() {
             // Opens on Connections; the Print Template tab is the other half of it.
             "Printer Settings" -> navigateTo(PrintSettingsFragment())
             "Stock & Inventory" -> navigateTo(InventoryFragment())
+            "Stock In" -> navigateTo(StockListFragment.newInstance(StockListFragment.Mode.IN))
+            "Write Off" -> navigateTo(StockListFragment.newInstance(StockListFragment.Mode.OUT))
             "Reports" -> navigateTo(ReportsFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")
@@ -399,6 +375,17 @@ class MainActivity : AppCompatActivity() {
             databaseSettingsNodes.add(TreeNode("Waiter"))
         }
 
+        // Stock & Inventory only exists while stock tracking is on - the drawer has
+        // to agree with the menu grid, or the tile is "hidden" in one place only.
+        val stockNodes = if (GeneralSettingsDao.isStockEnabled(context)) listOf(
+            // Matches the Stock & Inventory tile grid: only the two built screens are
+            // listed, and the rest stay parked in [InventoryFragment] until they are.
+            TreeNode("Stock & Inventory", listOf(
+                TreeNode("Stock In"),
+                TreeNode("Write Off")
+            ))
+        ) else emptyList()
+
         return listOf(
             TreeNode("Master", listOf(
                 TreeNode("Captions"),
@@ -421,14 +408,7 @@ class MainActivity : AppCompatActivity() {
                 TreeNode("Printer Settings"),
                 TreeNode("App Settings")
             )),
-            TreeNode("Stock & Inventory", listOf(
-                TreeNode("Purchase Item"),
-                TreeNode("Purchase Return"),
-                TreeNode("Generate Barcode"),
-                TreeNode("Print Barcode"),
-                TreeNode("Write Off Damage Item"),
-                TreeNode("Reset Stock")
-            )),
+            *stockNodes.toTypedArray(),
             TreeNode("Sale"),
             TreeNode("Sale Return"),
             TreeNode("Advance Payment"),

@@ -4,6 +4,8 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import com.example.synergic_pos_offline.database.DatabaseHelper
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.database.StockDao
 
 /**
  * Writes the rows of a bulk-upload sheet into the product master.
@@ -155,10 +157,18 @@ object ProductBulkImporter {
      * [Mode.APPEND] leaves them, [Mode.REPLACE] clears them first - see
      * [clearProducts] for what "clears" can and cannot reach.
      *
+     * A row's `stock` column opens that product's count, but only on a till that
+     * tracks stock; with Stock off the column is read past and nothing is written.
+     * The setting, not the sheet, decides whether this till counts anything - so a
+     * file filled in while Stock was on cannot start creating batches on a till
+     * where the stock screens are not even reachable, and the operator would have no
+     * way to see, correct or spend what it had booked in.
+     *
      * The whole sheet goes in one transaction - the clearing, the products, the
-     * rates, and any category or unit invented along the way - so a failure part-way
-     * leaves the masters as they were rather than half-populated with categories for
-     * products that never landed, or emptied with nothing put back.
+     * rates, the opening stock, and any category or unit invented along the way - so
+     * a failure part-way leaves the masters as they were rather than half-populated
+     * with categories for products that never landed, stock against products that
+     * did not, or emptied with nothing put back.
      */
     fun import(
         context: Context,
@@ -173,6 +183,10 @@ object ProductBulkImporter {
         // new category from creating ten copies of it.
         val categoryIds = HashMap<String, Int?>()
         val unitIds = HashMap<String, Int?>()
+        // Asked once for the sheet, not once per row: the setting cannot change
+        // half way through an import, and every row has to be treated the same way
+        // whichever half of the file it is in.
+        val stockDao = if (GeneralSettingsDao.isStockEnabled(context)) StockDao(context) else null
         var imported = 0
         var skipped = 0
         var removed = 0
@@ -242,6 +256,13 @@ object ProductBulkImporter {
                         arrayOf<Any>(rateId)
                     )
                 }
+
+                // The quantity the sheet says this item starts at, booked in exactly
+                // as the Add Product form's own opening stock is, and on the same
+                // transaction the product itself went in on.
+                stockDao?.let { dao ->
+                    openingStockOf(r)?.let { dao.recordOpening(db, productId, it, storeId, outletId) }
+                }
                 imported++
             }
             db.setTransactionSuccessful()
@@ -293,6 +314,30 @@ object ProductBulkImporter {
     /** The unit a row names, under whichever of [UNIT_COLUMNS] it used. */
     fun unitNameOf(row: Map<String, String>): String? = UNIT_COLUMNS
         .firstNotNullOfOrNull { row[it]?.trim()?.takeIf { name -> name.isNotEmpty() } }
+
+    /**
+     * The column headings a sheet may give its opening stock under.
+     *
+     * [ProductCsvTemplate.STOCK_COLUMN] is what the download hands over; the longer
+     * spellings are what someone writing their own sheet is likely to head the
+     * column, and a quantity should not be dropped over which of them they chose.
+     */
+    private val STOCK_COLUMNS = listOf(ProductCsvTemplate.STOCK_COLUMN, "opening_stock", "stock_qty")
+
+    /**
+     * The opening quantity a row declares, or null where it declares none.
+     *
+     * Null for a blank cell and null for text that is not a number: a row that says
+     * nothing about stock is a product with no stock yet, not one opening at zero,
+     * and inventing a batch for it would put a line on the stock screen that the
+     * sheet never asked for. A negative quantity is refused for the same reason - a
+     * count cannot open below empty, and reading "-5" as five in hand would be worse
+     * than ignoring it.
+     */
+    fun openingStockOf(row: Map<String, String>): Double? = STOCK_COLUMNS
+        .firstNotNullOfOrNull { row[it]?.trim()?.takeIf { value -> value.isNotEmpty() } }
+        ?.toDoubleOrNull()
+        ?.takeIf { it >= 0.0 }
 
     /**
      * The id of the unit written as [symbol] - "Ltr", "PCS", "KG" - adding it to the

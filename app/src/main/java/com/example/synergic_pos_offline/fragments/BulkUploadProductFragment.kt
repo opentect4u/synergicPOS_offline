@@ -15,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.utils.CsvUtils
 import com.example.synergic_pos_offline.utils.Downloads
 import com.example.synergic_pos_offline.utils.DialogUtils
@@ -123,10 +124,22 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         // A row that names no category imports uncategorised rather than being
         // filed under a guess - the page no longer asks for one to guess with.
         val uncategorised = rows.count { it["category"].orEmpty().isBlank() }
+        // What the sheet's stock column is about to do, said before it does it. Only
+        // a till that tracks stock opens a count from it, and on one that does not
+        // the figures are quietly dropped - which is worth saying out loud, since an
+        // operator who has filled a column in has every reason to expect it to land.
+        val stockTracked = GeneralSettingsDao.isStockEnabled(ctx)
+        val withStock = rows.count { ProductBulkImporter.openingStockOf(it) != null }
         view.findViewById<TextView>(R.id.tvPreviewSub).text = buildString {
             append("$named of ${rows.size} row(s) • ${columns.size} columns")
             if (uncategorised > 0) {
                 append("\n$uncategorised row(s) name no category and will be left uncategorised")
+            }
+            if (withStock > 0) {
+                append(
+                    if (stockTracked) "\nOpening stock will be set for $withStock row(s)"
+                    else "\nStock tracking is off - the stock column will be ignored"
+                )
             }
             if (newCategories.isNotEmpty()) {
                 append("\nNew categories to be created: ${newCategories.joinToString(", ")}")

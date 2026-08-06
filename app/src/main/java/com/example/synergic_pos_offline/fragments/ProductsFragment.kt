@@ -26,6 +26,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.FileProvider
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.DatabaseHelper
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.database.StockDao
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.Downloads
@@ -48,7 +50,18 @@ class ProductsFragment : DataTableFragment() {
 
     override val screenTitle = "Products"
 
-    override val columns = listOf("S.No", "Name", "HSN Code", "Barcode", "Category")
+    /** Whether stock is tracked. Decides the extra column and the dialog's stock block. */
+    private val stockTracked by lazy { GeneralSettingsDao.isStockEnabled(requireContext()) }
+
+    /**
+     * Stock is appended rather than slotted in, so the columns before it keep their
+     * positions - [filterColumnIndex] and the cell order both count from the front,
+     * and a column that only sometimes exists must not shift them.
+     */
+    override val columns by lazy {
+        listOf("S.No", "Name", "HSN Code", "Barcode", "Category") +
+            if (stockTracked) listOf("Stock") else emptyList()
+    }
 
     /** Products filter by category - the "Category" column above. */
     override val filterColumnIndex = 4
@@ -124,8 +137,12 @@ class ProductsFragment : DataTableFragment() {
     override fun loadRows(): MutableList<DataRow> {
         val rows = mutableListOf<DataRow>()
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+        // The count is summed in the query rather than read per row: the master lists
+        // the whole catalogue, and a lookup per product would be a query per tile.
         val sql = """
-            SELECT p.id, p.product_name, p.hsn_code, p.bar_code, c.category_name, p.product_image
+            SELECT p.id, p.product_name, p.hsn_code, p.bar_code, c.category_name, p.product_image,
+                   COALESCE((SELECT SUM(s.current_quantity) FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} s
+                             WHERE s.product_id = p.id), 0)
             FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
             LEFT JOIN ${DatabaseHelper.Tables.MD_CATEGORY} c ON c.id = p.category_id
             WHERE p.store_id = ?
@@ -134,16 +151,17 @@ class ProductsFragment : DataTableFragment() {
 
         db.rawQuery(sql, arrayOf(storeId().toString())).use { cursor ->
             while (cursor.moveToNext()) {
+                val cells = listOf(
+                    cursor.getInt(0).toString(),
+                    cursor.getString(1).orEmpty(),
+                    cursor.getString(2).orEmpty(),
+                    cursor.getString(3).orEmpty(),
+                    cursor.getString(4).orEmpty()
+                )
                 rows.add(
                     DataRow(
                         id = cursor.getInt(0).toString(),
-                        cells = listOf(
-                            cursor.getInt(0).toString(),
-                            cursor.getString(1).orEmpty(),
-                            cursor.getString(2).orEmpty(),
-                            cursor.getString(3).orEmpty(),
-                            cursor.getString(4).orEmpty()
-                        ),
+                        cells = if (stockTracked) cells + StockDao.trim(cursor.getDouble(6)) else cells,
                         thumbnail = if (cursor.isNull(5)) null else cursor.getBlob(5)
                     )
                 )
@@ -231,7 +249,30 @@ class ProductsFragment : DataTableFragment() {
         view.findViewById<TextInputEditText>(R.id.etHsn).setText(existing?.hsn.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etBarcode).setText(existing?.barcode.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etStockAlert).setText(existing?.stockAlert.orEmpty())
-        view.findViewById<TextInputEditText>(R.id.etBatchNo).setText(existing?.batchNo.orEmpty())
+
+        // The stock block shows whenever stock is tracked, but says different things
+        // either side of an edit. Adding: the opening batch, which is what sets the
+        // count. Editing: what is on hand now, with the opening fields locked - the
+        // batch is already there with a stock history behind it, and re-opening it
+        // would silently rewrite a count that sales and deliveries have since moved.
+        // Stock is moved from the Stock In / Write Off screens instead.
+        val editing = productId != null
+        val capturesOpeningStock = stockTracked && !editing
+        view.findViewById<LinearLayout>(R.id.llStockDetails).visibility =
+            if (stockTracked) android.view.View.VISIBLE else android.view.View.GONE
+
+        if (stockTracked && !capturesOpeningStock) {
+            view.findViewById<LinearLayout>(R.id.llCurrentStock).visibility =
+                android.view.View.VISIBLE
+            view.findViewById<TextInputEditText>(R.id.etCurrentStock).setText(
+                StockDao.trim(StockDao(context).stockOf(productId!!))
+            )
+            // Locked, not hidden: the opening figure is part of what the product is,
+            // and an edit that simply dropped it would read as if it never had one.
+            // Disabling the layout greys its field along with it.
+            view.findViewById<TextInputLayout>(R.id.tilOpeningStock).isEnabled = false
+            view.findViewById<TextInputEditText>(R.id.etOpeningStock).isEnabled = false
+        }
 
         // Restaurant-only attributes, shown above the rates section in Restaurant mode.
         val restaurantMode = SettingsCache.value(requireContext(), "G", "Mode") == "R"
@@ -275,6 +316,23 @@ class ProductsFragment : DataTableFragment() {
             }
             tilName.error = null
 
+            // With stock tracked, the quantity a product opens with is part of adding
+            // it: a product created without one would sit at nothing on the sale
+            // screen until someone noticed and took it through Stock In.
+            if (capturesOpeningStock) {
+                val tilOpening = view.findViewById<TextInputLayout>(R.id.tilOpeningStock)
+                val openingQty = text(view, R.id.etOpeningStock).toDoubleOrNull()
+                if (openingQty == null) {
+                    tilOpening.error = "Opening stock is required"
+                    return@setOnClickListener
+                }
+                if (openingQty < 0.0) {
+                    tilOpening.error = "Enter a quantity of 0 or more"
+                    return@setOnClickListener
+                }
+                tilOpening.error = null
+            }
+
             // Discount Type is required on any rate that carries a discount value.
             val ratesContainer = view.findViewById<LinearLayout>(R.id.llRates)
             for (i in 0 until ratesContainer.childCount) {
@@ -301,14 +359,14 @@ class ProductsFragment : DataTableFragment() {
                 barcode = text(view, R.id.etBarcode),
                 stockAlert = text(view, R.id.etStockAlert),
                 categoryId = selectedId(actCategory),
-                batchNo = text(view, R.id.etBatchNo),
+                openingStock = text(view, R.id.etOpeningStock),
                 foodType = view.findViewById<TextView>(R.id.actFoodType).text?.toString()?.trim().orEmpty(),
                 spiceLevel = view.findViewById<TextView>(R.id.actSpiceLevel).text?.toString()?.trim().orEmpty(),
                 prepTime = text(view, R.id.etPrepTime),
                 availability = view.findViewById<TextView>(R.id.actAvailability).text?.toString()?.trim().orEmpty(),
                 rates = rateRows
             )
-            saveProduct(productId, form)
+            saveProduct(productId, form, capturesOpeningStock)
             dialog.dismiss()
             dialogImageView = null
             refreshRows()
@@ -734,7 +792,8 @@ class ProductsFragment : DataTableFragment() {
         val barcode: String,
         val stockAlert: String,
         val categoryId: Int?,
-        val batchNo: String,
+        /** Quantity the product opens with, captured on Add while stock is tracked. */
+        val openingStock: String,
         val foodType: String,
         val spiceLevel: String,
         val prepTime: String,
@@ -744,7 +803,7 @@ class ProductsFragment : DataTableFragment() {
 
     private class ExistingProduct(
         val name: String, val hsn: String, val barcode: String, val stockAlert: String,
-        val categoryId: Int?, val image: ByteArray?, val batchNo: String,
+        val categoryId: Int?, val image: ByteArray?,
         val foodType: String, val spiceLevel: String,
         val prepTime: String, val availability: String,
         val rates: List<RateRow>
@@ -794,7 +853,6 @@ class ProductsFragment : DataTableFragment() {
                 stockAlert = num(c, 3),
                 categoryId = if (c.isNull(4)) null else c.getInt(4),
                 image = if (c.isNull(5)) null else c.getBlob(5),
-                batchNo = "",
                 foodType = c.getString(6).orEmpty(),
                 spiceLevel = c.getString(7).orEmpty(),
                 prepTime = c.getString(8).orEmpty(),
@@ -811,7 +869,7 @@ class ProductsFragment : DataTableFragment() {
         return if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
     }
 
-    private fun saveProduct(productId: Int?, form: ProductForm) {
+    private fun saveProduct(productId: Int?, form: ProductForm, withStock: Boolean = false) {
         val db = DatabaseHelper.getInstance(requireContext()).writableDatabase
         // store_id and outlet_id both come from md_registration.
         val (storeId, outletId) = storeAndOutlet()
@@ -888,10 +946,35 @@ class ProductsFragment : DataTableFragment() {
                 )
             }
 
+            if (withStock) saveOpeningBatch(db, id, storeId, outletId, form)
+
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
+    }
+
+    /**
+     * Writes the batch a newly added product opens with, through
+     * [StockDao.recordOpening] - the same call the bulk upload's `stock` column
+     * makes, so a product opened by hand and a product opened by sheet end up
+     * counted and filed alike.
+     *
+     * Runs inside [saveProduct]'s transaction - a product cannot end up saved with
+     * its opening stock missing, or a stock row left pointing at no product.
+     *
+     * Nothing is written when no opening quantity was given: a product added without
+     * one is a product with no stock yet, not a batch of zero.
+     */
+    private fun saveOpeningBatch(
+        db: android.database.sqlite.SQLiteDatabase,
+        productId: Long,
+        storeId: Int?,
+        outletId: Int?,
+        form: ProductForm
+    ) {
+        val quantity = form.openingStock.toDoubleOrNull() ?: return
+        StockDao(requireContext()).recordOpening(db, productId, quantity, storeId, outletId)
     }
 
     /** Stores a numeric field, or NULL when the user left it blank. */

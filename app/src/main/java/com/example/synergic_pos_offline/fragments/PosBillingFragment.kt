@@ -29,6 +29,7 @@ import com.example.synergic_pos_offline.database.BillDao
 import com.example.synergic_pos_offline.database.CategoryDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.database.StockDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
 import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.DialogUtils
@@ -37,6 +38,7 @@ import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.ImageUtils
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.SettingsCache
+import com.example.synergic_pos_offline.utils.StockBadge
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
@@ -86,7 +88,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
          * still searched on, so scanning into the search box finds the product.
          */
         val barcode: String = "",
-        val category: String, val categoryId: Long, val price: Double, val stock: String = "ok",
+        val category: String, val categoryId: Long, val price: Double,
+        /**
+         * Stock state driving the tile badge: "ok", "low", "out" - or "off" while
+         * stock tracking is not on, which is the only state that shows nothing at
+         * all. Kept a string because that is what the tile has always switched on.
+         */
+        val stock: String = "off",
+        /** Quantity on hand, shown on the tile. Meaningless unless [stock] is not "off". */
+        val stockQty: Double = 0.0,
         val hsn: String = "0000", val cgst: Double = 0.0, val sgst: Double = 0.0, val vat: Double = 0.0,
         val unit: String = "pcs",
         /** The rate's own pre-configured discount (Tax Settings' item-wise discount).
@@ -131,6 +141,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private val categories = mutableListOf("All")
     private val categoryItems = mutableListOf<CategoryItem>()
     private val menu = mutableListOf<Product>()
+
+    /**
+     * Whether stock is being tracked, as of the last catalogue load. Gates the
+     * cart's stock ceiling - with the flag off there is no count to sell past.
+     */
+    private var stockTrackingOn = false
 
     /** Product photos, decoded once per catalogue load and keyed by product id. */
     private val photoCache = mutableMapOf<String, android.graphics.Bitmap>()
@@ -570,6 +586,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // Query products with their rates — store-scoped like the Products master.
         photoCache.clear()
         val store = currentStoreId(db)
+
+        // Stock is read once for the whole catalogue rather than per tile, and only
+        // when it is being tracked - with the flag off the sale screen never asks the
+        // stock tables anything, and every tile stays as it was before they existed.
+        val stockOn = GeneralSettingsDao.isStockEnabled(requireContext())
+        stockTrackingOn = stockOn
+        val levels = if (stockOn) StockDao(requireContext()).levels(store?.toInt() ?: 0) else emptyMap()
         db.query(
             "md_products",
             arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id",
@@ -623,6 +646,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
                     // In Multiple mode, gather every rate for the popup's dropdown.
                     val rates = if (multipleRates) loadRates(db, productId) else emptyList()
 
+                    val level = if (stockOn) levels[cursor.getLong(0)] else null
+                    val stockState = StockBadge.stateOf(level)
+
                     // Create product with database values
                     val product = Product(
                         id = productId,
@@ -635,6 +661,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
                         category = categoryName,
                         categoryId = categoryId,
                         price = price,
+                        stock = stockState,
+                        stockQty = level?.quantity ?: 0.0,
                         hsn = hsn,
                         cgst = cgst,
                         sgst = sgst,
@@ -690,10 +718,40 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvNoProducts.visibility = if (shownProducts.isEmpty()) View.VISIBLE else View.GONE
     }
 
+    /**
+     * Whether putting [wantedQty] of [productId] in the cart would sell stock that
+     * is not there, counting what the cart already holds of it.
+     *
+     * The whole cart is counted, not the one line: the same product can sit on
+     * several lines at different rates, and three of each off a shelf of five is
+     * still overselling. [ignoreLineIndex] drops the line being replaced, so
+     * editing one from 2 to 3 is not read as asking for 5.
+     *
+     * Stock comes from the catalogue rather than the cart's own copy of the
+     * product - a line restored from a held bill may have been built without one.
+     * Off while stock is not tracked: there is no count to be over.
+     */
+    private fun exceedsStock(productId: String, wantedQty: Int, ignoreLineIndex: Int = -1): Boolean {
+        if (!stockTrackingOn) return false
+        val product = menu.firstOrNull { it.id == productId } ?: return false
+        val alreadyInCart = cart
+            .filterIndexed { index, line -> index != ignoreLineIndex && line.product.id == productId }
+            .sumOf { it.qty }
+        if (alreadyInCart + wantedQty <= product.stockQty) return false
+
+        val remaining = (product.stockQty - alreadyInCart).coerceAtLeast(0.0)
+        toast(
+            if (remaining <= 0.0) "${product.name}: no stock left to add"
+            else "${product.name}: only ${StockDao.trim(remaining)} left in stock"
+        )
+        return true
+    }
+
     /** Adds [qty] units of [p] at [rate]. Merges with an existing line only when
      *  the same product is already in the cart at the same rate. */
     private fun addToCart(p: Product, qty: Int, rate: Double) {
         if (p.stock == "out") { toast("${p.name} is out of stock"); return }
+        if (exceedsStock(p.id, qty)) return
         val priced = if (rate == p.price) p else p.copy(price = rate)
         
         // Find existing line at the SAME rate
@@ -785,12 +843,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
         id = id, name = name, sku = sku, category = category,
         price = price, hsn = hsn, unit = unit, photo = photoCache[id],
         cgst = cgst, sgst = sgst, vat = vat,
-        discValue = discValue, discType = discType, rates = rates
+        discValue = discValue, discType = discType, rates = rates,
+        stock = stock, stockQty = stockQty
     )
 
     /** Replaces a cart line's rate and quantity (from the edit dialog). */
     private fun updateCartLine(index: Int, qty: Int, rate: Double) {
         if (index !in cart.indices) return
+        if (exceedsStock(cart[index].product.id, qty, ignoreLineIndex = index)) return
         val base = cart[index].product
         val priced = if (rate == base.price) base else base.copy(price = rate)
         cart[index] = CartLine(priced, qty)
@@ -800,6 +860,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private fun changeQty(pos: Int, delta: Int) {
         if (pos !in cart.indices) return
+        // Only a step up can outrun the shelf; stepping down never needs asking.
+        if (delta > 0 &&
+            exceedsStock(cart[pos].product.id, cart[pos].qty + delta, ignoreLineIndex = pos)
+        ) return
         val line = cart.removeAt(pos)
         line.qty += delta
         if (line.qty > 0) {
@@ -1725,29 +1789,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 holder.photo.visibility = View.GONE
             }
 
-            when (p.stock) {
-                "low" -> {
-                    holder.stock.visibility = View.VISIBLE
-                    holder.stock.text = "Low stock"
-                    val shape = android.graphics.drawable.GradientDrawable().apply {
-                        cornerRadius = 8 * holder.itemView.resources.displayMetrics.density
-                        setColor(Color.parseColor("#F9AB00")) // Amber
-                    }
-                    holder.stock.background = shape
-                    holder.stock.setTextColor(Color.WHITE)
-                }
-                "out" -> {
-                    holder.stock.visibility = View.VISIBLE
-                    holder.stock.text = "Out of stock"
-                    val shape = android.graphics.drawable.GradientDrawable().apply {
-                        cornerRadius = 8 * holder.itemView.resources.displayMetrics.density
-                        setColor(Color.parseColor("#D93025")) // Red
-                    }
-                    holder.stock.background = shape
-                    holder.stock.setTextColor(Color.WHITE)
-                }
-                else -> holder.stock.visibility = View.GONE
-            }
+            StockBadge.apply(holder.stock, p.stock, p.stockQty)
             holder.itemView.alpha = if (p.stock == "out") 0.5f else 1f
             holder.itemView.setOnClickListener { showProductDialog(p) }
         }

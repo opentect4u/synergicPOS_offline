@@ -27,8 +27,10 @@ import java.util.Locale
  */
 class ReturnDao(context: Context) {
 
+    private val appContext = context.applicationContext
     private val helper = DatabaseHelper.getInstance(context)
     private val taxSettingsDao = TaxSettingsDao(context)
+    private val stockDao by lazy { StockDao(context) }
 
     /** A sellable item, with the rate, tax and discount it is currently sold at. */
     data class Item(
@@ -466,6 +468,16 @@ class ReturnDao(context: Context) {
                 "id = ?", arrayOf(id.toString())
             )
 
+            // Returned goods go back on the shelf, inside this same transaction: a
+            // return that refunded the customer without restoring what came back
+            // would leave the count short by exactly what was handed over. Only while
+            // stock is tracked - with the flag off a return touches nothing, the same
+            // way a sale does not. Bill-wise and item-wise both come through here, so
+            // neither can be left out; the original bill number, where there is one,
+            // lets the stock go back into the batches that bill drew from.
+            val restoresStock = GeneralSettingsDao.isStockEnabled(appContext)
+            val soldUnder = originalBillId?.let { billNumberOf(it) }
+
             kept.forEach { line ->
                 db.insert(
                     DatabaseHelper.Tables.TD_RETURN_ITEMS, null,
@@ -478,6 +490,16 @@ class ReturnDao(context: Context) {
                         put("created_by", user)
                     }
                 )
+                val productId = line.productId?.toInt()
+                if (restoresStock && productId != null) {
+                    stockDao.restoreForReturn(
+                        db = db,
+                        productId = productId,
+                        quantity = line.quantity,
+                        reference = returnNumber,
+                        soldUnderReference = soldUnder
+                    )
+                }
             }
 
             db.setTransactionSuccessful()

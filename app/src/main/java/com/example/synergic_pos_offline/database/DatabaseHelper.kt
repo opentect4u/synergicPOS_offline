@@ -35,6 +35,15 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "spice_level", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "prep_time", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "availability", "TEXT")
+        // A batch has always carried an expiry; the date it was made is captured
+        // alongside it when a product is added with stock tracking on.
+        addColumnIfMissing(db, Tables.MD_BATCH_STOCK, "mfg_date", "TEXT")
+        // Which way the stock moved - 'IN' or 'OUT'. transaction_type says what kind
+        // of movement it was (a RETURN is stock coming back out to a supplier here),
+        // which is not the same question as whether the count went up or down.
+        // Added without the CHECK the fresh schema carries: SQLite cannot attach a
+        // constraint to an existing column, and the writers are the two screens below.
+        addColumnIfMissing(db, Tables.TD_STOCK_TRANSACTIONS, "stock_flow", "TEXT")
         addColumnIfMissing(db, Tables.TD_BILLS, "bill_seq_no", "INTEGER")
         addColumnIfMissing(db, Tables.TD_BILLS, "settings_snapshot", "TEXT")
         // Bills created before bill_seq_no existed carried a plain receipt_no-based
@@ -1146,6 +1155,7 @@ class DatabaseHelper private constructor(context: Context) :
                 outlet_id INTEGER,
                 product_id INTEGER,
                 batch_no TEXT,
+                mfg_date TEXT,
                 expiry_date TEXT,
                 current_quantity REAL DEFAULT 0,
                 last_stock_update TEXT,
@@ -1521,6 +1531,7 @@ class DatabaseHelper private constructor(context: Context) :
                 product_id INTEGER,
                 batch_id INTEGER,
                 transaction_type TEXT CHECK(transaction_type IN ('PURCHASE','SALE','RETURN','ADJUSTMENT','DAMAGE_WRITEOFF')),
+                stock_flow TEXT CHECK(stock_flow IN ('IN','OUT')),
                 quantity REAL,
                 reference_number TEXT,
                 transaction_date TEXT,

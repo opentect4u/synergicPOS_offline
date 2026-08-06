@@ -50,6 +50,12 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swCustomerInfo: SwitchMaterial
     private lateinit var rgItemRate: RadioGroup
     private lateinit var rgLandingScreen: RadioGroup
+    private lateinit var swStockFlag: SwitchMaterial
+    private lateinit var llStockAlert: View
+    private lateinit var swStockAlert: SwitchMaterial
+    private lateinit var llStockAlertQty: View
+    private lateinit var tilStockAlertQty: View
+    private lateinit var etStockAlertQty: TextInputEditText
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -70,6 +76,12 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         swCustomerInfo = view.findViewById(R.id.swCustomerInfo)
         rgItemRate = view.findViewById(R.id.rgItemRate)
         rgLandingScreen = view.findViewById(R.id.rgLandingScreen)
+        swStockFlag = view.findViewById(R.id.swStockFlag)
+        llStockAlert = view.findViewById(R.id.llStockAlert)
+        swStockAlert = view.findViewById(R.id.swStockAlert)
+        llStockAlertQty = view.findViewById(R.id.llStockAlertQty)
+        tilStockAlertQty = view.findViewById(R.id.tilStockAlertQty)
+        etStockAlertQty = view.findViewById(R.id.etStockAlertQty)
 
         val s = dao.load()
         swLastBillStatus.isChecked = s.lastBillStatus
@@ -105,6 +117,36 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         swSaleReturn.setOnCheckedChangeListener { _, _ -> applyReturnState() }
         rgReturnMode.setOnCheckedChangeListener { _, _ -> applyReturnState() }
 
+        // ---- Stock: each flag only opens the one below it ----------------------
+        swStockFlag.isChecked = s.stockFlag
+        swStockAlert.isChecked = s.stockFlag && s.stockAlert
+        etStockAlertQty.setText(
+            if (swStockAlert.isChecked) s.stockAlertQty.toString() else ""
+        )
+
+        // The alert has nothing to watch without stock tracking, and the quantity
+        // has nothing to bound without the alert - so each stays visible but
+        // greyed out until its parent is on, and switching a parent off clears
+        // what depends on it rather than leaving a value that no longer applies.
+        fun applyStockState() {
+            val stockOn = swStockFlag.isChecked
+            val alertOn = stockOn && swStockAlert.isChecked
+            llStockAlert.setRowEnabled(stockOn)
+            swStockAlert.isEnabled = stockOn
+            llStockAlertQty.setRowEnabled(alertOn)
+            tilStockAlertQty.isEnabled = alertOn
+            etStockAlertQty.isEnabled = alertOn
+        }
+        applyStockState()
+        swStockFlag.setOnCheckedChangeListener { _, on ->
+            if (!on) swStockAlert.isChecked = false
+            applyStockState()
+        }
+        swStockAlert.setOnCheckedChangeListener { _, on ->
+            if (!on) etStockAlertQty.setText("")
+            applyStockState()
+        }
+
         view.findViewById<MaterialButton>(R.id.btnChangePassword).setOnClickListener {
             showChangePasswordDialog()
         }
@@ -121,6 +163,10 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             val isLandingHome = rgLandingScreen.checkedRadioButtonId == R.id.rbLandingHome
             val landingScreenVal = if (isLandingHome) LandingScreen.HOME else LandingScreen.SALE
 
+            val alertApply = swStockFlag.isChecked && swStockAlert.isChecked
+            val alertQty =
+                if (alertApply) etStockAlertQty.text?.toString()?.toIntOrNull() ?: 0 else 0
+
             val settings = GeneralSettings(
                 mode = modeVal,
                 saleReturn = swSaleReturn.isChecked,
@@ -130,7 +176,10 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 quantityStatus = swQuantityStatus.isChecked,
                 itemRate = itemRateVal,
                 customerInfo = swCustomerInfo.isChecked,
-                landingScreen = landingScreenVal
+                landingScreen = landingScreenVal,
+                stockFlag = swStockFlag.isChecked,
+                stockAlert = alertApply,
+                stockAlertQty = alertQty
             )
 
             // Switching mode wipes the mode-specific business data - confirm first.
@@ -220,6 +269,12 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             }
         }
         dialog.show()
+    }
+
+    /** Greys a settings row out when the flag it depends on is off. */
+    private fun View.setRowEnabled(enabled: Boolean) {
+        isEnabled = enabled
+        alpha = if (enabled) 1f else 0.45f
     }
 
     private fun toast(msg: String) =

@@ -59,6 +59,9 @@ class SettingsFragment : Fragment() {
             e("Item Rate", "General Settings", general),
             e("After Login", "General Settings", general),
             e("Landing Screen", "General Settings", general, match = "After Login"),
+            e("Stock", "General Settings", general),
+            e("Stock Alert", "General Settings", general),
+            e("Alert Quantity", "General Settings", general),
             // Bill Settings
             e("Bill No. Character", "Bill Settings", bill),
             e("Reset Bill No.", "Bill Settings", bill),

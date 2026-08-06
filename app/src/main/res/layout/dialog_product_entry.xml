@@ -47,6 +47,20 @@
             android:textSize="12sp"
             android:textColor="@color/primary_blue" />
 
+        <!-- Stock pill. Text and colour are set per state in StockBadge; hidden
+             entirely while stock is not being tracked. -->
+        <TextView
+            android:id="@+id/tvDialogStock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="3dp"
+            android:maxLines="1"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
         <!-- Product details grid -->
         <LinearLayout
             android:layout_width="match_parent"

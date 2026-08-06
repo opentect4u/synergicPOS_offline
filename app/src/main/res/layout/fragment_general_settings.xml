@@ -306,6 +306,85 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- ============ INVENTORY ============ -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <!-- Header wording differs from the "Stock" row title on purpose, so a
+                     search for Stock lands on the row rather than this header. -->
+                <TextView android:id="@+id/tvStockHeader"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="INVENTORY" android:textSize="12sp" android:letterSpacing="0.08"
+                    android:textStyle="bold" android:textColor="@color/primary_blue" />
+
+                <!-- Stock -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Stock" />
+                        <TextView style="@style/BillSettingSub" android:text="Track the quantity on hand for each item" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swStockFlag" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Stock Alert (only available while Stock is ON) -->
+                <LinearLayout
+                    android:id="@+id/llStockAlert"
+                    style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Stock Alert" />
+                        <TextView style="@style/BillSettingSub" android:text="Warn when an item runs low on stock" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swStockAlert" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Alert quantity (only available while Stock Alert is ON) -->
+                <LinearLayout
+                    android:id="@+id/llStockAlertQty"
+                    style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Alert Quantity" />
+                        <TextView style="@style/BillSettingSub" android:text="Alert once an item's stock falls to this quantity or below" />
+                    </LinearLayout>
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilStockAlertQty"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="110dp"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:hint="Qty"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etStockAlertQty"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:gravity="end"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSaveGeneral"
             android:layout_width="match_parent"

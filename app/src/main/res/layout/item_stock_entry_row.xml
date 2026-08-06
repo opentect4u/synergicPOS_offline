@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One item + quantity line inside the Stock In / Write Off modal. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:baselineAligned="false"
+    android:gravity="center_vertical">
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/tilRowItem"
+        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginBottom="10dp"
+        android:hint="Item"
+        app:boxCornerRadiusTopStart="12dp"
+        app:boxCornerRadiusTopEnd="12dp"
+        app:boxCornerRadiusBottomStart="12dp"
+        app:boxCornerRadiusBottomEnd="12dp">
+
+        <!-- Typed into as a search box: the list filters on what is typed and the
+             match is picked from the drop-down. -->
+        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+            android:id="@+id/actRowItem"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:completionThreshold="1"
+            android:imeOptions="actionNext"
+            android:inputType="text"
+            android:maxLines="1" />
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/tilRowQty"
+        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+        android:layout_width="104dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginBottom="10dp"
+        android:hint="Qty"
+        app:boxCornerRadiusTopStart="12dp"
+        app:boxCornerRadiusTopEnd="12dp"
+        app:boxCornerRadiusBottomStart="12dp"
+        app:boxCornerRadiusBottomEnd="12dp">
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/etRowQty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:inputType="numberDecimal"
+            android:maxLines="1" />
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <ImageButton
+        android:id="@+id/btnRemoveRow"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginStart="4dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Remove row"
+        android:src="@android:drawable/ic_delete" />
+
+</LinearLayout>

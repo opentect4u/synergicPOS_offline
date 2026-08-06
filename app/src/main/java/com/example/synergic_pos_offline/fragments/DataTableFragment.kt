@@ -131,6 +131,34 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     /** Invoked when a row's extra action button is tapped. */
     open fun onRowAction(row: DataRow) {}
 
+    /**
+     * Set true to make the whole row tappable, calling [onRowClick].
+     *
+     * For a table whose rows are a way in to somewhere else rather than records to
+     * be edited in place - tapping an item to move its stock, say. Off by default,
+     * so a table of editable records keeps the pencil as its only way in and a
+     * mis-tap on a row cannot navigate away from it.
+     */
+    open val rowClickable: Boolean get() = false
+
+    /** Invoked when a row is tapped, if [rowClickable]. */
+    open fun onRowClick(row: DataRow) {}
+
+    /** Set false on a table that shows records rather than owning them (no + FAB). */
+    open val showsAddAction: Boolean get() = true
+
+    /** Set false to drop the per-row pencil on a table that is not edited in place. */
+    open val showsEditAction: Boolean get() = true
+
+    /**
+     * Set false to drop the tick boxes and the Print/Delete bar above the table.
+     *
+     * A table that does not own its rows has no business offering to delete them -
+     * the stock screens list products, and deleting a product is the product
+     * master's job, not something reachable from a stock count.
+     */
+    open val showsSelection: Boolean get() = true
+
     private val allRows = mutableListOf<DataRow>()
     private val shownRows = mutableListOf<DataRow>()
     private val selectedIds = linkedSetOf<String>()
@@ -180,7 +208,10 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             onTestPrint = { onTestPrintRow(it) },
             rowActionIcon = { rowActionIcon(it) },
             rowActionLabel = rowActionLabel,
-            onRowAction = { onRowAction(it) }
+            onRowAction = { onRowAction(it) },
+            showsSelection = showsSelection,
+            showsEditAction = showsEditAction,
+            onRowClick = if (rowClickable) ({ onRowClick(it) }) else null
         )
         rvTable.layoutManager = LinearLayoutManager(requireContext())
         rvTable.adapter = adapter
@@ -202,7 +233,11 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
         setUpColumnFilter(view)
 
-        view.findViewById<View>(R.id.btnAdd).setOnClickListener { onAddRow() }
+        view.findViewById<View>(R.id.btnAdd).apply {
+            isVisible = showsAddAction
+            setOnClickListener { onAddRow() }
+        }
+        view.findViewById<View>(R.id.llActionRow).isVisible = showsSelection
 
         // A single FAB that opens a dedicated bulk-upload page (product screen).
         view.findViewById<View>(R.id.btnBulkPage).apply {
@@ -230,6 +265,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         cbSelectAll = CheckBox(ctx)
         cbSelectAll.layoutParams = LinearLayout.LayoutParams((44 * density).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT)
         cbSelectAll.buttonTintList = ColorStateList.valueOf(accent)
+        // Kept in the header even when hidden, so the columns still line up with the
+        // rows - whose own tick box is hidden the same way rather than removed.
+        cbSelectAll.visibility = if (showsSelection) View.VISIBLE else View.INVISIBLE
         cbSelectAll.setOnCheckedChangeListener { _, isChecked ->
             if (suppressSelectAll) return@setOnCheckedChangeListener
             if (isChecked) shownRows.forEach { selectedIds.add(it.id) }
@@ -520,7 +558,10 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         private val onTestPrint: (DataRow) -> Unit = {},
         private val rowActionIcon: (DataRow) -> Int? = { null },
         private val rowActionLabel: String = "Action",
-        private val onRowAction: (DataRow) -> Unit = {}
+        private val onRowAction: (DataRow) -> Unit = {},
+        private val showsSelection: Boolean = true,
+        private val showsEditAction: Boolean = true,
+        private val onRowClick: ((DataRow) -> Unit)? = null
     ) : RecyclerView.Adapter<DataTableAdapter.ViewHolder>() {
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -576,12 +617,23 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
             holder.cbRow.setOnCheckedChangeListener(null)
             holder.cbRow.isChecked = selectedIds.contains(row.id)
+            // INVISIBLE, not GONE: the header reserves this width either way, so the
+            // columns beside it have to start in the same place.
+            holder.cbRow.visibility = if (showsSelection) View.VISIBLE else View.INVISIBLE
             holder.cbRow.setOnCheckedChangeListener { _, isChecked ->
                 if (isChecked) selectedIds.add(row.id) else selectedIds.remove(row.id)
                 onSelectionChanged()
             }
 
+            holder.btnEdit.visibility = if (showsEditAction) View.VISIBLE else View.GONE
             holder.btnEdit.setOnClickListener { onEdit(row) }
+
+            // Recycled rows carry the previous binding, so the listener is always set -
+            // to null when this table does not navigate, which also clears the ripple.
+            holder.itemView.setOnClickListener(
+                onRowClick?.let { click -> View.OnClickListener { click(row) } }
+            )
+            holder.itemView.isClickable = onRowClick != null
 
             // Recycled rows carry the previous row's action, so both branches are
             // always taken - a row with no action has to actively lose one.
