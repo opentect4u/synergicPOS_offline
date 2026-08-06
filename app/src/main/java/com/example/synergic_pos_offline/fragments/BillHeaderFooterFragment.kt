@@ -96,13 +96,13 @@ class BillHeaderFooterFragment : DataTableFragment() {
         if (section == Section.HEADER) "headers" else "footers"
 
     private fun showEntryDialog(row: DataRow?) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
         val existing = row?.let { entryCache[it.id] }
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_bill_header_footer, null)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
         val etText = view.findViewById<TextInputEditText>(R.id.etText)

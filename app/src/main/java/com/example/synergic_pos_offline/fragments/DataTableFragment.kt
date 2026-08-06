@@ -465,7 +465,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         val bitmap = row.thumbnail?.let { decodeSampledBitmap(it, PREVIEW_PX) } ?: return
         val view = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_image_preview, null)
         val dialog = AlertDialog.Builder(requireContext()).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         view.findViewById<TextView>(R.id.tvPreviewName).text =
             row.cells.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Image"

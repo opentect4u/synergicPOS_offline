@@ -290,32 +290,30 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             RestaurantCheckoutFragment.RESULT_PAID, viewLifecycleOwner
         ) { _, bundle ->
             val paidTable = bundle.getString(RestaurantCheckoutFragment.ARG_TABLE)
-            orders.firstOrNull { it.id == paidTable }?.let { paid ->
-                // What was served has left the shelf. Done here rather than at bill
-                // save because Restaurant checkout does not write a bill - settling
-                // the order is the only moment the sale is known to be complete.
-                if (stockTrackingOn) {
-                    stockDao.recordSale(
-                        reference = "Table ${paid.id}",
-                        lines = paid.items.map {
-                            com.example.synergic_pos_offline.database.StockDao.SaleLine(
-                                it.productId.toInt(), it.qty.toDouble()
-                            )
-                        }
-                    )
-                }
-                roDao.close(paid.dbId)
+            // Resolve the order first — settlePaidOrder removes it from the list, so a
+            // second lookup afterwards would find nothing and the bill would never save
+            // or print.
+            val order = orders.firstOrNull { it.id == paidTable } ?: return@setFragmentResultListener
+            // What was served has left the shelf. Done here rather than at bill save
+            // because Restaurant checkout does not write a bill - settling the order is
+            // the only moment the sale is known to be complete.
+            if (stockTrackingOn) {
+                stockDao.recordSale(
+                    reference = "Table ${order.id}",
+                    lines = order.items.map {
+                        com.example.synergic_pos_offline.database.StockDao.SaleLine(
+                            it.productId.toInt(), it.qty.toDouble()
+                        )
+                    }
+                )
             }
-            orders.removeAll { it.id == paidTable }
-            // Counts have moved, so the grid is rebuilt from them on its next open.
-            loadProductsFromDb()
-            val root = view ?: return@setFragmentResultListener
-            populateOrders(root, ThemeManager.getThemeColor(requireContext()))
-            clearDetail(root)
             val payMethod = bundle.getString(RestaurantCheckoutFragment.ARG_PAY_METHOD).orEmpty()
             val tendered = bundle.getDouble(RestaurantCheckoutFragment.ARG_TENDERED, 0.0)
-            val order = orders.firstOrNull { it.id == paidTable } ?: return@setFragmentResultListener
+            // Persists the bill, closes & frees the table(s), refreshes the list, and
+            // prints the paid receipt (with the payment mode).
             settlePaidOrder(order, payMethod, tendered)
+            // Grid product counts have moved after the sale.
+            loadProductsFromDb()
         }
 
         // Bill & Pay → restaurant checkout with the selected order's items.
@@ -555,12 +553,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     // ---- New Order: table + customer modal (dine-in) -----------------------
 
     private fun showNewOrderDialog() {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
         val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_new_order, null)
         com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(v)
         val dialog = AlertDialog.Builder(ctx).setView(v).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val etTable = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etTableNo)
         val etSection = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etSection)
@@ -646,7 +644,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * in the same section, and be currently available.
      */
     private fun showTransferDialog(order: OrderCard) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
         // Valid targets: available tables in the same section, minus any that already
@@ -660,7 +658,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_transfer_table, null)
         val dialog = AlertDialog.Builder(ctx).setView(v).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val etFrom = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etFromTable)
         val etSection = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etTransferSection)
@@ -712,7 +710,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * offers same-section tables. Needs at least two tables.
      */
     private fun showMergeDialog() {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
         // Every active DINE-IN table (running, not billed) is a candidate at first.
@@ -722,7 +720,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_merge_table, null)
         val dialog = AlertDialog.Builder(ctx).setView(v).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val etSection = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etMergeSection)
         val actWith = v.findViewById<android.widget.AutoCompleteTextView>(R.id.actMergeWith)
@@ -816,13 +814,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * the rest start empty. All parts share the parent table until each is settled.
      */
     private fun showSplitDialog(order: OrderCard) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
         val counts = listOf("2", "3", "4")
 
         val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_split_table, null)
         val dialog = AlertDialog.Builder(ctx).setView(v).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val etTable = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etSplitTable)
         val actCount = v.findViewById<android.widget.AutoCompleteTextView>(R.id.actSplitCount)
@@ -1030,11 +1028,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     // ---- Add Item: product-grid modal --------------------------------------
 
     private fun showAddItemDialog() {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
         val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_add_item, null)
         val dialog = AlertDialog.Builder(ctx).setView(v).create()
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val etSearch = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etSearch)
         val llCats = v.findViewById<LinearLayout>(R.id.llCategories)
@@ -1401,10 +1399,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter
     ) {
         val nextNo = com.example.synergic_pos_offline.database.BillDao(requireContext()).nextBillNumber()
-        // No mode is chosen until Bill & Pay, but the printed bill still shows a payment
-        // mode line; default it to the settlement default (Cash), matching how the order
-        // settles if nothing else is picked. The paid receipt later shows the real mode.
-        printGroceryStyleBill(order, printer, billNumber = nextNo, payment = "Cash")
+        // This is the provisional table bill, printed before payment - so it carries no
+        // payment mode. The mode is only known and printed on the paid receipt, after
+        // Checkout -> Confirm (see settlePaidOrder -> printGroceryStyleBill with payMethod).
+        printGroceryStyleBill(order, printer, billNumber = nextNo, payment = "")
         completeTable(order)   // billed → locked (stays until paid)
     }
 

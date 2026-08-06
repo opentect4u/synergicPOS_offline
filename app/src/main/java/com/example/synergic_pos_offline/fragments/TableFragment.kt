@@ -75,13 +75,13 @@ class TableFragment : DataTableFragment() {
     // ---- Add: generate a table per code across From..To ---------------------
 
     private fun showAddDialog() {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_table, null)
         com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         view.findViewById<TextView>(R.id.tvDialogTitle).text = "Add Tables"
         val actSection = view.findViewById<MaterialAutoCompleteTextView>(R.id.actSection)
@@ -169,7 +169,7 @@ class TableFragment : DataTableFragment() {
     // ---- Edit: the section's individual tables in a grid --------------------
 
     private fun showSectionTablesEditor(row: DataRow) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
         val alloc = cache[row.id] ?: return
         val sectionId = alloc.sectionId ?: return
@@ -179,7 +179,7 @@ class TableFragment : DataTableFragment() {
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_table_units, null)
         com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         view.findViewById<TextView>(R.id.tvDialogTitle).text = "Tables — ${alloc.sectionName}"
         val info = view.findViewById<TextView>(R.id.tvUnitsInfo)

@@ -36,7 +36,7 @@ object CustomerLedgerDialog {
         val view = inflater.inflate(R.layout.dialog_customer_ledger, null)
         val dialog = AlertDialog.Builder(context).setView(view).create()
             .also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val dao = CustomerLedgerDao(context)
         val etFrom = view.findViewById<TextInputEditText>(R.id.etDialogFrom)

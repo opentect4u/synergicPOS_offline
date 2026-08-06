@@ -191,14 +191,14 @@ class OperatingPrinterFragment : DataTableFragment() {
     }
 
     private fun showPrinterDialog(row: DataRow?) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
         val existing = row?.let { entryCache[it.id] }
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_operating_printer, null)
         com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
         val etName = view.findViewById<TextInputEditText>(R.id.etPrinterName)
@@ -356,7 +356,7 @@ class OperatingPrinterFragment : DataTableFragment() {
      */
     private fun prefillBtField(actvBt: MaterialAutoCompleteTextView, address: String?) {
         if (address.isNullOrBlank()) return
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val bonded = try {
             if (hasBtPermissions() || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
                 (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)
@@ -398,7 +398,7 @@ class OperatingPrinterFragment : DataTableFragment() {
      * fumbling with an OTG adapter needs to see.
      */
     private fun showUsbPickerDialog(actvUsb: MaterialAutoCompleteTextView) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val density = resources.displayMetrics.density
 
         val printers = mutableListOf<UsbPrinters.Printer>()
@@ -496,7 +496,7 @@ class OperatingPrinterFragment : DataTableFragment() {
      */
     private fun showBluetoothPickerDialog(actvBt: MaterialAutoCompleteTextView) {
         withBtPermissions {
-            val ctx = requireContext()
+            val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
             val btAdapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
             if (btAdapter == null) {
                 toast("Bluetooth is not available on this device")

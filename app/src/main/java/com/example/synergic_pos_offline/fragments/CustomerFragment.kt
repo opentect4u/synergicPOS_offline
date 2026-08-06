@@ -77,13 +77,13 @@ class CustomerFragment : DataTableFragment() {
     }
 
     private fun showCustomerDialog(row: DataRow?) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
         val existing = row?.let { cache[it.id] }
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_customer, null)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
         val etName = view.findViewById<TextInputEditText>(R.id.etName)

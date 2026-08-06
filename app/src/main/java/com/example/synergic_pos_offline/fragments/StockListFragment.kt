@@ -110,7 +110,7 @@ class StockListFragment : DataTableFragment() {
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_stock_entry, null)
         val dialog = AlertDialog.Builder(context).setView(view).create()
             .also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val stockIn = mode == Mode.IN
         view.findViewById<TextView>(R.id.tvStockEntryTitle).text = mode.title

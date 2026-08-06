@@ -83,7 +83,7 @@ object DialogUtils {
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_common, null)
         fitToScreen(ctx, view.findViewById(R.id.llDialogContent))
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val accent = ThemeManager.getThemeColor(context)
         val positiveColor = if (destructive) Color.parseColor(DESTRUCTIVE_COLOR) else accent
@@ -137,7 +137,7 @@ object DialogUtils {
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_common, null)
         fitToScreen(ctx, view.findViewById(R.id.llDialogContent))
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val accent = ThemeManager.getThemeColor(context)
 
@@ -197,7 +197,7 @@ object DialogUtils {
         val view = inflater.inflate(R.layout.dialog_list, null)
         fitToScreen(ctx, view.findViewById(R.id.llListContent))
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val accent = ThemeManager.getThemeColor(context)
 
@@ -263,7 +263,7 @@ object DialogUtils {
         val view = inflater.inflate(R.layout.dialog_form, null)
         fitToScreen(ctx, view.findViewById(R.id.llFormContent))
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val accent = ThemeManager.getThemeColor(context)
 
