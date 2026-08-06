@@ -52,7 +52,11 @@ object ProductEntryDialog {
         val discValue: Double = 0.0,
         val discType: String? = null,
         /** All sellable rates for this product; drives the rate dropdown when >1. */
-        val rates: List<Rate> = emptyList()
+        val rates: List<Rate> = emptyList(),
+        /** Stock state for the badge - see [StockBadge]. "off" while untracked. */
+        val stock: String = StockBadge.OFF,
+        /** Quantity on hand. Meaningless unless [stock] is not "off". */
+        val stockQty: Double = 0.0
     ) {
         val gst: Double get() = cgst + sgst
     }
@@ -109,6 +113,9 @@ object ProductEntryDialog {
         }
         view.findViewById<TextView>(R.id.tvDialogTitle).text = product.name
         view.findViewById<TextView>(R.id.tvDialogCategory).text = product.category
+        // What is left, stated where the quantity is actually being chosen - the tile
+        // said it, and the operator is now typing against it.
+        StockBadge.apply(view.findViewById(R.id.tvDialogStock), product.stock, product.stockQty)
         view.findViewById<TextView>(R.id.tvDetSku).text = product.sku
         view.findViewById<TextView>(R.id.tvDetHsn).text = product.hsn
         view.findViewById<TextView>(R.id.tvDetUnit).text = product.unit

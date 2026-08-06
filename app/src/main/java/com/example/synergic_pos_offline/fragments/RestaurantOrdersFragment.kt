@@ -56,6 +56,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     // Running orders — loaded from / persisted to the database (survive restarts).
     private val orders = mutableListOf<OrderCard>()
     private val roDao by lazy { com.example.synergic_pos_offline.database.RunningOrderDao(requireContext()) }
+    private val stockDao by lazy { com.example.synergic_pos_offline.database.StockDao(requireContext()) }
+
+    /** Whether stock is tracked, as of the last catalogue read. Gates the ceiling below. */
+    private var stockTrackingOn = false
+
+    /**
+     * The catalogue behind the Add Item grid, kept on the fragment so the stock
+     * ceiling can be checked from the order rows too - a table restored from the
+     * database has quantities to step up before that dialog has ever been opened.
+     */
+    private var allProducts: List<GridProduct> = emptyList()
     private val tableDao by lazy { com.example.synergic_pos_offline.database.TableDao(requireContext()) }
     private val subTableDao by lazy { com.example.synergic_pos_offline.database.SubTableDao(requireContext()) }
     private var suppressNoteWatcher = false   // guards programmatic note-field updates
@@ -145,6 +156,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val accent = ThemeManager.getThemeColor(requireContext())
+
+        // Read up front, not only when Add Item opens: an order restored from the
+        // database can have its quantities stepped up before that dialog is ever
+        // used, and the stock ceiling has to be in place by then.
+        loadProductsFromDb()
 
         loadRunningOrders()          // restore open tables from the database
         populateOrders(view, accent)
@@ -273,6 +289,28 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             RestaurantCheckoutFragment.RESULT_PAID, viewLifecycleOwner
         ) { _, bundle ->
             val paidTable = bundle.getString(RestaurantCheckoutFragment.ARG_TABLE)
+            orders.firstOrNull { it.id == paidTable }?.let { paid ->
+                // What was served has left the shelf. Done here rather than at bill
+                // save because Restaurant checkout does not write a bill - settling
+                // the order is the only moment the sale is known to be complete.
+                if (stockTrackingOn) {
+                    stockDao.recordSale(
+                        reference = "Table ${paid.id}",
+                        lines = paid.items.map {
+                            com.example.synergic_pos_offline.database.StockDao.SaleLine(
+                                it.productId.toInt(), it.qty.toDouble()
+                            )
+                        }
+                    )
+                }
+                roDao.close(paid.dbId)
+            }
+            orders.removeAll { it.id == paidTable }
+            // Counts have moved, so the grid is rebuilt from them on its next open.
+            loadProductsFromDb()
+            val root = view ?: return@setFragmentResultListener
+            populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+            clearDetail(root)
             val payMethod = bundle.getString(RestaurantCheckoutFragment.ARG_PAY_METHOD).orEmpty()
             val tendered = bundle.getDouble(RestaurantCheckoutFragment.ARG_TENDERED, 0.0)
             val order = orders.firstOrNull { it.id == paidTable } ?: return@setFragmentResultListener
@@ -870,6 +908,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val cats = com.example.synergic_pos_offline.database.CategoryDao(requireContext())
             .getAll().associate { it.id to it.name }
         val multipleRates = SettingsCache.value(requireContext(), "G", "Item Rate") == "M"
+
+        // Read once for the whole grid, and only while stock is tracked - with the
+        // flag off this screen never asks the stock tables anything, exactly as the
+        // grocery sale screen does not.
+        stockTrackingOn = com.example.synergic_pos_offline.database.GeneralSettingsDao
+            .isStockEnabled(requireContext())
+        val levels = if (stockTrackingOn) {
+            com.example.synergic_pos_offline.database.StockDao(requireContext())
+                .levels(store?.toInt() ?: 0)
+        } else emptyMap()
+
         val out = mutableListOf<GridProduct>()
         db.query(
             "md_products",
@@ -907,10 +956,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 }
                 val (unitSymbol, allowFraction) = unitInfo(db, unitId)
                 val rates = if (multipleRates) loadRates(db, id) else emptyList()
+                val level = if (stockTrackingOn) levels[c.getLong(0)] else null
                 out.add(
                     GridProduct(
                         ProductEntryDialog.Product(
                             id = id, name = name, sku = sku, category = catName, price = price,
+                            hsn = hsn, unit = "", cgst = cgst, sgst = sgst, vat = vat,
+                            discValue = disc, discType = discType, rates = rates,
+                            stock = com.example.synergic_pos_offline.utils.StockBadge.stateOf(level),
+                            stockQty = level?.quantity ?: 0.0
                             hsn = hsn, unit = unitSymbol, allowFraction = allowFraction, cgst = cgst, sgst = sgst, vat = vat,
                             discValue = disc, discType = discType, rates = rates
                         ),
@@ -919,6 +973,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 )
             }
         }
+        allProducts = out
         return out
     }
 
@@ -1100,6 +1155,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             holder.itemView.findViewById<TextView>(R.id.tvTileSku).text = p.sku
             bindFoodType(holder.itemView.findViewById(R.id.ivFoodType), gp.foodType)
             bindSpice(holder.itemView.findViewById(R.id.llSpice), gp.spice)
+            com.example.synergic_pos_offline.utils.StockBadge.apply(
+                holder.itemView.findViewById(R.id.tvTileStock), p.stock, p.stockQty
+            )
+            holder.itemView.alpha =
+                if (p.stock == com.example.synergic_pos_offline.utils.StockBadge.OUT) 0.5f else 1f
             holder.itemView.setOnClickListener { onPick(p) }
         }
 
@@ -1158,6 +1218,35 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
     }
 
+    /**
+     * Whether putting [wantedQty] of [productId] on this order would sell stock that
+     * is not there, counting what the order already holds of it.
+     *
+     * Scoped to the order being served, matching how the grocery cart is checked.
+     * Stock is only taken off the shelf when an order is paid, so two tables can
+     * still each be promised the last one - covering that would mean reserving
+     * stock the moment it is ordered, which is a different thing from a ceiling.
+     */
+    private fun exceedsStock(productId: String, wantedQty: Int, ignoreItemId: Long = 0L): Boolean {
+        if (!stockTrackingOn) return false
+        val gp = allProducts.firstOrNull { it.product.id == productId } ?: return false
+        val onOrder = currentOrder()?.items.orEmpty()
+            .filter { it.dbItemId != ignoreItemId && it.productId.toString() == productId }
+            .sumOf { it.qty }
+        if (onOrder + wantedQty <= gp.product.stockQty) return false
+
+        val remaining = (gp.product.stockQty - onOrder).coerceAtLeast(0.0)
+        toast(
+            if (remaining <= 0.0) "${gp.product.name}: no stock left to add"
+            else "${gp.product.name}: only ${com.example.synergic_pos_offline.database.StockDao.trim(remaining)} left in stock"
+        )
+        return true
+    }
+
+    private fun addToCart(p: ProductEntryDialog.Product, qty: Int, rate: Double) {
+        val order = currentOrder() ?: run { toast("Select a table order first"); return }
+        if (exceedsStock(p.id, qty)) return
+        roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty.toDouble(), rate)
     private fun addToCart(p: ProductEntryDialog.Product, qty: Double, rate: Double) {
         val order = currentOrder() ?: run { toast("Select a table order first"); return }
         roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate, p.cgst, p.sgst)
@@ -1198,6 +1287,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 btnRemove.visibility = View.GONE
             } else {
                 btnPlus.setOnClickListener {
+                    // Only a step up can outrun the shelf; stepping down never can.
+                    if (exceedsStock(item.productId.toString(), item.qty + 1, item.dbItemId)) {
+                        return@setOnClickListener
+                    }
+                    roDao.setItemQty(item.dbItemId, (item.qty + 1).toDouble()); order?.let { reloadItems(it) }; renderCart()
                     roDao.setItemQty(item.dbItemId, item.qty + 1.0); order?.let { reloadItems(it) }; renderCart()
                 }
                 btnMinus.setOnClickListener {

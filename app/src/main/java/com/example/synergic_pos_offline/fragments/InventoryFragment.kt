@@ -36,18 +36,38 @@ class InventoryFragment : Fragment() {
         val columns = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) 4 else 2
         rvInventory.layoutManager = GridLayoutManager(requireContext(), columns)
 
+        // Only the two that do something are offered. The rest are kept here rather
+        // than deleted - they are still wanted, just not built yet - and a tile that
+        // opens a placeholder is worse than no tile at all.
         val inventoryItems = listOf(
-            InventoryItem("Purchase Item", android.R.drawable.ic_menu_add, R.color.menu_sale, R.color.menu_sale_icon),
-            InventoryItem("Purchase Return", android.R.drawable.ic_menu_revert, R.color.menu_delete, R.color.menu_delete_icon),
-            InventoryItem("Generate Barcode", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon),
-            InventoryItem("Print Barcode", android.R.drawable.ic_menu_set_as, R.color.menu_report, R.color.menu_report_icon),
-            InventoryItem("Write Off Damage Item", android.R.drawable.ic_menu_close_clear_cancel, R.color.menu_inventory, R.color.menu_inventory_icon),
-            InventoryItem("Reset Stock", android.R.drawable.ic_menu_rotate, R.color.menu_settings, R.color.menu_settings_icon)
+            InventoryItem("Stock In", android.R.drawable.ic_input_add, R.color.menu_sale, R.color.menu_sale_icon),
+            InventoryItem("Write Off", android.R.drawable.ic_menu_send, R.color.menu_delete, R.color.menu_delete_icon)
+            // InventoryItem("Purchase Item", android.R.drawable.ic_menu_add, R.color.menu_sale, R.color.menu_sale_icon),
+            // InventoryItem("Purchase Return", android.R.drawable.ic_menu_revert, R.color.menu_delete, R.color.menu_delete_icon),
+            // InventoryItem("Generate Barcode", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon),
+            // InventoryItem("Print Barcode", android.R.drawable.ic_menu_set_as, R.color.menu_report, R.color.menu_report_icon),
+            // InventoryItem("Write Off Damage Item", android.R.drawable.ic_menu_close_clear_cancel, R.color.menu_inventory, R.color.menu_inventory_icon),
+            // InventoryItem("Reset Stock", android.R.drawable.ic_menu_rotate, R.color.menu_settings, R.color.menu_settings_icon)
         )
 
         rvInventory.adapter = InventoryAdapter(inventoryItems) { item ->
-            Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
+            when (item.title) {
+                "Stock In" -> open(StockListFragment.newInstance(StockListFragment.Mode.IN))
+                "Write Off" -> open(StockListFragment.newInstance(StockListFragment.Mode.OUT))
+                // Unreachable while only the two above are offered, and kept for
+                // whichever of the parked tiles comes back first.
+                else -> Toast.makeText(
+                    requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT
+                ).show()
+            }
         }
+    }
+
+    private fun open(fragment: Fragment) {
+        parentFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, fragment)
+            .addToBackStack(null)
+            .commit()
     }
 
     data class InventoryItem(

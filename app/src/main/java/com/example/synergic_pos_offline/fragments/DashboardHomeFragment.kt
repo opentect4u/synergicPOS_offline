@@ -154,6 +154,9 @@ class DashboardHomeFragment : Fragment() {
 
     private fun build() {
         val ctx = requireContext()
+        // Read here rather than once on create, so every rebuild (pull-to-refresh,
+        // theme change, coming back from settings) picks the flag up.
+        val stockOn = GeneralSettingsDao.isStockEnabled(ctx)
         content.removeAllViews()
 
         content.addView(snapshotHeader(ctx))
@@ -185,15 +188,18 @@ class DashboardHomeFragment : Fragment() {
         )
         content.addView(kpis)
 
-        // Inventory (full width). Attention count = low + out of stock.
-        val attention = stats.lowStock + stats.outOfStock
-        content.addView(
-            statCard(
-                ctx, accent, "INVENTORY", "NEEDS ATTENTION", attention.toString(), "$attention items",
-                if (attention > 0) red else textSec, "of ${stats.totalSkus} SKUs",
-                listOf("LOW STOCK" to stats.lowStock.toString(), "OUT OF STOCK" to stats.outOfStock.toString())
-            ) { navigate(InventoryFragment()) }.apply { fullWidth() }
-        )
+        // Inventory (full width). Attention count = low + out of stock. Only while
+        // stock tracking is on - off, there is no quantity on hand to report against.
+        if (stockOn) {
+            val attention = stats.lowStock + stats.outOfStock
+            content.addView(
+                statCard(
+                    ctx, accent, "INVENTORY", "NEEDS ATTENTION", attention.toString(), "$attention items",
+                    if (attention > 0) red else textSec, "of ${stats.totalSkus} SKUs",
+                    listOf("LOW STOCK" to stats.lowStock.toString(), "OUT OF STOCK" to stats.outOfStock.toString())
+                ) { navigate(InventoryFragment()) }.apply { fullWidth() }
+            )
+        }
 
         // Industry widgets section.
         content.addView(industryHeader(ctx))

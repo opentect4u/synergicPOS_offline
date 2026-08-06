@@ -100,7 +100,17 @@ class GeneralSettingsDao(context: Context) {
          */
         val customerInfo: Boolean = true,
         /** Which screen a login lands on - see [LandingScreen]. */
-        val landingScreen: LandingScreen = LandingScreen.SALE
+        val landingScreen: LandingScreen = LandingScreen.SALE,
+        /**
+         * Whether the till tracks stock at all. Off, nothing below it applies -
+         * there is no quantity on hand to alert against.
+         */
+        val stockFlag: Boolean = false,
+        /** Warn when an item runs low. Only meaningful while [stockFlag] is on. */
+        val stockAlert: Boolean = false,
+        /** The on-hand quantity at or below which an item is low. Only meaningful
+         *  while [stockAlert] is on. */
+        val stockAlertQty: Int = 0
     )
 
     /** Reads every general setting for the current store, applying defaults. */
@@ -116,7 +126,10 @@ class GeneralSettingsDao(context: Context) {
             quantityStatus = m[KEY_QUANTITY_STATUS]?.toBool() ?: d.quantityStatus,
             itemRate = ItemRate.fromStored(m[KEY_ITEM_RATE]) ?: d.itemRate,
             customerInfo = m[KEY_CUSTOMER_INFO]?.toBool() ?: d.customerInfo,
-            landingScreen = LandingScreen.fromStored(m[KEY_LANDING_SCREEN]) ?: d.landingScreen
+            landingScreen = LandingScreen.fromStored(m[KEY_LANDING_SCREEN]) ?: d.landingScreen,
+            stockFlag = m[KEY_STOCK_FLAG]?.toBool() ?: d.stockFlag,
+            stockAlert = m[KEY_STOCK_ALERT]?.toBool() ?: d.stockAlert,
+            stockAlertQty = m[KEY_STOCK_ALERT_QTY]?.toIntOrNull() ?: d.stockAlertQty
         )
     }
 
@@ -134,6 +147,13 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_ITEM_RATE, s.itemRate.code)
         put(KEY_CUSTOMER_INFO, s.customerInfo.b())
         put(KEY_LANDING_SCREEN, s.landingScreen.code)
+        // Stock cascades: no stock tracking means no alert, and no alert means no
+        // quantity to alert at - store the dependants off rather than leave a stale
+        // value that would come back the moment the parent is switched on again.
+        val alertApply = s.stockFlag && s.stockAlert
+        put(KEY_STOCK_FLAG, s.stockFlag.b())
+        put(KEY_STOCK_ALERT, alertApply.b())
+        put(KEY_STOCK_ALERT_QTY, if (alertApply) s.stockAlertQty.toString() else "0")
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "General settings save (type G)")
     }
@@ -206,15 +226,33 @@ class GeneralSettingsDao(context: Context) {
 
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
-    private companion object {
-        const val KEY_MODE = "Mode"
-        const val KEY_SALE_RETURN = "Sale Return"
-        const val KEY_SALE_RETURN_DAYS = "Sale Return Days"
-        const val KEY_RETURN_MODE = "Sale Return Mode"
-        const val KEY_LAST_BILL_STATUS = "Last Bill Status"
-        const val KEY_QUANTITY_STATUS = "Quantity Status"
-        const val KEY_ITEM_RATE = "Item Rate"
-        const val KEY_CUSTOMER_INFO = "Customer Info"
-        const val KEY_LANDING_SCREEN = "Landing Screen"
+    companion object {
+        private const val KEY_MODE = "Mode"
+        private const val KEY_SALE_RETURN = "Sale Return"
+        private const val KEY_SALE_RETURN_DAYS = "Sale Return Days"
+        private const val KEY_RETURN_MODE = "Sale Return Mode"
+        private const val KEY_LAST_BILL_STATUS = "Last Bill Status"
+        private const val KEY_QUANTITY_STATUS = "Quantity Status"
+        private const val KEY_ITEM_RATE = "Item Rate"
+        private const val KEY_CUSTOMER_INFO = "Customer Info"
+        private const val KEY_LANDING_SCREEN = "Landing Screen"
+        private const val KEY_STOCK_FLAG = "Stock Flag"
+        private const val KEY_STOCK_ALERT = "Stock Alert"
+        private const val KEY_STOCK_ALERT_QTY = "Stock Alert Quantity"
+
+        /**
+         * Whether stock tracking is on - the one answer every Stock & Inventory
+         * entry point asks before it shows itself.
+         *
+         * Prefers the login cache (no database hit on a menu build) and falls back
+         * to the database when the cache has no answer for the key, which is the
+         * case on a till that has not saved general settings since the flag existed.
+         */
+        fun isStockEnabled(context: Context): Boolean {
+            val cached = com.example.synergic_pos_offline.utils.SettingsCache
+                .value(context, "G", KEY_STOCK_FLAG)
+            if (!cached.isNullOrBlank()) return cached == "1" || cached.equals("true", true)
+            return GeneralSettingsDao(context).load().stockFlag
+        }
     }
 }

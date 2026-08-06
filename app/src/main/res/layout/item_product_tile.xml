@@ -98,6 +98,20 @@
                     android:textSize="9sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
+
+            <!-- Stock badge. Hidden unless stock is being tracked; the text and the
+                 background colour are set per state in the grid adapter. -->
+            <TextView
+                android:id="@+id/tvTileStock"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="2dp"
+                android:maxLines="1"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

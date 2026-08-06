@@ -26,9 +26,11 @@ import java.util.Locale
  */
 class BillDao(context: Context) {
 
+    private val appContext = context.applicationContext
     private val helper = DatabaseHelper.getInstance(context)
     private val settingsDao = BillSettingsDao(context)
     private val taxSettingsDao = TaxSettingsDao(context)
+    private val stockDao by lazy { StockDao(context) }
 
     /** A single line on the bill. */
     data class Item(
@@ -227,6 +229,22 @@ class BillDao(context: Context) {
             val customerId = bill.customerId ?: bill.payment.custId
             if (balance > 0.001 && customerId != null && paymentId != -1L) {
                 recordBalanceDue(db, customerId, receiptNo, paymentId, balance, nowDateTime, user)
+            }
+
+            // 5) Stock. Inside the bill's own transaction, so a sale and the stock it
+            // moved land together or not at all. Only while stock tracking is on:
+            // with the flag off the sale never touches the stock tables at all, which
+            // is how the till behaved before they were being kept.
+            //
+            // A void sold nothing and a return is stock coming back, so neither is a
+            // deduction - the return flow has its own accounting.
+            val movesStock = bill.billType != "VOID" && !bill.isReturnBill &&
+                GeneralSettingsDao.isStockEnabled(appContext)
+            if (movesStock) {
+                bill.items.forEach { item ->
+                    val productId = item.productId?.toInt() ?: return@forEach
+                    stockDao.deductForSale(db, productId, item.quantity, billNumber)
+                }
             }
 
             db.setTransactionSuccessful()

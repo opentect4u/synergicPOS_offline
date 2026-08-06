@@ -171,7 +171,7 @@
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
-                <!-- Hidden fields kept for compatibility (Stock Alert Qty, Batch No) -->
+                <!-- Hidden field kept for compatibility (Stock Alert Qty) -->
                 <LinearLayout
                      style="@style/ProductFormRow" android:visibility="gone">
 
@@ -187,20 +187,66 @@
                             android:inputType="numberDecimal"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
 
-                    <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/tilBatchNo"
-                        style="@style/ProductFormField"
-                        android:layout_marginStart="8dp"
-                        android:hint="Batch No">
+                <!-- ===== Stock (shown only while the Stock flag is ON) ===== -->
+                <LinearLayout
+                    android:id="@+id/llStockDetails"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
 
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/etBatchNo"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:inputType="text"
-                            android:maxLines="1" />
-                    </com.google.android.material.textfield.TextInputLayout>
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="STOCK"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:letterSpacing="0.08"
+                        android:layout_marginTop="6dp"
+                        android:layout_marginBottom="4dp"
+                        android:textColor="@color/primary_blue" />
+
+                    <!-- Current stock. Shown only when editing: a product being added
+                         has none yet, and the opening figure below is what sets it. -->
+                    <LinearLayout
+                        android:id="@+id/llCurrentStock"
+                        style="@style/ProductFormRow"
+                        android:visibility="gone">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilCurrentStock"
+                            style="@style/ProductFormField"
+                            android:hint="Current Stock">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etCurrentStock"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:focusable="false"
+                                android:inputType="none"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <!-- Opening Stock, on its own: the quantity the product starts
+                         with is the whole of what this form says about stock. -->
+                    <LinearLayout style="@style/ProductFormRow">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilOpeningStock"
+                            style="@style/ProductFormField"
+                            android:hint="Opening Stock *">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etOpeningStock"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
                 </LinearLayout>
 
                 <!-- ===== Restaurant details (shown only in Restaurant mode) ===== -->
