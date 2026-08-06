@@ -748,13 +748,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * product - a line restored from a held bill may have been built without one.
      * Off while stock is not tracked: there is no count to be over.
      */
-    private fun exceedsStock(productId: String, wantedQty: Int, ignoreLineIndex: Int = -1): Boolean {
+    private fun exceedsStock(productId: String, wantedQty: Double, ignoreLineIndex: Int = -1): Boolean {
         if (!stockTrackingOn) return false
         val product = menu.firstOrNull { it.id == productId } ?: return false
         val alreadyInCart = cart
             .filterIndexed { index, line -> index != ignoreLineIndex && line.product.id == productId }
             .sumOf { it.qty }
-        if (alreadyInCart + wantedQty <= product.stockQty) return false
+        if (alreadyInCart + wantedQty <= product.stockQty + 0.0001) return false
 
         val remaining = (product.stockQty - alreadyInCart).coerceAtLeast(0.0)
         toast(

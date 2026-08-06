@@ -38,27 +38,17 @@ class MenuFragment : Fragment() {
         // Stock & Inventory only exists while stock tracking is on - with the flag
         // off there is no quantity on hand for those screens to work against.
         val stockOn = GeneralSettingsDao.isStockEnabled(requireContext())
-
-        val menuItems = listOfNotNull(
-            MenuItem("Master", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon),
-            MenuItem("Settings", android.R.drawable.ic_menu_preferences, R.color.menu_settings, R.color.menu_settings_icon),
-            MenuItem("Stock & Inventory", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon)
-                .takeIf { stockOn },
-            MenuItem("Sale", android.R.drawable.ic_menu_add, R.color.menu_sale, R.color.menu_sale_icon),
-            MenuItem("Bill History", android.R.drawable.ic_menu_agenda, R.color.menu_report, R.color.menu_report_icon),
-            MenuItem("Sale Return", android.R.drawable.ic_menu_revert, R.color.menu_delete, R.color.menu_delete_icon),
-            MenuItem("Advance Payment", android.R.drawable.ic_menu_today, R.color.menu_sale, R.color.menu_sale_icon),
-            // MenuItem("Duplicate Bill", android.R.drawable.ic_menu_today, R.color.menu_master, R.color.menu_master_icon),
-            // MenuItem("Delete Bill", android.R.drawable.ic_menu_delete, R.color.menu_delete, R.color.menu_delete_icon),
-            MenuItem("Reports", android.R.drawable.ic_menu_view, R.color.menu_report, R.color.menu_report_icon)
-        )
+        
         // Sale Return and Advance Payment are grocery-only flows — hidden in Restaurant.
         val isRestaurant = com.example.synergic_pos_offline.utils.SettingsCache
             .value(requireContext(), "G", "Mode") == "R"
+
         val menuItems = buildList {
             add(MenuItem("Master", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon))
             add(MenuItem("Settings", android.R.drawable.ic_menu_preferences, R.color.menu_settings, R.color.menu_settings_icon))
-            add(MenuItem("Stock & Inventory", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon))
+            if (stockOn) {
+                add(MenuItem("Stock & Inventory", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon))
+            }
             add(MenuItem("Sale", android.R.drawable.ic_menu_add, R.color.menu_sale, R.color.menu_sale_icon))
             add(MenuItem("Bill History", android.R.drawable.ic_menu_agenda, R.color.menu_report, R.color.menu_report_icon))
             if (!isRestaurant) {

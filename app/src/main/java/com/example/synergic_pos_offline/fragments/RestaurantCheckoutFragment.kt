@@ -121,7 +121,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             )
             subtotal += l.qty * l.rate; cgst += p.cgst; sgst += p.sgst
         }
-        val service = subtotal * serviceRate / 100.0
+        // Flat section service charge (₹), applied only to a non-empty order.
+        val service = if (subtotal > 0.0) serviceRate else 0.0
         val netTotal = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
 
         val tableLabel = if (tableNo.startsWith("TA-", ignoreCase = true))

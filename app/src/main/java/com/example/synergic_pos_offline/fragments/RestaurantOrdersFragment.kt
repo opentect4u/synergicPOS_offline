@@ -107,16 +107,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val subtotal: Double, val service: Double, val cgst: Double, val sgst: Double, val total: Double
     )
 
-    /** Service-charge % for a section (from the Section master). */
+    /** Flat service-charge amount (₹) for a section, from the Section master. */
     private fun serviceRateFor(sectionName: String): Double = sectionDao.serviceChargeForName(sectionName)
 
     /**
      * Bills each line by its own CGST/SGST rate — honouring the store Tax Settings
      * (GST on/off, inclusive vs exclusive) via the same [BillPricing] the saved bill
-     * uses — and adds the section's service charge (a % of the subtotal). For an
+     * uses — and adds the section's service charge as a flat rupee amount. For an
      * inclusive regime the tax is already within the rate, so it isn't added again.
      */
-    private fun computeBill(items: List<CartItem>, serviceRatePct: Double): BillBreakdown {
+    private fun computeBill(items: List<CartItem>, serviceChargeAmt: Double): BillBreakdown {
         var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0
         items.forEach {
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
@@ -128,7 +128,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             cgst += p.cgst
             sgst += p.sgst
         }
-        val service = subtotal * serviceRatePct / 100.0
+        // Flat section service charge, applied only to a non-empty order.
+        val service = if (subtotal > 0.0) serviceChargeAmt else 0.0
         // Inclusive: tax is already inside the gross subtotal, so don't add it again.
         val total = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
         return BillBreakdown(subtotal, service, cgst, sgst, total)
@@ -922,12 +923,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val out = mutableListOf<GridProduct>()
         db.query(
             "md_products",
-            arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id", "food_type", "spice_level"),
+            arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id", "food_type", "spice_level", "availability"),
             (if (store != null) "store_id = ?" else null),
             store?.let { arrayOf(it.toString()) },
             null, null, "product_name ASC"
         ).use { c ->
             while (c.moveToNext()) {
+                // Only sellable items reach the Add Item grid: a product explicitly set
+                // Unavailable in the master is hidden. Unset (blank) counts as available.
+                if (c.getString(7)?.equals("Unavailable", ignoreCase = true) == true) continue
                 val id = c.getLong(0).toString()
                 val name = c.getString(1).orEmpty()
                 // The SKU is the product's own id; the barcode is searched on too.
@@ -961,12 +965,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     GridProduct(
                         ProductEntryDialog.Product(
                             id = id, name = name, sku = sku, category = catName, price = price,
-                            hsn = hsn, unit = "", cgst = cgst, sgst = sgst, vat = vat,
+                            hsn = hsn, unit = unitSymbol, allowFraction = allowFraction, 
+                            cgst = cgst, sgst = sgst, vat = vat,
                             discValue = disc, discType = discType, rates = rates,
                             stock = com.example.synergic_pos_offline.utils.StockBadge.stateOf(level),
                             stockQty = level?.quantity ?: 0.0
-                            hsn = hsn, unit = unitSymbol, allowFraction = allowFraction, cgst = cgst, sgst = sgst, vat = vat,
-                            discValue = disc, discType = discType, rates = rates
                         ),
                         foodType = foodType, spice = spice, barcode = barcode
                     )
@@ -1227,13 +1230,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * still each be promised the last one - covering that would mean reserving
      * stock the moment it is ordered, which is a different thing from a ceiling.
      */
-    private fun exceedsStock(productId: String, wantedQty: Int, ignoreItemId: Long = 0L): Boolean {
+    private fun exceedsStock(productId: String, wantedQty: Double, ignoreItemId: Long = 0L): Boolean {
         if (!stockTrackingOn) return false
         val gp = allProducts.firstOrNull { it.product.id == productId } ?: return false
         val onOrder = currentOrder()?.items.orEmpty()
             .filter { it.dbItemId != ignoreItemId && it.productId.toString() == productId }
             .sumOf { it.qty }
-        if (onOrder + wantedQty <= gp.product.stockQty) return false
+        if (onOrder + wantedQty <= gp.product.stockQty + 0.0001) return false
 
         val remaining = (gp.product.stockQty - onOrder).coerceAtLeast(0.0)
         toast(
@@ -1243,12 +1246,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         return true
     }
 
-    private fun addToCart(p: ProductEntryDialog.Product, qty: Int, rate: Double) {
-        val order = currentOrder() ?: run { toast("Select a table order first"); return }
-        if (exceedsStock(p.id, qty)) return
-        roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty.toDouble(), rate)
     private fun addToCart(p: ProductEntryDialog.Product, qty: Double, rate: Double) {
         val order = currentOrder() ?: run { toast("Select a table order first"); return }
+        if (exceedsStock(p.id, qty)) return
         roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate, p.cgst, p.sgst)
         // A split sub-table with its first item is now Occupied.
         if (order.id.contains(" ")) subTableDao.setStatus(order.id, "Occupied")
@@ -1288,14 +1288,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             } else {
                 btnPlus.setOnClickListener {
                     // Only a step up can outrun the shelf; stepping down never can.
-                    if (exceedsStock(item.productId.toString(), item.qty + 1, item.dbItemId)) {
+                    if (exceedsStock(item.productId.toString(), item.qty + 1.0, item.dbItemId)) {
                         return@setOnClickListener
                     }
-                    roDao.setItemQty(item.dbItemId, (item.qty + 1).toDouble()); order?.let { reloadItems(it) }; renderCart()
                     roDao.setItemQty(item.dbItemId, item.qty + 1.0); order?.let { reloadItems(it) }; renderCart()
                 }
                 btnMinus.setOnClickListener {
-                    roDao.setItemQty(item.dbItemId, item.qty - 1.0); order?.let { reloadItems(it) }; renderCart()
+                    roDao.setItemQty(item.dbItemId, (item.qty - 1.0).coerceAtLeast(0.0))
+                    order?.let { reloadItems(it) }; renderCart()
                 }
                 btnRemove.setOnClickListener {
                     roDao.removeItem(item.dbItemId); order?.let { reloadItems(it) }; renderCart()
