@@ -667,7 +667,9 @@ class ProductsFragment : DataTableFragment() {
             ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, codes.map { it.second })
         )
         view.setOnItemClickListener { _, _, position, _ -> view.tag = codes[position].first }
-        codes.firstOrNull { it.first == selectedCode }?.let {
+        // Default to Percentage when the user hasn't chosen a discount type.
+        val effective = selectedCode ?: "P"
+        codes.firstOrNull { it.first == effective }?.let {
             view.setText(it.second, false)
             view.tag = it.first
         }
@@ -778,7 +780,7 @@ class ProductsFragment : DataTableFragment() {
         db.rawQuery(
             """
             SELECT rate_name, rate, unit_id, cgst_rate, sgst_rate, igst_rate, vat_rate,
-                   discount, discount_type, sell_price, purchase_price, rate_name_id
+                   discount, discount_type, COALESCE(sell_price, sale_price), purchase_price, rate_name_id
             FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES}
             WHERE product_id = ?
             ORDER BY "default" DESC, id ASC
@@ -855,6 +857,17 @@ class ProductsFragment : DataTableFragment() {
                 when {
                     image != null -> put("product_image", image)
                     imageCleared -> putNull("product_image")
+                }
+                // Audit trail: stamp who/when on create, and who/when on each edit.
+                val nowTs = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(java.util.Date())
+                val user = SessionManager.auditUser
+                if (productId == null) {
+                    put("created_at", nowTs)
+                    put("created_by", user)
+                } else {
+                    put("modified_at", nowTs)
+                    put("modified_by", user)
                 }
             }
 

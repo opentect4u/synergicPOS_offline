@@ -38,6 +38,9 @@ class RateNameDao(context: Context) {
             put("store_id", currentStoreId())
             put("rate_name", name)
             put("is_active", 1)
+            // Set explicitly: on a migrated table the added created_at column carries no
+            // default, so relying on it would leave the stamp null.
+            put("created_at", now())
             put("created_by", currentUser())
         }
         return helper.writableDatabase.insert(table, null, v)
@@ -69,6 +72,6 @@ class RateNameDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 }

@@ -35,12 +35,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     // One line in an order's cart (backed by td_running_order_items).
     private data class CartItem(
-        val productId: Long, val name: String, var qty: Int, var rate: Double,
+        val productId: Long, val name: String, var qty: Double, var rate: Double,
         var dbItemId: Long = 0, var kotQty: Double = 0.0,
         val cgstRate: Double = 0.0, val sgstRate: Double = 0.0
     ) {
         /** Quantity not yet sent to the kitchen. */
-        val pending: Int get() = (qty - kotQty).toInt().coerceAtLeast(0)
+        val pending: Double get() = (qty - kotQty).coerceAtLeast(0.0)
     }
 
     private data class OrderCard(
@@ -74,7 +74,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             )
             // qty 0 lines are removed items awaiting a cancellation KOT — hide from the cart.
             roDao.itemsFor(ro.id).filter { it.qty > 0.0 }.forEach { ri ->
-                card.items.add(CartItem(ri.productId, ri.name, ri.qty.toInt(), ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate))
+                card.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate))
             }
             card.amount = "₹ ${money(computeBill(card.items, serviceRateFor(card.section)).total)}"
             orders.add(card)
@@ -85,7 +85,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun reloadItems(order: OrderCard) {
         order.items.clear()
         roDao.itemsFor(order.dbId).filter { it.qty > 0.0 }.forEach { ri ->
-            order.items.add(CartItem(ri.productId, ri.name, ri.qty.toInt(), ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate))
+            order.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate))
         }
     }
 
@@ -109,7 +109,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0
         items.forEach {
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
-                rate = it.rate, quantity = it.qty.toDouble(),
+                rate = it.rate, quantity = it.qty,
                 cgstRate = it.cgstRate, sgstRate = it.sgstRate, vatRate = 0.0,
                 discountAmount = 0.0, regime = taxRegime, inclusive = taxInclusive, discountPreTax = discountPreTax
             )
@@ -274,8 +274,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         ) { _, bundle ->
             val paidTable = bundle.getString(RestaurantCheckoutFragment.ARG_TABLE)
             val payMethod = bundle.getString(RestaurantCheckoutFragment.ARG_PAY_METHOD).orEmpty()
+            val tendered = bundle.getDouble(RestaurantCheckoutFragment.ARG_TENDERED, 0.0)
             val order = orders.firstOrNull { it.id == paidTable } ?: return@setFragmentResultListener
-            settlePaidOrder(order, payMethod)
+            settlePaidOrder(order, payMethod, tendered)
         }
 
         // Bill & Pay → restaurant checkout with the selected order's items.
@@ -286,7 +287,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 order.items.isEmpty() -> toast("Add items before billing")
                 else -> {
                     val names = ArrayList(order.items.map { it.name })
-                    val qtys = order.items.map { it.qty }.toIntArray()
+                    val qtys = order.items.map { it.qty }.toDoubleArray()
                     val rates = order.items.map { it.rate }.toDoubleArray()
                     val cgsts = order.items.map { it.cgstRate }.toDoubleArray()
                     val sgsts = order.items.map { it.sgstRate }.toDoubleArray()
@@ -518,6 +519,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val ctx = requireContext()
         val accent = ThemeManager.getThemeColor(ctx)
         val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_new_order, null)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(v)
         val dialog = AlertDialog.Builder(ctx).setView(v).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
@@ -887,10 +889,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 val foodType = c.getString(5).orEmpty()
                 val spice = c.getString(6).orEmpty()
                 var price = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
-                var disc = 0.0; var discType: String? = null
+                var disc = 0.0; var discType: String? = null; var unitId: Long? = null
                 db.query(
                     "md_product_rates",
-                    arrayOf("rate", "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type"),
+                    arrayOf("rate", "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type", "unit_id"),
                     "product_id = ?", arrayOf(id), null, null, "\"default\" DESC, id ASC", "1"
                 ).use { r ->
                     if (r.moveToFirst()) {
@@ -900,14 +902,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                         vat = if (r.isNull(3)) 0.0 else r.getDouble(3)
                         disc = if (r.isNull(4)) 0.0 else r.getDouble(4)
                         discType = r.getString(5)
+                        unitId = if (r.isNull(6)) null else r.getLong(6)
                     }
                 }
+                val (unitSymbol, allowFraction) = unitInfo(db, unitId)
                 val rates = if (multipleRates) loadRates(db, id) else emptyList()
                 out.add(
                     GridProduct(
                         ProductEntryDialog.Product(
                             id = id, name = name, sku = sku, category = catName, price = price,
-                            hsn = hsn, unit = "", cgst = cgst, sgst = sgst, vat = vat,
+                            hsn = hsn, unit = unitSymbol, allowFraction = allowFraction, cgst = cgst, sgst = sgst, vat = vat,
                             discValue = disc, discType = discType, rates = rates
                         ),
                         foodType = foodType, spice = spice, barcode = barcode
@@ -945,6 +949,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         return out
     }
 
+    /** A unit's symbol and whether it allows fractional quantities (fraction_flag). */
+    private fun unitInfo(db: android.database.sqlite.SQLiteDatabase, unitId: Long?): Pair<String, Boolean> {
+        if (unitId == null) return "" to false
+        db.query("md_units", arrayOf("unit_symbol", "fraction_flag"),
+            "id = ?", arrayOf(unitId.toString()), null, null, null, "1").use { c ->
+            if (c.moveToFirst()) return (c.getString(0).orEmpty() to (c.getInt(1) == 1))
+        }
+        return "" to false
+    }
+
     private fun currentStoreId(db: android.database.sqlite.SQLiteDatabase): Long? {
         com.example.synergic_pos_offline.utils.SessionManager.currentUser?.storeId
             ?.takeIf { it != 0 }?.let { return it.toLong() }
@@ -975,7 +989,22 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         var selectedCat = "All"
         var query = ""
 
-        val adapter = ProductAdapter(accent) { showProductEntry(it) }
+        // Picking a product opens the qty dialog; once it's added, clear the search
+        // box so the next item can be searched from a clean slate. Clearing the text
+        // fires the watcher below, which resets the list back to the full menu.
+        //
+        // Direct Add to Cart (App Settings): skip the popup and add one of the tapped
+        // item at its default rate straight to the cart; each tap adds one more.
+        val directAdd = com.example.synergic_pos_offline.utils.SettingsCache
+            .value(ctx, "A", "Direct Add to Cart") == "1"
+        val adapter = ProductAdapter(accent) { picked ->
+            if (directAdd) {
+                addToCart(picked, 1.0, picked.price)
+                etSearch.setText("")
+            } else {
+                showProductEntry(picked) { etSearch.setText("") }
+            }
+        }
         rv.layoutManager = androidx.recyclerview.widget.GridLayoutManager(ctx, 4)
         rv.adapter = adapter
 
@@ -1106,24 +1135,32 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     // ---- Item detail popup + cart ------------------------------------------
 
     /** Opens the shared grocery product popup; on confirm the item joins the cart. */
-    private fun showProductEntry(p: ProductEntryDialog.Product) {
+    private fun showProductEntry(p: ProductEntryDialog.Product, onAdded: (() -> Unit)? = null) {
+        // "Enter Quantity" general setting: on lets the quantity be typed in the popup,
+        // off fixes it to 1 (the default add). Off when the setting was never saved.
+        val qtyEditable = com.example.synergic_pos_offline.utils.SettingsCache
+            .value(requireContext(), "G", "Quantity Status") == "1"
         ProductEntryDialog.show(
             context = requireContext(),
             inflater = layoutInflater,
             product = p,
             startRate = p.price,
-            startQty = 1,
+            startQty = 1.0,
             confirmLabel = "Add to cart",
+            qtyEditable = qtyEditable,
             taxRegime = taxRegime,
             taxInclusive = taxInclusive,
             itemwiseDiscountActive = itemwiseDiscountActive,
             discountPreTax = discountPreTax
-        ) { qty, rate -> addToCart(p, qty, rate) }
+        ) { qty, rate ->
+            addToCart(p, qty, rate)
+            onAdded?.invoke()
+        }
     }
 
-    private fun addToCart(p: ProductEntryDialog.Product, qty: Int, rate: Double) {
+    private fun addToCart(p: ProductEntryDialog.Product, qty: Double, rate: Double) {
         val order = currentOrder() ?: run { toast("Select a table order first"); return }
-        roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty.toDouble(), rate, p.cgst, p.sgst)
+        roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate, p.cgst, p.sgst)
         // A split sub-table with its first item is now Occupied.
         if (order.id.contains(" ")) subTableDao.setStatus(order.id, "Occupied")
         reloadItems(order)
@@ -1143,12 +1180,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         cart.forEach { item ->
             val row = inflater.inflate(R.layout.item_order_line, container, false)
             row.findViewById<TextView>(R.id.tvLineName).text = item.name
-            row.findViewById<TextView>(R.id.tvLineQty).text = item.qty.toString()
+            row.findViewById<TextView>(R.id.tvLineQty).text = qtyText(item.qty)
             row.findViewById<TextView>(R.id.tvLineRate).text = money(item.rate)
             row.findViewById<TextView>(R.id.tvLineAmount).text = money(item.qty * item.rate)
             // KOT status: any quantity not yet sent shows NEW ×n (accent); else ✓ Sent.
             row.findViewById<TextView>(R.id.tvLineNote).apply {
-                if (item.pending > 0) { text = "NEW ×${item.pending}"; setTextColor(accent) }
+                if (item.pending > 0.0) { text = "NEW ×${qtyText(item.pending)}"; setTextColor(accent) }
                 else { text = "✓ Sent"; setTextColor(0xFF9AA0A6.toInt()) }
             }
             val btnPlus = row.findViewById<ImageButton>(R.id.btnPlus)
@@ -1161,10 +1198,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 btnRemove.visibility = View.GONE
             } else {
                 btnPlus.setOnClickListener {
-                    roDao.setItemQty(item.dbItemId, (item.qty + 1).toDouble()); order?.let { reloadItems(it) }; renderCart()
+                    roDao.setItemQty(item.dbItemId, item.qty + 1.0); order?.let { reloadItems(it) }; renderCart()
                 }
                 btnMinus.setOnClickListener {
-                    roDao.setItemQty(item.dbItemId, (item.qty - 1).toDouble()); order?.let { reloadItems(it) }; renderCart()
+                    roDao.setItemQty(item.dbItemId, item.qty - 1.0); order?.let { reloadItems(it) }; renderCart()
                 }
                 btnRemove.setOnClickListener {
                     roDao.removeItem(item.dbItemId); order?.let { reloadItems(it) }; renderCart()
@@ -1217,11 +1254,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun printGroceryStyleBill(
         order: OrderCard,
         printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter,
-        billNumber: String, payment: String
+        billNumber: String, payment: String, tendered: Double = 0.0
     ) {
         val config = com.example.synergic_pos_offline.utils.ThermalPrinter.configFor(printer)
             ?: run { toast("Bill printer '${printer.printerName}' is not fully configured"); return }
-        val draft = buildBillDraft(order, billNumber, payment)
+        val draft = buildBillDraft(order, billNumber, payment, tendered)
         val bmp = com.example.synergic_pos_offline.utils.BillReceiptRenderer(requireContext())
             .renderDraftToBitmap(draft, config.paperDots)
             ?: run { toast("Could not render the bill"); return }
@@ -1237,12 +1274,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** Maps an order to a grocery-renderer Draft (per-item GST + a service-charge line). */
     private fun buildBillDraft(
-        order: OrderCard, billNumber: String, payment: String
+        order: OrderCard, billNumber: String, payment: String, tendered: Double = 0.0
     ): com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft {
         val b = computeBill(order.items, serviceRateFor(order.section))
         val items = order.items.map {
             com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
-                name = it.name, quantity = it.qty.toDouble(), rate = it.rate,
+                name = it.name, quantity = it.qty, rate = it.rate,
                 cgstRate = it.cgstRate, sgstRate = it.sgstRate
             )
         }
@@ -1259,7 +1296,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             items = items,
             discount = 0.0, roundOff = 0.0, netAmount = b.total,
             paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),
-            serviceCharge = b.service   // shown as its own totals line, not an item
+            serviceCharge = b.service,   // shown as its own totals line, not an item
+            returnAmount = (tendered - b.total).coerceAtLeast(0.0)   // cash to hand back
         )
     }
 
@@ -1269,7 +1307,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter
     ) {
         val nextNo = com.example.synergic_pos_offline.database.BillDao(requireContext()).nextBillNumber()
-        printGroceryStyleBill(order, printer, billNumber = nextNo, payment = "")
+        // No mode is chosen until Bill & Pay, but the printed bill still shows a payment
+        // mode line; default it to the settlement default (Cash), matching how the order
+        // settles if nothing else is picked. The paid receipt later shows the real mode.
+        printGroceryStyleBill(order, printer, billNumber = nextNo, payment = "Cash")
         completeTable(order)   // billed → locked (stays until paid)
     }
 
@@ -1280,13 +1321,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * line carries its OWN CGST/SGST rate so tax is charged per product; the section's
      * service charge is booked as an "other charge" so the net reconciles.
      */
-    private fun persistBill(order: OrderCard, payMethod: String): com.example.synergic_pos_offline.database.BillDao.Result? {
+    private fun persistBill(
+        order: OrderCard, payMethod: String, tendered: Double = 0.0
+    ): com.example.synergic_pos_offline.database.BillDao.Result? {
         val billDao = com.example.synergic_pos_offline.database.BillDao(requireContext())
         val b = computeBill(order.items, serviceRateFor(order.section))
 
         val billType = when (payMethod.lowercase(java.util.Locale.US)) {
             "card" -> "CARD"; "online" -> "ONLINE"; else -> "CASH"
         }
+        // Cash handed over more than the bill → book the change and record what was
+        // actually tendered; otherwise the payment settles exactly the total.
+        val change = (tendered - b.total).coerceAtLeast(0.0)
+        val amountPaid = if (tendered > b.total) tendered else b.total
         val custId = billDao.findCustomerIdByPhone(order.phone.takeIf { it.isNotBlank() })
         val waiterId = roDao.findByTable(order.id)?.waiterId
 
@@ -1299,14 +1346,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                         com.example.synergic_pos_offline.database.BillDao.Item(
                             productId = it.productId.takeIf { id -> id > 0 },
                             name = it.name,
-                            quantity = it.qty.toDouble(),
+                            quantity = it.qty,
                             rate = it.rate,
                             cgstRate = it.cgstRate,
                             sgstRate = it.sgstRate
                         )
                     },
                     payment = com.example.synergic_pos_offline.database.BillDao.Payment(
-                        mode = billType, amountPaid = b.total, changeAmount = 0.0,
+                        mode = billType, amountPaid = amountPaid, changeAmount = change,
                         custPhone = order.phone.takeIf { it.isNotBlank() }, custId = custId
                     ),
                     totalPrice = b.subtotal,
@@ -1382,11 +1429,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * also cut and printed here, so Confirm fires two prints (KOT + paid bill).
      * Dine-in prints only the receipt (its KOT was sent during the order).
      */
-    private fun settlePaidOrder(order: OrderCard, payMethod: String) {
+    private fun settlePaidOrder(order: OrderCard, payMethod: String, tendered: Double = 0.0) {
         // Take Away sends no KOT during the order — cut & print it now, before the
         // order is closed, so payment prints both the KOT and the paid bill together.
         if (order.type.equals("Take Away", ignoreCase = true)) printTakeAwayKot(order)
-        val saved = persistBill(order, payMethod)       // save to td_bills / td_bill_items / td_payments
+        val saved = persistBill(order, payMethod, tendered)  // save to td_bills / td_bill_items / td_payments
         val mergedTables = roDao.mergedTablesOf(order.dbId)
         roDao.close(order.dbId)                          // payment done → remove from temp table
         tableDao.setStatusByCode(order.id, "Available")  // table freed for the next guest
@@ -1406,9 +1453,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         when {
             billPrinters.isEmpty() ->
                 toast("Paid — no bill printer set up to print the receipt")
-            default != null -> printGroceryStyleBill(order, default, billNo, payMethod)
+            default != null -> printGroceryStyleBill(order, default, billNo, payMethod, tendered)
             else -> showPrinterChooser(billPrinters, "Select bill printer") {
-                printGroceryStyleBill(order, it, billNo, payMethod)
+                printGroceryStyleBill(order, it, billNo, payMethod, tendered)
             }
         }
     }
@@ -1484,4 +1531,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     private fun money(v: Double): String =
         String.format(java.util.Locale.US, "%,.2f", v)
+
+    /** Whole quantities show without decimals; fractional ones keep up to 3 places. */
+    private fun qtyText(v: Double): String =
+        if (v % 1.0 == 0.0) v.toLong().toString()
+        else String.format(java.util.Locale.US, "%.3f", v).trimEnd('0').trimEnd('.')
 }

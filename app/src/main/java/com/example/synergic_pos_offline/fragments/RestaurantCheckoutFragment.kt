@@ -22,17 +22,17 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Checkout"
 
-    private data class Line(val name: String, val qty: Int, val rate: Double, val cgstRate: Double, val sgstRate: Double)
+    private data class Line(val name: String, val qty: Double, val rate: Double, val cgstRate: Double, val sgstRate: Double)
 
     // The selected order's items, passed in from the Orders screen.
     private val lines: List<Line> by lazy {
         val names = arguments?.getStringArrayList(ARG_NAMES) ?: arrayListOf()
-        val qtys = arguments?.getIntArray(ARG_QTYS) ?: IntArray(0)
+        val qtys = arguments?.getDoubleArray(ARG_QTYS) ?: DoubleArray(0)
         val rates = arguments?.getDoubleArray(ARG_RATES) ?: DoubleArray(0)
         val cgsts = arguments?.getDoubleArray(ARG_CGSTS) ?: DoubleArray(0)
         val sgsts = arguments?.getDoubleArray(ARG_SGSTS) ?: DoubleArray(0)
         names.mapIndexed { i, n ->
-            Line(n, qtys.getOrElse(i) { 1 }, rates.getOrElse(i) { 0.0 },
+            Line(n, qtys.getOrElse(i) { 1.0 }, rates.getOrElse(i) { 0.0 },
                 cgsts.getOrElse(i) { 0.0 }, sgsts.getOrElse(i) { 0.0 })
         }
     }
@@ -87,6 +87,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 RESULT_PAID, android.os.Bundle().apply {
                     putString(ARG_TABLE, tableNo)
                     putString(ARG_PAY_METHOD, payMethod)
+                    // Cash tendered (0 when not entered) so the Orders screen can book
+                    // the change and print the amount returned on the receipt.
+                    putDouble(ARG_TENDERED, etTendered.text?.toString()?.toDoubleOrNull() ?: 0.0)
                 }
             )
             parentFragmentManager.popBackStack()
@@ -114,7 +117,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0
         lines.forEach { l ->
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
-                l.rate, l.qty.toDouble(), l.cgstRate, l.sgstRate, 0.0, 0.0, regime, taxInclusive, false
+                l.rate, l.qty, l.cgstRate, l.sgstRate, 0.0, 0.0, regime, taxInclusive, false
             )
             subtotal += l.qty * l.rate; cgst += p.cgst; sgst += p.sgst
         }
@@ -137,7 +140,12 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             },
             discount = 0.0, roundOff = 0.0, netAmount = netTotal,
             paymentModes = listOf(payMethod.uppercase(java.util.Locale.US)),
-            serviceCharge = service
+            serviceCharge = service,
+            returnAmount = run {
+                val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
+                    ?.text?.toString()?.toDoubleOrNull() ?: 0.0
+                (tendered - netTotal).coerceAtLeast(0.0)
+            }
         )
         val paperDots = com.example.synergic_pos_offline.database.OperatingPrinterDao(ctx).getAll()
             .firstOrNull { it.printFlag.equals("B", ignoreCase = true) }
@@ -179,13 +187,13 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         lines.forEach { l ->
             val row = inflater.inflate(R.layout.item_rest_checkout_line, container, false)
             row.findViewById<TextView>(R.id.tvLineName).text = l.name
-            row.findViewById<TextView>(R.id.tvLineQty).text = l.qty.toString()
+            row.findViewById<TextView>(R.id.tvLineQty).text = qtyText(l.qty)
             row.findViewById<TextView>(R.id.tvLineRate).text = money(l.rate)
             row.findViewById<TextView>(R.id.tvLineAmount).text = money(l.qty * l.rate)
             container.addView(row)
             // Per-product GST honouring the store Tax Settings (GST on/off, inclusive).
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
-                l.rate, l.qty.toDouble(), l.cgstRate, l.sgstRate, 0.0, 0.0, regime, taxInclusive, false
+                l.rate, l.qty, l.cgstRate, l.sgstRate, 0.0, 0.0, regime, taxInclusive, false
             )
             subtotal += l.qty * l.rate
             cgst += p.cgst
@@ -227,10 +235,15 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
     private fun money(v: Double): String = String.format(java.util.Locale.US, "%,.2f", v)
 
+    private fun qtyText(v: Double): String =
+        if (v % 1.0 == 0.0) v.toLong().toString()
+        else String.format(java.util.Locale.US, "%.3f", v).trimEnd('0').trimEnd('.')
+
     companion object {
         const val RESULT_PAID = "restaurant_checkout_paid"
         const val ARG_TABLE = "table"
         const val ARG_PAY_METHOD = "pay_method"
+        const val ARG_TENDERED = "tendered"
         private const val ARG_CUSTOMER = "customer"
         private const val ARG_NAMES = "names"
         private const val ARG_QTYS = "qtys"
@@ -244,7 +257,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         /** Builds a checkout for [table]'s order, carrying its items and tax. */
         fun newInstance(
             table: String, customer: String,
-            names: ArrayList<String>, qtys: IntArray, rates: DoubleArray,
+            names: ArrayList<String>, qtys: DoubleArray, rates: DoubleArray,
             cgsts: DoubleArray, sgsts: DoubleArray, serviceRate: Double,
             gstEnabled: Boolean, inclusive: Boolean
         ): RestaurantCheckoutFragment = RestaurantCheckoutFragment().apply {
@@ -252,7 +265,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putString(ARG_TABLE, table)
                 putString(ARG_CUSTOMER, customer)
                 putStringArrayList(ARG_NAMES, names)
-                putIntArray(ARG_QTYS, qtys)
+                putDoubleArray(ARG_QTYS, qtys)
                 putDoubleArray(ARG_RATES, rates)
                 putDoubleArray(ARG_CGSTS, cgsts)
                 putDoubleArray(ARG_SGSTS, sgsts)

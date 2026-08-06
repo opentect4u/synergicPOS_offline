@@ -212,12 +212,15 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
     ) {
         val result = ProductBulkImporter.import(ctx, rows, mode)
         preview.dismiss()
-        toast(
-            buildString {
-                if (result.removed > 0) append("Removed ${result.removed}, ")
-                append("imported ${result.imported} product(s)")
-                if (result.skipped > 0) append(", ${result.skipped} skipped")
-            }
+        val summary = buildString {
+            append("${result.imported} product(s) uploaded successfully.")
+            if (result.removed > 0) append("\n${result.removed} existing product(s) removed.")
+            if (result.skipped > 0) append("\n${result.skipped} row(s) skipped.")
+        }
+        DialogUtils.showSuccess(
+            context = ctx,
+            title = "Upload Complete",
+            message = summary
         )
     }
 

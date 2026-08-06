@@ -52,7 +52,8 @@ class BillSettingsFragment : Fragment(), TitledScreen {
     private lateinit var actCustomerDetails: MaterialAutoCompleteTextView
     private lateinit var swCustomerAddress: SwitchMaterial
     private lateinit var actTotalFontSize: MaterialAutoCompleteTextView
-    private lateinit var actBillFormat: MaterialAutoCompleteTextView
+    // Bill format is no longer editable here; keep whatever was stored on save.
+    private var currentFormat: BillFormat = BillFormat.STANDARD
 
     /** The start number that was persisted when the screen opened. */
     private var savedStartNo = 0
@@ -78,7 +79,6 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         actCustomerDetails = view.findViewById(R.id.actCustomerDetails)
         swCustomerAddress = view.findViewById(R.id.swCustomerAddress)
         actTotalFontSize = view.findViewById(R.id.actTotalFontSize)
-        actBillFormat = view.findViewById(R.id.actBillFormat)
 
         // Dropdowns (always show every option).
         actCustomerDetails.setAdapter(
@@ -86,9 +86,6 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         )
         actTotalFontSize.setAdapter(
             NoFilterAdapter(requireContext(), FontSize.values().map { it.label })
-        )
-        actBillFormat.setAdapter(
-            NoFilterAdapter(requireContext(), BillFormat.values().map { it.label })
         )
 
         bind(dao.load())
@@ -136,7 +133,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         actCustomerDetails.setText(s.customerDetails.label, false)
         swCustomerAddress.isChecked = s.customerAddressPrinting
         actTotalFontSize.setText(s.totalAmountFontSize.label, false)
-        actBillFormat.setText(s.billFormat.label, false)
+        currentFormat = s.billFormat
         updatePreview()
     }
 
@@ -157,7 +154,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         customerDetails = CustomerDetails.fromStored(actCustomerDetails.text?.toString()) ?: CustomerDetails.ONLY_MOBILE,
         customerAddressPrinting = swCustomerAddress.isChecked,
         totalAmountFontSize = FontSize.fromStored(actTotalFontSize.text?.toString()) ?: FontSize.REGULAR,
-        billFormat = BillFormat.fromStored(actBillFormat.text?.toString()) ?: BillFormat.STANDARD
+        billFormat = currentFormat
     )
 
     /** Shows what the next bill number will look like with the current inputs. */

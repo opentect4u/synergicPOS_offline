@@ -48,6 +48,8 @@ class DashboardHomeFragment : Fragment() {
     private data class Stats(
         val salesToday: Double = 0.0, val billsToday: Int = 0, val avgBill: Double = 0.0,
         val collected: Double = 0.0, val upi: Double = 0.0, val card: Double = 0.0,
+        /** Count of cash / credit sales today. */
+        val cashCount: Int = 0, val creditCount: Int = 0,
         val customersToday: Int = 0, val repeatToday: Int = 0, val newMembers: Int = 0,
         val totalSkus: Int = 0, val lowStock: Int = 0, val outOfStock: Int = 0
     )
@@ -110,18 +112,27 @@ class DashboardHomeFragment : Fragment() {
                     BillDao.countableBillClause("b") +
                     (if (mode != null) " AND p.payment_mode = '$mode'" else "")
             )
+            // Count of sales by bill type (cash / credit) today.
+            fun billCount(type: String) =
+                num("SELECT COUNT(*) FROM td_bills WHERE $billOk AND bill_type = '$type'").toInt()
             val stockOf = "COALESCE((SELECT SUM(current_quantity) FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} s WHERE s.product_id = p.id),0)"
             Stats(
                 salesToday = sales,
                 billsToday = bills,
                 avgBill = if (bills > 0) sales / bills else 0.0,
                 collected = pay(null),
-                upi = pay("UPI"),
+                // UPI and online collections read together — online payments settle via UPI rails.
+                upi = pay("UPI") + pay("ONLINE"),
                 card = pay("CARD"),
+                cashCount = billCount("CASH"),
+                creditCount = billCount("CREDIT"),
                 customersToday = num("SELECT COUNT(DISTINCT customer_id) FROM td_bills WHERE $billOk AND customer_id IS NOT NULL").toInt(),
+                // Repeat = customers served today who also have a real (countable) purchase on an earlier day.
                 repeatToday = num(
                     "SELECT COUNT(DISTINCT customer_id) FROM td_bills WHERE $billOk AND customer_id IS NOT NULL " +
-                        "AND customer_id IN (SELECT customer_id FROM td_bills WHERE date(COALESCE(bill_date_time,bill_date)) < $today)"
+                        "AND customer_id IN (SELECT customer_id FROM td_bills " +
+                        "WHERE date(COALESCE(bill_date_time,bill_date)) < $today AND customer_id IS NOT NULL AND " +
+                        BillDao.countableBillClause() + ")"
                 ).toInt(),
                 newMembers = num("SELECT COUNT(*) FROM ${DatabaseHelper.Tables.MD_CUSTOMERS} WHERE date(created_at) = $today").toInt(),
                 totalSkus = num("SELECT COUNT(*) FROM ${DatabaseHelper.Tables.MD_PRODUCTS}").toInt(),
@@ -158,7 +169,12 @@ class DashboardHomeFragment : Fragment() {
         kpis.addView(
             statCard(
                 ctx, accent, "PAYMENTS", "COLLECTED", money(stats.collected), "0%", textSec, "₹0 pending",
-                listOf("UPI" to money(stats.upi), "CARD" to money(stats.card))
+                listOf(
+                    "CASH SALES" to stats.cashCount.toString(),
+                    "CREDIT SALES" to stats.creditCount.toString(),
+                    "UPI/ONLINE" to money(stats.upi),
+                    "CARD" to money(stats.card)
+                )
             ) { navigate(ReportsFragment()) }.weighted()
         )
         kpis.addView(

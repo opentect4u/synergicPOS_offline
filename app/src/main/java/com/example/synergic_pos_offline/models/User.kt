@@ -7,5 +7,7 @@ data class User(
     var isBlocked: Boolean = false,
     var assignedFeatures: List<String> = emptyList(),
     /** Store this user belongs to (md_users.store_id); 0 when unknown. */
-    val storeId: Int = 0
+    val storeId: Int = 0,
+    /** The user's serial no. (md_users.id) — recorded in created_by / modified_by. */
+    val serialNo: Long = 0
 )

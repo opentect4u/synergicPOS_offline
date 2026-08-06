@@ -346,10 +346,27 @@ class BillReceiptRenderer(context: Context) {
         if (card.measuredHeight <= 0) return null
         card.layout(0, 0, card.measuredWidth, card.measuredHeight)
 
-        ReceiptPrinter.capture(card)
+        val captured = ReceiptPrinter.capture(card) ?: return null
+        // The card is captured to its exact height, so a big header/footer font sits
+        // flush against the top/bottom edge — with no clearance the footer runs into
+        // the tear line and the next receipt. Add white top/bottom margins that scale
+        // with the paper so header/footer always have breathing room in print.
+        withVerticalMargins(captured, top = paperDots / 16, bottom = paperDots / 9)
     }.getOrElse {
         android.util.Log.e(TAG, "Could not render bill", it)
         null
+    }
+
+    /** Returns [src] padded with white space above and below (recycling [src]). */
+    private fun withVerticalMargins(src: Bitmap, top: Int, bottom: Int): Bitmap {
+        if (top <= 0 && bottom <= 0) return src
+        val out = Bitmap.createBitmap(src.width, src.height + top + bottom, Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(out).apply {
+            drawColor(android.graphics.Color.WHITE)
+            drawBitmap(src, 0f, top.toFloat(), null)
+        }
+        src.recycle()
+        return out
     }
 
     /**
@@ -374,7 +391,9 @@ class BillReceiptRenderer(context: Context) {
         val netAmount: Double,
         val paymentModes: List<String>,
         /** Restaurant service charge — shown as its own totals line, added to the net. */
-        val serviceCharge: Double = 0.0
+        val serviceCharge: Double = 0.0,
+        /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
+        val returnAmount: Double = 0.0
     ) {
         /** As captured on the sale; each field printed only where the settings ask. */
         data class Customer(
@@ -473,6 +492,8 @@ class BillReceiptRenderer(context: Context) {
             var storedNetAmount = 0.0
             var roundOff = 0.0
             var serviceCharge = 0.0
+            // Cash handed back to the customer when they tendered more than the payable.
+            var returnAmount = 0.0
             var settingsSnapshotJson: String? = null
             if (draft != null) {
                 billNumber = draft.billNumber
@@ -481,6 +502,7 @@ class BillReceiptRenderer(context: Context) {
                 discount = draft.discount
                 storedNetAmount = draft.netAmount
                 serviceCharge = draft.serviceCharge
+                returnAmount = draft.returnAmount
             } else db.rawQuery(
                 """
                 SELECT bill_number, bill_date_time, bill_date, customer_id,
@@ -508,6 +530,13 @@ class BillReceiptRenderer(context: Context) {
                 discount = c.getDouble(4)
                 storedNetAmount = c.getDouble(5)
             }
+
+            // The change given back is recorded per payment row; a reprint reads the
+            // stored figure so it matches what was handed over on the day.
+            if (draft == null) db.rawQuery(
+                "SELECT COALESCE(SUM(change_amount), 0) FROM ${DatabaseHelper.Tables.TD_PAYMENTS} WHERE bill_id = ?",
+                arrayOf(receiptNo.toString())
+            ).use { c -> if (c.moveToFirst()) returnAmount = c.getDouble(0) }
 
             // Whichever Bill/Tax Settings were active when this bill was made - not
             // necessarily what is live now - so a reprint reads exactly as it did on
@@ -747,7 +776,7 @@ class BillReceiptRenderer(context: Context) {
                 view.findViewById<TextView>(R.id.tvAmountWords).visibility = View.GONE
             }
 
-            renderPayment(view, draft?.paymentModes ?: paymentModes(db, receiptNo, billType), narrow)
+            renderPayment(view, draft?.paymentModes ?: paymentModes(db, receiptNo, billType), returnAmount, narrow)
 
             renderFixedLines(
                 db, view, R.id.llBillFooterLines,
@@ -1471,15 +1500,25 @@ class BillReceiptRenderer(context: Context) {
         return modes
     }
 
-    private fun renderPayment(view: View, modes: List<String>, narrow: Boolean = false) {
+    private fun renderPayment(
+        view: View, modes: List<String>, returnAmount: Double = 0.0, narrow: Boolean = false
+    ) {
         val ll = view.findViewById<LinearLayout>(R.id.llBillPayment)
         ll.removeAllViews()
-        if (modes.isEmpty()) return
+        if (modes.isEmpty() && returnAmount <= 0.005) return
 
         modes.forEach { mode ->
             val row = baseRow(narrow)
             row.addView(cell("PAY MODE", 1f, Gravity.START))
             row.addView(cell(mode, 1f, Gravity.END))
+            ll.addView(row)
+        }
+
+        // Change handed back when the customer tendered more than the payable.
+        if (returnAmount > 0.005) {
+            val row = baseRow(narrow)
+            row.addView(cell("RETURN", 1f, Gravity.START))
+            row.addView(cell(money(returnAmount), 1f, Gravity.END))
             ll.addView(row)
         }
     }
@@ -1770,7 +1809,7 @@ class BillReceiptRenderer(context: Context) {
                         put("bill_id", receiptNo)
                         put("print_type", if (already == 0) "ORIGINAL" else "REPRINT")
                         put("print_date", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
-                        put("created_by", SessionManager.currentUser?.userId)
+                        put("created_by", SessionManager.auditUser)
                     }
                 )
             }.onFailure { android.util.Log.e(TAG, "Could not record the print", it) }

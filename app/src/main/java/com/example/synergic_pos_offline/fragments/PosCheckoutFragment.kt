@@ -26,6 +26,7 @@ import com.example.synergic_pos_offline.database.CustomerDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
 import com.example.synergic_pos_offline.utils.CustomerCardDialog
 import com.example.synergic_pos_offline.utils.BillReceiptRenderer
+import com.example.synergic_pos_offline.utils.InputLimits
 import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.GstCalculator
@@ -35,8 +36,6 @@ import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.example.synergic_pos_offline.utils.ThermalPrinter
-import com.google.android.material.textfield.MaterialAutoCompleteTextView
-import android.widget.ArrayAdapter
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.TextInputEditText
@@ -55,7 +54,7 @@ private const val HELD_PREVIEW_LINES = 8
 /** In-process hand-off of the current sale from billing to checkout. */
 object CheckoutSession {
     data class Line(
-        val name: String, val sku: String, var price: Double, var qty: Int,
+        val name: String, val sku: String, var price: Double, var qty: Double,
         val productId: Long? = null,
         /** Per-product tax rates from md_product_rates, carried so checkout and the
          *  bill tax each line at the rate its product actually charges. [vatRate] is
@@ -253,9 +252,6 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         }
         id<MaterialButton>(R.id.btnModeReceipt).setOnClickListener { setMode(false) }
 
-        // Add line
-        setupAddItem()
-
         // Payment mode tiles
         id<MaterialButton>(R.id.btnCash).setOnClickListener { setMethod(Method.CASH) }
         id<MaterialButton>(R.id.btnCredit).setOnClickListener { setMethod(Method.CREDIT) }
@@ -328,7 +324,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             // list reads exactly as it did before.
             row.findViewById<TextView>(R.id.tvName).text =
                 if (showDiscount) "${index + 1}  ${line.name}" else line.name
-            row.findViewById<TextView>(R.id.tvQty).text = "Qty: ${line.qty}"
+            row.findViewById<TextView>(R.id.tvQty).text = "Qty: ${qtyText(line.qty)}"
             // NET AMT: the line's gross less its discount, as on the receipt.
             row.findViewById<TextView>(R.id.tvPrice).text = money(lineNetAmount(line))
             row.findViewById<TextView>(R.id.tvDiscount).apply {
@@ -389,59 +385,6 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         }
         return list
     }
-
-    /**
-     * Wires the "Add item" box: typing filters the catalog, picking a suggestion
-     * opens the same product dialog the billing screen uses, and confirming adds
-     * the line here.
-     */
-    private fun setupAddItem() {
-        val input = id<MaterialAutoCompleteTextView>(R.id.actAddItem)
-        val adapter = ArrayAdapter(
-            requireContext(), android.R.layout.simple_list_item_1, catalog.map { it.name }
-        )
-        input.setAdapter(adapter)
-
-        input.setOnItemClickListener { _, _, position, _ ->
-            // The adapter filters, so map the tapped row back through it rather than
-            // indexing the unfiltered catalog.
-            val name = adapter.getItem(position)
-            val product = catalog.firstOrNull { it.name == name }
-            input.setText("")
-            if (product == null) toast("Product not found") else showAddDialog(product)
-        }
-    }
-
-    private fun showAddDialog(product: ProductEntryDialog.Product) {
-        ProductEntryDialog.show(
-            context = requireContext(),
-            inflater = layoutInflater,
-            product = product,
-            confirmLabel = "Add to bill",
-            taxRegime = taxRegime,
-            taxInclusive = taxInclusive,
-            itemwiseDiscountActive = itemwiseDiscountActive,
-            discountPreTax = discountPreTax
-        ) { qty, rate ->
-            lines.add(
-                CheckoutSession.Line(
-                    name = product.name,
-                    sku = product.sku,
-                    price = rate,
-                    qty = qty,
-                    productId = product.id.toLongOrNull(),
-                    cgstRate = product.cgst,
-                    sgstRate = product.sgst,
-                    vatRate = product.vat,
-                    itemDiscValue = product.discValue,
-                    itemDiscType = product.discType
-                )
-            )
-            renderItems()
-            refreshTotals()
-        }
-    }
-
 
     // ---- Customer ----------------------------------------------------------
 
@@ -993,7 +936,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
         // Update item count
         val itemCount = lines.sumOf { it.qty }
-        id<TextView>(R.id.tvPayItemCount).text = "Items: $itemCount"
+        id<TextView>(R.id.tvPayItemCount).text = "Items: ${qtyText(itemCount)}"
 
         // Cash change - exact amount (no tendered/change entry) when Cash Reception is off
         val tendered = if (cashReceptionEnabled()) {
@@ -1101,7 +1044,11 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             discount = discountAmt(),
             roundOff = roundOffAmt(),
             netAmount = total(),
-            paymentModes = listOf(method.name)
+            paymentModes = listOf(method.name),
+            returnAmount = if (method == Method.CASH && cashReceptionEnabled()) {
+                val tendered = id<TextInputEditText>(R.id.etCash).text?.toString()?.toDoubleOrNull() ?: total()
+                (tendered - total()).coerceAtLeast(0.0)
+            } else 0.0
         )
     }
 
@@ -1119,8 +1066,15 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             return
         }
 
-        // The sale is committed, so the receipt goes out without waiting to be asked:
-        // the operator hands over paper while the dialog is still up.
+        // The sale is committed, so start a fresh sale right now - not only when
+        // "Start new sale" is tapped. However the operator leaves this screen next
+        // (that button, "Reprint" then back, or the system back button), the cart
+        // that was just billed must not carry over to the billing screen.
+        CheckoutSession.lines = mutableListOf()
+        CheckoutSession.startFreshSale = true
+
+        // The receipt goes out without waiting to be asked: the operator hands over
+        // paper while the dialog is still up.
         printBill(result.receiptNo)
 
         DialogUtils.showConfirm(
@@ -1133,8 +1087,6 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             onConfirm = {
                 // No counter to bump: the next screen reads the number back from the
                 // bills table, which the sale just added to.
-                CheckoutSession.lines = mutableListOf()
-                CheckoutSession.startFreshSale = true
                 requireActivity().supportFragmentManager.popBackStack()
             },
             onCancel = { printBill(result.receiptNo) }
@@ -1166,15 +1118,20 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     }
 
     private fun sendToPrinter(receiptNo: Long, config: ThermalPrinter.Config) {
-        val capture = BillReceiptRenderer(requireContext()).renderToBitmap(receiptNo, config.paperDots)
+        // This can run from the printer-setup dialog's callback, which may fire after
+        // the operator has left checkout. Use the current context and bail if the
+        // screen is gone, rather than crashing on requireContext(). The sale is saved,
+        // so it can still be reprinted from Recent Bills.
+        val ctx = context ?: return
+        val capture = BillReceiptRenderer(ctx).renderToBitmap(receiptNo, config.paperDots)
         if (capture == null) {
             toast("Could not render the receipt")
             return
         }
         // Bill Settings' "Two Copy" toggle - sent as two separate jobs off the one
         // rendered bitmap, not two renders.
-        val copies = if (BillSettingsDao(requireContext()).load().twoCopyBill) 2 else 1
-        ThermalPrinter.printCopies(requireContext(), capture, config, copies) { result ->
+        val copies = if (BillSettingsDao(ctx).load().twoCopyBill) 2 else 1
+        ThermalPrinter.printCopies(ctx, capture, config, copies) { result ->
             // The sale is already saved, so a printer problem is reported and never
             // blocks the till: the bill can always be reprinted from Recent Bills.
             if (!isAdded) return@printCopies
@@ -1326,7 +1283,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
         val items = CheckoutSession.heldOrders.map { h ->
             val details = listOfNotNull(
-                "${h.lines.sumOf { it.qty }} items",
+                "${qtyText(h.lines.sumOf { it.qty })} items",
                 h.customerName?.takeIf { it.isNotBlank() },
                 "held ${heldTime(h.heldAt)}"
             ).joinToString(" · ")
@@ -1468,12 +1425,15 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             filters = arrayOf(android.text.InputFilter.LengthFilter(10))
         }
         val etName = editText(field("Customer Name", 1, 0, 2, creditCustomerName))
+            .apply { InputLimits.cap(this, InputLimits.TEXT) }
         val etAddress = editText(field("Address", 2, 0, 2, creditCustomerAddress)).apply {
             minLines = 3
             maxLines = 5
             isSingleLine = false
+            InputLimits.cap(this, InputLimits.TEXT_AREA)
         }
         val etGstin = editText(field("GSTIN", 3, 0, 2, creditCustomerGstin))
+            .apply { InputLimits.cap(this, InputLimits.GSTIN) }
 
         // Dates are picked from a calendar, never typed, so they can only ever be
         // stored in the yyyy-MM-dd the master expects.
@@ -1517,6 +1477,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         editText(tilBalance).inputType = android.text.InputType.TYPE_CLASS_NUMBER or
             android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        InputLimits.cap(editText(tilLimit), InputLimits.NUMBER)
+        InputLimits.cap(editText(tilBalance), InputLimits.NUMBER)
 
         // Credit gates the figures that only exist because of it, exactly as the
         // customer master does.
@@ -1702,6 +1664,11 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     }
 
     private fun money(v: Double) = "₹" + String.format("%.2f", BillRounding.toPaise(v))
+
+    /** Whole quantities show without decimals; fractional ones keep up to 3 places. */
+    private fun qtyText(v: Double): String =
+        if (v % 1.0 == 0.0) v.toLong().toString()
+        else String.format("%.3f", v).trimEnd('0').trimEnd('.')
     private fun fmtPlain(v: Double) = String.format("%.2f", v)
 
     private fun <T : View> id(resId: Int): T = root.findViewById(resId)

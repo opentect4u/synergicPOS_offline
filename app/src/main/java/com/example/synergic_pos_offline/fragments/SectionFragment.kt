@@ -63,6 +63,7 @@ class SectionFragment : DataTableFragment() {
         val existing = row?.let { cache[it.id] }
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_section, null)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 

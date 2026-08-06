@@ -426,6 +426,8 @@
                         android:layout_height="wrap_content"
                         android:layout_margin="18dp"
                         android:hint="Add Order Note"
+                        app:counterEnabled="true"
+                        app:counterMaxLength="200"
                         app:boxCornerRadiusTopStart="12dp"
                         app:boxCornerRadiusTopEnd="12dp"
                         app:boxCornerRadiusBottomStart="12dp"
@@ -435,7 +437,8 @@
                             android:layout_width="match_parent"
                             android:layout_height="80dp"
                             android:gravity="top"
-                            android:inputType="textMultiLine"
+                            android:inputType="textMultiLine|textCapSentences"
+                            android:maxLength="200"
                             android:textSize="14sp" />
                     </com.google.android.material.textfield.TextInputLayout>
 
@@ -512,7 +515,7 @@
                             android:layout_height="48dp"
                             android:insetTop="0dp"
                             android:insetBottom="0dp"
-                            android:text="Bill &amp; Print"
+                            android:text="Print Bill"
                             app:cornerRadius="12dp" />
 
                         <com.google.android.material.button.MaterialButton

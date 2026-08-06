@@ -144,12 +144,23 @@ class CustomerFragment : DataTableFragment() {
                 etName.error = "Name is required"
                 return@setOnClickListener
             }
+            val phone = etPhone.text?.toString()?.trim().orEmpty()
+            if (phone.isEmpty()) {
+                etPhone.error = "Phone number is required"
+                etPhone.requestFocus()
+                return@setOnClickListener
+            }
+            if (phone.length < 10) {
+                etPhone.error = "Enter a valid phone number"
+                etPhone.requestFocus()
+                return@setOnClickListener
+            }
             val credit = swCredit.isChecked
             val customer = CustomerDao.Customer(
                 id = existing?.id ?: 0L,
                 name = name,
                 address = etAddress.text?.toString()?.trim().orEmpty(),
-                phone = etPhone.text?.toString()?.trim().orEmpty(),
+                phone = phone,
                 gstin = etGstin.text?.toString()?.trim().orEmpty(),
                 creditEnabled = credit,
                 creditLimit = if (credit) etCreditLimit.text?.toString()?.toDoubleOrNull() ?: 0.0 else 0.0,
