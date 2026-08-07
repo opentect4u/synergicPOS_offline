@@ -13,7 +13,7 @@
 
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/cardReceipt"
-            android:layout_width="360dp"
+            android:layout_width="300dp"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
             android:layout_marginTop="20dp"
@@ -197,82 +197,81 @@
 
                 <TextView style="@style/BillDashLine" />
 
-                <!-- Items header: the item name sits on its own row, so the header
-                     is a name label above the value columns that line up under it. -->
+                <!-- Items header. One row, the same five columns the Classic slip
+                     uses and in the same proportions: BillReceiptRenderer lays these
+                     out to CLASSIC_COLUMNS at inflation and sets the rows beneath
+                     them from the same array, so a figure cannot end up under the
+                     wrong label. The weights here are the 3-inch ones and are
+                     present so the layout can be previewed. -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical">
+                    android:orientation="horizontal">
 
                     <TextView
                         android:id="@+id/tvColSrItem"
-                        android:layout_width="match_parent"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_weight="3.8"
                         android:text="SR.NO ITEM"
                         android:fontFamily="monospace"
                         android:textStyle="bold"
                         android:textSize="12sp"
                         android:textColor="#222222" />
 
-                    <LinearLayout
-                        android:layout_width="match_parent"
+                    <TextView
+                        android:id="@+id/tvColQty"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal">
+                        android:layout_weight="2"
+                        android:text="QTY"
+                        android:gravity="center"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
 
-                        <TextView
-                            android:id="@+id/tvColQty"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1.8"
-                            android:text="QTY"
-                            android:gravity="center"
-                            android:fontFamily="monospace"
-                            android:textStyle="bold"
-                            android:textSize="12sp"
-                            android:textColor="#222222" />
+                    <TextView
+                        android:id="@+id/tvColPrice"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1.9"
+                        android:text="PRICE"
+                        android:gravity="end"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
 
-                        <!-- Weighted wide enough to keep the label on one line. -->
-                        <TextView
-                            android:id="@+id/tvColPrice"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="3"
-                            android:text="PER UNIT PRICE"
-                            android:gravity="end"
-                            android:fontFamily="monospace"
-                            android:textStyle="bold"
-                            android:textSize="12sp"
-                            android:textColor="#222222" />
+                    <!-- Hidden by the renderer when no line carries a discount - a
+                         bill-wise discount comes off the total, not the lines, so
+                         its column would be nothing but dashes. -->
+                    <TextView
+                        android:id="@+id/tvColDisc"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1.7"
+                        android:text="DISC"
+                        android:gravity="end"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222"
+                        android:visibility="gone" />
 
-                        <!-- Hidden by the renderer when no line carries a discount -
-                             a bill-wise discount comes off the total, not the lines,
-                             so its column would be nothing but dashes. -->
-                        <TextView
-                            android:id="@+id/tvColDisc"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1.8"
-                            android:text="DISC"
-                            android:gravity="end"
-                            android:fontFamily="monospace"
-                            android:textStyle="bold"
-                            android:textSize="12sp"
-                            android:textColor="#222222" />
-
-                        <!-- The line's gross less its discount - what it actually
-                             contributes to the bill. -->
-                        <TextView
-                            android:id="@+id/tvColNet"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="2.4"
-                            android:text="NET AMT"
-                            android:gravity="end"
-                            android:fontFamily="monospace"
-                            android:textStyle="bold"
-                            android:textSize="12sp"
-                            android:textColor="#222222" />
-                    </LinearLayout>
+                    <!-- The line's gross less its discount - what it actually
+                         contributes to the bill. -->
+                    <TextView
+                        android:id="@+id/tvColNet"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2.3"
+                        android:text="AMOUNT"
+                        android:gravity="end"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
                 </LinearLayout>
 
                 <TextView style="@style/BillDashLine" />

@@ -1,10 +1,12 @@
-package com.example.synergic_pos_offline.utils
+﻿package com.example.synergic_pos_offline.utils
 
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.graphics.Bitmap
+import android.graphics.Paint
 import android.graphics.Typeface
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -25,29 +27,35 @@ import java.util.Locale
 /** Longest edge decoded for a receipt logo; the slots cap well below this. */
 private const val LOGO_PX = 480
 
-/** Width the receipt card is laid out at for 80mm paper, matching fragment_bill.xml. */
-private const val CARD_WIDTH_DP = 360
+/**
+ * Width the card is laid out at before it is scaled to the paper.
+ *
+ * Taken from [PrintType.CARD_WIDTH_DP], the one dial for how big every slip
+ * prints - each renderer used to carry its own copy of this number, so making
+ * the print bigger meant finding all five and hoping none was missed.
+ */
+private const val CARD_WIDTH_DP = PrintType.CARD_WIDTH_DP
 
-/** Printable dots on 80mm paper - the reference [CARD_WIDTH_DP] was designed for. */
-private const val REFERENCE_PAPER_DOTS = 576
+/** The card's own horizontal padding, per side - the bill layouts' paddingHorizontal. */
+private const val CARD_PADDING_DP = 20
+
+/** Printable dots on 80mm paper - what [CARD_WIDTH_DP] is measured against. */
+private const val REFERENCE_PAPER_DOTS = PrintType.REFERENCE_PAPER_DOTS
 
 /**
  * Below this, the item table is set smaller so its columns still fit the roll.
  *
- * The layout is the same at every width - serial and item name on one line, the
- * quantity / unit price / net figures in their columns underneath - because that is
- * what makes a bill readable down the page. What a 2-inch roll cannot take is the
- * *headings* at full size: "PER UNIT PRICE" is wider than the column it labels and
- * wraps, which drags the figures under it out of line. Stepping the type down keeps
- * the labels on one line and the columns where they belong. 58mm (384 dots) falls
- * under this; 80mm (576) and up print at full size.
+ * The layout is the same at every width - a line item across one row, with a long
+ * name taking the row above its figures - because that is what makes a bill readable
+ * down the page. What a 2-inch roll cannot take is five columns at full size: the
+ * headings grow wider than the columns they label and wrap, which drags the figures
+ * under them out of line. Stepping the type down keeps the labels on one line and
+ * the columns where they belong. 58mm (384 dots) falls under this; 80mm (576) and
+ * up print at full size.
  */
 private const val NARROW_PAPER_DOTS = 450
 
-/** Type size for the item table's headings and figures on a 2-inch roll. */
-private const val NARROW_ITEM_SP = 14f
-
-/** The same, at 80mm and wider. */
+/** Type size for the item table's headings and figures at 80mm and wider. */
 private const val WIDE_ITEM_SP = 12.5f
 
 /**
@@ -69,16 +77,6 @@ private const val WIDE_SUMMARY_SP = 12.5f
 private const val NARROW_BODY_SP = 15f
 
 /**
- * What the item-table headings say on a 2-inch roll.
- *
- * "PER UNIT PRICE" and "NET AMT" are wider than the columns they label once the
- * type is set large enough to read, and a heading that wraps takes the figures
- * under it out of line. Shorter words for the same columns is what buys the size.
- */
-private const val NARROW_PRICE_HEADING = "RATE"
-private const val NARROW_NET_HEADING = "AMOUNT"
-
-/**
  * How much of the usual gap between printed rows a 2-inch slip keeps.
  *
  * The larger type it is set in already carries its own leading, so the padding that
@@ -93,8 +91,8 @@ private const val NARROW_ROW_SPACING = 0.5f
  *
  * Classic prints a whole line - serial, name, quantity, price and amount - across
  * one row, so a narrow roll has to set it *smaller* to keep those five columns on
- * that row. This is the opposite of the Standard layout, whose name sits on a row
- * of its own and so has the width to be set larger ([NARROW_ITEM_SP]).
+ * that row. Every template prints that way now, so this is the size a 2-inch item
+ * line is set at whichever one is chosen.
  */
 private const val CLASSIC_NARROW_ITEM_SP = 10f
 
@@ -134,6 +132,43 @@ private const val CLASSIC_NARROW_GRAND_TOTAL_BIG_SP = 17f
  * from here after, so a column and its label cannot drift apart.
  */
 private val CLASSIC_COLUMNS = floatArrayOf(3.8f, 2f, 1.9f, 1.7f, 2.3f)
+
+/**
+ * Where each column sits in the arrays above: name, quantity, price, discount,
+ * amount. DISC is the one that is not always drawn.
+ */
+private const val QTY_COLUMN = 1
+private const val PRICE_COLUMN = 2
+private const val DISC_COLUMN = 3
+private const val NET_COLUMN = 4
+
+/** The figure columns, in the order they are drawn - everything but the name. */
+private val ITEM_FIGURE_COLUMNS = listOf(QTY_COLUMN, PRICE_COLUMN, DISC_COLUMN, NET_COLUMN)
+
+/**
+ * The fewest characters of an item name the name column is ever squeezed to.
+ *
+ * It gives up width to the figure columns when their values need more than their
+ * weight allows, and this is the floor: past it a bill of very wide figures would
+ * print a column of names too narrow to show anything at all.
+ */
+private const val NAME_COLUMN_MIN_CHARS = 6f
+
+/**
+ * The longest item name that shares its line with the figures on a Classic bill.
+ *
+ * A count of characters rather than a measurement, because that is the rule the
+ * bill is meant to follow: up to ten characters the name sits beside its quantity
+ * and price, and past ten it takes a line of its own. Ten is about what the name
+ * column holds on 80mm paper, so the rule and the room agree there - which is the
+ * paper this was set against.
+ *
+ * It is a ceiling, not a guarantee: on a 2-inch roll carrying a DISC column the
+ * name column holds nearer nine characters, and a name that will not fit still
+ * takes its own line whatever its length. Otherwise it would wrap inside the
+ * column, which is the thing giving the name its own line exists to prevent.
+ */
+private const val CLASSIC_NAME_MAX_CHARS = 10
 
 /**
  * The same on a 2-inch roll, where the item name is given a larger share.
@@ -317,7 +352,7 @@ class BillReceiptRenderer(context: Context) {
 
     /**
      * Renders an in-memory [draft] to a bitmap through exactly the same layout, font
-     * sizes and settings the saved bill uses — so a restaurant bill printed from a
+     * sizes and settings the saved bill uses â€” so a restaurant bill printed from a
      * draft is byte-for-byte the grocery bill's format. The service charge should be
      * folded into the draft's items so it is part of the printed total.
      */
@@ -348,7 +383,7 @@ class BillReceiptRenderer(context: Context) {
 
         val captured = ReceiptPrinter.capture(card) ?: return null
         // The card is captured to its exact height, so a big header/footer font sits
-        // flush against the top/bottom edge — with no clearance the footer runs into
+        // flush against the top/bottom edge â€” with no clearance the footer runs into
         // the tear line and the next receipt. Add white top/bottom margins that scale
         // with the paper so header/footer always have breathing room in print.
         withVerticalMargins(captured, top = paperDots / 16, bottom = paperDots / 9)
@@ -390,9 +425,9 @@ class BillReceiptRenderer(context: Context) {
         val roundOff: Double,
         val netAmount: Double,
         val paymentModes: List<String>,
-        /** Restaurant service charge — shown as its own totals line, added to the net. */
+        /** Restaurant service charge â€” shown as its own totals line, added to the net. */
         val serviceCharge: Double = 0.0,
-        /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
+        /** Cash returned when the customer tenders more than the payable â€” printed only when > 0. */
         val returnAmount: Double = 0.0
     ) {
         /** As captured on the sale; each field printed only where the settings ask. */
@@ -667,11 +702,14 @@ class BillReceiptRenderer(context: Context) {
             // The headings are set at the size the figures beneath them are, so the
             // two stay in step - a heading left at full size on a 2-inch roll wraps
             // and takes the column alignment with it.
+            // One item table for all three templates. Standard used to build its own
+            // - name always on a row of its own, its figures in columns of their own
+            // widths beneath - which meant a short name took two lines there and one
+            // on a Classic slip off the same till. The table is now the same table
+            // everywhere, and only what surrounds it tells the templates apart.
             val headingSp = when {
-                classic && narrow && showDisc -> CLASSIC_NARROW_DISC_ITEM_SP
-                classic && narrow -> CLASSIC_NARROW_ITEM_SP
-                classic -> WIDE_ITEM_SP
-                narrow -> NARROW_ITEM_SP
+                narrow && showDisc -> CLASSIC_NARROW_DISC_ITEM_SP
+                narrow -> CLASSIC_NARROW_ITEM_SP
                 else -> WIDE_ITEM_SP
             }
             val headings = listOf(
@@ -683,30 +721,40 @@ class BillReceiptRenderer(context: Context) {
                 narrow -> CLASSIC_NARROW_COLUMNS
                 else -> CLASSIC_COLUMNS
             }
-            if (classic) {
-                headings.forEachIndexed { i, id ->
-                    view.findViewById<TextView>(id).let { heading ->
-                        (heading.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
-                            lp.weight = classicColumns[i]
-                            heading.layoutParams = lp
-                        }
+            if (narrow && showDisc) {
+                view.findViewById<TextView>(R.id.tvColSrItem).text = CLASSIC_NARROW_ITEM_HEADING
+            }
+            // Fixed widths, not weights - see [itemColumnWidths]. Applied to the
+            // headings and to the rows beneath them from the one array, so a figure
+            // stays under its label.
+            val columnPx = itemColumnWidths(
+                items, showDisc, headingSp, classicColumns, paperDots,
+                headings.map { view.findViewById<TextView>(it).text?.toString().orEmpty() }
+            )
+            headings.forEachIndexed { i, id ->
+                view.findViewById<TextView>(id).let { heading ->
+                    (heading.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+                        lp.width = columnPx[i]
+                        lp.weight = 0f
+                        heading.layoutParams = lp
                     }
-                }
-                if (narrow && showDisc) {
-                    view.findViewById<TextView>(R.id.tvColSrItem).text = CLASSIC_NARROW_ITEM_HEADING
+                    // A heading is a label, not a paragraph: one that outgrows its
+                    // column is shortened or clipped, never wrapped, since a second
+                    // line of heading sits over the wrong column entirely.
+                    heading.maxLines = 1
                 }
             }
-            // Only Standard needs its headings shortened on a narrow roll; the
-            // Classic layout's own labels ("PRICE", "AMOUNT") already fit.
-            if (narrow && !classic) {
-                view.findViewById<TextView>(R.id.tvColPrice).text = NARROW_PRICE_HEADING
-                view.findViewById<TextView>(R.id.tvColNet).text = NARROW_NET_HEADING
+            // "SR.NO ITEM" needs more room than the name column has left once the
+            // figures have taken theirs - on a bill carrying a DISC column it is
+            // squeezed hardest - so it gives way to the short form rather than
+            // wrapping under itself.
+            view.findViewById<TextView>(R.id.tvColSrItem).let { srItem ->
+                if (measure(headingSp).measureText(srItem.text.toString()) > columnPx[0]) {
+                    srItem.text = CLASSIC_NARROW_ITEM_HEADING
+                }
             }
             items.forEach {
-                llItems.addView(
-                    if (classic) buildClassicItemRow(it, showDisc, headingSp, classicColumns, narrow)
-                    else buildItemRow(it, showDisc, narrow)
-                )
+                llItems.addView(buildClassicItemRow(it, showDisc, headingSp, columnPx, narrow))
             }
 
             val totals = lineTotals.copy(discount = discount)
@@ -1087,8 +1135,8 @@ class BillReceiptRenderer(context: Context) {
                         vatRate = c.getDouble(14),
                         hsn = if (includeHsn) c.getString(11)?.takeIf { it.isNotBlank() } else null,
                         // Read whatever the sale recorded, falling back to the
-                        // product's own unit. Only the Classic slip prints it, and
-                        // it prints nothing where there is nothing to print.
+                        // product's own unit. Printed beside the quantity on every
+                        // template, and nothing is printed where there is nothing.
                         unit = c.getString(15)?.takeIf { it.isNotBlank() }?.uppercase()
                     )
                 )
@@ -1255,7 +1303,7 @@ class BillReceiptRenderer(context: Context) {
     /**
      * Draws the configured bill logos at the head and foot of the receipt.
      *
-     * Decoded at a modest size: the receipt card is 360dp wide and the slots cap
+     * Decoded at a modest size: the receipt card is [CARD_WIDTH_DP] wide and the slots cap
      * out well below that, so pushing a full-resolution image through would cost
      * memory for pixels nobody sees. The most recently added logo of each type
      * wins, which is what an operator replacing an old one expects.
@@ -1558,58 +1606,6 @@ class BillReceiptRenderer(context: Context) {
     }
 
     /**
-     * An item block: the name (and HSN, if shown) on its own full-width row, with
-     * the QTY / PRICE / DISC / NET AMT columns lined up beneath it under the header.
-     *
-     * [showDisc] drops the DISC column - header included, so the rest stay lined up -
-     * for a bill whose lines carry no discount at all. Where the column is printed, a
-     * dash fills it on whichever lines were not discounted.
-     */
-    private fun buildItemRow(item: BillItem, showDisc: Boolean, narrow: Boolean = false): View {
-        val itemSp = if (narrow) NARROW_ITEM_SP else WIDE_ITEM_SP
-        val density = ctx.resources.displayMetrics.density
-        val gap = 6 * density * (if (narrow) NARROW_ROW_SPACING else 1f)
-        val container = LinearLayout(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, gap.toInt(), 0, gap.toInt())
-        }
-
-        val name = buildString {
-            append("${item.sr} ${item.name}")
-            if (item.hsn != null) append("\nHSN: ${item.hsn}")
-        }
-        container.addView(TextView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            text = name
-            gravity = Gravity.START
-            typeface = Typeface.MONOSPACE
-            textSize = itemSp
-            setTextColor(0xFF222222.toInt())
-        })
-
-        val values = LinearLayout(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, (2 * density).toInt(), 0, 0)
-        }
-        // Weights mirror the QTY / PER UNIT PRICE / DISC / NET AMT header in
-        // fragment_bill.xml - change one and the other has to follow.
-        values.addView(cell(item.qty, 1.8f, Gravity.CENTER, itemSp))
-        values.addView(cell(item.price, 3f, Gravity.END, itemSp))
-        if (showDisc) values.addView(cell(item.discount ?: "-", 1.8f, Gravity.END, itemSp))
-        values.addView(cell(item.netAmount, 2.4f, Gravity.END, itemSp))
-        container.addView(values)
-        return container
-    }
-
-    /**
      * A row of a Classic table - a line item or a line of the tax table.
      *
      * Set tighter than [baseRow]: these rows are read as a block down the page, and
@@ -1628,43 +1624,246 @@ class BillReceiptRenderer(context: Context) {
     }
 
     /**
-     * A Classic line item: serial and name, the quantity with its unit, the unit
-     * price and the amount, all on one row under the headings.
+     * A line item: serial and name, the quantity with its unit, the unit price and
+     * the amount, on one row under the headings - or on two, where the name is too
+     * long for one.
      *
-     * [columns] and [sizeSp] are the weights and the size the headings were laid out
+     * Every template's item table is built here. It is named for the Classic slip
+     * because that is the shape it takes, and Standard and Tax Wise Short now print
+     * their lines the same way.
+     *
+     * [columnPx] and [sizeSp] are the widths and the size the headings were laid out
      * to, passed in rather than restated so a figure cannot end up in a different
      * column, or at a different size, from the label above it.
      *
-     * A long item name wraps within its own cell rather than pushing the figures
-     * along, so the columns hold whatever the name is. HSN, when Bill Settings asks
-     * for it, goes underneath the name in that same cell.
+     * A name of more than [CLASSIC_NAME_MAX_CHARS] takes a line to itself, whole and
+     * unbroken, and the figures drop to the line beneath - still in their own
+     * columns, still under their own headings. Short names keep the old single row.
+     * Before this, a name too long for its column wrapped inside it, breaking the
+     * product's name across two or three lines and leaving the figures floating
+     * beside a ragged block of text. A name is the thing on a bill a customer
+     * actually checks, so it is the thing that gets the room.
+     *
+     * HSN, when Bill Settings asks for it, goes underneath the name either way.
      */
     private fun buildClassicItemRow(
         item: BillItem,
         showDisc: Boolean,
         sizeSp: Float,
-        columns: FloatArray,
+        columnPx: IntArray,
         narrow: Boolean
     ): View {
-        val row = classicRow(narrow)
+        val heading = "${item.sr} ${item.name}"
 
-        val name = buildString {
-            append("${item.sr} ${item.name}")
-            if (item.hsn != null) append("\nHSN: ${item.hsn}")
+        /** The figures, in their columns - the same cells whichever line they land on. */
+        fun addFigures(row: LinearLayout) {
+            ITEM_FIGURE_COLUMNS.filter { showDisc || it != DISC_COLUMN }.forEach { i ->
+                row.addView(
+                    figureCell(
+                        itemCellText(item, i), columnPx[i],
+                        if (i == QTY_COLUMN) Gravity.CENTER else Gravity.END, sizeSp
+                    )
+                )
+            }
         }
-        row.addView(cell(name, columns[0], Gravity.START, sizeSp))
+
+        // Ten characters or fewer share the line with the figures; anything longer
+        // takes a line of its own - and so does a shorter name that still will not
+        // fit the column on this paper, see [CLASSIC_NAME_MAX_CHARS].
+        val sharesTheLine = item.name.length <= CLASSIC_NAME_MAX_CHARS &&
+            measure(sizeSp).measureText(heading) <= columnPx[0]
+
+        if (sharesTheLine) {
+            val row = classicRow(narrow)
+            val name = buildString {
+                append(heading)
+                if (item.hsn != null) append("\nHSN: ${item.hsn}")
+            }
+            row.addView(nameCell(name, columnPx[0], sizeSp))
+            addFigures(row)
+            return row
+        }
+
+        // Spaced as one row would be, so the two lines read as one item rather than
+        // as an item and a stray line of figures.
+        val gap = (3 * ctx.resources.displayMetrics.density *
+            (if (narrow) NARROW_ROW_SPACING else 1f)).toInt()
+        return LinearLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, gap, 0, gap)
+
+            addView(fullWidthLine(heading, sizeSp))
+            if (item.hsn != null) addView(fullWidthLine("HSN: ${item.hsn}", sizeSp))
+
+            addView(
+                LinearLayout(ctx).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                    orientation = LinearLayout.HORIZONTAL
+                    // The name column is held open and empty, so the figures stay
+                    // under the headings instead of sliding left into its place.
+                    addView(nameCell("", columnPx[0], sizeSp))
+                    addFigures(this)
+                }
+            )
+        }
+    }
+
+    /**
+     * A figure cell of the item table, at the width [itemColumnWidths] settled on.
+     *
+     * Held to one line. The width was measured to hold the value, so there is nothing
+     * to wrap - and if a figure ever did outrun its column, breaking it across two
+     * lines is the one thing it must not do: a quantity split as "1.0" over "0" reads
+     * as a different quantity.
+     *
+     * One line is set with [TextView.setMaxLines], never `isSingleLine`. They read as
+     * the same instruction and are not: `isSingleLine` also turns on horizontal
+     * scrolling, and a scrolling TextView with a fixed width and no ellipsize lays
+     * its text out at its natural width and then scrolls it - straight out of the
+     * cell. Every figure on the bill printed blank, in a cell of exactly the right
+     * width, holding exactly the right text.
+     */
+    private fun figureCell(text: String, widthPx: Int, gravity: Int, sizeSp: Float): TextView =
+        TextView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+            this.text = text
+            this.gravity = gravity
+            typeface = Typeface.MONOSPACE
+            textSize = sizeSp
+            maxLines = 1
+            setTextColor(0xFF222222.toInt())
+        }
+
+    /**
+     * The name cell of a row that shares its line with the figures.
+     *
+     * Wrapping is left on here alone: HSN sits under the name in this cell on a line
+     * of its own, and a name only lands here when it was measured to fit.
+     */
+    private fun nameCell(text: String, widthPx: Int, sizeSp: Float): TextView =
+        TextView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+            this.text = text
+            gravity = Gravity.START
+            typeface = Typeface.MONOSPACE
+            textSize = sizeSp
+            setTextColor(0xFF222222.toInt())
+        }
+
+    /**
+     * One line of the item block running the whole width of the paper.
+     *
+     * Kept to a single line on purpose: the point of giving the name its own line is
+     * that it stops being broken up, so it is cut at the edge rather than wrapped if
+     * it somehow outruns the whole roll as well.
+     */
+    private fun fullWidthLine(text: String, sizeSp: Float): TextView = TextView(ctx).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        this.text = text
+        gravity = Gravity.START
+        typeface = Typeface.MONOSPACE
+        textSize = sizeSp
+        // maxLines, not isSingleLine - see [figureCell] for what that costs.
+        maxLines = 1
+        ellipsize = android.text.TextUtils.TruncateAt.END
+        setTextColor(0xFF222222.toInt())
+    }
+
+    /** A monospace paint at [sizeSp], for measuring what a column has to hold. */
+    private fun measure(sizeSp: Float): Paint = Paint().apply {
+        typeface = Typeface.MONOSPACE
+        textSize = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_SP, sizeSp, ctx.resources.displayMetrics
+        )
+    }
+
+    /** What column [column] of the item table holds for [item]. */
+    private fun itemCellText(item: BillItem, column: Int): String = when (column) {
         // The unit trails the quantity - "1 PKT", "1.00 LTR" - and is simply left
         // off where the sale did not record one, rather than assuming pieces.
-        row.addView(
-            cell(
-                item.unit?.let { "${item.qty} $it" } ?: item.qty,
-                columns[1], Gravity.CENTER, sizeSp
-            )
-        )
-        row.addView(cell(item.price, columns[2], Gravity.END, sizeSp))
-        if (showDisc) row.addView(cell(item.discount ?: "-", columns[3], Gravity.END, sizeSp))
-        row.addView(cell(item.netAmount, columns[4], Gravity.END, sizeSp))
-        return row
+        QTY_COLUMN -> item.unit?.let { "${item.qty} $it" } ?: item.qty
+        PRICE_COLUMN -> item.price
+        DISC_COLUMN -> item.discount ?: "-"
+        else -> item.netAmount
+    }
+
+    /**
+     * The width in pixels each of the item table's five columns is given.
+     *
+     * The weights in [columns] are the starting point, not the answer. A weighted
+     * column cannot be trusted with a number: give it less width than the figure in
+     * it and Android wraps the figure mid-value - "1.00" printing as "1.0" with the
+     * last zero tucked underneath, or "125000." over "00". On a bill that is not a
+     * cosmetic problem, and it is why the widths are settled here and handed to the
+     * headings and the rows alike rather than each being weighted separately.
+     *
+     * So every figure column is measured against the widest value the bill actually
+     * puts in it - and against its own heading, which can be wider than any of them -
+     * and widened to fit where the weight alone would not. A gutter goes on top, so a
+     * right-aligned figure cannot end up touching the column before it.
+     *
+     * The name column pays for whatever the figures borrow. It is the one column that
+     * can afford to: its content moves to a line of its own when it will not fit
+     * (see [CLASSIC_NAME_MAX_CHARS]), where a figure has nowhere else to go. It keeps
+     * a floor of a few characters so a bill of very wide figures still shows the
+     * start of each name rather than a column of nothing.
+     */
+    private fun itemColumnWidths(
+        items: List<BillItem>,
+        showDisc: Boolean,
+        sizeSp: Float,
+        columns: FloatArray,
+        paperDots: Int,
+        headings: List<String>
+    ): IntArray {
+        val metrics = ctx.resources.displayMetrics
+        val widthDp = CARD_WIDTH_DP.toDouble() * paperDots / REFERENCE_PAPER_DOTS
+        val contentPx = ((widthDp - CARD_PADDING_DP * 2) * metrics.density).toFloat()
+
+        val paint = measure(sizeSp)
+        val gutter = paint.measureText("0")
+
+        val drawn = columns.indices.filter { showDisc || it != DISC_COLUMN }
+        val totalWeight = drawn.map { columns[it] }.sum()
+        val width = FloatArray(columns.size)
+        if (totalWeight <= 0f) return IntArray(columns.size)
+        drawn.forEach { width[it] = contentPx * columns[it] / totalWeight }
+
+        var borrowed = 0f
+        drawn.filter { it != 0 }.forEach { i ->
+            val widest = items.maxOfOrNull { paint.measureText(itemCellText(it, i)) } ?: 0f
+            val needed = maxOf(widest, paint.measureText(headings.getOrElse(i) { "" })) + gutter
+            if (needed > width[i]) {
+                borrowed += needed - width[i]
+                width[i] = needed
+            }
+        }
+        width[0] = (width[0] - borrowed).coerceAtLeast(paint.measureText("0").times(NAME_COLUMN_MIN_CHARS))
+
+        // Never wider than the paper. If the name column hit its floor before the
+        // figures were paid for in full, the shortfall comes back off the figures in
+        // proportion - a row wider than the roll would push the amount off the right
+        // edge, and the amount is the one figure that has to print whatever else does
+        // not. A bill that reaches this is one whose figures will not fit the paper at
+        // this type size at all.
+        val total = drawn.map { width[it] }.sum()
+        if (total > contentPx) {
+            val figures = drawn.filter { it != 0 }
+            val figuresPx = figures.map { width[it] }.sum()
+            if (figuresPx > 0f) {
+                val excess = total - contentPx
+                figures.forEach { width[it] -= excess * width[it] / figuresPx }
+            }
+        }
+
+        return IntArray(columns.size) { width[it].toInt() }
     }
 
     /** A summary line without a colon column: left label and a right-aligned value

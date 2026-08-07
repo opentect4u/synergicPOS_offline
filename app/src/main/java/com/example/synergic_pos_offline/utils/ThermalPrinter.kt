@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -205,7 +204,7 @@ object ThermalPrinter {
 
     private fun buildTestPrintBitmap(purpose: String, config: Config): Bitmap {
         val width = config.paperDots
-        val lineHeight = 34
+        val lineHeight = (PrintType.dots(PrintType.BODY_SP) * 1.45f).toInt()
         val lines = listOf(
             "Purpose : $purpose",
             "Type    : ${config.connection}",
@@ -221,17 +220,10 @@ object ThermalPrinter {
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE)
 
-        val bodyPaint = Paint().apply {
-            color = Color.BLACK
-            isAntiAlias = true
-            typeface = Typeface.MONOSPACE
-            textSize = 26f
-        }
-        val titlePaint = Paint(bodyPaint).apply {
-            textSize = 34f
-            isFakeBoldText = true
-            textAlign = Paint.Align.CENTER
-        }
+        // The sample slip is set like everything else the till prints - it is meant
+        // to show what this printer's output looks like, so it has to be that.
+        val bodyPaint = PrintType.paint(PrintType.BODY_SP)
+        val titlePaint = PrintType.paint(PrintType.STORE_NAME_SP, bold = true, align = Paint.Align.CENTER)
 
         var y = lineHeight * 1.5f
         canvas.drawText("TEST PRINT", width / 2f, y, titlePaint)

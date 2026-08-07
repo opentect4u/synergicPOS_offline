@@ -316,6 +316,9 @@ class MainActivity : AppCompatActivity() {
             "Stock In" -> navigateTo(StockListFragment.newInstance(StockListFragment.Mode.IN))
             "Write Off" -> navigateTo(StockListFragment.newInstance(StockListFragment.Mode.OUT))
             "Reports" -> navigateTo(ReportsFragment())
+            // Serves both modes: a settled restaurant order is written to td_bills
+            // by the same call a grocery sale is, so there is one report to open.
+            "Bill Wise Report" -> navigateTo(BillWiseReportFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")
                     com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment()

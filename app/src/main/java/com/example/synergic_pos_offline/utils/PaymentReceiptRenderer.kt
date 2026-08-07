@@ -21,11 +21,17 @@ import java.util.Locale
 /** Longest edge decoded for a receipt logo; the slots cap well below this. */
 private const val LOGO_PX = 480
 
-/** Width the receipt card is laid out at for 80mm paper, matching receipt_payment.xml. */
-private const val CARD_WIDTH_DP = 360
+/**
+ * Width the card is laid out at before it is scaled to the paper.
+ *
+ * Taken from [PrintType.CARD_WIDTH_DP], the one dial for how big every slip
+ * prints - each renderer used to carry its own copy of this number, so making
+ * the print bigger meant finding all five and hoping none was missed.
+ */
+private const val CARD_WIDTH_DP = PrintType.CARD_WIDTH_DP
 
-/** Printable dots on 80mm paper - the reference [CARD_WIDTH_DP] was designed for. */
-private const val REFERENCE_PAPER_DOTS = 576
+/** Printable dots on 80mm paper - what [CARD_WIDTH_DP] is measured against. */
+private const val REFERENCE_PAPER_DOTS = PrintType.REFERENCE_PAPER_DOTS
 
 /**
  * Renders the slip handed over when a customer settles part or all of what they
@@ -148,7 +154,7 @@ class PaymentReceiptRenderer(context: Context) {
             summary.removeAllViews()
             summary.addView(row("MODE", receipt.mode.uppercase()))
             summary.addView(row("PREVIOUS DUE", money(receipt.previousDue)))
-            summary.addView(row("AMOUNT PAID", money(receipt.amountPaid), bold = true, valueSize = 20f))
+            summary.addView(row("AMOUNT PAID", money(receipt.amountPaid), bold = true, valueSize = PrintType.TOTAL_SP))
             summary.addView(row("TOTAL DUE", money(receipt.totalDue), bold = true))
             summary.addView(row("TOTAL PAID", money(receipt.totalPaid)))
             summary.addView(row("CREDIT AVAILABLE", money(receipt.creditLimit)))
@@ -160,7 +166,7 @@ class PaymentReceiptRenderer(context: Context) {
     }
 
     /** One "LABEL            value" line in the figures block. */
-    private fun row(label: String, value: String, bold: Boolean = false, valueSize: Float = 13f): View {
+    private fun row(label: String, value: String, bold: Boolean = false, valueSize: Float = PrintType.BODY_SP): View {
         val density = ctx.resources.displayMetrics.density
         return LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -168,7 +174,7 @@ class PaymentReceiptRenderer(context: Context) {
             setPadding(0, (2 * density).toInt(), 0, (2 * density).toInt())
             addView(TextView(ctx).apply {
                 text = label
-                textSize = 13f
+                textSize = PrintType.BODY_SP
                 setTypeface(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
                 setTextColor(0xFF222222.toInt())
                 layoutParams = LinearLayout.LayoutParams(0, -2, 1f)

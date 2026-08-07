@@ -32,6 +32,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.PrintType
 import com.example.synergic_pos_offline.utils.ThermalPrinter
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -637,21 +638,24 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         title: String, headers: List<String>, rows: List<DataRow>, paperDots: Int
     ): Bitmap {
         val pad = 12f
-        val lineH = 34
-        val body = Paint().apply {
-            color = Color.BLACK; isAntiAlias = true; typeface = Typeface.MONOSPACE; textSize = 24f
-        }
-        val bold = Paint(body).apply { isFakeBoldText = true }
-        val titleP = Paint(body).apply {
-            textSize = 32f; isFakeBoldText = true; textAlign = Paint.Align.CENTER
-        }
-        val charW = body.measureText("M").coerceAtLeast(1f)
-        val maxChars = ((paperDots - pad * 2) / charW).toInt().coerceAtLeast(12)
+        // Set from PrintType, so a master list is the bill's face at the bill's
+        // sizes. These were fixed pixel sizes before, which meant the list printed
+        // at one size on a 58mm roll and a visibly different one on 80mm - the two
+        // sat side by side on the counter and did not look like the same till.
+        val body = PrintType.paint(PrintType.BODY_SP)
+        val bold = PrintType.paint(PrintType.BODY_SP, bold = true)
+        val titleP = PrintType.paint(PrintType.STORE_NAME_SP, bold = true, align = Paint.Align.CENTER)
+        // A line box a little taller than the type, so the rows breathe as they do
+        // on a bill rather than sitting on top of one another.
+        val lineH = (PrintType.dots(PrintType.BODY_SP) * 1.45f).toInt()
+        val maxChars = PrintType.charsAcross(body, paperDots, pad)
 
         val lines = ArrayList<PrintLine>()
         lines.add(PrintLine(SimpleDateFormat("dd-MM-yyyy HH:mm", Locale.US).format(Date()), false))
         lines.add(PrintLine("${rows.size} record(s)", false))
-        lines.add(PrintLine("=".repeat(maxChars), false))
+        // The same rule the bill draws, cut to the paper - not a row of "=" this
+        // slip invented for itself.
+        lines.add(PrintLine(PrintType.RULE.take(maxChars), false))
         rows.forEachIndexed { i, row ->
             // Use the first non-thumbnail, non-empty cell as the record's heading.
             val nameCol = headers.indices.firstOrNull {
@@ -665,7 +669,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
                 if (value.isEmpty()) return@forEachIndexed
                 wrapText("   $h: $value", maxChars).forEach { lines.add(PrintLine(it, false)) }
             }
-            lines.add(PrintLine("-".repeat(maxChars), false))
+            lines.add(PrintLine(PrintType.RULE.take(maxChars), false))
         }
 
         val topMargin = lineH * 2

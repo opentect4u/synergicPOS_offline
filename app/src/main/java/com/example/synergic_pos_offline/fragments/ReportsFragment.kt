@@ -81,6 +81,7 @@ class ReportsFragment : Fragment() {
 
         rvReports.adapter = ReportsAdapter(reportItems) { item ->
             when (item.title) {
+                "Bill Wise Report" -> openFragment(BillWiseReportFragment())
                 "Customer Ledger" -> openFragment(CustomerLedgerFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             }

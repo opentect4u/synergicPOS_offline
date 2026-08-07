@@ -30,7 +30,7 @@
 
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/cardReceipt"
-            android:layout_width="360dp"
+            android:layout_width="300dp"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
             android:layout_marginTop="20dp"

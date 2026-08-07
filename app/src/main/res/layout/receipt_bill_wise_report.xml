@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The printed customer ledger. Laid out at 300dp for 80mm paper, the same reference
-  width as fragment_bill.xml, and scaled from there by LedgerReceiptRenderer.
+  The printed Bill Wise Report. Laid out at 300dp for 80mm paper, the same reference
+  width as receipt_ledger.xml, and scaled from there by BillWiseReportRenderer.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -16,7 +16,7 @@
         android:scrollbars="none">
 
         <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardLedgerReceipt"
+            android:id="@+id/cardReportReceipt"
             android:layout_width="300dp"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
@@ -34,7 +34,7 @@
                 android:paddingVertical="22dp">
 
                 <ImageView
-                    android:id="@+id/ivLedgerHeaderLogo"
+                    android:id="@+id/ivReportHeaderLogo"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:maxHeight="76dp"
@@ -45,7 +45,7 @@
                     android:visibility="gone" />
 
                 <TextView
-                    android:id="@+id/tvLedgerStoreName"
+                    android:id="@+id/tvReportStoreName"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"
@@ -56,7 +56,7 @@
                     android:text="STORE" />
 
                 <TextView
-                    android:id="@+id/tvLedgerStoreAddress"
+                    android:id="@+id/tvReportStoreAddress"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"
@@ -66,7 +66,7 @@
                     android:visibility="gone" />
 
                 <TextView
-                    android:id="@+id/tvLedgerStorePhone"
+                    android:id="@+id/tvReportStorePhone"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"
@@ -76,7 +76,7 @@
                     android:visibility="gone" />
 
                 <TextView
-                    android:id="@+id/tvLedgerStoreGstin"
+                    android:id="@+id/tvReportStoreGstin"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
@@ -97,10 +97,19 @@
                     android:textStyle="bold"
                     android:textSize="15sp"
                     android:textColor="#111111"
-                    android:text="CUSTOMER LEDGER" />
+                    android:text="BILL WISE REPORT" />
 
                 <TextView
-                    android:id="@+id/tvLedgerPeriod"
+                    android:id="@+id/tvReportPeriod"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444" />
+
+                <TextView
+                    android:id="@+id/tvReportBillCount"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"
@@ -110,39 +119,9 @@
 
                 <TextView style="@style/BillDashLine" />
 
-                <!-- Who the account belongs to -->
-                <TextView
-                    android:id="@+id/tvLedgerCustName"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:textSize="13sp"
-                    android:textColor="#222222"
-                    android:visibility="gone" />
-
-                <TextView
-                    android:id="@+id/tvLedgerCustMobile"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:textSize="13sp"
-                    android:textColor="#222222"
-                    android:visibility="gone" />
-
-                <TextView
-                    android:id="@+id/tvLedgerCustGstin"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:textSize="13sp"
-                    android:textColor="#222222"
-                    android:visibility="gone" />
-
-                <TextView style="@style/BillDashLine" />
-
-                <!-- Opening, then a line per movement, then the totals and closing -->
+                <!-- A header line, then two lines per bill -->
                 <LinearLayout
-                    android:id="@+id/llLedgerRows"
+                    android:id="@+id/llReportRows"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
@@ -150,16 +129,26 @@
                 <TextView style="@style/BillDashLine" />
 
                 <TextView
-                    android:id="@+id/tvLedgerClosingWords"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:fontFamily="monospace"
-                    android:textSize="12sp"
-                    android:textColor="#333333"
-                    android:visibility="gone" />
+                    android:textStyle="bold"
+                    android:textSize="13sp"
+                    android:textColor="#111111"
+                    android:text="SUMMARY" />
+
+                <!-- The period's totals -->
+                <LinearLayout
+                    android:id="@+id/llReportSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:orientation="vertical" />
+
+                <TextView style="@style/BillDashLine" />
 
                 <TextView
-                    android:id="@+id/tvLedgerPrintedBy"
+                    android:id="@+id/tvReportPrintedBy"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
@@ -167,15 +156,23 @@
                     android:textSize="12sp"
                     android:textColor="#333333" />
 
+                <TextView
+                    android:id="@+id/tvReportPrintedAt"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textColor="#333333" />
+
                 <LinearLayout
-                    android:id="@+id/llLedgerFooterLines"
+                    android:id="@+id/llReportFooterLines"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
                     android:orientation="vertical" />
 
                 <ImageView
-                    android:id="@+id/ivLedgerFooterLogo"
+                    android:id="@+id/ivReportFooterLogo"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:maxHeight="76dp"

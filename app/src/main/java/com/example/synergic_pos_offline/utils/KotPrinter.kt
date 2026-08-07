@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Typeface
 import com.example.synergic_pos_offline.database.OperatingPrinterDao
 import com.example.synergic_pos_offline.database.RunningOrderDao
 
@@ -73,18 +72,15 @@ object KotPrinter {
 
     /** Draws the ticket at [width] dots (the printer's printable width) and returns it. */
     fun render(batch: RunningOrderDao.KotBatch, width: Int): Bitmap {
-        val black = Color.BLACK
-        fun paint(scale: Float, bold: Boolean) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = black
-            typeface = Typeface.create(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
-            textSize = width * scale
-        }
-        val title = paint(0.095f, true)
-        val sub = paint(0.05f, false)
-        val item = paint(0.058f, true)
-        val cancelHdr = paint(0.05f, true)
-        val note = paint(0.048f, false)
-        val ruleH = maxOf(2, width / 200)
+        // Set from [PrintType], so the ticket carries the same face and the same
+        // sizes as the bill. These used to be fractions of the paper width, which
+        // made a KOT off a 58mm roll a visibly smaller document than one off an 80mm
+        // roll - and neither of them the size of anything else the till printed.
+        val title = PrintType.paint(PrintType.STORE_NAME_SP, bold = true)
+        val sub = PrintType.paint(PrintType.BODY_SP)
+        val item = PrintType.paint(PrintType.BODY_SP, bold = true)
+        val cancelHdr = PrintType.paint(PrintType.BODY_SP, bold = true)
+        val note = PrintType.paint(PrintType.SMALL_SP)
 
         val padX = width * 0.04f
         val padTop = width * 0.04f
@@ -115,28 +111,27 @@ object KotPrinter {
             }
         }
 
-        // Measure total height (each line + a gap; each rule adds its own height).
-        fun lineHeight(p: Paint) = p.descent() - p.ascent()
-        var height = padTop + padBottom
-        lines.forEach { height += lineHeight(it.paint) + gap }
-        height += ruleBefore.size * (ruleH + gap)
-
-        val bmp = Bitmap.createBitmap(width, height.toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp).apply { drawColor(Color.WHITE) }
-        val rule = Paint().apply { color = black; strokeWidth = ruleH.toFloat() }
-
-        var y = padTop
-        lines.forEachIndexed { index, line ->
-            if (index in ruleBefore) {
-                y += gap
-                canvas.drawLine(padX, y, width - padX, y, rule)
-                y += ruleH + gap
+        // Measured and drawn by walking the same list twice, so the height reserved
+        // is the height used - the rule is a line of text now, not a bar of known
+        // thickness, and guessing at it would crop the ticket.
+        fun layout(canvas: Canvas?): Float {
+            var y = padTop
+            lines.forEachIndexed { index, line ->
+                if (index in ruleBefore) y = PrintType.drawRule(canvas, y, width, padX)
+                y -= line.paint.ascent()
+                if (line.center) {
+                    canvas?.drawText(line.text, width / 2f, y, line.paint.apply { textAlign = Paint.Align.CENTER })
+                } else {
+                    canvas?.drawText(line.text, padX, y, line.paint.apply { textAlign = Paint.Align.LEFT })
+                }
+                y += line.paint.descent() + gap
             }
-            y -= line.paint.ascent()
-            if (line.center) canvas.drawText(line.text, width / 2f, y, line.paint.apply { textAlign = Paint.Align.CENTER })
-            else canvas.drawText(line.text, padX, y, line.paint.apply { textAlign = Paint.Align.LEFT })
-            y += line.paint.descent() + gap
+            return y
         }
+
+        val height = (layout(null) + padBottom).toInt().coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        layout(Canvas(bmp).apply { drawColor(Color.WHITE) })
         return bmp
     }
 }

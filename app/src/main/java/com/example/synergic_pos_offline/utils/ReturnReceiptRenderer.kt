@@ -22,11 +22,17 @@ import java.util.Locale
 /** Longest edge decoded for a receipt logo; the slots cap well below this. */
 private const val LOGO_PX = 480
 
-/** Width the receipt card is laid out at for 80mm paper, matching receipt_return.xml. */
-private const val CARD_WIDTH_DP = 360
+/**
+ * Width the card is laid out at before it is scaled to the paper.
+ *
+ * Taken from [PrintType.CARD_WIDTH_DP], the one dial for how big every slip
+ * prints - each renderer used to carry its own copy of this number, so making
+ * the print bigger meant finding all five and hoping none was missed.
+ */
+private const val CARD_WIDTH_DP = PrintType.CARD_WIDTH_DP
 
-/** Printable dots on 80mm paper - the reference [CARD_WIDTH_DP] was designed for. */
-private const val REFERENCE_PAPER_DOTS = 576
+/** Printable dots on 80mm paper - what [CARD_WIDTH_DP] is measured against. */
+private const val REFERENCE_PAPER_DOTS = PrintType.REFERENCE_PAPER_DOTS
 
 /** Below this the table is set larger with shorter headings - as the bill does. */
 private const val NARROW_PAPER_DOTS = 450
