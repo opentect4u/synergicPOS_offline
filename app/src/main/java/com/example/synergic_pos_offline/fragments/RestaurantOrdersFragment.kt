@@ -1047,7 +1047,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         // Picking a product opens the qty dialog; once it's added, clear the search
         // box so the next item can be searched from a clean slate. Clearing the text
-        // fires the watcher below, which resets the list back to the full menu.
+        // fires the watcher below, which resets the list back to z full menu.
         //
         // Direct Add to Cart (App Settings): skip the popup and add one of the tapped
         // item at its default rate straight to the cart; each tap adds one more.

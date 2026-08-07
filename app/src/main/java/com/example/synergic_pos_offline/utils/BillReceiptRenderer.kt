@@ -458,9 +458,12 @@ class BillReceiptRenderer(context: Context) {
             val db = DatabaseHelper.getInstance(ctx).readableDatabase
 
             // Store identity and tax registration, printed at the head of the bill.
+            // Its store_id also scopes the header/footer lines, so a header set up for
+            // one store does not print alongside another store's on the same slip.
+            var headerStoreId: Long? = null
             db.query(
                 DatabaseHelper.Tables.MD_REGISTRATION,
-                arrayOf("store_name", "address", "phone_no", "store_gstin"),
+                arrayOf("store_name", "address", "phone_no", "store_gstin", "store_id"),
                 null, null, null, null, "store_id ASC", "1"
             ).use { c ->
                 if (c.moveToFirst()) {
@@ -471,12 +474,14 @@ class BillReceiptRenderer(context: Context) {
                     setIfPresent(view, R.id.tvStoreAddress, c.getString(1))
                     setIfPresent(view, R.id.tvStorePhone, c.getString(2)?.let { "Ph: $it" })
                     setIfPresent(view, R.id.tvStoreGstin, c.getString(3)?.let { "GSTIN: $it" })
+                    if (!c.isNull(4)) headerStoreId = c.getLong(4)
                 }
             }
 
             renderFixedLines(
                 db, view, R.id.llBillHeaderLines,
-                DatabaseHelper.Tables.MD_HEADERS, "header_text", "header_number", "header_type"
+                DatabaseHelper.Tables.MD_HEADERS, "header_text", "header_number", "header_type",
+                headerStoreId
             )
             renderLogos(view)
 
@@ -780,7 +785,8 @@ class BillReceiptRenderer(context: Context) {
 
             renderFixedLines(
                 db, view, R.id.llBillFooterLines,
-                DatabaseHelper.Tables.MD_FOOTERS, "footer_text", "footer_number", "footer_type"
+                DatabaseHelper.Tables.MD_FOOTERS, "footer_text", "footer_number", "footer_type",
+                headerStoreId
             )
 
             if (narrow) enlargeBodyForNarrowPaper(view, classic)
@@ -1376,17 +1382,22 @@ class BillReceiptRenderer(context: Context) {
         table: String,
         textColumn: String,
         numberColumn: String,
-        typeColumn: String
+        typeColumn: String,
+        storeId: Long? = null
     ) {
         val container = root.findViewById<LinearLayout>(containerId)
         container.removeAllViews()
+        // Header/footer tables are store-scoped; without this filter a line set up for
+        // another store prints on this store's slip too - the same header twice.
+        val storeClause = if (storeId != null) " AND (store_id = ? OR store_id IS NULL)" else ""
+        val args = if (storeId != null) arrayOf(storeId.toString()) else null
         db.rawQuery(
             """
             SELECT $textColumn, font_size, is_bold FROM $table
-            WHERE is_enabled = 1 AND ($typeColumn IS NULL OR $typeColumn = 'BILL')
+            WHERE is_enabled = 1 AND ($typeColumn IS NULL OR $typeColumn = 'BILL')$storeClause
             ORDER BY $numberColumn ASC
             """.trimIndent(),
-            null
+            args
         ).use { c ->
             while (c.moveToNext()) {
                 val text = c.getString(0)?.takeIf { it.isNotBlank() } ?: continue

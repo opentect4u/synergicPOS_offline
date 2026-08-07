@@ -1176,7 +1176,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
             "0", "00", ".", "="
         )
         grid.post {
-            val cell = (grid.width - (3 * 8 * density).toInt()) / 4
+            // Four columns with a 6dp margin (3dp per side) around each key.
+            val cell = (grid.width - (4 * 6 * density).toInt()) / 4
             keys.forEach { key ->
                 val b = MaterialButton(requireContext(), null,
                     com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
@@ -1197,8 +1198,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 }
                 val lp = android.widget.GridLayout.LayoutParams().apply {
                     width = cell
-                    height = (54 * density).toInt()
-                    setMargins((4 * density).toInt(), (4 * density).toInt(), (4 * density).toInt(), (4 * density).toInt())
+                    height = (48 * density).toInt()
+                    setMargins((3 * density).toInt(), (3 * density).toInt(), (3 * density).toInt(), (3 * density).toInt())
                 }
                 grid.addView(b, lp)
             }
@@ -1207,6 +1208,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         val dialog = AlertDialog.Builder(requireContext()).setView(view).create()
         dialog.setCanceledOnTouchOutside(false)
+        // Show the custom card (its own rounded background), centred - the same look as
+        // every other popup, not the default Material dialog panel.
+        dialog.window?.apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+            setLayout(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            setGravity(android.view.Gravity.CENTER)
+        }
 
         val btnClose = view.findViewById<MaterialButton>(R.id.btnCalcClose)
         styleOutlined(btnClose, accent)

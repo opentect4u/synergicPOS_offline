@@ -274,6 +274,16 @@ object ProductEntryDialog {
 
         val dialog = AlertDialog.Builder(context).setView(view).create()
         dialog.setCanceledOnTouchOutside(false)
+        // Show the custom card (its own rounded background), centred - the same look as
+        // every other popup, not the default Material dialog panel.
+        dialog.window?.apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            setLayout(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            setGravity(android.view.Gravity.CENTER)
+        }
 
         val btnCancel = view.findViewById<MaterialButton>(R.id.btnDialogCancel)
         val btnAdd = view.findViewById<MaterialButton>(R.id.btnDialogAdd)

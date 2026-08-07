@@ -1,17 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<com.example.synergic_pos_offline.utils.MaxHeightScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent"
+    android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:scrollbars="none">
+    android:layout_margin="24dp"
+    app:cardCornerRadius="24dp"
+    app:cardElevation="16dp"
+    app:cardBackgroundColor="@color/white">
+
+    <LinearLayout
+        android:layout_width="480dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+    <com.example.synergic_pos_offline.utils.MaxHeightScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingHorizontal="22dp"
-        android:paddingTop="20dp"
-        android:paddingBottom="14dp">
+        android:paddingHorizontal="24dp"
+        android:paddingTop="24dp"
+        android:paddingBottom="8dp">
 
         <!-- The product's own photo, so the operator can see they picked the right
              thing before committing a quantity to it - the names on a till differ by
@@ -228,13 +241,18 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Buttons -->
+    </LinearLayout>
+    </com.example.synergic_pos_offline.utils.MaxHeightScrollView>
+
+        <!-- Buttons: fixed footer outside the scroll, so they never get clipped. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="end"
-            android:layout_marginTop="16dp">
+            android:paddingHorizontal="24dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="20dp">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnDialogCancel"
@@ -260,4 +278,4 @@
                 app:cornerRadius="10dp" />
         </LinearLayout>
     </LinearLayout>
-</com.example.synergic_pos_offline.utils.MaxHeightScrollView>
+</com.google.android.material.card.MaterialCardView>

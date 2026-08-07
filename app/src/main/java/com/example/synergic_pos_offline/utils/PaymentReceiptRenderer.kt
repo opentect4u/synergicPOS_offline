@@ -87,7 +87,11 @@ class PaymentReceiptRenderer(context: Context) {
         if (card.measuredHeight <= 0) return null
         card.layout(0, 0, card.measuredWidth, card.measuredHeight)
 
-        ReceiptPrinter.capture(card)
+        val captured = ReceiptPrinter.capture(card) ?: return null
+        // The card is captured to its exact height, so the footer sits flush against the
+        // tear line. Add a white feed margin below it (scaled to the paper width) so the
+        // footer clears the cut - the same clearance the sale bill leaves.
+        withBottomMargin(captured, paperDots / 9)
     }.getOrElse {
         android.util.Log.e(TAG, "Could not render payment receipt ${receipt.receiptNumber}", it)
         null
@@ -239,6 +243,18 @@ class PaymentReceiptRenderer(context: Context) {
                 })
             }
         }
+    }
+
+    /** Returns [src] with [bottom] px of white space added below it (recycling [src]). */
+    private fun withBottomMargin(src: Bitmap, bottom: Int): Bitmap {
+        if (bottom <= 0) return src
+        val out = Bitmap.createBitmap(src.width, src.height + bottom, Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(out).apply {
+            drawColor(android.graphics.Color.WHITE)
+            drawBitmap(src, 0f, 0f, null)
+        }
+        src.recycle()
+        return out
     }
 
     /** Fills a receipt line, or hides it when there is nothing to print there. */
