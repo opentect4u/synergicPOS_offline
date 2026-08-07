@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Typeface
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.OperatingPrinterDao
 import java.util.Locale
@@ -79,23 +78,17 @@ object RestaurantBillPrinter {
     /** Draws the bill at [width] dots (the printer's printable width) and returns it. */
     fun render(context: Context, ticket: BillTicket, width: Int): Bitmap {
         val s = store(context)
-        val black = Color.BLACK
-        fun paint(scale: Float, bold: Boolean, align: Paint.Align = Paint.Align.LEFT) =
-            Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = black
-                typeface = Typeface.create(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
-                textSize = width * scale
-                textAlign = align
-            }
-        val storeName = paint(0.085f, true, Paint.Align.CENTER)
-        val storeInfo = paint(0.040f, false, Paint.Align.CENTER)
-        val meta = paint(0.042f, false)
-        val itemName = paint(0.045f, false)
-        val totLabel = paint(0.05f, false)
-        val grand = paint(0.065f, true)
-        val footer = paint(0.045f, false, Paint.Align.CENTER)
+        // Set from [PrintType], so this slip is the bill's face at the bill's sizes
+        // rather than a set of fractions of the paper width that happened to look
+        // about right on one roll.
+        val storeName = PrintType.paint(PrintType.STORE_NAME_SP, bold = true, align = Paint.Align.CENTER)
+        val storeInfo = PrintType.paint(PrintType.STORE_INFO_SP, align = Paint.Align.CENTER)
+        val meta = PrintType.paint(PrintType.BODY_SP)
+        val itemName = PrintType.paint(PrintType.TABLE_SP)
+        val totLabel = PrintType.paint(PrintType.BODY_SP)
+        val grand = PrintType.paint(PrintType.TOTAL_SP, bold = true)
+        val footer = PrintType.paint(PrintType.SMALL_SP, align = Paint.Align.CENTER)
 
-        val ruleH = maxOf(2, width / 220)
         val padX = width * 0.03f
         val padTop = width * 0.03f
         val padBottom = width * 0.12f
@@ -141,11 +134,8 @@ object RestaurantBillPrinter {
             }
             y + itemName.descent() + gap
         }
-        fun rule() = steps.add { c, y0 ->
-            val y = y0 + gap
-            c?.drawLine(padX, y, width - padX, y, Paint().apply { color = black; strokeWidth = ruleH.toFloat() })
-            y + ruleH + gap
-        }
+        // A row of hyphens, as on the bill - not the solid bar this used to draw.
+        fun rule() = steps.add { c, y0 -> PrintType.drawRule(c, y0, width, padX) }
 
         // ---- Header ----
         if (s.name.isNotBlank()) center(s.name, storeName)

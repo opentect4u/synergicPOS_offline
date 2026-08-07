@@ -183,7 +183,18 @@
         <item name="android:textColor">@color/text_main</item>
     </style>
 
-    <!-- Printed hyphen separator line, like a thermal receipt. -->
+    <!--
+        Printed hyphen separator line, like a thermal receipt. The one rule every
+        slip draws - bill, KOT, statement, master list - so that a rule is the same
+        rule wherever it appears. PrintType.RULE is the same run of hyphens for the
+        slips that are drawn on a canvas instead of laid out from XML; change one and
+        change the other.
+
+        Cut off square at the edge of the paper rather than trailing an ellipsis. The
+        line is deliberately longer than any roll it prints on, so the overflow is
+        the point - marking it "..." says the rule was truncated, which on a receipt
+        just reads as a smudge.
+    -->
     <style name="BillDashLine">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
@@ -194,17 +205,15 @@
         <item name="android:textColor">#222222</item>
         <item name="android:singleLine">true</item>
         <item name="android:scrollHorizontally">true</item>
+        <item name="android:ellipsize">none</item>
         <item name="android:text">--------------------------------------------------------</item>
     </style>
 
     <!--
-        The same rule for the Classic bill, cut off square at the edge of the paper
-        rather than trailing an ellipsis. The line is deliberately longer than any
-        roll it prints on, so the overflow is the point - marking it "..." says the
-        rule was truncated, which on a receipt just reads as a smudge.
+        Kept as the name the Classic and Tax Wise layouts already ask for. It used to
+        be the only rule that was cut square; that is now how every rule is drawn, so
+        there is nothing left for it to add.
     -->
-    <style name="BillDashLineClassic" parent="BillDashLine">
-        <item name="android:ellipsize">none</item>
-    </style>
+    <style name="BillDashLineClassic" parent="BillDashLine" />
 
 </resources>

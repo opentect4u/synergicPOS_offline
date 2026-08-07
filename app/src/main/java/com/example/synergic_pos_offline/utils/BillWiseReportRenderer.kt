@@ -15,10 +15,11 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillHeaderFooterDao
-import com.example.synergic_pos_offline.database.CustomerLedgerDao
+import com.example.synergic_pos_offline.database.BillWiseReportDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.LogoDao
 import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 /** Longest edge decoded for a receipt logo; the slots cap well below this. */
@@ -33,47 +34,41 @@ private const val LOGO_PX = 480
  */
 private const val CARD_WIDTH_DP = PrintType.CARD_WIDTH_DP
 
-/** The card's own horizontal padding, per side - receipt_ledger.xml again. */
+/** The card's own horizontal padding, per side - receipt_bill_wise_report.xml again. */
 private const val CARD_PADDING_DP = 20
 
 /** Printable dots on 80mm paper - what [CARD_WIDTH_DP] is measured against. */
 private const val REFERENCE_PAPER_DOTS = PrintType.REFERENCE_PAPER_DOTS
 
 /**
- * Below this, the statement's four columns are set a point smaller and the year is
- * shortened. 58mm (384 dots) falls under it; 80mm (576) and up keep the full size.
- */
-private const val NARROW_PAPER_DOTS = 450
-
-/**
- * Renders a [CustomerLedgerDao.Ledger] onto receipt paper.
+ * Renders a [BillWiseReportDao.Report] onto receipt paper.
  *
- * A ledger is a statement rather than a receipt, so it is laid out as a statement:
- * the opening balance, one block per movement, and the totals that carry it to the
- * closing balance. Each movement takes two printed lines - date and particulars
- * above, the money columns below - because three amount columns and a description
- * will not fit across a roll without one of them being shredded.
+ * A bill carries nine figures on this report and a roll fits about four across, so
+ * each bill takes two printed lines: the number, how it was paid and what it came
+ * to on the first, and the tax and discount that make up the difference on the
+ * second. Squeezing all nine onto one line would set the type so small that the
+ * report could not be read, which is the only thing a printed report is for.
  */
-class LedgerReceiptRenderer(context: Context) {
+class BillWiseReportRenderer(context: Context) {
 
     /** Pinned to a standard font scale - see [ReceiptContext]. */
     private val ctx: Context = ReceiptContext.standardFontScale(context)
 
     /**
-     * Renders the ledger to a bitmap without it ever being shown, laid out for a
+     * Renders the report to a bitmap without it ever being shown, laid out for a
      * printer whose head is [paperDots] wide (defaults to 80mm).
      *
      * @return null if it could not be rendered, so a caller does not print blank paper
      */
     fun renderToBitmap(
-        ledger: CustomerLedgerDao.Ledger,
+        report: BillWiseReportDao.Report,
         printedBy: String,
         paperDots: Int = REFERENCE_PAPER_DOTS
     ): Bitmap? = runCatching {
-        val root = LayoutInflater.from(ctx).inflate(R.layout.receipt_ledger, null, false)
-        populate(root, ledger, printedBy, paperDots)
+        val root = LayoutInflater.from(ctx).inflate(R.layout.receipt_bill_wise_report, null, false)
+        populate(root, report, printedBy, paperDots)
 
-        val card = root.findViewById<View>(R.id.cardLedgerReceipt) ?: return null
+        val card = root.findViewById<View>(R.id.cardReportReceipt) ?: return null
         (card.parent as? ViewGroup)?.removeView(card)
 
         val widthDp = CARD_WIDTH_DP.toDouble() * paperDots / REFERENCE_PAPER_DOTS
@@ -87,19 +82,14 @@ class LedgerReceiptRenderer(context: Context) {
 
         ReceiptPrinter.capture(card)
     }.getOrElse {
-        android.util.Log.e(TAG, "Could not render the ledger", it)
+        android.util.Log.e(TAG, "Could not render the bill wise report", it)
         null
     }
 
-    /**
-     * Fills an already-inflated [R.layout.receipt_ledger] in place.
-     *
-     * [paperDots] only chooses how tightly the four columns are set - see
-     * [NARROW_PAPER_DOTS]; the content is the same on every width.
-     */
+    /** Fills an already-inflated [R.layout.receipt_bill_wise_report] in place. */
     fun populate(
         view: View,
-        ledger: CustomerLedgerDao.Ledger,
+        report: BillWiseReportDao.Report,
         printedBy: String,
         paperDots: Int = REFERENCE_PAPER_DOTS
     ) {
@@ -113,93 +103,90 @@ class LedgerReceiptRenderer(context: Context) {
             ).use { c ->
                 if (c.moveToFirst()) {
                     c.getString(0)?.takeIf { it.isNotBlank() }?.let {
-                        view.findViewById<TextView>(R.id.tvLedgerStoreName).text = it.uppercase()
+                        view.findViewById<TextView>(R.id.tvReportStoreName).text = it.uppercase()
                     }
-                    setIfPresent(view, R.id.tvLedgerStoreAddress, c.getString(1))
-                    setIfPresent(view, R.id.tvLedgerStorePhone, c.getString(2)?.let { "Ph: $it" })
-                    setIfPresent(view, R.id.tvLedgerStoreGstin, c.getString(3)?.let { "GSTIN: $it" })
+                    setIfPresent(view, R.id.tvReportStoreAddress, c.getString(1))
+                    setIfPresent(view, R.id.tvReportStorePhone, c.getString(2)?.let { "Ph: $it" })
+                    setIfPresent(view, R.id.tvReportStoreGstin, c.getString(3)?.let { "GSTIN: $it" })
                 }
             }
 
             renderFixedLines(
-                db, view, R.id.llLedgerFooterLines,
+                db, view, R.id.llReportFooterLines,
                 DatabaseHelper.Tables.MD_FOOTERS, "footer_text", "footer_number", "footer_type"
             )
             renderLogos(view)
 
-            view.findViewById<TextView>(R.id.tvLedgerPeriod).text =
-                "${pretty(ledger.fromDate)}  to  ${pretty(ledger.toDate)}"
-            view.findViewById<TextView>(R.id.tvLedgerPrintedBy).text = "Printed by: $printedBy"
+            view.findViewById<TextView>(R.id.tvReportPeriod).text =
+                "${pretty(report.fromDate)}  to  ${pretty(report.toDate)}"
+            view.findViewById<TextView>(R.id.tvReportBillCount).text =
+                "${report.billCount} bill(s)"
+            view.findViewById<TextView>(R.id.tvReportPrintedBy).text = "Printed by: $printedBy"
+            view.findViewById<TextView>(R.id.tvReportPrintedAt).text =
+                "Printed on: " + SimpleDateFormat("dd-MM-yyyy hh:mm a", Locale.US).format(Date())
 
-            val customer = ledger.customer
-            setIfPresent(view, R.id.tvLedgerCustName, customer.name.takeIf { it.isNotBlank() }
-                ?.let { "NAME   : ${it.uppercase()}" })
-            setIfPresent(view, R.id.tvLedgerCustMobile, customer.phone.takeIf { it.isNotBlank() }
-                ?.let { "MOBILE : $it" })
-            setIfPresent(view, R.id.tvLedgerCustGstin, customer.gstin.takeIf { it.isNotBlank() }
-                ?.let { "GSTIN  : $it" })
-
-            val rows = view.findViewById<LinearLayout>(R.id.llLedgerRows)
+            val rows = view.findViewById<LinearLayout>(R.id.llReportRows)
             rows.removeAllViews()
-            val narrow = paperDots < NARROW_PAPER_DOTS
 
-            // The BALANCE column is a running figure, so the statement has to say
-            // what it starts from or the first row's balance comes out of nowhere.
-            rows.addView(amountRow("OPENING BALANCE", money(ledger.opening), bold = true))
-            rows.addView(divider())
-
-            if (ledger.entries.isEmpty()) {
-                rows.addView(note("No transactions in this period."))
+            if (report.isEmpty) {
+                rows.addView(note("No bills in this period."))
             } else {
-                // PAID is money the customer handed over, DUE is what a credit sale
-                // added to their account - the two directions the account can move,
-                // one column each, a dash in the one that did not.
-                val lines = ledger.entries.map { entry ->
+                val header = TableLine("BILL NO", "MODE", "MRP", "AMOUNT")
+                val lines = report.lines.map {
                     TableLine(
-                        date = pretty(entry.date, narrow),
-                        paid = if (entry.`in` > 0.0) money(entry.`in`) else "-",
-                        due = if (entry.out > 0.0) money(entry.out) else "-",
-                        balance = money(entry.balance)
+                        billNo = it.billNumber,
+                        mode = it.payMode,
+                        mrp = money(it.mrp),
+                        amount = money(it.netAmount)
                     )
                 }
-                val header = TableLine("DATE", "PAID", "DUE", "BALANCE")
                 val metrics = measureTable(listOf(header) + lines, paperDots)
 
                 rows.addView(tableRow(header, metrics, bold = true))
-                lines.forEach { rows.addView(tableRow(it, metrics)) }
+                report.lines.forEachIndexed { i, line ->
+                    rows.addView(tableRow(lines[i], metrics))
+                    rows.addView(taxRow(line, metrics, paperDots))
+                }
             }
 
-            rows.addView(divider())
-            rows.addView(amountRow("TOTAL DUE", money(ledger.closing), bold = true, valueSize = PrintType.TOTAL_SP))
-
-            // A negative closing balance is the customer sitting in credit, which is
-            // not what "rupees owed" in words would say, so the line is left off.
-            setIfPresent(
-                view, R.id.tvLedgerClosingWords,
-                if (ledger.closing > 0.005) AmountInWords.of(ledger.closing) else null
+            val summary = view.findViewById<LinearLayout>(R.id.llReportSummary)
+            summary.removeAllViews()
+            // The parts first, then the adjustment, then what they came to - the
+            // order the figures actually add up in.
+            listOf(
+                "TOTAL BILLS" to report.billCount.toString(),
+                "TOTAL MRP" to money(report.totalMrp),
+                "TOTAL CGST" to money(report.totalCgst),
+                "TOTAL SGST" to money(report.totalSgst),
+                "TOTAL IGST" to money(report.totalIgst),
+                "TOTAL DISCOUNT" to money(report.totalDiscount),
+                "TOTAL ROUND OFF" to money(report.totalRoundOff)
+            ).forEach { (label, value) -> summary.addView(amountRow(label, value)) }
+            summary.addView(
+                amountRow("TOTAL BILL AMOUNT", money(report.totalAmount), bold = true, valueSize = PrintType.TOTAL_SP)
             )
         } catch (e: Exception) {
-            android.util.Log.e(TAG, "Error rendering the ledger", e)
+            android.util.Log.e(TAG, "Error rendering the bill wise report", e)
         }
     }
 
-    // ---- Row builders ------------------------------------------------------
+    // ---- Row builders --------------------------------------------------------
 
-    /** The four cells of one statement line, header row included. */
+    /** The four cells of a bill's first printed line, header row included. */
     private data class TableLine(
-        val date: String,
-        val paid: String,
-        val due: String,
-        val balance: String
+        val billNo: String,
+        val mode: String,
+        val mrp: String,
+        val amount: String
     )
 
-    /** Type size, gutter and money-column widths the whole table is set at. */
+    /** Type size, gutter and fixed column widths the whole table is set at. */
     private data class TableMetrics(
         val textSize: Float,
         val gutterPx: Int,
-        val paidPx: Int,
-        val duePx: Int,
-        val balancePx: Int
+        val modePx: Int,
+        val mrpPx: Int,
+        val amountPx: Int
     )
 
     /**
@@ -207,10 +194,10 @@ class LedgerReceiptRenderer(context: Context) {
      *
      * A weighted column cannot be trusted with a number: give it less width than the
      * figure in it and Android hard-wraps mid-number ("125000." over "00"), which on
-     * a statement is not a cosmetic problem. So each money column is measured to its
-     * own widest value and given exactly that width, and the type steps down through
-     * [SIZES] until the three of them plus a readable date column fit the roll. The
-     * date takes whatever is left, being the one value that can be shortened.
+     * a report is not a cosmetic problem. So each fixed column is measured to its own
+     * widest value and given exactly that width, and the type steps down through
+     * [SIZES] until they plus a readable bill number fit the roll. The bill number
+     * takes whatever is left, being the one value that can be allowed to ellipsize.
      */
     private fun measureTable(lines: List<TableLine>, paperDots: Int): TableMetrics {
         val metrics = ctx.resources.displayMetrics
@@ -218,10 +205,10 @@ class LedgerReceiptRenderer(context: Context) {
         val contentPx = ((widthDp - CARD_PADDING_DP * 2) * metrics.density).toFloat()
 
         val widest = { pick: (TableLine) -> String -> lines.maxOf { pick(it).length } }
-        val dateChars = widest { it.date }
-        val paidChars = widest { it.paid }
-        val dueChars = widest { it.due }
-        val balanceChars = widest { it.balance }
+        val billChars = widest { it.billNo }
+        val modeChars = widest { it.mode }
+        val mrpChars = widest { it.mrp }
+        val amountChars = widest { it.amount }
 
         val paint = Paint().apply { typeface = Typeface.MONOSPACE }
         var chosen = SIZES.last()
@@ -231,33 +218,27 @@ class LedgerReceiptRenderer(context: Context) {
             paint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, size, metrics)
             val cw = paint.measureText("0")
             val gutter = (if (size <= 10f) 3f else 6f) * metrics.density
-            val needed = (dateChars + paidChars + dueChars + balanceChars) * cw + gutter * 3
-            if (needed <= contentPx) {
-                chosen = size
-                charPx = cw
-                gutterPx = gutter
-                break
-            }
+            val needed = (billChars + modeChars + mrpChars + amountChars) * cw + gutter * 3
             chosen = size
             charPx = cw
             gutterPx = gutter
+            if (needed <= contentPx) break
         }
 
         return TableMetrics(
             textSize = chosen,
             gutterPx = gutterPx.toInt(),
-            paidPx = (paidChars * charPx).toInt() + 1,
-            duePx = (dueChars * charPx).toInt() + 1,
-            balancePx = (balanceChars * charPx).toInt() + 1
+            modePx = (modeChars * charPx).toInt() + 1,
+            mrpPx = (mrpChars * charPx).toInt() + 1,
+            amountPx = (amountChars * charPx).toInt() + 1
         )
     }
 
     /**
-     * One "DATE  PAID  DUE  BALANCE" line.
+     * A bill's first line: "BILL NO  MODE  MRP  AMOUNT".
      *
-     * The date is left-aligned and takes the slack; the three money columns are
-     * right-aligned at the fixed widths [metrics] measured, so their digits line up
-     * down the page and none of them can be squeezed into wrapping.
+     * The number is left-aligned and takes the slack; the other three sit at the
+     * fixed widths [metrics] measured, so the figures line up down the page.
      */
     private fun tableRow(line: TableLine, metrics: TableMetrics, bold: Boolean = false): View {
         val density = ctx.resources.displayMetrics.density
@@ -265,9 +246,10 @@ class LedgerReceiptRenderer(context: Context) {
             text = value
             textSize = metrics.textSize
             gravity = if (alignEnd) Gravity.END else Gravity.START
-            // A gutter before each money column: a right-aligned value would
-            // otherwise touch the column before it, and a "-" sitting against the
-            // next figure reads as a minus sign.
+            isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            // A gutter before each fixed column: a right-aligned value would
+            // otherwise touch the column before it.
             if (alignEnd) setPadding(metrics.gutterPx, 0, 0, 0)
             setTypeface(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
             setTextColor(0xFF222222.toInt())
@@ -278,11 +260,51 @@ class LedgerReceiptRenderer(context: Context) {
 
         return LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, (2 * density).toInt(), 0, (2 * density).toInt())
-            addView(cell(line.date, null, alignEnd = false))
-            addView(cell(line.paid, metrics.paidPx, alignEnd = true))
-            addView(cell(line.due, metrics.duePx, alignEnd = true))
-            addView(cell(line.balance, metrics.balancePx, alignEnd = true))
+            setPadding(0, (2 * density).toInt(), 0, 0)
+            addView(cell(line.billNo, null, alignEnd = false))
+            addView(cell(line.mode, metrics.modePx, alignEnd = true))
+            addView(cell(line.mrp, metrics.mrpPx, alignEnd = true))
+            addView(cell(line.amount, metrics.amountPx, alignEnd = true))
+        }
+    }
+
+    /**
+     * A bill's second line: the tax and discount behind the amount above it.
+     *
+     * Written as one string rather than as columns - it is a breakdown of the line
+     * above, not a table of its own, and labelling each figure means it can be read
+     * without a heading of its own to look up. Set a size smaller than the table so
+     * it reads as belonging to the bill above rather than as another bill, and
+     * stepped down further if the labels and figures will not fit the roll.
+     */
+    private fun taxRow(
+        line: BillWiseReportDao.Line,
+        metrics: TableMetrics,
+        paperDots: Int
+    ): View {
+        val text = "  CGST ${money(line.cgst)}  SGST ${money(line.sgst)}" +
+            "  IGST ${money(line.igst)}  DISC ${money(line.discount)}"
+
+        val displayMetrics = ctx.resources.displayMetrics
+        val widthDp = CARD_WIDTH_DP.toDouble() * paperDots / REFERENCE_PAPER_DOTS
+        val contentPx = ((widthDp - CARD_PADDING_DP * 2) * displayMetrics.density).toFloat()
+        val paint = Paint().apply { typeface = Typeface.MONOSPACE }
+        // Never larger than the line it belongs under, and never below the floor -
+        // past that it stops being legible on a thermal head at all.
+        var size = (metrics.textSize - 1f).coerceAtLeast(SIZES.last())
+        while (size > SIZES.last()) {
+            paint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, size, displayMetrics)
+            if (paint.measureText(text) <= contentPx) break
+            size -= 1f
+        }
+
+        return TextView(ctx).apply {
+            this.text = text
+            textSize = size
+            isSingleLine = true
+            setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
+            setTextColor(0xFF555555.toInt())
+            setPadding(0, 0, 0, (3 * displayMetrics.density).toInt())
         }
     }
 
@@ -321,31 +343,13 @@ class LedgerReceiptRenderer(context: Context) {
         setPadding(0, pad, 0, pad)
     }
 
-    /**
-     * The rule between sections of the statement.
-     *
-     * Every value here comes from [PrintType], which is also what `@style/BillDashLine`
-     * carries - the rules this builds sit on the same slip as the ones the layout
-     * builds, and they used to be a different length at a different spacing.
-     */
-    private fun divider(): View = TextView(ctx).apply {
-        text = PrintType.RULE
-        textSize = PrintType.BODY_SP
-        isSingleLine = true
-        ellipsize = null
-        setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
-        setTextColor(0xFF222222.toInt())
-        val pad = (PrintType.RULE_MARGIN_DP * ctx.resources.displayMetrics.density).toInt()
-        setPadding(0, pad, 0, pad)
-    }
-
-    // ---- Shared receipt furniture ------------------------------------------
+    // ---- Shared receipt furniture --------------------------------------------
 
     private fun renderLogos(view: View) {
         val dao = LogoDao(ctx)
         listOf(
-            LogoDao.LogoType.BILL_HEADER to R.id.ivLedgerHeaderLogo,
-            LogoDao.LogoType.BILL_FOOTER to R.id.ivLedgerFooterLogo
+            LogoDao.LogoType.BILL_HEADER to R.id.ivReportHeaderLogo,
+            LogoDao.LogoType.BILL_FOOTER to R.id.ivReportFooterLogo
         ).forEach { (type, viewId) ->
             val target = view.findViewById<ImageView>(viewId)
             val bitmap = dao.getAll(listOf(type)).lastOrNull()?.image
@@ -409,26 +413,20 @@ class LedgerReceiptRenderer(context: Context) {
 
     private fun money(v: Double) = String.format(Locale.US, "%.2f", BillRounding.toPaise(v))
 
-    /**
-     * "yyyy-MM-dd" or "yyyy-MM-dd HH:mm:ss" as "dd-MM-yyyy", or "dd-MM-yy" on
-     * [narrow] paper - two characters that a 58mm roll would rather spend on the
-     * figures than on a century nobody is in any doubt about.
-     */
-    private fun pretty(value: String, narrow: Boolean = false): String = runCatching {
-        val pattern = if (narrow) "dd-MM-yy" else "dd-MM-yyyy"
-        SimpleDateFormat(pattern, Locale.US)
+    /** "yyyy-MM-dd" as "dd-MM-yyyy". */
+    private fun pretty(value: String): String = runCatching {
+        SimpleDateFormat("dd-MM-yyyy", Locale.US)
             .format(SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value.take(10))!!)
     }.getOrDefault(value)
 
     private companion object {
-        const val TAG = "LedgerReceiptRenderer"
+        const val TAG = "BillWiseReportRenderer"
 
         /**
-         * Type sizes the statement table is tried at, largest first.
+         * Type sizes the table is tried at, largest first.
          *
-         * Starts at the bill's own body size and only steps down when four columns
-         * genuinely will not fit the roll, so on 80mm the statement is set like the
-         * bill and a narrow roll is the only thing that makes it smaller.
+         * Starts at the bill's own body size and only steps down when the columns
+         * genuinely will not fit the roll - see [PrintType].
          */
         val SIZES = listOf(
             PrintType.BODY_SP, PrintType.TABLE_SP, PrintType.SMALL_SP,
