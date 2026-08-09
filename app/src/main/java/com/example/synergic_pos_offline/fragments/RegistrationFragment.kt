@@ -198,16 +198,71 @@ class RegistrationFragment : Fragment() {
     /** Posts the payload to the registration endpoint, showing a loader and then the response. */
     private fun submitRegistration() {
         val payload = buildPayload()
+        val appCtx = requireContext().applicationContext
         val loader = showLoader()
 
         ioExecutor.execute {
+            // Start from a clean slate: clear any previous registration and users
+            // before registering, so a re-registration never leaves the old store or
+            // its logins behind on this device.
+            runCatching {
+                val db = com.example.synergic_pos_offline.database.DatabaseHelper
+                    .getInstance(appCtx).writableDatabase
+                db.delete(com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_USERS, null, null)
+                db.delete(com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_REGISTRATION, null, null)
+            }
             val result = ApiClient.postJson(ApiClient.PATH_REGISTER, payload)
+            // On success, store the new store in md_registration right away so the
+            // device reflects the registration it just made (the admin user syncs on
+            // login once the store is verified).
+            if (result.ok) {
+                runCatching { saveRegistration(appCtx, payload, result.body) }
+            }
             view?.post {
                 if (!isAdded) return@post
                 loader.dismiss()
                 showResponse(result)
             }
         }
+    }
+
+    /**
+     * Writes the just-registered store into md_registration from the submitted
+     * [payload], taking store_id / verify_flag from the server [responseBody] when it
+     * returns them (a fresh registration is normally unverified, verify_flag = 0).
+     */
+    private fun saveRegistration(
+        context: android.content.Context, payload: JSONObject, responseBody: String
+    ) {
+        val record = runCatching { JSONObject(responseBody).optJSONArray("msg")?.optJSONObject(0) }
+            .getOrNull() ?: runCatching { JSONObject(responseBody) }.getOrNull()
+        val storeId = record?.optInt("store_id", 1) ?: 1
+        val verifyFlag = record?.let {
+            when (val v = it.opt("verify_flag")) {
+                is Number -> v.toInt()
+                is String -> v.trim().toIntOrNull() ?: 0
+                else -> 0
+            }
+        } ?: 0
+
+        val values = android.content.ContentValues().apply {
+            put("store_id", storeId)
+            put("store_name", payload.optString("store_name"))
+            put("address", payload.optString("address"))
+            put("phone_no", payload.optString("phone_no"))
+            val gstin = payload.opt("store_gstin")
+            if (gstin is String && gstin.isNotBlank()) put("store_gstin", gstin) else putNull("store_gstin")
+            put("device_id", payload.optString("device_id"))
+            put("registration_dt", payload.optString("registration_dt"))
+            put("registration_upto", payload.optString("registration_upto"))
+            put("verify_flag", verifyFlag)
+        }
+        com.example.synergic_pos_offline.database.DatabaseHelper.getInstance(context)
+            .writableDatabase
+            .insertWithOnConflict(
+                com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_REGISTRATION,
+                null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE
+            )
     }
 
     /** Small indeterminate spinner dialog shown while the request is in flight. */

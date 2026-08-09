@@ -127,9 +127,11 @@ class LoginFragment : Fragment() {
             val flag = record?.let { verifyFlagOf(it) }
 
             // A verified device (flag == 1): mirror the store + user into SQLite so
-            // the app has everything it needs to work offline.
+            // the app has everything it needs to work offline. Guard it: a sync/DB
+            // hiccup here must never crash the launch — the login screen can still open.
             if (record != null && flag == 1) {
-                saveVerifiedStore(appContext, record)
+                runCatching { saveVerifiedStore(appContext, record) }
+                    .onFailure { android.util.Log.e("SynergicPOS", "saveVerifiedStore failed", it) }
             }
 
             view?.post {
@@ -178,50 +180,117 @@ class LoginFragment : Fragment() {
         }
     }
 
-    /** Persists a verified store into md_registration and its admin user into md_users, once. */
+    /**
+     * Aligns the device to the store that just logged in — without removing any master
+     * data. Rather than wiping/duplicating, it re-points the existing local rows to the
+     * logged-in store_id (so a store registered under a placeholder id, or store-less
+     * rows, become this store's), then updates the store record and its admin user in
+     * place. Everything the device already holds is kept; only the store_id is moved.
+     */
     private fun saveVerifiedStore(context: Context, record: JSONObject) {
         val db = DatabaseHelper.getInstance(context).writableDatabase
 
         val storeId = record.optInt("store_id")
-        // Write once: if this store is already stored locally, leave it untouched.
-        if (storeExists(db, storeId)) return
+        if (storeId == 0) return
 
-        val outletId = record.optInt("outlet_id")
-        val storeName = str(record, "store_name")
-        val phone = str(record, "phone_no")
+        db.beginTransaction()
+        try {
+            val outletId = record.optInt("outlet_id")
+            val storeName = str(record, "store_name")
+            val phone = str(record, "phone_no")
 
-        val registration = ContentValues().apply {
-            put("store_id", storeId)
-            put("outlet_id", outletId)
-            put("store_name", storeName)
-            put("address", str(record, "address"))
-            put("phone_no", phone)
-            put("store_gstin", str(record, "gstin"))
-            put("device_id", str(record, "device_id"))
-            put("registration_dt", str(record, "reg_dt"))
-            put("registration_upto", str(record, "reg_upto"))
-            put("verify_flag", verifyFlagOf(record) ?: 0)
-            put("verified_by", str(record, "verified_by"))
-            put("verified_at", str(record, "verified_at"))
+            val registration = ContentValues().apply {
+                put("store_id", storeId)
+                put("outlet_id", outletId)
+                put("store_name", storeName)
+                put("address", str(record, "address"))
+                put("phone_no", phone)
+                put("store_gstin", str(record, "gstin"))
+                put("device_id", str(record, "device_id"))
+                put("registration_dt", str(record, "reg_dt"))
+                put("registration_upto", str(record, "reg_upto"))
+                put("verify_flag", verifyFlagOf(record) ?: 0)
+                put("verified_by", str(record, "verified_by"))
+                put("verified_at", str(record, "verified_at"))
+            }
+            // The store row is normally created by the registration flow, so on login
+            // we just update it in place. But md_users has a FOREIGN KEY on store_id →
+            // md_registration(store_id): if this store has no local registration row yet
+            // (e.g. a fresh install of an already server-verified device), the user
+            // insert below would fail the constraint. So insert the row when the update
+            // matches nothing — still no duplicates, and the FK parent always exists.
+            val storeUpdated = db.update(
+                DatabaseHelper.Tables.MD_REGISTRATION, registration, "store_id=?",
+                arrayOf(storeId.toString())
+            )
+            if (storeUpdated == 0) {
+                db.insertWithOnConflict(
+                    DatabaseHelper.Tables.MD_REGISTRATION, null, registration,
+                    SQLiteDatabase.CONFLICT_REPLACE
+                )
+            }
+
+            val userId = str(record, "user_id")
+            val user = ContentValues().apply {
+                put("store_id", storeId)
+                put("outlet_id", outletId)
+                put("user_id", userId)
+                put("password", str(record, "password"))
+                put("user_name", storeName)
+                put("phone_no", phone)
+                put("role", "A")
+                put("is_blocked", 0)
+            }
+            // Update the admin user in place (by user_id); insert if it's not there.
+            val userUpdated = if (userId != null)
+                db.update(DatabaseHelper.Tables.MD_USERS, user, "user_id=?", arrayOf(userId)) else 0
+            if (userUpdated == 0) {
+                db.insertWithOnConflict(DatabaseHelper.Tables.MD_USERS, null, user, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
-        db.insertWithOnConflict(
-            DatabaseHelper.Tables.MD_REGISTRATION, null, registration, SQLiteDatabase.CONFLICT_REPLACE
-        )
+    }
 
-        val user = ContentValues().apply {
-            put("id", storeId)
-            put("store_id", storeId)
-            put("outlet_id", outletId)
-            put("user_id", str(record, "user_id"))
-            put("password", str(record, "password"))
-            put("user_name", storeName)
-            put("phone_no", phone)
-            put("role", "A")
-            put("is_blocked", 0)
+    /**
+     * Sets every md_ table's store_id to the [storeId] the signed-in user belongs to,
+     * so all local master data is owned by the logged-in store. No rows are removed.
+     */
+    private fun alignMasterDataToStore(storeId: Int) {
+        if (storeId <= 0) return
+        val db = DatabaseHelper.getInstance(requireContext()).writableDatabase
+        db.beginTransaction()
+        try {
+            for (t in mdTablesWithStoreId(db)) {
+                runCatching { db.execSQL("UPDATE $t SET store_id = ?", arrayOf<Any>(storeId)) }
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
-        db.insertWithOnConflict(
-            DatabaseHelper.Tables.MD_USERS, null, user, SQLiteDatabase.CONFLICT_REPLACE
-        )
+    }
+
+    /** Every md_ table that has a store_id column — so the re-point covers them all. */
+    private fun mdTablesWithStoreId(db: SQLiteDatabase): List<String> {
+        val tables = mutableListOf<String>()
+        db.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'md\\_%' ESCAPE '\\'", null
+        ).use { c ->
+            while (c.moveToNext()) {
+                val name = c.getString(0) ?: continue
+                val hasStoreId = db.rawQuery("PRAGMA table_info($name)", null).use { info ->
+                    var found = false
+                    while (info.moveToNext()) {
+                        if (info.getString(1) == "store_id") { found = true; break }
+                    }
+                    found
+                }
+                if (hasStoreId) tables.add(name)
+            }
+        }
+        return tables
     }
 
     /** Returns a trimmed string field, or null when absent/blank/JSON null. */
@@ -289,6 +358,9 @@ class LoginFragment : Fragment() {
         }
 
         SessionManager.currentUser = user
+        // Put all local master data under the store this user just logged in to — every
+        // md_ table's store_id is set to the logged-in store id (not device-based).
+        alignMasterDataToStore(user.storeId)
         // Cache md_app_settings to local storage, chunked by type (B / T / G / A).
         SettingsCache.storeFromDb(requireContext())
         val roleText = if (user.role == UserRole.ADMIN) "Admin" else "General User"
@@ -355,4 +427,5 @@ class LoginFragment : Fragment() {
             )
         }
     }
+
 }

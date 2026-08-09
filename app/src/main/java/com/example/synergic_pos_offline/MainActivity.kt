@@ -58,9 +58,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Fill the master tables with demo data on first run (idempotent: only
-        // ever fills empty tables, never overwrites hand-entered rows).
-        Thread { DatabaseSeeder.seedIfEmpty(applicationContext) }.start()
+        // The APK ships with the master table *structure* only — no demo/master
+        // data is bundled. Tables are created empty by DatabaseHelper.onCreate and
+        // filled by registration/login sync and hand entry, so nothing is seeded here.
 
         drawerLayout = findViewById(R.id.drawerLayout)
         rvSidebar = findViewById(R.id.rvSidebar)
