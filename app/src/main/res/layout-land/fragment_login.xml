@@ -172,6 +172,28 @@
                 android:layout_marginTop="16dp"
                 android:visibility="gone" />
 
+            <!--
+              The other way into a till that has no data yet: restore a backup taken
+              from the tablet that used to hold the books.
+
+              On its own line under Register, matching the portrait screen. Unlike
+              Register it is always shown - a shop reaching for it has usually just
+              lost the device that held their data, which is the moment a recovery
+              route must not be hidden behind a state check that needs the internet
+              to resolve.
+            -->
+            <TextView
+                android:id="@+id/tvRestoreData"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Restore Data"
+                android:textColor="@color/primary_blue"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:layout_marginTop="16dp"
+                android:clickable="true"
+                android:focusable="true" />
+
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

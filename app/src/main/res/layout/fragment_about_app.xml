@@ -79,8 +79,12 @@
             android:layout_height="wrap_content"
             android:orientation="vertical" />
 
-        <!-- Data backup. Lives here rather than in App Settings: it acts on the
-             installation, not on how the shop is configured. -->
+        <!-- Backup lives here rather than in App Settings: it acts on the
+             installation, not on how the shop is configured. Automatic and manual
+             are separate cards because they are separate decisions - one is a
+             standing arrangement to be set up and left alone, the other is something
+             an operator does now, and putting them together made the card read as a
+             single settings block with a stray pair of buttons at the bottom. -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -98,7 +102,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="DATA BACKUP"
+                    android:text="AUTOMATIC BACKUP"
                     android:textSize="13sp"
                     android:textStyle="bold"
                     android:textColor="@color/text_secondary" />
@@ -107,7 +111,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="Back up before uninstalling, then restore on the new installation. The whole database is carried, store registration and users included - so after restoring, sign in with the login from the device the backup came from."
+                    android:text="Takes a backup on its own every so often while the app is open, into Downloads/POSbackup, so the shop is not relying on somebody remembering to."
                     android:textSize="12sp"
                     android:textColor="@color/text_secondary" />
 
@@ -192,33 +196,89 @@
 
                 <!-- Nothing above is stored until this is pressed, and the line under
                      the switch says what actually is stored - so a half-changed
-                     setting cannot be mistaken for a saved one. -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnSaveAutoBackup"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                     setting cannot be mistaken for a saved one. Right-aligned and
+                     sized to its label like every other action on this screen. -->
+                <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="10dp"
-                    android:text="Save automatic backup settings"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    app:cornerRadius="12dp" />
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="end|center_vertical"
+                    android:baselineAligned="false"
+                    android:layout_marginTop="16dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSaveAutoBackup"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:minWidth="96dp"
+                        android:text="Save"
+                        android:textStyle="bold"
+                        android:textAllCaps="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        app:cornerRadius="12dp" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Manual backup: its own card, because taking one now and arranging for
+             them to be taken are different acts. This is the one an operator reaches
+             for before uninstalling, so the warning about which login works
+             afterwards belongs here rather than over the automatic settings. -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="MANUAL BACKUP"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_secondary" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Back up before uninstalling, then restore on the new installation. The whole database is carried, store registration and users included - so after restoring, sign in with the login from the device the backup came from."
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
+                    android:gravity="center_vertical"
                     android:baselineAligned="false"
-                    android:layout_marginTop="12dp">
+                    android:layout_marginTop="16dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Manual Backup"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_main" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnBackupData"
-                        android:layout_width="0dp"
-                        android:layout_height="52dp"
-                        android:layout_weight="1"
-                        android:layout_marginEnd="6dp"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:minWidth="96dp"
                         android:text="Backup"
                         android:textStyle="bold"
+                        android:textAllCaps="false"
                         android:insetTop="0dp"
                         android:insetBottom="0dp"
                         app:cornerRadius="12dp" />
@@ -226,11 +286,225 @@
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnRestoreData"
                         style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                        android:layout_width="0dp"
-                        android:layout_height="52dp"
-                        android:layout_weight="1"
-                        android:layout_marginStart="6dp"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:minWidth="96dp"
+                        android:layout_marginStart="8dp"
                         android:text="Restore"
+                        android:textStyle="bold"
+                        android:textAllCaps="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        app:cornerRadius="12dp" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- The catalogue on its own. Sits under the backup because it is the same
+             kind of act on a narrower thing: a whole backup moves the shop, this
+             moves only what it sells, and is what sets up a second till without
+             typing the products in again. -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="MASTER TABLES"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_secondary" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Products, their categories and rates, the rate tiers and the units — the catalogue on its own, saved to Downloads/masterbackup. It carries no store, so it can be loaded onto another till; restoring stamps it with this device's store. Stock is not included."
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:baselineAligned="false"
+                    android:layout_marginTop="16dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Master Tables"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_main" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnExportMasters"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:minWidth="96dp"
+                        android:text="Export"
+                        android:textStyle="bold"
+                        android:textAllCaps="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        app:cornerRadius="12dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnRestoreMasters"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:minWidth="96dp"
+                        android:layout_marginStart="8dp"
+                        android:text="Restore"
+                        android:textStyle="bold"
+                        android:textAllCaps="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        app:cornerRadius="12dp" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Erase bills: the shop's book started again, without touching how the
+             shop is configured. Separate from Restore Defaults because they are
+             opposite halves - one throws away the sales and keeps the setup, the
+             other throws away the setup and keeps the sales. -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="ERASE BILLS"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_secondary" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Throws away every bill and starts numbering again from the Start No. in Bill Settings. Products, customers, stock and settings are left alone. A backup is taken first — everything except this device's users and store registration."
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:baselineAligned="false"
+                    android:layout_marginTop="16dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Erase Bills"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_main" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnEraseBills"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:minWidth="96dp"
+                        android:text="Erase"
+                        android:textStyle="bold"
+                        android:textAllCaps="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        app:cornerRadius="12dp" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Restore defaults. Last on the screen, and below the backup, on purpose:
+             the backup is what an operator should take before pressing this. -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="RESTORE DEFAULTS"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_secondary" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Puts every setting back to how the app came: General, Bill, Tax and App settings, the printers, the automatic backup and the theme colour. Products, customers, bills and stock are not touched — but the shop's whole configuration is, and it has to be set up again from scratch. A backup is taken first — everything except this device's users and store registration."
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:baselineAligned="false"
+                    android:layout_marginTop="16dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Restore Defaults"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_main" />
+
+                    <!-- "Reset" rather than a third "Restore" on one screen: the
+                         Manual Backup and Master Tables rows both already have one,
+                         and they put data back where this throws it away. -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnRestoreDefaults"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:minWidth="96dp"
+                        android:text="Reset"
+                        android:textStyle="bold"
+                        android:textAllCaps="false"
                         android:insetTop="0dp"
                         android:insetBottom="0dp"
                         app:cornerRadius="12dp" />

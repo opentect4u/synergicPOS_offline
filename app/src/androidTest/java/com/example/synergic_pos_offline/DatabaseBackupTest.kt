@@ -40,6 +40,9 @@ class DatabaseBackupTest {
     @org.junit.Before
     fun clearLeftovers() {
         db.delete(DatabaseHelper.Tables.MD_USERS, "user_id = ?", arrayOf("BACKUP_TEST_USER"))
+        db.delete(
+            DatabaseHelper.Tables.MD_REGISTRATION, "store_name = ?", arrayOf("Backup Test Store")
+        )
     }
 
     @Test
@@ -69,6 +72,16 @@ class DatabaseBackupTest {
             }
         )
         assertTrue("could not seed a user", userId != -1L)
+
+        // And a registration, for the same reason: the backup carries it, so it has
+        // to survive the round trip. Seeded rather than relied on - a device that has
+        // never been registered has an empty table, which is left out of every backup
+        // and would pass the assertion below for the wrong reason.
+        val storeId = db.insert(
+            DatabaseHelper.Tables.MD_REGISTRATION, null,
+            ContentValues().apply { put("store_name", "Backup Test Store") }
+        )
+        assertTrue("could not seed a registration", storeId != -1L)
 
         val export = DatabaseBackup.export(ctx)
         assertTrue("the export carried nothing", export.rows > 0)

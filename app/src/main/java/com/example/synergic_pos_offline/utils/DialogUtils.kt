@@ -37,7 +37,8 @@ import com.google.android.material.textfield.TextInputLayout
  */
 object DialogUtils {
 
-    private const val DESTRUCTIVE_COLOR = "#D93025"
+    /** The red a destructive confirm is drawn in - and the button that opens it. */
+    const val DESTRUCTIVE_COLOR = "#D93025"
 
     /**
      * The most of the screen's width a dialog may take.
@@ -118,6 +119,100 @@ object DialogUtils {
             onCancel()
         }
         // Back-press / outside-tap counts as a cancel too.
+        dialog.setOnCancelListener { onCancel() }
+
+        dialog.show()
+        centerWindow(dialog)
+    }
+
+    /**
+     * The last gate in front of something irreversible: the operator's own password,
+     * typed again.
+     *
+     * Shown *after* the warning that says what is about to happen, never instead of
+     * it - a password box on its own asks somebody to authorise a thing they have not
+     * been told the shape of. What it adds is proof that the person holding the till
+     * is the person the till is signed in as: the warning stops an accident, this
+     * stops anybody who walked up to a screen left unattended on the About page.
+     *
+     * [verify] is handed the typed password and answers whether it is right; who is
+     * signed in and how their password is stored are the caller's business, not this
+     * dialog's. A wrong answer keeps the dialog open with the field marked and
+     * emptied, because being thrown out to the start of a two-step confirmation for a
+     * typo is how an operator ends up avoiding the safe path altogether.
+     */
+    fun showPasswordConfirm(
+        context: Context,
+        title: String,
+        message: String,
+        positiveText: String = "Confirm",
+        negativeText: String = "Cancel",
+        destructive: Boolean = false,
+        onCancel: () -> Unit = {},
+        verify: (String) -> Boolean,
+        onConfirmed: () -> Unit
+    ) {
+        val ctx = FixedFontScale.wrap(context)
+        val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_password_confirm, null)
+        fitToScreen(ctx, view.findViewById(R.id.llPwdConfirmContent))
+        val dialog = AlertDialog.Builder(ctx).setView(view).create()
+            .also { it.setCanceledOnTouchOutside(false) }
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.CENTER)
+        }
+
+        val positiveColor =
+            if (destructive) Color.parseColor(DESTRUCTIVE_COLOR) else ThemeManager.getThemeColor(context)
+
+        view.findViewById<ImageView>(R.id.ivPwdConfirmIcon).imageTintList =
+            ColorStateList.valueOf(positiveColor)
+        view.findViewById<TextView>(R.id.tvPwdConfirmTitle).text = title
+        view.findViewById<TextView>(R.id.tvPwdConfirmMessage).text = message
+
+        val field = view.findViewById<TextInputLayout>(R.id.tilPwdConfirm)
+        val input = view.findViewById<TextInputEditText>(R.id.etPwdConfirm)
+        val btnPositive = view.findViewById<MaterialButton>(R.id.btnPwdConfirmPositive)
+        val btnNegative = view.findViewById<MaterialButton>(R.id.btnPwdConfirmNegative)
+        btnPositive.text = positiveText
+        btnNegative.text = negativeText
+        ThemeManager.styleDialogButtons(btnPositive, btnNegative, positiveColor)
+
+        // Clears the complaint as soon as the operator starts correcting it.
+        input.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { field.error = null }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+
+        fun submit() {
+            val typed = input.text?.toString().orEmpty()
+            when {
+                typed.isEmpty() -> field.error = "Enter your password"
+                !verify(typed) -> {
+                    field.error = "That password is not right"
+                    input.setText("")
+                }
+                else -> {
+                    dialog.dismiss()
+                    onConfirmed()
+                }
+            }
+        }
+
+        btnPositive.setOnClickListener { submit() }
+        // Done on the keyboard is the same as pressing the button - a password field
+        // is the one place people expect it to submit.
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
+                submit(); true
+            } else false
+        }
+        btnNegative.setOnClickListener {
+            dialog.dismiss()
+            onCancel()
+        }
         dialog.setOnCancelListener { onCancel() }
 
         dialog.show()
