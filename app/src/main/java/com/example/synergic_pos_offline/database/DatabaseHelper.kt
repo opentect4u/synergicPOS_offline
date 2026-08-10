@@ -591,6 +591,47 @@ class DatabaseHelper private constructor(context: Context) :
         }
     }
 
+    /**
+     * Empties [Tables.MD_APP_SETTINGS] - every setting on the till, for every store.
+     *
+     * Only ever called on the way to writing the defaults back
+     * ([com.example.synergic_pos_offline.utils.DefaultSettings.restore]), which is
+     * why it takes no store id: a key written before the till was registered carries
+     * a null store and would survive a scoped delete, then sit alongside the row the
+     * restore inserts against the real store and be read back at random.
+     */
+    fun clearAppSettings() {
+        writableDatabase.delete(Tables.MD_APP_SETTINGS, null, null)
+    }
+
+    /**
+     * Puts the printers back to how a newly installed app has them.
+     *
+     * Both tables, because they are one setup: [Tables.MD_OPERATING_PRINTER] holds
+     * the shop's named printers and each points at a connection row in
+     * [Tables.MD_PRINTER], so rebuilding the connections while leaving the named
+     * printers behind would leave every one of them pointing at a row that no longer
+     * exists. They go together and are set up again together.
+     *
+     * The rebuilt state is exactly what [onCreate] lays down: WIFI for BILL, LAN for
+     * KOT and OTHERS, each with no address and no paper width, plus the unselected
+     * Bluetooth and USB alternatives.
+     */
+    fun resetPrintersToDefaults() {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete(Tables.MD_OPERATING_PRINTER, null, null)
+            db.delete(Tables.MD_PRINTER, null, null)
+            seedDefaultPrinters(db)
+            db.execSQL("UPDATE ${Tables.MD_PRINTER} SET is_selected = 1")
+            addExtraPrinterTypes(db)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     /** The default purpose-to-type printer rows. Idempotent via the sl_no primary key. */
     private fun seedDefaultPrinters(db: SQLiteDatabase) {
         db.execSQL(

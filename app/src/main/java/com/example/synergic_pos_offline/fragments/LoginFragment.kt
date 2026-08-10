@@ -3,6 +3,7 @@ package com.example.synergic_pos_offline.fragments
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.text.Editable
@@ -12,6 +13,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.example.synergic_pos_offline.R
@@ -20,6 +23,11 @@ import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.models.User
 import com.example.synergic_pos_offline.models.UserRole
 import com.example.synergic_pos_offline.utils.ApiClient
+import com.example.synergic_pos_offline.utils.BackupFiles
+import com.example.synergic_pos_offline.utils.BusyDialog
+import com.example.synergic_pos_offline.utils.DatabaseBackup
+import com.example.synergic_pos_offline.utils.DeviceIdentity
+import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.NetworkBadge
 import com.example.synergic_pos_offline.utils.NetworkMonitor
 import com.example.synergic_pos_offline.utils.SessionManager
@@ -39,11 +47,28 @@ class LoginFragment : Fragment() {
     private lateinit var etPassword: TextInputEditText
     private lateinit var btnLogin: Button
     private lateinit var tvRegister: View
+    private lateinit var tvRestoreData: View
     private lateinit var tvPending: View
     private lateinit var swipeRefresh: SwipeRefreshLayout
 
+    /**
+     * Picks the backup to restore from, when it is not one this app can still see
+     * for itself (see [BackupFiles]).
+     *
+     * Registered here rather than at the tap: a launcher has to exist before the
+     * fragment is started, and registering one from a click listener throws.
+     */
+    private val pickBackup: ActivityResultLauncher<Array<String>> =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            uri?.let { confirmRestore(it) }
+        }
+
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private lateinit var networkMonitor: NetworkMonitor
+
+    /** Guards against the connectivity callback stacking up retries - see
+     *  [sendPendingDeviceMove]. */
+    private val sendingDeviceMove = java.util.concurrent.atomic.AtomicBoolean(false)
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -61,6 +86,7 @@ class LoginFragment : Fragment() {
         etPassword = view.findViewById(R.id.etPassword)
         btnLogin = view.findViewById(R.id.btnLogin)
         tvRegister = view.findViewById(R.id.tvRegister)
+        tvRestoreData = view.findViewById(R.id.tvRestoreData)
         tvPending = view.findViewById(R.id.tvPending)
         swipeRefresh = view.findViewById(R.id.swipeRefresh)
 
@@ -83,11 +109,14 @@ class LoginFragment : Fragment() {
                 .commit()
         }
 
+        tvRestoreData.setOnClickListener { chooseBackup() }
+
         ThemeManager.applyTheme(view)
 
         networkMonitor = NetworkMonitor(requireContext())
         networkMonitor.register { online ->
             this.view?.let { NetworkBadge.bind(it, online) }
+            if (online) sendPendingDeviceMove()
         }
 
         checkDeviceVerification()
@@ -120,6 +149,11 @@ class LoginFragment : Fragment() {
         val payload = JSONObject().put("device_id", deviceId)
 
         ioExecutor.execute {
+            // A device move that could not be sent when it happened goes out here,
+            // before the check that would otherwise ask about the wrong tablet.
+            // Costs nothing when there is nothing queued.
+            runCatching { DeviceIdentity.publishPending(appContext) }
+
             val result = ApiClient.postJson(ApiClient.PATH_CHECK_USER, payload)
             // On success read the record; if the check fails, fall back to offering
             // registration (treat as an unknown / unregistered device).
@@ -160,7 +194,201 @@ class LoginFragment : Fragment() {
                 tvPending.visibility = View.GONE
             }
         }
+        // Restore Data is not part of this: it stays on screen whatever the server
+        // says, so a device with no data can always be restored onto.
     }
+
+    // ---- Restoring a backup onto a device with nothing on it -------------------
+
+    /**
+     * Offers the backups this app can still see, and the file picker for the ones it
+     * cannot.
+     *
+     * On a replacement tablet the list is empty - Android does not let a fresh
+     * installation read what the previous one wrote (see [BackupFiles]) - so this
+     * goes straight to the picker, which is the route that always works. On a device
+     * the app is still installed on, the operator gets their own backups by name and
+     * date instead of hunting through folders.
+     */
+    private fun chooseBackup() {
+        val found = BackupFiles.list(requireContext())
+        if (found.isEmpty()) {
+            browseForBackup()
+            return
+        }
+        // Newest first, and capped: a till backing up hourly has hundreds, and the
+        // one being looked for is nearly always among the most recent.
+        val recent = found.take(MAX_LISTED_BACKUPS)
+        val items = recent.map {
+            DialogUtils.ListItem(
+                title = it.name,
+                subtitle = BackupFiles.timeLabel(it.takenAt),
+                trailing = BackupFiles.sizeLabel(it.bytes)
+            )
+        } + DialogUtils.ListItem(
+            title = "Choose another file…",
+            subtitle = "Browse the device for a backup"
+        )
+
+        DialogUtils.showList(
+            context = requireContext(),
+            title = "Restore data",
+            subtitle = "Pick the backup to restore from",
+            items = items
+        ) { index ->
+            if (index == recent.size) browseForBackup() else confirmRestore(recent[index].uri)
+        }
+    }
+
+    private fun browseForBackup() {
+        // Anything, rather than a MIME filter: a .sql file is typed differently by
+        // different file managers - text/plain here, application/octet-stream there -
+        // and a filter that hides the operator's own backup is worse than one that
+        // shows too much.
+        runCatching { pickBackup.launch(arrayOf("*/*")) }
+            .onFailure { toast("No app on this device can pick a file") }
+    }
+
+    /**
+     * Says what restoring will do before it does it.
+     *
+     * The device id is the part worth spelling out. The backup names the tablet it
+     * came from, and this one is not it; the restore adopts this device so the till
+     * can be logged into here, which is the whole point of restoring onto new
+     * hardware and is not something an operator would guess.
+     */
+    private fun confirmRestore(uri: Uri) {
+        val head = BackupFiles.headOf(requireContext(), uri)
+        if (head == null) {
+            toast("That file could not be read")
+            return
+        }
+        if (!BackupFiles.looksLikeBackup(head)) {
+            toast("That file is not a Synergic POS backup")
+            return
+        }
+
+        val taken = DatabaseBackup.schemaVersionOf(head)
+        val here = DatabaseHelper.getInstance(requireContext()).readableDatabase.version
+        val mismatch = if (taken != null && taken != here) {
+            "\n\nThis backup was taken from database version $taken and this app is on " +
+                "$here. Anything it does not recognise will be left as it is."
+        } else ""
+
+        val identity = if (DatabaseBackup.excludedIn(head).containsAll(DatabaseBackup.DEVICE_IDENTITY)) {
+            "\n\nThis backup does not carry users or the store registration, so this " +
+                "device keeps its own. Sign in with the login you use here."
+        } else {
+            "\n\nSign in afterwards with the login from the device the backup was taken " +
+                "on - its users come across with the rest.\n\nThis tablet is registered " +
+                "in place of the one the backup came from, so the till can be logged " +
+                "into here."
+        }
+
+        DialogUtils.showConfirm(
+            context = requireContext(),
+            title = "Restore data?",
+            message = "This replaces everything on this device with the backup - products, " +
+                "customers, bills and settings. It cannot be undone." +
+                identity + mismatch,
+            positiveText = "Restore",
+            negativeText = "Cancel",
+            destructive = true
+        ) { runRestore(uri, taken) }
+    }
+
+    /** Streams the file into the database, then makes the till this device. */
+    private fun runRestore(uri: Uri, schemaVersion: Int?) =
+        BusyDialog.run(this, "Restoring…") {
+            val context = requireContext().applicationContext
+            val result = context.contentResolver.openInputStream(uri)?.use { stream ->
+                stream.bufferedReader().useLines { lines ->
+                    DatabaseBackup.restore(context, lines, schemaVersion)
+                }
+            } ?: DatabaseBackup.Result(0, 0, 0, schemaVersion, "that file could not be opened")
+
+            // The registration that just landed names the device the backup came
+            // from. Adopting it is what lets this tablet be logged into at all, so it
+            // happens before the operator is told the restore worked.
+            val adoption = if (result.ok) DeviceIdentity.adopt(context) else null
+            // Then the server is told, on this same background thread. It is allowed
+            // to fail: the till is already correct locally, and a shop setting up a
+            // replacement tablet somewhere with no signal still has a working POS.
+            val published = adoption?.let { DeviceIdentity.publish(context, it) }
+
+            BusyDialog.onMain(this) {
+                if (!result.ok) {
+                    DialogUtils.showSuccess(
+                        context = requireContext(),
+                        title = "Restore failed",
+                        message = "${result.error}\n\nNothing was changed."
+                    )
+                    return@onMain
+                }
+                val skipped = if (result.skipped > 0) {
+                    "\n\n${result.skipped} record(s) were for tables this version does not " +
+                        "have, and were skipped."
+                } else ""
+                // Said plainly when the server has not been told - and said as
+                // something already in hand, because it is: the move is queued and
+                // goes out by itself on the next connection. A tablet being set up
+                // before it has the shop's wifi is the ordinary case, not a fault.
+                val moved = when {
+                    adoption?.changed != true -> ""
+                    published?.ok == true ->
+                        "\n\nThis tablet is now the registered device for the store, here " +
+                            "and on the server."
+                    else ->
+                        "\n\nThis tablet is now the registered device for the store. The " +
+                            "office has not been told yet - ${published?.error}. Nothing " +
+                            "more to do: the till works, and it will send that by itself " +
+                            "once there is a connection."
+                }
+                DialogUtils.showSuccess(
+                    context = requireContext(),
+                    title = "Restored",
+                    message = "${result.rows} record(s) into ${result.tables} table(s)." +
+                        skipped + moved +
+                        "\n\nSign in with the login from the device the backup came from.",
+                    onDismiss = { afterRestore() }
+                )
+            }
+        }
+
+    /**
+     * Sends a queued device move the moment the tablet comes online.
+     *
+     * The connectivity callback fires on capability changes as well as on connect,
+     * which on a flaky connection is several times a minute; the flag keeps those
+     * from stacking up requests, and the queued-state check means the common path
+     * costs one preference read and no thread at all.
+     */
+    private fun sendPendingDeviceMove() {
+        val context = context?.applicationContext ?: return
+        if (!DeviceIdentity.hasPending(context)) return
+        if (!sendingDeviceMove.compareAndSet(false, true)) return
+        runCatching {
+            ioExecutor.execute {
+                try {
+                    DeviceIdentity.publishPending(context)
+                } finally {
+                    sendingDeviceMove.set(false)
+                }
+            }
+        }.onFailure { sendingDeviceMove.set(false) }   // executor already shut down
+    }
+
+    /** Clears the form and re-reads the device's state from the restored data. */
+    private fun afterRestore() {
+        etUsername.setText("")
+        etPassword.setText("")
+        tilUsername.error = null
+        tilPassword.error = null
+        checkDeviceVerification()
+    }
+
+    private fun toast(message: String) =
+        Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
 
     /** Returns the first store record from a { "suc": .., "msg": [ {...} ] } response. */
     private fun firstRecord(body: String): JSONObject? = try {
@@ -428,4 +656,13 @@ class LoginFragment : Fragment() {
         }
     }
 
+    private companion object {
+        /**
+         * How many backups the picker lists before falling back to browsing.
+         *
+         * A till backing up hourly has hundreds of them, and a dialog that scrolls
+         * past a screenful is not a shorter route to the file than the file manager.
+         */
+        const val MAX_LISTED_BACKUPS = 15
+    }
 }

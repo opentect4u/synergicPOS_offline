@@ -25,10 +25,16 @@ import java.util.Locale
  *
  ## What is carried
  *
- * Everything - see [EXCLUDED], which is empty. The registration and the users go
- * with the rest, so the restored device *is* the device the backup came from: the
- * store the rows refer to exists, and there is an operator belonging to it to log in
- * as. It follows that after a restore the old device's logins are the ones that work.
+ * Everything, by default - see [EXCLUDED], which is empty. The registration and the
+ * users go with the rest, so the restored device *is* the device the backup came
+ * from: the store the rows refer to exists, and there is an operator belonging to it
+ * to log in as. It follows that after a restore the old device's logins are the ones
+ * that work.
+ *
+ * A caller may hold tables back for one backup by passing them to [exportTo] - see
+ * [DEVICE_IDENTITY], which is what the safety backups taken before an irreversible
+ * action leave out. The default is unchanged, so the backup an operator takes from
+ * the Backup button is still the whole database.
  *
  * `sqlite_sequence` is the one thing left out. It is not data but SQLite's own bookkeeping,
  * and it repairs itself: inserting a row with an explicit id carries the counter up
@@ -57,8 +63,42 @@ object DatabaseBackup {
      */
     val EXCLUDED = emptySet<String>()
 
+    /**
+     * Who this device is: the store it is registered as and the people who can sign
+     * in to it. Held back from the safety backups taken before an irreversible
+     * action - see [AutoBackup.backupBefore].
+     *
+     * Those backups exist to undo something on *this* device a minute after it was
+     * done, not to move a shop to another one. Carrying the registration and the
+     * users would mean an operator who restored one had also silently rolled back
+     * the login list and the device registration to that moment - a password changed
+     * since would stop working, a user added since would vanish, for someone who only
+     * wanted their settings back. Leaving them out makes the restore land on the
+     * device as it is now: [restore] only clears the tables the file carries, so the
+     * two tables that are not in it are not touched.
+     *
+     * The trade is that these files are for the device they came from. Nearly every
+     * row carries a `store_id` and every screen reads its rows back by it, so a
+     * safety backup restored onto a *different* device would leave its records
+     * pointing at a store that device is not - the same failure described on
+     * [EXCLUDED]. The Backup button, which is the one for moving a shop, still takes
+     * the whole database.
+     */
+    val DEVICE_IDENTITY: Set<String> = setOf(
+        DatabaseHelper.Tables.MD_USERS, DatabaseHelper.Tables.MD_REGISTRATION
+    )
+
     /** Marks the line that records the schema the backup was taken from. */
     private const val VERSION_TAG = "-- schema-version:"
+
+    /** Marks the line that lists the tables a backup was taken without. */
+    private const val EXCLUDED_TAG = "-- not included:"
+
+    /** Marks the line that lists columns deliberately written empty. */
+    private const val NULLED_TAG = "-- written empty:"
+
+    /** The first line of an ordinary whole-database backup. */
+    const val TITLE = "Synergic POS data backup"
 
     // ---- Backup --------------------------------------------------------------
 
@@ -96,9 +136,24 @@ object DatabaseBackup {
      * has been counted, so the tables are read once to count them and again to write
      * them. Reading twice is cheap; holding the whole thing is not.
      */
-    fun exportTo(context: Context, out: java.io.Writer): Export {
+    fun exportTo(
+        context: Context,
+        out: java.io.Writer,
+        // Tables this one backup leaves behind. Defaults to none; [DEVICE_IDENTITY]
+        // is what a safety backup passes.
+        excluded: Set<String> = EXCLUDED,
+        // The only tables to carry, or null for the whole database. The master
+        // catalogue export ([MasterData]) names its four.
+        only: Set<String>? = null,
+        // Columns written as NULL whatever they hold. Lets an export be deliberately
+        // store-less, so it can be loaded onto a shop that is not the one it came
+        // from - see [MasterData].
+        nullColumns: Set<String> = emptySet(),
+        // The first line of the file, and what a reader checks to know what it has.
+        title: String = TITLE
+    ): Export {
         val db = DatabaseHelper.getInstance(context).readableDatabase
-        val all = tablesIn(db)
+        val all = tablesIn(db, excluded, only)
 
         val counts = LinkedHashMap<String, Int>()
         all.forEach { table ->
@@ -111,21 +166,35 @@ object DatabaseBackup {
         val rowCount = carried.values.sum()
 
         val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-        out.write("-- Synergic POS data backup\n")
+        out.write("-- $title\n")
         out.write("-- taken: $stamp\n")
         out.write("$VERSION_TAG ${db.version}\n")
         out.write(
-            "-- read every table in the database: ${all.size} of them, " +
-                "${carried.size} holding $rowCount record(s)\n"
+            if (only == null) {
+                "-- read every table in the database: ${all.size} of them, " +
+                    "${carried.size} holding $rowCount record(s)\n"
+            } else {
+                "-- read ${all.size} named table(s), " +
+                    "${carried.size} holding $rowCount record(s)\n"
+            }
         )
+        if (nullColumns.isNotEmpty()) {
+            out.write(
+                "$NULLED_TAG ${nullColumns.sorted().joinToString(", ")}" +
+                    " - written empty so this file belongs to no one shop\n"
+            )
+        }
         if (empty.isNotEmpty()) {
             out.write("-- these were read and held no records:\n")
             empty.chunked(6).forEach { out.write("--   " + it.joinToString(", ") + "\n") }
         }
-        if (EXCLUDED.isEmpty()) {
+        if (excluded.isEmpty()) {
             out.write("-- the whole database, store registration and users included\n")
         } else {
-            out.write("-- not included: ${EXCLUDED.joinToString(", ")}\n")
+            // Said in the file itself: what is not in a backup is exactly what
+            // somebody reading it a month later needs to know.
+            out.write("$EXCLUDED_TAG ${excluded.sorted().joinToString(", ")}\n")
+            out.write("-- restoring this leaves this device's own copies of those alone\n")
         }
         out.write("-- restore this through Settings > About App > Restore\n\n")
 
@@ -133,11 +202,18 @@ object DatabaseBackup {
             out.write("-- $table (${counts[table]} rows)\n")
             db.rawQuery("SELECT * FROM $table", null).use { c ->
                 val columns = c.columnNames
+                // Worked out once per table rather than per row: a product catalogue
+                // is tens of thousands of rows and this is a set lookup per column.
+                val blanked = columns.map { it in nullColumns }
                 val header = "INSERT INTO $table (" +
                     columns.joinToString(", ") { "\"$it\"" } + ") VALUES ("
                 while (c.moveToNext()) {
                     out.write(header)
-                    out.write(columns.indices.joinToString(", ") { literal(c, it) })
+                    out.write(
+                        columns.indices.joinToString(", ") {
+                            if (blanked[it]) "NULL" else literal(c, it)
+                        }
+                    )
                     out.write(");\n")
                 }
             }
@@ -153,14 +229,27 @@ object DatabaseBackup {
      * there is one description of what a backup looks like rather than two that can
      * drift apart.
      */
-    fun export(context: Context): Export {
+    fun export(
+        context: Context,
+        excluded: Set<String> = EXCLUDED,
+        only: Set<String>? = null,
+        nullColumns: Set<String> = emptySet(),
+        title: String = TITLE
+    ): Export {
         val writer = java.io.StringWriter()
-        val summary = exportTo(context, writer)
+        val summary = exportTo(context, writer, excluded, only, nullColumns, title)
         return summary.copy(sql = writer.toString())
     }
 
-    /** Everything the database holds, less SQLite's own internals. */
-    private fun tablesIn(db: android.database.sqlite.SQLiteDatabase): List<String> {
+    /**
+     * Everything the database holds, less SQLite's own internals and [excluded] -
+     * or, when [only] is given, just those of its tables that exist here.
+     */
+    private fun tablesIn(
+        db: android.database.sqlite.SQLiteDatabase,
+        excluded: Set<String> = EXCLUDED,
+        only: Set<String>? = null
+    ): List<String> {
         val names = mutableListOf<String>()
         db.rawQuery(
             "SELECT name FROM sqlite_master WHERE type='table' " +
@@ -169,7 +258,9 @@ object DatabaseBackup {
         ).use { c ->
             while (c.moveToNext()) {
                 val name = c.getString(0) ?: continue
-                if (name !in EXCLUDED) names.add(name)
+                if (name in excluded) continue
+                if (only != null && name !in only) continue
+                names.add(name)
             }
         }
         return names
@@ -229,9 +320,18 @@ object DatabaseBackup {
      * Only the tables the file actually carries are cleared. A backup that predates
      * a table leaves that table alone rather than emptying it.
      */
-    fun restore(context: Context, lines: Sequence<String>, schemaVersion: Int? = null): Result {
+    fun restore(
+        context: Context,
+        lines: Sequence<String>,
+        schemaVersion: Int? = null,
+        // The only tables this restore may write, or null for whatever the file
+        // carries. [MasterData] names its four, so that picking a whole-database
+        // backup on the Restore Masters button cannot quietly replace the shop's
+        // bills as well as its catalogue.
+        only: Set<String>? = null
+    ): Result {
         val db = DatabaseHelper.getInstance(context).writableDatabase
-        val present = tablesIn(db).toSet()
+        val present = tablesIn(db, only = only).toSet()
 
         var rows = 0
         var skipped = 0
@@ -284,6 +384,22 @@ object DatabaseBackup {
     private fun tableOf(statement: String): String? =
         Regex("""^INSERT\s+INTO\s+["']?([A-Za-z0-9_]+)["']?\s*\(""", RegexOption.IGNORE_CASE)
             .find(statement)?.groupValues?.get(1)
+
+    /**
+     * The tables a backup says it was taken without, or an empty set for one that
+     * carries the whole database.
+     *
+     * Read from the file's own header so the restore can describe what it is about
+     * to do accurately: a safety backup that does not carry the users is not going
+     * to replace them, and a warning that said it would is a warning nobody can act
+     * on. A file with no such line is a whole-database backup - which is every one
+     * taken before this existed.
+     */
+    fun excludedIn(sql: String): Set<String> = sql.lineSequence()
+        .firstOrNull { it.trimStart().startsWith(EXCLUDED_TAG) }
+        ?.substringAfter(EXCLUDED_TAG)
+        ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
+        .orEmpty()
 
     /** The schema version the backup was taken from, if it says. */
     fun schemaVersionOf(sql: String): Int? = sql.lineSequence()

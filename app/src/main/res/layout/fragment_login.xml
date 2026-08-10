@@ -159,7 +159,7 @@
             app:layout_constraintTop_toBottomOf="@id/tvForgot"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent"/>
+            app:layout_constraintBottom_toTopOf="@id/tvRestoreData"/>
 
         <TextView
             android:id="@+id/tvPending"
@@ -173,6 +173,34 @@
             android:layout_marginBottom="16dp"
             android:visibility="gone"
             app:layout_constraintTop_toBottomOf="@id/tvForgot"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintBottom_toTopOf="@id/tvRestoreData"/>
+
+        <!--
+          The other way into a till that has no data yet: restore a backup taken from
+          the tablet that used to hold the books.
+
+          On its own line under Register rather than sharing one with it. The two
+          labels together are wider than a phone's login card, and a row that cannot
+          fit them clips the first - which reads as Register having gone missing.
+
+          Unlike Register it is always shown. A shop reaching for it has usually just
+          lost the device that held their data, which is the moment a recovery route
+          must not be hidden behind a state check that needs the internet to resolve.
+        -->
+        <TextView
+            android:id="@+id/tvRestoreData"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Restore Data"
+            android:textColor="@color/primary_blue"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="16dp"
+            android:clickable="true"
+            android:focusable="true"
+            app:layout_constraintTop_toBottomOf="@id/tvRegister"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"/>

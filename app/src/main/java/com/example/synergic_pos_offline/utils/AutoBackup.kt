@@ -151,6 +151,35 @@ object AutoBackup {
         }
     }
 
+    /**
+     * A backup taken immediately before something that cannot be undone, named after
+     * the thing it precedes.
+     *
+     * Every irreversible action on the About screen goes through here first, so the
+     * state of the till a second before it was changed is always on disk. The name
+     * carries [action] because that is what makes the file findable afterwards: an
+     * operator looking for "the one from before I erased the bills" should not have
+     * to work it out from a timestamp.
+     *
+     * Everything is carried except who the device is - the users and the store
+     * registration, see [DatabaseBackup.DEVICE_IDENTITY]. This is the one backup that
+     * is meant to be restored onto the device it came from, minutes later, and
+     * rolling the login list back to that moment alongside the settings is not what
+     * anybody pressing undo is asking for.
+     *
+     * Throws if the file could not be written, and the caller is expected to let it:
+     * an irreversible action whose safety net silently failed to deploy should not
+     * go ahead. Blocking - it reads the whole database.
+     */
+    fun backupBefore(context: Context, action: String): String {
+        val now = Date()
+        return Downloads.stream(
+            context, fileName(now, action), "application/sql", folderFor(now)
+        ) { writer ->
+            DatabaseBackup.exportTo(context, writer, DatabaseBackup.DEVICE_IDENTITY)
+        }
+    }
+
     // ---- Naming --------------------------------------------------------------
 
     /** The day's folder: `POSbackup/2026-08-08`. */
@@ -158,12 +187,21 @@ object AutoBackup {
         "$FOLDER/" + SimpleDateFormat("yyyy-MM-dd", Locale.US).format(at)
 
     /**
-     * The file's name, carrying the date and the time it was taken.
+     * The file's name, carrying the date and the time it was taken - and, for one
+     * taken ahead of an irreversible action, what that action was.
      *
      * Dashes rather than colons in the time: a colon is not a legal character in a
      * file name on the storage this lands on, and a name the system has to sanitise
-     * is a name the operator cannot search for.
+     * is a name the operator cannot search for. [action] is put through the same
+     * treatment and goes last, so the day's files still sort into the order they
+     * were taken in.
      */
-    fun fileName(at: Date): String =
-        "synergic_backup_" + SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(at) + ".sql"
+    fun fileName(at: Date, action: String? = null): String {
+        val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(at)
+        val suffix = action?.trim()?.takeIf { it.isNotEmpty() }
+            ?.lowercase(Locale.US)?.replace(Regex("[^a-z0-9]+"), "_")?.trim('_')
+            ?.let { "_before_$it" }
+            .orEmpty()
+        return "synergic_backup_$stamp$suffix.sql"
+    }
 }
