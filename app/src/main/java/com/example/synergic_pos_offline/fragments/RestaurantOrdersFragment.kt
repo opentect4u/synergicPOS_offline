@@ -897,7 +897,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val product: ProductEntryDialog.Product, val foodType: String, val spice: String,
         /** The scanned code, kept beside the product now that its SKU is its own id
          *  - both are searched on, so a scan into the search box still finds it. */
-        val barcode: String = ""
+        val barcode: String = "",
+        /** Preparation time from the master (e.g. "15" / "15 min"); shown on the tile. */
+        val prepTime: String = ""
     )
 
     /** Loads the current store's products (rate + tax split + category + food/spice), for the grid. */
@@ -921,7 +923,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val out = mutableListOf<GridProduct>()
         db.query(
             "md_products",
-            arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id", "food_type", "spice_level", "availability"),
+            arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id", "food_type", "spice_level", "availability", "prep_time"),
             (if (store != null) "store_id = ?" else null),
             store?.let { arrayOf(it.toString()) },
             null, null, "product_name ASC"
@@ -939,6 +941,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 val catName = cats[c.getLong(4)].orEmpty()
                 val foodType = c.getString(5).orEmpty()
                 val spice = c.getString(6).orEmpty()
+                val prepTime = c.getString(8).orEmpty()
                 var price = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
                 var disc = 0.0; var discType: String? = null; var unitId: Long? = null
                 db.query(
@@ -969,7 +972,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                             stock = com.example.synergic_pos_offline.utils.StockBadge.stateOf(level),
                             stockQty = level?.quantity ?: 0.0
                         ),
-                        foodType = foodType, spice = spice, barcode = barcode
+                        foodType = foodType, spice = spice, barcode = barcode,
+                        prepTime = prepTime
                     )
                 )
             }
@@ -1055,7 +1059,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             .value(ctx, "A", "Direct Add to Cart") == "1"
         val adapter = ProductAdapter(accent) { picked ->
             if (directAdd) {
+                val before = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
                 addToCart(picked, 1.0, picked.price)
+                // Only announce when the tap actually added (order selected, in stock),
+                // and show the running count: "1 item added", "2 items added", …
+                val after = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
+                if (after > before) toast(itemsAddedMessage(after))
                 etSearch.setText("")
             } else {
                 showProductEntry(picked) { etSearch.setText("") }
@@ -1156,6 +1165,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             holder.itemView.findViewById<TextView>(R.id.tvTileSku).text = p.sku
             bindFoodType(holder.itemView.findViewById(R.id.ivFoodType), gp.foodType)
             bindSpice(holder.itemView.findViewById(R.id.llSpice), gp.spice)
+            bindPrepTime(
+                holder.itemView.findViewById(R.id.llPrepTime),
+                holder.itemView.findViewById(R.id.tvTilePrepTime),
+                gp.prepTime
+            )
             com.example.synergic_pos_offline.utils.StockBadge.apply(
                 holder.itemView.findViewById(R.id.tvTileStock), p.stock, p.stockQty
             )
@@ -1191,6 +1205,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
             container.addView(iv)
         }
+    }
+
+    /**
+     * Preparation time on the tile (clock icon + minutes). Hidden when the product has
+     * no prep time set. A bare number is shown as "N min"; text already carrying a unit
+     * (e.g. "15 min") is shown as entered.
+     */
+    private fun bindPrepTime(container: LinearLayout, label: TextView, prepTime: String) {
+        val value = prepTime.trim()
+        if (value.isEmpty()) {
+            container.visibility = View.GONE
+            return
+        }
+        label.text = if (value.all { it.isDigit() }) "$value min" else value
+        container.visibility = View.VISIBLE
     }
 
     // ---- Item detail popup + cart ------------------------------------------
@@ -1252,6 +1281,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (order.id.contains(" ")) subTableDao.setStatus(order.id, "Occupied")
         reloadItems(order)
         renderCart()
+    }
+
+    /** "N item(s) added" for the running Direct-Add-to-Cart toast; [total] is the
+     *  order's total quantity, shown whole when it has no fraction. */
+    private fun itemsAddedMessage(total: Double): String {
+        val display = if (total % 1.0 == 0.0) total.toInt().toString() else total.toString()
+        return "$display ${if (total == 1.0) "item" else "items"} added"
     }
 
     /** Rebuilds the order-item rows from the SELECTED order's cart and recomputes totals. */
@@ -1537,19 +1573,45 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             populateOrders(root, ThemeManager.getThemeColor(requireContext()))
             clearDetail(root)
         }
-        // Then the receipt: resolve the BILL printer and preview like the grocery flow.
-        val billPrinters = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
-            .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
-        val default = billPrinters.firstOrNull { it.isDefault }
-        val billNo = saved?.billNumber ?: com.example.synergic_pos_offline.database.BillDao(requireContext()).lastBillNumber().orEmpty()
-        when {
-            billPrinters.isEmpty() ->
-                toast("Paid — no bill printer set up to print the receipt")
-            default != null -> printGroceryStyleBill(order, default, billNo, payMethod, tendered)
-            else -> showPrinterChooser(billPrinters, "Select bill printer") {
-                printGroceryStyleBill(order, it, billNo, payMethod, tendered)
+        // Then the receipt: resolve the BILL printer and print like the grocery flow.
+        val billNo = saved?.billNumber
+            ?: com.example.synergic_pos_offline.database.BillDao(requireContext()).lastBillNumber().orEmpty()
+        // Prints the paid receipt, re-resolving the bill printer each time so the
+        // Reprint button on the completion popup works exactly the same way.
+        val printPaidReceipt: () -> Unit = {
+            val billPrinters = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
+                .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
+            val default = billPrinters.firstOrNull { it.isDefault }
+            when {
+                billPrinters.isEmpty() ->
+                    toast("Paid — no bill printer set up to print the receipt")
+                default != null -> printGroceryStyleBill(order, default, billNo, payMethod, tendered)
+                else -> showPrinterChooser(billPrinters, "Select bill printer") {
+                    printGroceryStyleBill(order, it, billNo, payMethod, tendered)
+                }
             }
         }
+        printPaidReceipt()
+        // Like the grocery checkout: a completion popup offering Reprint / Start New Sale.
+        showPaidCompletionDialog(billNo, printPaidReceipt)
+    }
+
+    /**
+     * Post-payment popup mirroring the grocery checkout: confirms the sale with its
+     * bill number and offers Reprint or Start New Sale. Start New Sale just closes it —
+     * the table is already settled and the Orders screen is ready for the next order.
+     */
+    private fun showPaidCompletionDialog(billNo: String, reprint: () -> Unit) {
+        com.example.synergic_pos_offline.utils.DialogUtils.showConfirm(
+            context = requireContext(),
+            title = "Payment complete",
+            message = if (billNo.isNotBlank()) "Bill No: $billNo" else "The bill has been settled.",
+            positiveText = "Start New Sale",
+            negativeText = "Reprint",
+            iconRes = R.drawable.ic_check,
+            onConfirm = { },
+            onCancel = { reprint() }
+        )
     }
 
     /**
