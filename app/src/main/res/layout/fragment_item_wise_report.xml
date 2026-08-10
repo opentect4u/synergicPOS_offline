@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Bill Wise Report: a date range in, every bill of that period out, with the
-  period's totals under them. One screen for Restaurant and Grocery both - a
+  Item Wise Report: a date range in, every item sold in that period out, with
+  the period's totals under them. One screen for Restaurant and Grocery both - a
   settled restaurant order is written to td_bills exactly as a grocery sale is.
 
-  The table is eight columns wide, which no tablet shows at a readable size, so it
-  scrolls sideways inside its card. The summary sits outside that scroll: it is the
+  The table is four columns wide, and the item name takes whatever room the
+  figures leave. The summary sits outside that scroll: it is the
   part of the report most often wanted, and it must not be somewhere off to the
   right.
 -->
@@ -105,7 +105,7 @@
                         app:cornerRadius="12dp" />
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPrintReport"
+                        android:id="@+id/btnPrintItemReport"
                         style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                         android:layout_width="wrap_content"
                         android:layout_height="52dp"
@@ -123,7 +123,7 @@
 
         <!-- Nothing generated yet, or a period with no bills in it -->
         <LinearLayout
-            android:id="@+id/llReportEmpty"
+            android:id="@+id/llItemReportEmpty"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
@@ -139,7 +139,7 @@
                 android:contentDescription="No report yet" />
 
             <TextView
-                android:id="@+id/tvReportEmptyTitle"
+                android:id="@+id/tvItemReportEmptyTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
@@ -149,7 +149,7 @@
                 android:textColor="@color/text_main" />
 
             <TextView
-                android:id="@+id/tvReportEmptyHint"
+                android:id="@+id/tvItemReportEmptyHint"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
@@ -161,7 +161,7 @@
 
         <!-- The report -->
         <LinearLayout
-            android:id="@+id/llReportResult"
+            android:id="@+id/llItemReportResult"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
@@ -170,7 +170,7 @@
             android:visibility="gone">
 
             <TextView
-                android:id="@+id/tvReportPeriod"
+                android:id="@+id/tvItemReportPeriod"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="8dp"
@@ -187,7 +187,7 @@
                 app:cardBackgroundColor="@color/white">
 
                 <HorizontalScrollView
-                    android:id="@+id/hsvReportTable"
+                    android:id="@+id/hsvItemReportTable"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:scrollbars="none">
@@ -200,7 +200,7 @@
                         <!-- Filled by the fragment, so the header cannot drift from
                              the rows it labels: both are built from one column list. -->
                         <LinearLayout
-                            android:id="@+id/llReportHeader"
+                            android:id="@+id/llItemReportHeader"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:orientation="horizontal" />
@@ -216,7 +216,7 @@
                              set in code to the columns' total, so it scrolls
                              sideways with the header above it. -->
                         <androidx.recyclerview.widget.RecyclerView
-                            android:id="@+id/rvReportRows"
+                            android:id="@+id/rvItemReportRows"
                             android:layout_width="wrap_content"
                             android:layout_height="0dp"
                             android:layout_weight="1"
@@ -252,7 +252,7 @@
                     <!-- One row per figure, built by the fragment from the same
                          report object the rows and the printout come from. -->
                     <LinearLayout
-                        android:id="@+id/llReportSummary"
+                        android:id="@+id/llItemReportSummary"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"

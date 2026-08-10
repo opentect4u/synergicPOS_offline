@@ -32,11 +32,62 @@ object Downloads {
      * Downloads directory instead - reachable over USB and by a file manager,
      * without stopping to ask.
      */
-    fun save(context: Context, fileName: String, content: String): String =
+    /**
+     * Writes a file to Downloads a piece at a time.
+     *
+     * For anything that could be large - a whole database, not a product list - so
+     * the file is never held in memory in one piece. [write] is handed a writer and
+     * called once; whatever it writes is the file.
+     */
+    fun stream(
+        context: Context,
+        fileName: String,
+        mimeType: String,
+        // Folders under Downloads to put it in, e.g. "POSbackup/2026-08-08". Created
+        // as needed; empty means Downloads itself.
+        folder: String = "",
+        write: (java.io.Writer) -> Unit
+    ): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val relative = if (folder.isBlank()) Environment.DIRECTORY_DOWNLOADS
+            else "${Environment.DIRECTORY_DOWNLOADS}/${folder.trim('/')}"
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                // MediaStore creates the folders on the way in; there is no mkdirs to
+                // call and no permission to ask for.
+                put(MediaStore.Downloads.RELATIVE_PATH, relative)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val resolver = context.contentResolver
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("could not create file")
+            resolver.openOutputStream(uri)?.use { out ->
+                out.bufferedWriter().use { write(it) }
+            }
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            "$relative/$fileName"
+        } else {
+            val base = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            val dir = if (folder.isBlank()) base else File(base, folder).apply { mkdirs() }
+            File(dir, fileName).apply { bufferedWriter().use { write(it) } }.absolutePath
+        }
+
+    fun save(
+        context: Context,
+        fileName: String,
+        content: String,
+        // Defaults to CSV, which is what the two export buttons produce; the database
+        // backup is SQL and says so, or a file manager offers to open it in a
+        // spreadsheet.
+        mimeType: String = "text/csv"
+    ): String =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-                put(MediaStore.Downloads.MIME_TYPE, "text/csv")
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
             val resolver = context.contentResolver

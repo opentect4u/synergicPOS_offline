@@ -153,15 +153,18 @@ class BillWiseReportRenderer(context: Context) {
             summary.removeAllViews()
             // The parts first, then the adjustment, then what they came to - the
             // order the figures actually add up in.
-            listOf(
-                "TOTAL BILLS" to report.billCount.toString(),
-                "TOTAL MRP" to money(report.totalMrp),
-                "TOTAL CGST" to money(report.totalCgst),
-                "TOTAL SGST" to money(report.totalSgst),
-                "TOTAL IGST" to money(report.totalIgst),
-                "TOTAL DISCOUNT" to money(report.totalDiscount),
-                "TOTAL ROUND OFF" to money(report.totalRoundOff)
-            ).forEach { (label, value) -> summary.addView(amountRow(label, value)) }
+            buildList {
+                add("TOTAL BILLS" to report.billCount.toString())
+                add("TOTAL MRP" to money(report.totalMrp))
+                add("TOTAL CGST" to money(report.totalCgst))
+                add("TOTAL SGST" to money(report.totalSgst))
+                add("TOTAL IGST" to money(report.totalIgst))
+                // Only where the period holds VAT bills - see Report.hasVat. Without
+                // this their tax would be missing from the totals altogether.
+                if (report.hasVat) add("TOTAL VAT" to money(report.totalVat))
+                add("TOTAL DISCOUNT" to money(report.totalDiscount))
+                add("TOTAL ROUND OFF" to money(report.totalRoundOff))
+            }.forEach { (label, value) -> summary.addView(amountRow(label, value)) }
             summary.addView(
                 amountRow("TOTAL BILL AMOUNT", money(report.totalAmount), bold = true, valueSize = PrintType.TOTAL_SP)
             )
@@ -246,7 +249,10 @@ class BillWiseReportRenderer(context: Context) {
             text = value
             textSize = metrics.textSize
             gravity = if (alignEnd) Gravity.END else Gravity.START
-            isSingleLine = true
+            // maxLines, never isSingleLine: the latter also turns on horizontal
+            // scrolling, and a right-aligned scrolling cell draws its text outside
+            // itself - the figure prints blank in a cell of exactly the right width.
+            maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             // A gutter before each fixed column: a right-aligned value would
             // otherwise touch the column before it.
@@ -282,8 +288,17 @@ class BillWiseReportRenderer(context: Context) {
         metrics: TableMetrics,
         paperDots: Int
     ): View {
-        val text = "  CGST ${money(line.cgst)}  SGST ${money(line.sgst)}" +
-            "  IGST ${money(line.igst)}  DISC ${money(line.discount)}"
+        // Broken out under the regime this bill was actually raised under, read from
+        // the settings snapshot frozen onto it. A VAT bill printed with CGST and
+        // SGST columns of 0.00 would read as a bill that charged no tax, when it
+        // charged VAT; and the till may since have been switched to the other
+        // regime, which is exactly what the snapshot is there to survive.
+        val text = if (line.isVat) {
+            "  VAT ${money(line.vat)}  DISC ${money(line.discount)}"
+        } else {
+            "  CGST ${money(line.cgst)}  SGST ${money(line.sgst)}" +
+                "  IGST ${money(line.igst)}  DISC ${money(line.discount)}"
+        }
 
         val displayMetrics = ctx.resources.displayMetrics
         val widthDp = CARD_WIDTH_DP.toDouble() * paperDots / REFERENCE_PAPER_DOTS
@@ -301,7 +316,7 @@ class BillWiseReportRenderer(context: Context) {
         return TextView(ctx).apply {
             this.text = text
             textSize = size
-            isSingleLine = true
+            maxLines = 1
             setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
             setTextColor(0xFF555555.toInt())
             setPadding(0, 0, 0, (3 * displayMetrics.density).toInt())

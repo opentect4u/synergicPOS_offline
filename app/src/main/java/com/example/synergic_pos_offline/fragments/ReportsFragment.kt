@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.MainActivity
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
 
@@ -74,7 +75,14 @@ class ReportsFragment : Fragment() {
             "Time Wise Item Report"
         )
 
-        val reportItems = titles.mapIndexed { index, title ->
+        // Stock Report only exists where there is a count to report on: with stock
+        // tracking off there are no quantities, and the tile would open a screen
+        // that could only ever show zeroes.
+        val shown = titles.filter {
+            it != STOCK_REPORT || GeneralSettingsDao.isStockEnabled(requireContext())
+        }
+
+        val reportItems = shown.mapIndexed { index, title ->
             val (bg, icon) = palette[index % palette.size]
             ReportItem(title, android.R.drawable.ic_menu_view, bg, icon)
         }
@@ -82,10 +90,17 @@ class ReportsFragment : Fragment() {
         rvReports.adapter = ReportsAdapter(reportItems) { item ->
             when (item.title) {
                 "Bill Wise Report" -> openFragment(BillWiseReportFragment())
+                "Item Wise Report" -> openFragment(ItemWiseReportFragment())
+                STOCK_REPORT -> openFragment(StockReportFragment())
                 "Customer Ledger" -> openFragment(CustomerLedgerFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    private companion object {
+        /** Named once: the tile is filtered by this and opened by it. */
+        const val STOCK_REPORT = "Stock Report"
     }
 
     private fun openFragment(fragment: Fragment) {
