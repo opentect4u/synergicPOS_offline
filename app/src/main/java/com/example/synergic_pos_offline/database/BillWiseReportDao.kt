@@ -2,6 +2,8 @@ package com.example.synergic_pos_offline.database
 
 import android.content.Context
 import com.example.synergic_pos_offline.utils.BillRounding
+import com.example.synergic_pos_offline.utils.BillSettingsSnapshot
+import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.SessionManager
 
 /**
@@ -38,11 +40,28 @@ class BillWiseReportDao(context: Context) {
         val cgst: Double,
         val sgst: Double,
         val igst: Double,
+        val vat: Double,
         val discount: Double,
         val roundOff: Double,
         /** What the customer actually paid - the bill's net. */
-        val netAmount: Double
-    )
+        val netAmount: Double,
+        /**
+         * The tax regime this bill was raised under, read from the settings snapshot
+         * frozen onto it at the time - not from what the till is set to now.
+         *
+         * A shop that has since moved from VAT to GST still has VAT bills in its
+         * books, and their tax is a VAT amount however the till is configured today.
+         * Reporting them under today's regime would put a figure in the wrong column
+         * or, worse, in none at all.
+         */
+        val regime: GstCalculator.TaxRegime
+    ) {
+        /** True where this bill's tax is GST - the CGST / SGST / IGST columns apply. */
+        val isGst: Boolean get() = regime == GstCalculator.TaxRegime.GST
+
+        /** True where this bill's tax is VAT - the CGST / SGST / IGST columns do not. */
+        val isVat: Boolean get() = regime == GstCalculator.TaxRegime.VAT
+    }
 
     /**
      * The whole report: the period asked for and every bill inside it.
@@ -65,9 +84,20 @@ class BillWiseReportDao(context: Context) {
         val totalCgst: Double get() = total { it.cgst }
         val totalSgst: Double get() = total { it.sgst }
         val totalIgst: Double get() = total { it.igst }
+        val totalVat: Double get() = total { it.vat }
         val totalDiscount: Double get() = total { it.discount }
         val totalRoundOff: Double get() = total { it.roundOff }
         val totalAmount: Double get() = total { it.netAmount }
+
+        /**
+         * Whether any bill in the period was raised under VAT.
+         *
+         * The VAT column and its total only appear when there is VAT to show, the
+         * way the bill's own DISC column only appears when a line was discounted: a
+         * GST-only shop should not be reading a column of zeroes, and a shop with
+         * VAT bills in the period must not have that tax quietly left off.
+         */
+        val hasVat: Boolean get() = lines.any { it.isVat || it.vat > 0.0 }
 
         val isEmpty: Boolean get() = lines.isEmpty()
 
@@ -104,8 +134,9 @@ class BillWiseReportDao(context: Context) {
                        b.bill_type, ''),
                    COALESCE(b.tot_price, 0), COALESCE(b.tot_cgst_amount, 0),
                    COALESCE(b.tot_sgst_amount, 0), COALESCE(b.tot_igst_amount, 0),
+                   COALESCE(b.tot_vat_amount, 0),
                    COALESCE(b.tot_discount_amount, 0), COALESCE(b.tot_round_off_amount, 0),
-                   COALESCE(b.net_amount, 0)
+                   COALESCE(b.net_amount, 0), b.settings_snapshot
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
               AND COALESCE(b.is_voided, 0) = 0
@@ -121,23 +152,54 @@ class BillWiseReportDao(context: Context) {
         val lines = mutableListOf<Line>()
         helper.readableDatabase.rawQuery(sql, args.toTypedArray()).use { c ->
             while (c.moveToNext()) {
+                val cgst = c.getDouble(4)
+                val sgst = c.getDouble(5)
+                val igst = c.getDouble(6)
+                val vat = c.getDouble(7)
                 lines.add(
                     Line(
                         billNumber = c.getString(0).orEmpty().ifBlank { "-" },
                         date = c.getString(1).orEmpty(),
                         payMode = c.getString(2).orEmpty().ifBlank { "-" }.uppercase(),
                         mrp = c.getDouble(3),
-                        cgst = c.getDouble(4),
-                        sgst = c.getDouble(5),
-                        igst = c.getDouble(6),
-                        discount = c.getDouble(7),
-                        roundOff = c.getDouble(8),
-                        netAmount = c.getDouble(9)
+                        cgst = cgst,
+                        sgst = sgst,
+                        igst = igst,
+                        vat = vat,
+                        discount = c.getDouble(8),
+                        roundOff = c.getDouble(9),
+                        netAmount = c.getDouble(10),
+                        regime = regimeOf(c.getString(11), cgst + sgst + igst, vat)
                     )
                 )
             }
         }
         return Report(fromDate, toDate, lines)
+    }
+
+    /**
+     * Which regime a bill was raised under.
+     *
+     * The settings snapshot frozen onto the bill is the answer wherever there is
+     * one - it is the record of how the sale was actually taxed, and it survives the
+     * till being reconfigured afterwards. This is the same source
+     * [com.example.synergic_pos_offline.utils.BillReceiptRenderer] reads when it
+     * reprints the bill, so a reprint and the report cannot disagree about it.
+     *
+     * A bill saved before snapshots existed has none, and the *live* settings are no
+     * guide to how it was taxed - they may have changed in between, which is the
+     * whole reason snapshots were added. So it is read off the money instead: tax
+     * booked as VAT means it was a VAT bill, tax booked as CGST/SGST/IGST means GST,
+     * and no tax at all means neither applied.
+     */
+    private fun regimeOf(snapshotJson: String?, gstAmount: Double, vatAmount: Double):
+        GstCalculator.TaxRegime {
+        BillSettingsSnapshot.parse(snapshotJson)?.let { return it.taxRegime }
+        return when {
+            vatAmount > 0.0 -> GstCalculator.TaxRegime.VAT
+            gstAmount > 0.0 -> GstCalculator.TaxRegime.GST
+            else -> GstCalculator.TaxRegime.NONE
+        }
     }
 
     /** The signed-in user's store; the registration row is the fallback. */

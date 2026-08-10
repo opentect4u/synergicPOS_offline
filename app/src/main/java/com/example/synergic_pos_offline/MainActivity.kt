@@ -35,6 +35,19 @@ class MainActivity : AppCompatActivity() {
         init {
             android.util.Log.e("SynergicPOS", "MainActivity CLASS LOADED")
         }
+
+        /**
+         * A short wait before the first automatic-backup check, so a launch is not
+         * competing with the seeder and the first screen for the database.
+         */
+        private const val AUTO_BACKUP_FIRST_CHECK_MS = 30_000L
+
+        /**
+         * How often the question is asked after that. Well under the shortest
+         * interval that can be set, so an hourly backup lands within a few minutes
+         * of its hour rather than up to an hour late.
+         */
+        private const val AUTO_BACKUP_CHECK_MS = 5 * 60_000L
     }
 
     private lateinit var drawerLayout: DrawerLayout
@@ -61,6 +74,11 @@ class MainActivity : AppCompatActivity() {
         // The APK ships with the master table *structure* only — no demo/master
         // data is bundled. Tables are created empty by DatabaseHelper.onCreate and
         // filled by registration/login sync and hand entry, so nothing is seeded here.
+
+        // Automatic backup, if it is switched on. Started here and stopped in
+        // onDestroy, so it runs for as long as the till is open and not a moment
+        // after - see [AutoBackup] for what that does and does not cover.
+        startAutoBackupWatch()
 
         drawerLayout = findViewById(R.id.drawerLayout)
         rvSidebar = findViewById(R.id.rvSidebar)
@@ -110,6 +128,45 @@ class MainActivity : AppCompatActivity() {
                 .commit()
         }
         android.util.Log.e("SynergicPOS", "!!! MainActivity onCreate FINISHED !!!")
+    }
+
+    // ---- Automatic backup ---------------------------------------------------
+
+    private val autoBackupHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * Asks [AutoBackup] whether a backup is due, now and every [AUTO_BACKUP_CHECK_MS]
+     * after.
+     *
+     * A check rather than a timer set to the interval: the app is opened and closed
+     * through the day, and a timer started at launch would only ever fire for a till
+     * left running for the whole gap. Asking often and letting the elapsed time
+     * decide catches up a backup missed while the app was shut, on the next launch.
+     *
+     * The check itself is a single settings read on the main thread; only a backup
+     * that is actually due goes to the worker.
+     */
+    private fun startAutoBackupWatch() {
+        val tick = object : Runnable {
+            override fun run() {
+                Thread {
+                    val outcome = runCatching { AutoBackup.runIfDue(applicationContext) }
+                        .getOrElse { AutoBackup.Outcome(taken = false, error = it.message) }
+                    if (outcome.taken) {
+                        android.util.Log.i("AutoBackup", "backed up to ${outcome.savedTo}")
+                    } else outcome.error?.let {
+                        android.util.Log.e("AutoBackup", "automatic backup failed: $it")
+                    }
+                }.start()
+                autoBackupHandler.postDelayed(this, AUTO_BACKUP_CHECK_MS)
+            }
+        }
+        autoBackupHandler.postDelayed(tick, AUTO_BACKUP_FIRST_CHECK_MS)
+    }
+
+    override fun onDestroy() {
+        autoBackupHandler.removeCallbacksAndMessages(null)
+        super.onDestroy()
     }
 
     /** Updates the global header title/subtitle and back-button for [f]. */
@@ -319,6 +376,8 @@ class MainActivity : AppCompatActivity() {
             // Serves both modes: a settled restaurant order is written to td_bills
             // by the same call a grocery sale is, so there is one report to open.
             "Bill Wise Report" -> navigateTo(BillWiseReportFragment())
+            "Item Wise Report" -> navigateTo(ItemWiseReportFragment())
+            "Stock Report" -> navigateTo(StockReportFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")
                     com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment()
@@ -359,6 +418,8 @@ class MainActivity : AppCompatActivity() {
         // Sale Return and Advance Payment are grocery-only flows; hidden in Restaurant.
         val isRestaurant = SettingsCache.value(context, "G", "Mode") == "R"
 
+        // Stock Report is dropped where stock is not tracked, the same way the tile
+        // on the Reports screen is: with no count kept there is nothing to report.
         val reportTitles = listOf(
             "Bill Wise Report", "Item Wise Report", "Operator Wise Report", "Void Bill Report",
             "Tax Report", "Duplicate Bill Report", "Stock Report", "Item Bill Report",
@@ -367,7 +428,7 @@ class MainActivity : AppCompatActivity() {
             "Customer Ledger", "Profit & Loss Report", "KOT Cancel Report", "Day-Wise Report",
             "Month Wise Report", "Year Wise Report", "UDF Wise Item Report", "Customer Item Wise RPT",
             "Time Wise Item Report"
-        )
+        ).filter { it != "Stock Report" || GeneralSettingsDao.isStockEnabled(context) }
 
         val databaseSettingsNodes = mutableListOf(
             TreeNode("Category/Department"),

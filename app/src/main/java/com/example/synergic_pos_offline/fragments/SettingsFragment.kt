@@ -169,20 +169,20 @@ class SettingsFragment : Fragment() {
             // needed again) - "Operating Printer" now takes over the "Printer Settings" name
             // and spot in the grid, routed via its own key so the two don't collide below.
             SettingsItem("Printer Settings", R.drawable.ic_print, R.color.menu_report, R.color.menu_report_icon, key = "Operating Printer"),
-            SettingsItem("App Settings", android.R.drawable.ic_menu_manage, R.color.menu_sale, R.color.menu_sale_icon)
+            SettingsItem("App Settings", android.R.drawable.ic_menu_manage, R.color.menu_sale, R.color.menu_sale_icon),
+            SettingsItem("About App", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon)
         )
 
+        // One decision, on the tile's key. It used to be two `when` blocks running
+        // one after the other, so opening any settings screen also fell through the
+        // second and toasted "Opening ..." over the screen it had just opened.
         rvSettings.adapter = SettingsAdapter(settingsItems) { item ->
-            val fragment: Fragment? = when (item.title) {
-                "General Settings" -> GeneralSettingsFragment()
-                "Bill Settings" -> BillSettingsFragment()
-                "Tax Settings" -> TaxSettingsFragment()
-                "App Settings" -> AppSettingsFragment()
-                else -> null
-            }
-            if (fragment != null) openFragment(fragment)
-            else Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             when (item.key) {
+                "General Settings" -> openFragment(GeneralSettingsFragment())
+                "Bill Settings" -> openFragment(BillSettingsFragment())
+                "Tax Settings" -> openFragment(TaxSettingsFragment())
+                "App Settings" -> openFragment(AppSettingsFragment())
+                "About App" -> openFragment(AboutAppFragment())
                 "Printer Settings" -> openFragment(PrinterSettingsFragment())
                 "Operating Printer" -> openFragment(PrintSettingsFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()

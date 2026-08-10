@@ -331,7 +331,10 @@ class LedgerReceiptRenderer(context: Context) {
     private fun divider(): View = TextView(ctx).apply {
         text = PrintType.RULE
         textSize = PrintType.BODY_SP
-        isSingleLine = true
+        // maxLines rather than isSingleLine, which also turns on horizontal
+        // scrolling. The rule is deliberately wider than the paper and is meant to be
+        // clipped square at the edge, not scrolled.
+        maxLines = 1
         ellipsize = null
         setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
         setTextColor(0xFF222222.toInt())

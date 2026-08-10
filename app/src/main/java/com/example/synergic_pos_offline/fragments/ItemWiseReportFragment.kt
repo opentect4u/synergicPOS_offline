@@ -16,8 +16,9 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
-import com.example.synergic_pos_offline.database.BillWiseReportDao
-import com.example.synergic_pos_offline.utils.BillWiseReportPrinter
+import com.example.synergic_pos_offline.database.ItemWiseReportDao
+import com.example.synergic_pos_offline.database.StockDao
+import com.example.synergic_pos_offline.utils.ItemWiseReportPrinter
 import com.example.synergic_pos_offline.utils.ReportTable
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
@@ -28,27 +29,24 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Bill Wise Report - every bill of a period, what each was made of, and the totals
- * of the whole period.
+ * Item Wise Report - what sold over a period, a line per item.
  *
- * The same screen in Restaurant and in Grocery. A settled restaurant order is
- * persisted as a bill through the same path a grocery sale takes, so there is one
- * set of books to report on and this reads it - see [BillWiseReportDao].
+ * The Bill Wise Report's twin, down to the date range, the table, the summary and
+ * the Print button; the difference is which way the books are read. See
+ * [ItemWiseReportDao].
  *
- * What is on screen and what comes out of the printer are rendered from one
- * [BillWiseReportDao.Report], generated once when Generate is pressed. Printing does
- * not re-query: an operator prints what they were looking at, and a sale landing
- * between the two would otherwise put a figure on the paper that was never on the
- * screen.
+ * Screen and printout are rendered from one [ItemWiseReportDao.Report], generated
+ * when Generate is pressed, so printing sends what was looked at rather than a
+ * fresh query that a sale could have changed underneath.
  */
-class BillWiseReportFragment : Fragment(), TitledScreen {
+class ItemWiseReportFragment : Fragment(), TitledScreen {
 
-    override val screenTitle = "Bill Wise Report"
+    override val screenTitle = "Item Wise Report"
 
-    private val dao: BillWiseReportDao by lazy { BillWiseReportDao(requireContext()) }
+    private val dao: ItemWiseReportDao by lazy { ItemWiseReportDao(requireContext()) }
 
     /** The generated report, held so Print sends exactly what was generated. */
-    private var report: BillWiseReportDao.Report? = null
+    private var report: ItemWiseReportDao.Report? = null
 
     private lateinit var root: View
 
@@ -57,19 +55,13 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
      * has been laid out and [ReportTable] can share out whatever room is spare.
      */
     private var columnPx: IntArray = IntArray(0)
-
-    /**
-     * The columns actually drawn. [BASE_COLUMNS] plus VAT where the period holds a
-     * bill raised under it - see [BillWiseReportDao.Report.hasVat].
-     */
-    private var columns: List<Column> = BASE_COLUMNS
     private lateinit var etFrom: TextInputEditText
     private lateinit var etTo: TextInputEditText
     private lateinit var btnPrint: MaterialButton
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
-    ): View = inflater.inflate(R.layout.fragment_bill_wise_report, container, false)
+    ): View = inflater.inflate(R.layout.fragment_item_wise_report, container, false)
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -77,10 +69,9 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
 
         etFrom = view.findViewById(R.id.etFrom)
         etTo = view.findViewById(R.id.etTo)
-        btnPrint = view.findViewById(R.id.btnPrintReport)
+        btnPrint = view.findViewById(R.id.btnPrintItemReport)
 
-        // Opens on today, the range asked for far more often than any other, so
-        // Generate works on the first tap rather than after two calendars.
+        // Opens on today, the range asked for far more often than any other.
         val today = Calendar.getInstance().time
         etFrom.setText(iso(today))
         etTo.setText(iso(today))
@@ -90,12 +81,11 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
 
         view.findViewById<MaterialButton>(R.id.btnGenerate).setOnClickListener { generate() }
         btnPrint.setOnClickListener {
-            report?.let { r -> BillWiseReportPrinter.print(requireContext(), r) { if (isAdded) toast(it) } }
+            report?.let { r -> ItemWiseReportPrinter.print(requireContext(), r) { if (isAdded) toast(it) } }
         }
 
         ThemeManager.applyTheme(view)
-        // ThemeManager fills every MaterialButton; Print is the secondary action here
-        // and keeps its outlined look.
+        // ThemeManager fills every MaterialButton; Print is the secondary action.
         val accent = ThemeManager.getThemeColor(requireContext())
         btnPrint.apply {
             backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
@@ -124,34 +114,33 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
 
         if (result.isEmpty) {
             showEmpty(
-                "No bills in this period",
-                "Nothing was billed between ${pretty(from)} and ${pretty(to)}."
+                "Nothing sold in this period",
+                "No items were billed between ${pretty(from)} and ${pretty(to)}."
             )
             return
         }
         bind(result)
     }
 
-    private fun bind(r: BillWiseReportDao.Report) {
-        root.findViewById<View>(R.id.llReportEmpty).visibility = View.GONE
-        root.findViewById<View>(R.id.llReportResult).visibility = View.VISIBLE
+    private fun bind(r: ItemWiseReportDao.Report) {
+        root.findViewById<View>(R.id.llItemReportEmpty).visibility = View.GONE
+        root.findViewById<View>(R.id.llItemReportResult).visibility = View.VISIBLE
         btnPrint.isEnabled = true
 
-        root.findViewById<TextView>(R.id.tvReportPeriod).text =
-            "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.billCount} bill(s)"
+        root.findViewById<TextView>(R.id.tvItemReportPeriod).text =
+            "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.itemCount} item(s)"
 
         // The table fills the card where there is room to spare, and keeps its
         // declared widths and scrolls where there is not - see [ReportTable]. The
         // card's width is only known once it has been laid out, so the table is
         // built at its minimums first and stretched when that width arrives.
-        columns = columnsFor(r)
-        columnPx = columns.map { dp(it.widthDp) }.toIntArray()
+        columnPx = COLUMNS.map { dp(it.widthDp) }.toIntArray()
         drawTable(r)
-        root.findViewById<View>(R.id.hsvReportTable).let { table ->
+        root.findViewById<View>(R.id.hsvItemReportTable).let { table ->
             table.post {
                 if (!isAdded) return@post
                 val available = table.width - dp(ROW_PADDING_DP) * 2
-                val stretched = ReportTable.stretch(columns.map { dp(it.widthDp) }.toIntArray(), available)
+                val stretched = ReportTable.stretch(COLUMNS.map { dp(it.widthDp) }.toIntArray(), available)
                 if (!stretched.contentEquals(columnPx)) {
                     columnPx = stretched
                     drawTable(r)
@@ -161,48 +150,32 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
     }
 
     /** Lays the header and rows out at whatever [columnPx] currently says. */
-    private fun drawTable(r: BillWiseReportDao.Report) {
-        val header = root.findViewById<LinearLayout>(R.id.llReportHeader)
+    private fun drawTable(r: ItemWiseReportDao.Report) {
+        val header = root.findViewById<LinearLayout>(R.id.llItemReportHeader)
         header.removeAllViews()
-        header.addView(tableRow(columns.map { it.label }, index = -1))
+        header.addView(tableRow(COLUMNS.map { it.label }, index = -1))
 
-        // The list is as wide as one row, not as wide as the screen: it and the
-        // header scroll sideways together inside the one HorizontalScrollView, and
-        // a header that sat still over rows that moved would label the wrong ones.
-        // The row's own side padding counts - leave it out and the list is narrower
-        // than its rows, which shifts every figure out from under its heading.
-        val rows = root.findViewById<RecyclerView>(R.id.rvReportRows)
+        // The list is as wide as one row, so it and the header scroll sideways
+        // together - a header that sat still would label the wrong figures.
+        val rows = root.findViewById<RecyclerView>(R.id.rvItemReportRows)
         rows.layoutParams = rows.layoutParams.apply {
             width = columnPx.sum() + dp(ROW_PADDING_DP) * 2
         }
         rows.layoutManager = LinearLayoutManager(requireContext())
         rows.adapter = LineAdapter(r.lines)
 
-        val summary = root.findViewById<LinearLayout>(R.id.llReportSummary)
+        val summary = root.findViewById<LinearLayout>(R.id.llItemReportSummary)
         summary.removeAllViews()
-        // Read straight off the report, in the order they add up: the parts, then
-        // the adjustment, then what the parts came to.
-        buildList {
-            add("Total Bills" to r.billCount.toString())
-            add("Total MRP" to money(r.totalMrp))
-            add("Total CGST" to money(r.totalCgst))
-            add("Total SGST" to money(r.totalSgst))
-            add("Total IGST" to money(r.totalIgst))
-            // Only where the period actually holds VAT bills, so a GST-only shop is
-            // not reading a line of zeroes - and a shop with VAT in the period does
-            // not have that tax left off the totals entirely.
-            if (r.hasVat) add("Total VAT" to money(r.totalVat))
-            add("Total Discount" to money(r.totalDiscount))
-            add("Total Round Off" to money(r.totalRoundOff))
-        }.forEach { (label, value) -> summary.addView(summaryRow(label, value)) }
-        summary.addView(summaryRow("Total Bill Amount", money(r.totalAmount), emphasised = true))
+        summary.addView(summaryRow("Total Items", r.itemCount.toString()))
+        summary.addView(summaryRow("Total Quantity", StockDao.trim(r.totalQuantity)))
+        summary.addView(summaryRow("Total Price", money(r.totalPrice), emphasised = true))
     }
 
     private fun showEmpty(title: String, hint: String) {
-        root.findViewById<View>(R.id.llReportResult).visibility = View.GONE
-        root.findViewById<View>(R.id.llReportEmpty).visibility = View.VISIBLE
-        root.findViewById<TextView>(R.id.tvReportEmptyTitle).text = title
-        root.findViewById<TextView>(R.id.tvReportEmptyHint).text = hint
+        root.findViewById<View>(R.id.llItemReportResult).visibility = View.GONE
+        root.findViewById<View>(R.id.llItemReportEmpty).visibility = View.VISIBLE
+        root.findViewById<TextView>(R.id.tvItemReportEmptyTitle).text = title
+        root.findViewById<TextView>(R.id.tvItemReportEmptyHint).text = hint
         btnPrint.isEnabled = false
     }
 
@@ -211,58 +184,28 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
     /** One column of the on-screen table: what it is called and how wide it sits. */
     private data class Column(val label: String, val widthDp: Int, val alignEnd: Boolean)
 
-    /** The columns [r] needs: the standing ones, plus VAT where the period has any. */
-    private fun columnsFor(r: BillWiseReportDao.Report): List<Column> =
-        if (!r.hasVat) BASE_COLUMNS
-        else BASE_COLUMNS.toMutableList().apply {
-            add(indexOfFirst { it.label == "IGST" } + 1, Column("VAT", 90, alignEnd = true))
-        }
-
-    /**
-     * One row's cells, in the order [columns] are drawn.
-     *
-     * A tax that did not apply to this bill prints as a dash rather than 0.00. Zero
-     * says the tax was charged and came to nothing; a dash says it was never in
-     * play, which is what a GST bill's VAT column and a VAT bill's CGST column
-     * actually mean. The regime comes from the bill's own settings snapshot, so this
-     * stays true for bills raised before the till was reconfigured.
-     */
-    private fun cellsOf(line: BillWiseReportDao.Line): List<String> = buildList {
-        add(line.billNumber)
-        add(pretty(line.date))
-        add(line.payMode)
-        add(money(line.mrp))
-        add(if (line.isVat) "-" else money(line.cgst))
-        add(if (line.isVat) "-" else money(line.sgst))
-        add(if (line.isVat) "-" else money(line.igst))
-        if (columns.any { it.label == "VAT" }) add(if (line.isVat) money(line.vat) else "-")
-        add(money(line.discount))
-        add(money(line.netAmount))
-    }
-
-    /**
-     * The rows of the report.
-     *
-     * Each row is the same nine cells in the same nine widths as the header, built
-     * by [tableRow] so there is one description of the table rather than two that
-     * have to be kept in step.
-     */
+    /** The rows of the report, recycled - a long period is a long list of items. */
     private inner class LineAdapter(
-        private val lines: List<BillWiseReportDao.Line>
+        private val lines: List<ItemWiseReportDao.Line>
     ) : RecyclerView.Adapter<LineAdapter.Holder>() {
 
         inner class Holder(val row: LinearLayout) : RecyclerView.ViewHolder(row)
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder =
-            Holder(tableRow(columns.map { "" }, index = 0) as LinearLayout)
+            Holder(tableRow(COLUMNS.map { "" }, index = 0) as LinearLayout)
 
         override fun onBindViewHolder(holder: Holder, position: Int) {
             val line = lines[position]
-            cellsOf(line).forEachIndexed { i, value ->
+            listOf(
+                line.serial.toString(),
+                line.name,
+                StockDao.trim(line.quantity),
+                money(line.price)
+            ).forEachIndexed { i, value ->
                 (holder.row.getChildAt(i) as? TextView)?.text = value
             }
-            // Zebra by where the row sits now, not by where it was built: a recycled
-            // row carries the shade of whichever row it used to be.
+            // Zebra by where the row sits now: a recycled row carries the shade of
+            // whichever row it used to be.
             holder.row.setBackgroundColor(
                 if (position % 2 == 1) Color.parseColor("#FFFFFF") else Color.parseColor("#F7F8FA")
             )
@@ -272,14 +215,8 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
     }
 
     /**
-     * Builds one row - the header when [index] is negative, otherwise a data row -
-     * from the one column list, so a heading cannot end up over the wrong figures.
-     *
-     * Every column is a fixed width rather than weighted: the row scrolls sideways,
-     * where a weighted column has no width to divide up, and the money columns have
-     * to line up down the page to be read as a column at all. The shade [index]
-     * picks is only the row's starting one - a recycled row is re-shaded for the
-     * position it lands on, see [LineAdapter].
+     * Builds one row - the header when [index] is negative - from the one column
+     * list, so a heading cannot end up over the wrong figures.
      */
     private fun tableRow(values: List<String>, index: Int): View {
         val header = index < 0
@@ -294,14 +231,14 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
                     else -> Color.parseColor("#F7F8FA")
                 }
             )
-            columns.forEachIndexed { i, column ->
+            COLUMNS.forEachIndexed { i, column ->
                 addView(TextView(context).apply {
                     layoutParams = LinearLayout.LayoutParams(columnPx[i], -2)
                     text = values.getOrNull(i).orEmpty()
                     textSize = 12f
+                    // maxLines, never isSingleLine - the latter also turns on
+                    // horizontal scrolling, which prints the cell blank.
                     maxLines = 1
-                    // A long bill number reads as shortened rather than as sliced
-                    // through the middle of a digit.
                     ellipsize = android.text.TextUtils.TruncateAt.END
                     gravity = if (column.alignEnd) Gravity.END else Gravity.START
                     setPadding(dp(8), 0, dp(8), 0)
@@ -382,25 +319,16 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         const val ROW_PADDING_DP = 6
 
         /**
-         * The table, left to right.
+         * The table, left to right - the four columns the report was asked for.
          *
-         * DATE is not one of the figures a bill-wise report is about, but a range
-         * covering more than one day is unreadable without it - every row would say
-         * what it came to and none would say when.
-         *
-         * VAT is not here: it is added by [columnsFor] only for a period that holds
-         * a bill raised under it.
+         * ITEM takes by far the most room: it is the column the report is about, and
+         * the only one whose content has no fixed length.
          */
-        val BASE_COLUMNS = listOf(
-            Column("BILL NO", 120, alignEnd = false),
-            Column("DATE", 100, alignEnd = false),
-            Column("PAY MODE", 90, alignEnd = false),
-            Column("TOTAL MRP", 100, alignEnd = true),
-            Column("CGST", 90, alignEnd = true),
-            Column("SGST", 90, alignEnd = true),
-            Column("IGST", 90, alignEnd = true),
-            Column("DISCOUNT", 100, alignEnd = true),
-            Column("TOTAL AMOUNT", 120, alignEnd = true)
+        val COLUMNS = listOf(
+            Column("SL NO", 70, alignEnd = false),
+            Column("ITEM", 260, alignEnd = false),
+            Column("QTY", 100, alignEnd = true),
+            Column("PRICE", 120, alignEnd = true)
         )
     }
 }
