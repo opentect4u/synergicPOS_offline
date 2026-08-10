@@ -797,6 +797,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
         resetBrowsing()
     }
 
+    /** "N item(s) added" for the running Direct-Add-to-Cart toast; [total] is the
+     *  cart's total quantity, shown whole when it has no fraction. */
+    private fun itemsAddedMessage(total: Double): String {
+        val display = if (total % 1.0 == 0.0) total.toInt().toString() else total.toString()
+        return "$display ${if (total == 1.0) "item" else "items"} added"
+    }
+
     /**
      * Puts the product grid back to "All Items" with an empty search box.
      *
@@ -827,7 +834,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // cart with its default rate - no popup. Each tap adds one more. Only for a
         // fresh add; editing an existing cart line still opens the dialog.
         if (!editing && SettingsCache.value(requireContext(), "A", "Direct Add to Cart") == "1") {
+            val before = cart.sumOf { it.qty }
             addToCart(p, 1.0, p.price)
+            // Only announce when the tap actually added (not blocked by stock), and
+            // show the running count so rapid taps read "1 item added", "2 items…".
+            if (cart.sumOf { it.qty } > before) toast(itemsAddedMessage(cart.sumOf { it.qty }))
             return
         }
 

@@ -182,29 +182,34 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 stockAlertQty = alertQty
             )
 
-            // Switching mode wipes the mode-specific business data - confirm first.
+            // Switching mode wipes the mode-specific business data. Because it is
+            // destructive and account-level, it is gated behind the signed-in user's
+            // password first, then the erase warning is confirmed.
             val currentMode = dao.load().mode
             if (modeVal != currentMode) {
-                DialogUtils.showConfirm(
-                    context = requireContext(),
-                    title = "Switch to ${modeVal.label}?",
-                    message = "Changing the mode will erase all current data - products, categories, " +
-                        "sections, tables, waiters, bills, KOTs, payments, sale returns and running " +
-                        "orders. This cannot be undone.",
-                    positiveText = "Erase & Switch",
-                    negativeText = "Cancel",
-                    destructive = true,
-                    onConfirm = {
-                        DatabaseHelper.getInstance(requireContext()).eraseBusinessDataForModeChange()
-                        dao.save(settings)
-                        if (modeVal == Mode.RESTAURANT) enableRestaurantDefaults()
-                        DialogUtils.showSuccess(
-                            context = requireContext(),
-                            title = "Mode changed",
-                            message = "Switched to ${modeVal.label}. All previous data was erased."
-                        )
-                    }
-                )
+                promptPasswordThenSwitch(modeVal) {
+                    DialogUtils.showConfirm(
+                        context = requireContext(),
+                        title = "Switch to ${modeVal.label}?",
+                        message = "Changing the mode will erase all current data - products, categories, " +
+                            "sections, tables, waiters, bills, KOTs, payments, sale returns and running " +
+                            "orders. This cannot be undone.",
+                        positiveText = "Erase & Switch",
+                        negativeText = "Cancel",
+                        destructive = true,
+                        onCancel = { actMode.setText(currentMode.label, false) },
+                        onConfirm = {
+                            DatabaseHelper.getInstance(requireContext()).eraseBusinessDataForModeChange()
+                            dao.save(settings)
+                            if (modeVal == Mode.RESTAURANT) enableRestaurantDefaults()
+                            DialogUtils.showSuccess(
+                                context = requireContext(),
+                                title = "Mode changed",
+                                message = "Switched to ${modeVal.label}. All previous data was erased."
+                            )
+                        }
+                    )
+                }
             } else {
                 dao.save(settings)
                 DialogUtils.showSuccess(
@@ -219,6 +224,43 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         com.example.synergic_pos_offline.utils.SettingsHighlighter.apply(
             view, arguments?.getString(com.example.synergic_pos_offline.utils.SettingsHighlighter.ARG_SETTING)
         )
+    }
+
+    /**
+     * Asks the signed-in user for their password before a mode switch. On the correct
+     * password it runs [onVerified] (which then confirms the data erase); on cancel or
+     * a wrong password nothing switches and the Mode dropdown is put back to how it was.
+     */
+    private fun promptPasswordThenSwitch(targetMode: Mode, onVerified: () -> Unit) {
+        val userId = SessionManager.currentUser?.userId
+        if (userId.isNullOrBlank()) { toast("No signed-in user"); return }
+
+        val accent = ThemeManager.getThemeColor(requireContext())
+        val (dialog, view) = DialogUtils.buildCustom(requireContext(), R.layout.dialog_password_prompt)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
+        view.findViewById<android.widget.TextView>(R.id.tvPromptTitle).text = "Switch to ${targetMode.label}?"
+        view.findViewById<android.widget.TextView>(R.id.tvPromptMessage).text =
+            "Enter your password to change the mode to ${targetMode.label}."
+        val etPwd = view.findViewById<TextInputEditText>(R.id.etPromptPwd)
+
+        val btnCancel = view.findViewById<MaterialButton>(R.id.btnPromptCancel)
+        val btnConfirm = view.findViewById<MaterialButton>(R.id.btnPromptConfirm)
+        ThemeManager.styleDialogButtons(btnConfirm, btnCancel, accent)
+
+        // Cancelling leaves the mode untouched — reset the dropdown to the saved mode.
+        val revertDropdown = { actMode.setText(dao.load().mode.label, false) }
+        btnCancel.setOnClickListener { dialog.dismiss(); revertDropdown() }
+        dialog.setOnCancelListener { revertDropdown() }
+
+        btnConfirm.setOnClickListener {
+            val pwd = etPwd.text?.toString()?.trim().orEmpty()
+            when {
+                pwd.isEmpty() -> toast("Enter your password")
+                !userDao.verifyPassword(userId, pwd) -> toast("Incorrect password")
+                else -> { dialog.dismiss(); onVerified() }
+            }
+        }
+        dialog.show()
     }
 
     /** Turns on the restaurant App Settings by default when Restaurant mode is enabled. */

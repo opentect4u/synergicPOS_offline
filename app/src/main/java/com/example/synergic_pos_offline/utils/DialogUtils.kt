@@ -405,4 +405,24 @@ object DialogUtils {
             setGravity(Gravity.CENTER)
         }
     }
+
+    /**
+     * Builds an [AlertDialog] for a bespoke [contentLayout] wrapped in the same chrome
+     * as [showConfirm]/[showSuccess] — neutralised font scale, transparent window,
+     * centered, and width-fit to the screen — so a custom dialog matches the global
+     * design. The layout's width-controlling container must have id `llDialogContent`
+     * (as in dialog_common). Returns the dialog and its inflated root; the caller wires
+     * up the views and calls `dialog.show()`.
+     */
+    fun buildCustom(context: Context, contentLayout: Int): Pair<AlertDialog, android.view.View> {
+        val ctx = FixedFontScale.wrap(context)
+        val view = LayoutInflater.from(ctx).inflate(contentLayout, null)
+        fitToScreen(ctx, view.findViewById(R.id.llDialogContent))
+        val dialog = AlertDialog.Builder(ctx).setView(view).create()
+            .also { it.setCanceledOnTouchOutside(false) }
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        // Re-apply on show so the card stays wrap-content and centered.
+        dialog.setOnShowListener { centerWindow(dialog) }
+        return dialog to view
+    }
 }
