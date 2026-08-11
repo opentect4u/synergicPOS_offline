@@ -1613,7 +1613,7 @@ class BillReceiptRenderer(context: Context) {
      */
     private fun classicRow(narrow: Boolean): LinearLayout {
         val density = ctx.resources.displayMetrics.density
-        val gap = 3 * density * (if (narrow) NARROW_ROW_SPACING else 1f)
+        val gap = 1.5f * density * (if (narrow) NARROW_ROW_SPACING else 1f)
         return LinearLayout(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1686,7 +1686,7 @@ class BillReceiptRenderer(context: Context) {
 
         // Spaced as one row would be, so the two lines read as one item rather than
         // as an item and a stray line of figures.
-        val gap = (3 * ctx.resources.displayMetrics.density *
+        val gap = (1.5f * ctx.resources.displayMetrics.density *
             (if (narrow) NARROW_ROW_SPACING else 1f)).toInt()
         return LinearLayout(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -1898,7 +1898,7 @@ class BillReceiptRenderer(context: Context) {
 
     private fun summaryRowContainer(narrow: Boolean = false): LinearLayout {
         val density = ctx.resources.displayMetrics.density
-        val gap = 2 * density * (if (narrow) NARROW_ROW_SPACING else 1f)
+        val gap = 1 * density * (if (narrow) NARROW_ROW_SPACING else 1f)
         return LinearLayout(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
