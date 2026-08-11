@@ -46,8 +46,8 @@ object DefaultSettings {
      *
      * Mode is the one that reaches furthest: Grocery is what the till goes back to,
      * so the restaurant menus, KOT and table screens fold away with it. Customer Info
-     * is the exception to the all-off rule - it defaults on because a till that never
-     * asks who it is selling to cannot print a customer on a bill that needs one.
+     * is off with the rest - a credit sale still asks for the customer whatever this
+     * says, because it has to be collected from somebody.
      */
     val GENERAL = GeneralSettingsDao.GeneralSettings(
         mode = GeneralSettingsDao.Mode.GROCERY,
@@ -57,7 +57,7 @@ object DefaultSettings {
         lastBillStatus = false,
         quantityStatus = false,
         itemRate = GeneralSettingsDao.ItemRate.SINGLE,
-        customerInfo = true,
+        customerInfo = false,
         landingScreen = GeneralSettingsDao.LandingScreen.SALE,
         stockFlag = false,
         stockAlert = false,
