@@ -900,12 +900,20 @@ class PosBillingFragment : Fragment(), TitledScreen {
         if (delta > 0 &&
             exceedsStock(cart[pos].product.id, cart[pos].qty + delta, ignoreLineIndex = pos)
         ) return
-        val line = cart.removeAt(pos)
+        // Adjusted where it stands. The line is not lifted to the front and the list
+        // is not scrolled: the operator is looking at this row with a finger on its
+        // button, and a list that reorders itself under that finger sends the next
+        // tap to whichever line happened to slide into the gap - which is how two of
+        // something becomes two of something else. Adding from the product grid still
+        // brings a line to the top, because that is a line arriving rather than one
+        // already in the cart being corrected.
+        val line = cart[pos]
         line.qty += delta
         if (line.qty > 0) {
-            cart.add(0, line)
             lastAddedId = line.product.id
-            view?.findViewById<RecyclerView>(R.id.rvCart)?.scrollToPosition(0)
+        } else {
+            // Stepped down to nothing: the line goes rather than sitting at zero.
+            cart.removeAt(pos)
         }
         cartAdapter.notifyDataSetChanged()
         updateTotals()

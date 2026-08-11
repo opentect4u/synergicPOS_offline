@@ -411,12 +411,25 @@ class ProductsFragment : DataTableFragment() {
             val etIgst = row.findViewById<TextInputEditText>(R.id.etRateIgst)
             val etDiscount = row.findViewById<TextInputEditText>(R.id.etRateDiscount)
             val actDiscType = row.findViewById<AutoCompleteTextView>(R.id.actRateDiscType)
-            etCgst.isEnabled = gstOn
-            etSgst.isEnabled = gstOn
-            etIgst.isEnabled = gstOn
-            row.findViewById<TextInputEditText>(R.id.etRateVat).isEnabled = vatOn
-            etDiscount.isEnabled = itemWiseDiscount
-            actDiscType.isEnabled = itemWiseDiscount
+            // A rate that has already been saved keeps the tax and the discount it
+            // was saved with - GST, VAT and the discount alike, since a shop that
+            // moved between the two regimes has bills under both - the way an edited
+            // product keeps its opening stock:
+            // both are already behind every bill this rate has been sold on, and
+            // those bills carry the figures they were raised with. Editing them here
+            // would not correct a single one of them - it would only make the master
+            // disagree with the books, with nothing to say which was right.
+            //
+            // Keyed on the rate rather than on the dialog, so "+ Add Rate" during an
+            // edit still gives a rate that can be configured: a genuinely different
+            // tax or discount is a different rate, and that is how one is made.
+            val savedRate = prefill != null
+            etCgst.isEnabled = gstOn && !savedRate
+            etSgst.isEnabled = gstOn && !savedRate
+            etIgst.isEnabled = gstOn && !savedRate
+            row.findViewById<TextInputEditText>(R.id.etRateVat).isEnabled = vatOn && !savedRate
+            etDiscount.isEnabled = itemWiseDiscount && !savedRate
+            actDiscType.isEnabled = itemWiseDiscount && !savedRate
 
             // Prefill from an existing rate (edit). The name is fixed by position
             // (set in renumberRates), so it is not restored from the saved value.
@@ -432,7 +445,12 @@ class ProductsFragment : DataTableFragment() {
 
             // Within a rate (GST on): entering CGST/SGST disables IGST, and entering
             // IGST disables CGST + SGST - they are two ways to charge the same tax.
-            if (gstOn) {
+            //
+            // Not wired on a saved rate: this rule decides which GST fields are
+            // enabled, and on a saved rate none of them are. Left in, it would
+            // re-enable whichever half of the split was blank the moment the row was
+            // laid out.
+            if (gstOn && !savedRate) {
                 fun syncGstFields() {
                     val cgstSgstFilled = !etCgst.text.isNullOrBlank() || !etSgst.text.isNullOrBlank()
                     val igstFilled = !etIgst.text.isNullOrBlank()

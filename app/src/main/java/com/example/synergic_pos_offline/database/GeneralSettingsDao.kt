@@ -96,9 +96,12 @@ class GeneralSettingsDao(context: Context) {
          * exception - it is collected later, so it has to be attributable, and it
          * asks for the customer and prints them whatever this says.
          *
-         * Defaults on, which is how the till behaved before the setting existed.
+         * Defaults off, with the rest of the optional flags: most sales over a
+         * counter are to nobody in particular, and a till that stops to ask who is
+         * buying a packet of biscuits is slower at the one thing it is for. A shop
+         * that does need the customer on its bills turns it on once.
          */
-        val customerInfo: Boolean = true,
+        val customerInfo: Boolean = false,
         /** Which screen a login lands on - see [LandingScreen]. */
         val landingScreen: LandingScreen = LandingScreen.SALE,
         /**
