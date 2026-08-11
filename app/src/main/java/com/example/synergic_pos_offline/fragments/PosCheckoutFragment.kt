@@ -1077,20 +1077,41 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // paper while the dialog is still up.
         printBill(result.receiptNo)
 
-        DialogUtils.showConfirm(
-            context = requireContext(),
-            title = "Checkout complete",
-            message = "Bill No: ${result.billNumber}",
-            positiveText = "Start new sale",
-            negativeText = "Reprint",
-            iconRes = R.drawable.ic_check,
-            onConfirm = {
-                // No counter to bump: the next screen reads the number back from the
-                // bills table, which the sale just added to.
-                requireActivity().supportFragmentManager.popBackStack()
-            },
-            onCancel = { printBill(result.receiptNo) }
-        )
+        showCheckoutCompleteDialog(result)
+    }
+
+    /**
+     * Post-sale popup: Start new sale / Reprint.
+     *
+     * Built as a custom dialog (not showConfirm) on purpose: showConfirm routes both the
+     * negative button AND a back-press/escape through onCancel, which made dismissing the
+     * popup fire the reprint. Here only the explicit Reprint button reprints; Start new
+     * sale or dismissing (back / escape) just closes it.
+     */
+    private fun showCheckoutCompleteDialog(result: BillDao.Result) {
+        val (dialog, view) = DialogUtils.buildCustom(requireContext(), R.layout.dialog_common)
+        val accent = com.example.synergic_pos_offline.utils.ThemeManager.getThemeColor(requireContext())
+        view.findViewById<android.widget.ImageView>(R.id.ivDialogIcon).apply {
+            setImageResource(R.drawable.ic_check)
+            imageTintList = android.content.res.ColorStateList.valueOf(accent)
+            visibility = View.VISIBLE
+        }
+        view.findViewById<android.widget.TextView>(R.id.tvDialogTitle).text = "Checkout complete"
+        view.findViewById<android.widget.TextView>(R.id.tvDialogMessage).text = "Bill No: ${result.billNumber}"
+        val btnStartNew = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnDialogPositive)
+        val btnReprint = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnDialogNegative)
+        btnStartNew.text = "Start new sale"
+        btnReprint.text = "Reprint"
+        com.example.synergic_pos_offline.utils.ThemeManager.styleDialogButtons(btnStartNew, btnReprint, accent)
+        btnStartNew.setOnClickListener {
+            dialog.dismiss()
+            // No counter to bump: the next screen reads the number back from the
+            // bills table, which the sale just added to.
+            requireActivity().supportFragmentManager.popBackStack()
+        }
+        // Only the explicit Reprint button reprints; dismissing (back / escape) never does.
+        btnReprint.setOnClickListener { dialog.dismiss(); printBill(result.receiptNo) }
+        dialog.show()
     }
 
     // ---- Printing ----------------------------------------------------------

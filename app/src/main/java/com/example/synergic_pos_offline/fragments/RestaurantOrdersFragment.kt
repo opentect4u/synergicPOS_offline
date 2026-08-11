@@ -1602,16 +1602,30 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * the table is already settled and the Orders screen is ready for the next order.
      */
     private fun showPaidCompletionDialog(billNo: String, reprint: () -> Unit) {
-        com.example.synergic_pos_offline.utils.DialogUtils.showConfirm(
-            context = requireContext(),
-            title = "Payment complete",
-            message = if (billNo.isNotBlank()) "Bill No: $billNo" else "The bill has been settled.",
-            positiveText = "Start New Sale",
-            negativeText = "Reprint",
-            iconRes = R.drawable.ic_check,
-            onConfirm = { },
-            onCancel = { reprint() }
+        // Built as a custom dialog (not showConfirm) on purpose: showConfirm routes both
+        // the negative button AND a back-press/escape through onCancel, which made
+        // dismissing the popup fire the reprint. Here only the explicit Reprint button
+        // reprints; Start New Sale or dismissing (back / escape) just closes it.
+        val (dialog, view) = com.example.synergic_pos_offline.utils.DialogUtils.buildCustom(
+            requireContext(), R.layout.dialog_common
         )
+        val accent = ThemeManager.getThemeColor(requireContext())
+        view.findViewById<android.widget.ImageView>(R.id.ivDialogIcon).apply {
+            setImageResource(R.drawable.ic_check)
+            imageTintList = android.content.res.ColorStateList.valueOf(accent)
+            visibility = View.VISIBLE
+        }
+        view.findViewById<android.widget.TextView>(R.id.tvDialogTitle).text = "Payment complete"
+        view.findViewById<android.widget.TextView>(R.id.tvDialogMessage).text =
+            if (billNo.isNotBlank()) "Bill No: $billNo" else "The bill has been settled."
+        val btnStartNew = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnDialogPositive)
+        val btnReprint = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnDialogNegative)
+        btnStartNew.text = "Start New Sale"
+        btnReprint.text = "Reprint"
+        ThemeManager.styleDialogButtons(btnStartNew, btnReprint, accent)
+        btnStartNew.setOnClickListener { dialog.dismiss() }
+        btnReprint.setOnClickListener { dialog.dismiss(); reprint() }
+        dialog.show()
     }
 
     /**
