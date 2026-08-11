@@ -120,13 +120,11 @@
 
                 <!-- Bill no | Date | Time, all on one line - the Classic head.
 
-                     The date is centred on the paper, not merely placed between the
-                     other two: it is a bare wrap_content cell flanked by two of
-                     equal weight, so whatever room the line has left over is split
-                     evenly either side of it and the date sits dead centre however
-                     long the bill number is. The bill number gets the left half and
-                     is the only field here that can outgrow it - a long one wraps
-                     under itself rather than pushing the date off centre. -->
+                     The bill number and the time each take exactly the width of their
+                     own text and never wrap, so a 2- or 3-digit bill number stays on the
+                     line instead of breaking under the "BILL NO:" label. The date is the
+                     weighted cell in the middle: it fills whatever room is left and is
+                     centred within it, sitting between the two either side. -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -135,9 +133,9 @@
 
                     <TextView
                         android:id="@+id/tvBillNo"
-                        android:layout_width="0dp"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
+                        android:maxLines="1"
                         android:text="BILL NO: 1"
                         android:gravity="start"
                         android:fontFamily="monospace"
@@ -146,9 +144,11 @@
 
                     <TextView
                         android:id="@+id/tvDate"
-                        android:layout_width="wrap_content"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_weight="1"
                         android:layout_marginHorizontal="8dp"
+                        android:maxLines="1"
                         android:text="31-07-2026"
                         android:gravity="center"
                         android:fontFamily="monospace"
@@ -157,9 +157,9 @@
 
                     <TextView
                         android:id="@+id/tvTime"
-                        android:layout_width="0dp"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
+                        android:maxLines="1"
                         android:text="10:24"
                         android:gravity="end"
                         android:fontFamily="monospace"
