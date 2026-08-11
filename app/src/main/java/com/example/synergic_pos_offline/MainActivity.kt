@@ -377,6 +377,8 @@ class MainActivity : AppCompatActivity() {
             // by the same call a grocery sale is, so there is one report to open.
             "Bill Wise Report" -> navigateTo(BillWiseReportFragment())
             "Item Wise Report" -> navigateTo(ItemWiseReportFragment())
+            "Tax Report" -> navigateTo(TaxReportFragment())
+            "Returned Bill Report" -> navigateTo(ReturnedBillReportFragment())
             "Stock Report" -> navigateTo(StockReportFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")

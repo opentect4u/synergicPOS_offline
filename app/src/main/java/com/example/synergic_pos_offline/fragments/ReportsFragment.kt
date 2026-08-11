@@ -91,6 +91,8 @@ class ReportsFragment : Fragment() {
             when (item.title) {
                 "Bill Wise Report" -> openFragment(BillWiseReportFragment())
                 "Item Wise Report" -> openFragment(ItemWiseReportFragment())
+                "Tax Report" -> openFragment(TaxReportFragment())
+                "Returned Bill Report" -> openFragment(ReturnedBillReportFragment())
                 STOCK_REPORT -> openFragment(StockReportFragment())
                 "Customer Ledger" -> openFragment(CustomerLedgerFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
