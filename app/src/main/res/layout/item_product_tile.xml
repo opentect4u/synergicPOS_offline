@@ -16,16 +16,31 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tvTileInitials"
+        <!-- Product thumbnail. The coloured initials tile is the default; when the
+             product has an image in the master it is drawn on top, covering it. -->
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="92dp"
-            android:gravity="center"
-            android:background="@color/primary_blue"
-            android:text="PT"
-            android:textSize="40sp"
-            android:textStyle="bold"
-            android:textColor="@color/white" />
+            android:layout_height="92dp">
+
+            <TextView
+                android:id="@+id/tvTileInitials"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:background="@color/primary_blue"
+                android:text="PT"
+                android:textSize="40sp"
+                android:textStyle="bold"
+                android:textColor="@color/white" />
+
+            <ImageView
+                android:id="@+id/ivTileImage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:contentDescription="Product image"
+                android:visibility="gone" />
+        </FrameLayout>
 
         <LinearLayout
             android:layout_width="match_parent"

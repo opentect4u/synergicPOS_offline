@@ -899,7 +899,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
          *  - both are searched on, so a scan into the search box still finds it. */
         val barcode: String = "",
         /** Preparation time from the master (e.g. "15" / "15 min"); shown on the tile. */
-        val prepTime: String = ""
+        val prepTime: String = "",
+        /** Product image bytes from the master, or null; shown on the tile when present. */
+        val image: ByteArray? = null
     )
 
     /** Loads the current store's products (rate + tax split + category + food/spice), for the grid. */
@@ -923,7 +925,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val out = mutableListOf<GridProduct>()
         db.query(
             "md_products",
-            arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id", "food_type", "spice_level", "availability", "prep_time"),
+            arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id", "food_type", "spice_level", "availability", "prep_time", "product_image"),
             (if (store != null) "store_id = ?" else null),
             store?.let { arrayOf(it.toString()) },
             null, null, "product_name ASC"
@@ -942,6 +944,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 val foodType = c.getString(5).orEmpty()
                 val spice = c.getString(6).orEmpty()
                 val prepTime = c.getString(8).orEmpty()
+                val image = if (c.isNull(9)) null else c.getBlob(9)
                 var price = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
                 var disc = 0.0; var discType: String? = null; var unitId: Long? = null
                 db.query(
@@ -973,7 +976,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                             stockQty = level?.quantity ?: 0.0
                         ),
                         foodType = foodType, spice = spice, barcode = barcode,
-                        prepTime = prepTime
+                        prepTime = prepTime, image = image
                     )
                 )
             }
@@ -1157,6 +1160,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                         else ColorUtils.blendARGB(accent, Color.WHITE, -f)
             holder.itemView.findViewById<TextView>(R.id.tvTileInitials).apply {
                 text = initials(p.name); setBackgroundColor(shade)
+            }
+            // Show the product's own image on the tile when the master has one; else the
+            // coloured initials tile underneath shows through.
+            holder.itemView.findViewById<android.widget.ImageView>(R.id.ivTileImage).apply {
+                val bmp = gp.image?.let {
+                    runCatching { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull()
+                }
+                if (bmp != null) { setImageBitmap(bmp); visibility = View.VISIBLE }
+                else { setImageDrawable(null); visibility = View.GONE }
             }
             holder.itemView.findViewById<TextView>(R.id.tvTileName).text = p.name
             holder.itemView.findViewById<TextView>(R.id.tvTilePrice).apply {
