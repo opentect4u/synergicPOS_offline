@@ -243,6 +243,16 @@ class BillReceiptRenderer(context: Context) {
     private val ctx: Context = ReceiptContext.standardFontScale(context)
 
     /**
+     * The bill's typeface — the bundled Roboto Mono font (res/font/roboto_mono_regular.ttf).
+     * Every code-built cell renders with it (the bill XML layouts point their fontFamily
+     * at the same font), so the whole slip prints in one face. Falls back to the platform
+     * monospace if the font ever fails to load.
+     */
+    private val billTypeface: Typeface by lazy {
+        androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.roboto_mono_regular) ?: Typeface.MONOSPACE
+    }
+
+    /**
      * One printed line item: serial + name, quantity, unit price, discount and the
      * net it leaves.
      *
@@ -1054,7 +1064,7 @@ class BillReceiptRenderer(context: Context) {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
             )
             text = label
-            typeface = Typeface.MONOSPACE
+            typeface = billTypeface
             textSize = sizeSp
             setTextColor(0xFF222222.toInt())
         })
@@ -1357,7 +1367,7 @@ class BillReceiptRenderer(context: Context) {
                 text = caption.text
                 gravity = Gravity.CENTER
                 textSize = caption.fontSize.sp
-                setTypeface(Typeface.MONOSPACE, if (caption.bold) Typeface.BOLD else Typeface.NORMAL)
+                setTypeface(billTypeface, if (caption.bold) Typeface.BOLD else Typeface.NORMAL)
                 setTextColor(0xFF111111.toInt())
                 setPadding(0, (2 * density).toInt(), 0, 0)
             })
@@ -1464,7 +1474,7 @@ class BillReceiptRenderer(context: Context) {
                     this.text = text
                     gravity = Gravity.CENTER
                     textSize = size.sp
-                    setTypeface(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
+                    setTypeface(billTypeface, if (bold) Typeface.BOLD else Typeface.NORMAL)
                     setTextColor(0xFF333333.toInt())
                     setPadding(0, (2 * ctx.resources.displayMetrics.density).toInt(), 0, 0)
                 })
@@ -1733,7 +1743,7 @@ class BillReceiptRenderer(context: Context) {
             layoutParams = LinearLayout.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
             this.text = text
             this.gravity = gravity
-            typeface = Typeface.MONOSPACE
+            typeface = billTypeface
             textSize = sizeSp
             maxLines = 1
             setTextColor(0xFF222222.toInt())
@@ -1750,7 +1760,7 @@ class BillReceiptRenderer(context: Context) {
             layoutParams = LinearLayout.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
             this.text = text
             gravity = Gravity.START
-            typeface = Typeface.MONOSPACE
+            typeface = billTypeface
             textSize = sizeSp
             setTextColor(0xFF222222.toInt())
         }
@@ -1768,7 +1778,7 @@ class BillReceiptRenderer(context: Context) {
         )
         this.text = text
         gravity = Gravity.START
-        typeface = Typeface.MONOSPACE
+        typeface = billTypeface
         textSize = sizeSp
         // maxLines, not isSingleLine - see [figureCell] for what that costs.
         maxLines = 1
@@ -1778,7 +1788,7 @@ class BillReceiptRenderer(context: Context) {
 
     /** A monospace paint at [sizeSp], for measuring what a column has to hold. */
     private fun measure(sizeSp: Float): Paint = Paint().apply {
-        typeface = Typeface.MONOSPACE
+        typeface = billTypeface
         textSize = TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_SP, sizeSp, ctx.resources.displayMetrics
         )
@@ -1914,7 +1924,7 @@ class BillReceiptRenderer(context: Context) {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight)
             this.text = text
             this.gravity = gravity
-            setTypeface(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
+            setTypeface(billTypeface, if (bold) Typeface.BOLD else Typeface.NORMAL)
             textSize = size
             setTextColor(0xFF222222.toInt())
         }
@@ -1953,7 +1963,7 @@ class BillReceiptRenderer(context: Context) {
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight)
         this.text = text
         this.gravity = gravity
-        typeface = Typeface.MONOSPACE
+        typeface = billTypeface
         textSize = sizeSp
         setTextColor(0xFF222222.toInt())
     }

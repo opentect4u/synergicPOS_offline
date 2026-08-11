@@ -61,6 +61,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvHeaderTitle: TextView
     private lateinit var tvHeaderSubtitle: TextView
 
+    /** Title of the page currently open, used to highlight its sidebar item and keep
+     *  its parent group expanded so the drawer reflects where the user is. */
+    private var activeLeafTitle: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         android.util.Log.e("SynergicPOS", "!!! MainActivity onCreate START !!!")
         // The UI is designed light-only (hardcoded white backgrounds). Force day
@@ -98,7 +102,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnLogout).setOnClickListener { confirmLogout() }
 
         rvSidebar.layoutManager = LinearLayoutManager(this)
-        rvSidebar.adapter = SidebarAdapter(buildMenuTree()) { leafTitle -> handleLeaf(leafTitle) }
+        refreshSidebar()
 
         applyThemeEverywhere()
 
@@ -116,6 +120,9 @@ class MainActivity : AppCompatActivity() {
                         headerBar.visibility = View.VISIBLE
                         drawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED)
                         updateHeader(f)
+                        // Remember which page is open so the drawer can highlight its
+                        // sidebar item (and expand its group) the next time it opens.
+                        activeLeafTitle = titleFor(f)
                         applyThemeEverywhere()
                     }
                 }
@@ -228,10 +235,35 @@ class MainActivity : AppCompatActivity() {
         tvSidebarUser.text = if (user != null) "Active User: ${user.userId}" else "Main Menu"
         
         // Refresh the menu tree in case the app mode (Grocery/Restaurant) changed.
-        rvSidebar.adapter = SidebarAdapter(buildMenuTree()) { leafTitle -> handleLeaf(leafTitle) }
+        refreshSidebar()
 
         refreshSidebarTheme()
         drawerLayout.openDrawer(GravityCompat.START)
+    }
+
+    /**
+     * Rebuilds the sidebar from the current menu tree, expanding the group that holds
+     * the open page and telling the adapter which leaf to highlight, so the drawer
+     * always reflects where the user is.
+     */
+    private fun refreshSidebar() {
+        val tree = buildMenuTree()
+        activeLeafTitle?.let { expandToActive(tree, it) }
+        rvSidebar.adapter = SidebarAdapter(tree, activeLeafTitle) { leafTitle -> handleLeaf(leafTitle) }
+    }
+
+    /**
+     * Expands every ancestor group of the leaf titled [active] so it is visible in the
+     * drawer. Returns whether [active] was found under [nodes].
+     */
+    private fun expandToActive(nodes: List<TreeNode>, active: String): Boolean {
+        var contains = false
+        for (n in nodes) {
+            val childHasIt = n.hasChildren && expandToActive(n.children, active)
+            if (childHasIt) n.expanded = true
+            if (n.title == active || childHasIt) contains = true
+        }
+        return contains
     }
 
     /**
@@ -367,6 +399,7 @@ class MainActivity : AppCompatActivity() {
             "Bill Settings" -> navigateTo(BillSettingsFragment())
             "Tax Settings" -> navigateTo(TaxSettingsFragment())
             "App Settings" -> navigateTo(AppSettingsFragment())
+            "About App" -> navigateTo(AboutAppFragment())
             // Opens on Connections; the Print Template tab is the other half of it.
             "Printer Settings" -> navigateTo(PrintSettingsFragment())
             "Stock & Inventory" -> navigateTo(InventoryFragment())
@@ -475,7 +508,8 @@ class MainActivity : AppCompatActivity() {
                 // Same position it holds in the Settings tile grid, so the two ways
                 // in list the screens in one order.
                 TreeNode("Printer Settings"),
-                TreeNode("App Settings")
+                TreeNode("App Settings"),
+                TreeNode("About App")
             )),
             *stockNodes.toTypedArray(),
             TreeNode("Sale"),
@@ -502,6 +536,7 @@ class MainActivity : AppCompatActivity() {
 
     private inner class SidebarAdapter(
         private val roots: List<TreeNode>,
+        private val activeTitle: String?,
         private val onLeafClick: (String) -> Unit
     ) : RecyclerView.Adapter<SidebarAdapter.ViewHolder>() {
 
@@ -572,12 +607,25 @@ class MainActivity : AppCompatActivity() {
                 holder.ivChevron.visibility = View.INVISIBLE
             }
 
-            holder.tvTitle.setTextColor(
-                ContextCompat.getColor(
-                    this@MainActivity,
-                    if (vn.depth == 0) R.color.text_main else R.color.text_secondary
+            // The open page's leaf is highlighted (accent tint + accent bold text) so
+            // the drawer shows where the user is; every other row uses its normal style.
+            val isActive = !vn.node.hasChildren && vn.node.title == activeTitle
+            if (isActive) {
+                holder.root.setBackgroundColor(
+                    androidx.core.graphics.ColorUtils.setAlphaComponent(themeColor, 28)
                 )
-            )
+                holder.tvTitle.setTextColor(themeColor)
+                holder.tvTitle.setTypeface(null, android.graphics.Typeface.BOLD)
+            } else {
+                holder.root.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                holder.tvTitle.setTextColor(
+                    ContextCompat.getColor(
+                        this@MainActivity,
+                        if (vn.depth == 0) R.color.text_main else R.color.text_secondary
+                    )
+                )
+                holder.tvTitle.setTypeface(null, android.graphics.Typeface.NORMAL)
+            }
         }
 
         override fun getItemCount() = visible.size

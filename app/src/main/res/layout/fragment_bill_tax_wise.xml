@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
     The Tax wise short bill layout, the "Tax wise short" choice in Printer Settings
     > Print Template.
@@ -70,7 +70,7 @@
                     android:layout_height="wrap_content"
                     android:text="JAI HANUMAN"
                     android:gravity="center"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textStyle="bold"
                     android:textSize="18sp"
                     android:textColor="#111111" />
@@ -81,7 +81,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="11sp"
                     android:textColor="#444444"
                     android:visibility="gone" />
@@ -91,7 +91,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="11sp"
                     android:textColor="#444444"
                     android:visibility="gone" />
@@ -102,7 +102,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
                     android:gravity="center"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textStyle="bold"
                     android:textSize="11sp"
                     android:textColor="#222222"
@@ -145,7 +145,7 @@
                         android:layout_weight="1"
                         android:text="BILL NO: 1"
                         android:gravity="start"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textSize="13sp"
                         android:textColor="#222222" />
 
@@ -156,7 +156,7 @@
                         android:layout_marginHorizontal="8dp"
                         android:text="31-07-2026"
                         android:gravity="center"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textSize="13sp"
                         android:textColor="#222222" />
 
@@ -167,7 +167,7 @@
                         android:layout_weight="1"
                         android:text="10:24"
                         android:gravity="end"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textSize="13sp"
                         android:textColor="#222222" />
                 </LinearLayout>
@@ -177,7 +177,7 @@
                     android:id="@+id/tvCustMobile"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="13sp"
                     android:textColor="#222222"
                     android:visibility="gone" />
@@ -186,7 +186,7 @@
                     android:id="@+id/tvName"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="13sp"
                     android:textColor="#222222"
                     android:visibility="gone" />
@@ -195,7 +195,7 @@
                     android:id="@+id/tvCustGstin"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="13sp"
                     android:textColor="#222222"
                     android:visibility="gone" />
@@ -205,7 +205,7 @@
                     android:id="@+id/tvCustAddress"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="13sp"
                     android:textColor="#222222"
                     android:visibility="gone" />
@@ -216,7 +216,7 @@
                     android:id="@+id/tvCustOutstanding"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textStyle="bold"
                     android:textSize="13sp"
                     android:textColor="#222222"
@@ -241,7 +241,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="3.8"
                         android:text="SR.NO ITEM"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textSize="12.5sp"
                         android:textColor="#222222" />
 
@@ -252,7 +252,7 @@
                         android:layout_weight="2"
                         android:text="QTY"
                         android:gravity="center"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textSize="12.5sp"
                         android:textColor="#222222" />
 
@@ -263,7 +263,7 @@
                         android:layout_weight="1.9"
                         android:text="PRICE"
                         android:gravity="end"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textSize="12.5sp"
                         android:textColor="#222222" />
 
@@ -277,7 +277,7 @@
                         android:layout_weight="1.7"
                         android:text="DISC"
                         android:gravity="end"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textSize="12.5sp"
                         android:textColor="#222222"
                         android:visibility="gone" />
@@ -289,7 +289,7 @@
                         android:layout_weight="2.3"
                         android:text="AMOUNT"
                         android:gravity="end"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textSize="12.5sp"
                         android:textColor="#222222" />
                 </LinearLayout>
@@ -329,7 +329,7 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="2"
                             android:text="TAX%"
-                            android:fontFamily="monospace"
+                            android:fontFamily="@font/roboto_mono_regular"
                             android:textSize="12.5sp"
                             android:textColor="#222222" />
 
@@ -340,7 +340,7 @@
                             android:layout_weight="2.4"
                             android:text="B.AMT"
                             android:gravity="end"
-                            android:fontFamily="monospace"
+                            android:fontFamily="@font/roboto_mono_regular"
                             android:textSize="12.5sp"
                             android:textColor="#222222" />
 
@@ -353,7 +353,7 @@
                             android:layout_weight="1.9"
                             android:text="SGST"
                             android:gravity="end"
-                            android:fontFamily="monospace"
+                            android:fontFamily="@font/roboto_mono_regular"
                             android:textSize="12.5sp"
                             android:textColor="#222222" />
 
@@ -364,7 +364,7 @@
                             android:layout_weight="1.9"
                             android:text="CGST"
                             android:gravity="end"
-                            android:fontFamily="monospace"
+                            android:fontFamily="@font/roboto_mono_regular"
                             android:textSize="12.5sp"
                             android:textColor="#222222" />
 
@@ -375,7 +375,7 @@
                             android:layout_weight="2.3"
                             android:text="TOTAL"
                             android:gravity="end"
-                            android:fontFamily="monospace"
+                            android:fontFamily="@font/roboto_mono_regular"
                             android:textSize="12.5sp"
                             android:textColor="#222222" />
                     </LinearLayout>
@@ -419,7 +419,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="GRAND TOTAL:"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textStyle="bold"
                         android:textSize="17sp"
                         android:textColor="#111111" />
@@ -431,7 +431,7 @@
                         android:layout_weight="1"
                         android:text="0.00"
                         android:gravity="end"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textStyle="bold"
                         android:textSize="17sp"
                         android:textColor="#111111" />
@@ -445,7 +445,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="12sp"
                     android:lineSpacingExtra="2dp"
                     android:textColor="#333333"
@@ -465,7 +465,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="Created by: ---"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="12sp"
                     android:textColor="#222222" />
 
