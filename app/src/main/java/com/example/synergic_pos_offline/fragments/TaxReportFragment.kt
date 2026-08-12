@@ -2,24 +2,22 @@ package com.example.synergic_pos_offline.fragments
 
 import com.example.synergic_pos_offline.database.TaxReportDao
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
+import java.util.Locale
 
 /**
- * Tax Report - what tax was collected over a period, bill by bill, with the period's
- * CGST, SGST and IGST totalled under it.
+ * Tax Report - what was taxed over a period, at what rate, and what that came to.
  *
- * The screen behind the Tax Report tile, and the report a return is filed from: the
- * summary is the answer, and the rows are there so the answer can be traced back to
- * the sales it came from.
+ * A line per tax and slab, which is the shape a return is filed in. The screen behind
+ * the Tax Report tile, and the report a filing is made from.
  *
- * Everything a date-range report does - the pickers, the sideways-scrolling table,
- * printing what was generated rather than re-reading the period - comes from
- * [PeriodReportFragment]. What is here is only what makes this report a tax report.
+ * Everything a date-range report does comes from [PeriodReportFragment]; what is here
+ * is only what makes this a tax report.
  */
 class TaxReportFragment : PeriodReportFragment<TaxReportDao.Report>() {
 
     override val screenTitle = "Tax Report"
 
-    override val rowNoun = "bills"
+    override val rowNoun = "slabs"
 
     private val dao: TaxReportDao by lazy { TaxReportDao(requireContext()) }
 
@@ -29,102 +27,78 @@ class TaxReportFragment : PeriodReportFragment<TaxReportDao.Report>() {
     override fun isEmpty(report: TaxReportDao.Report): Boolean = report.isEmpty
 
     override fun headline(report: TaxReportDao.Report): String =
-        "${pretty(report.fromDate)}  to  ${pretty(report.toDate)}   •   ${report.billCount} bill(s)"
+        "${pretty(report.fromDate)}  to  ${pretty(report.toDate)}   •   " +
+            "${report.slabCount} slab(s)"
 
-    /**
-     * BILL NO, DATE, the taxes, what they came to, and the bill they were charged on.
-     *
-     * VAT and IGST are only columns where the period holds them. A GST-only shop
-     * that never sells inter-state would otherwise read two stripes of 0.00 across
-     * the whole report, and the two columns that matter would be pushed off the
-     * right-hand edge to make room for them.
-     */
-    override fun columnsFor(report: TaxReportDao.Report): List<Column> = buildList {
-        add(Column("BILL NO", 120, alignEnd = false))
-        add(Column("DATE", 100, alignEnd = false))
-        add(Column("CGST", 90, alignEnd = true))
-        add(Column("SGST", 90, alignEnd = true))
-        if (report.hasIgst) add(Column("IGST", 90, alignEnd = true))
-        if (report.hasVat) add(Column("VAT", 90, alignEnd = true))
-        add(Column("TOTAL TAX", 110, alignEnd = true))
-        add(Column("BILL AMOUNT", 120, alignEnd = true))
-    }
+    override fun columnsFor(report: TaxReportDao.Report): List<Column> = listOf(
+        Column("TAX", 100, alignEnd = false),
+        Column("AMOUNT", 150, alignEnd = true),
+        Column("GST%", 100, alignEnd = true),
+        Column("TAX AMOUNT", 150, alignEnd = true)
+    )
 
     override fun rowsOf(report: TaxReportDao.Report): List<List<String>> =
         report.lines.map { line ->
-            buildList {
-                add(line.billNumber)
-                add(pretty(line.date))
-                // A tax that did not apply to this bill reads as a dash rather than
-                // 0.00. Zero says the tax was charged and came to nothing; a dash
-                // says it was never in play, which is what a VAT bill's CGST column
-                // actually means.
-                add(if (line.isVat) "-" else money(line.cgst))
-                add(if (line.isVat) "-" else money(line.sgst))
-                if (report.hasIgst) add(if (line.isVat) "-" else money(line.igst))
-                if (report.hasVat) add(if (line.isVat) money(line.vat) else "-")
-                add(money(line.totalTax))
-                add(money(line.netAmount))
-            }
+            listOf(line.tax, money(line.amount), percent(line.rate), money(line.taxAmount))
         }
 
-    override fun summaryOf(report: TaxReportDao.Report): List<Pair<String, String>> = buildList {
-        add("Total Bills" to report.billCount.toString())
-        add("Total CGST" to money(report.totalCgst))
-        add("Total SGST" to money(report.totalSgst))
-        add("Total IGST" to money(report.totalIgst))
-        // Only where the period actually holds VAT bills - a GST-only shop is not
-        // reading a line of zeroes, and a shop with VAT in the period does not have
-        // that tax left off the totals entirely.
-        if (report.hasVat) add("Total VAT" to money(report.totalVat))
-        add("Total Bill Amount" to money(report.totalAmount))
-    }
+    override fun summaryOf(report: TaxReportDao.Report): List<Pair<String, String>> =
+        listOf("Tax Slabs" to report.slabCount.toString())
 
     /** The one figure the report is read for. */
     override fun totalOf(report: TaxReportDao.Report): Pair<String, String> =
-        "Total Tax Collected" to money(report.totalTax)
+        "Total" to money(report.totalTax)
 
     /**
-     * The printed report.
+     * The printed slip, in the format these tills have always printed it.
      *
-     * A roll fits about four columns, so the two taxes that are always charged go on
-     * the bill's own line and the rest - IGST, VAT where there is any - go on a
-     * second line under it. Squeezing all of them across the paper would set the type
-     * so small that the report could not be read, which is the only thing a printed
-     * report is for.
+     * Each tax names itself on a line of its own and its slabs follow underneath, so
+     * a shop running three rates reads three figures under one heading rather than
+     * repeating "SGST" down the page. That is why the rows are a mixture of one-cell
+     * headings and four-cell figures.
      */
-    override fun printContent(report: TaxReportDao.Report): PeriodReportRenderer.Content =
-        PeriodReportRenderer.Content(
+    override fun printContent(report: TaxReportDao.Report): PeriodReportRenderer.Content {
+        val rows = mutableListOf<List<String>>()
+        var heading: String? = null
+        report.lines.forEach { line ->
+            if (line.tax != heading) {
+                heading = line.tax
+                rows.add(listOf("${line.tax.padEnd(TAX_LABEL_WIDTH)}:"))
+            }
+            rows.add(listOf("", money(line.amount), percent(line.rate), money(line.taxAmount)))
+        }
+
+        return PeriodReportRenderer.Content(
             title = "Tax Report",
             period = "${pretty(report.fromDate)}  to  ${pretty(report.toDate)}",
-            subtitle = "${report.billCount} bill(s)",
-            columns = listOf("BILL NO", "CGST", "SGST", "TAX"),
-            rows = report.lines.map { line ->
-                listOf(
-                    line.billNumber,
-                    if (line.isVat) "-" else money(line.cgst),
-                    if (line.isVat) "-" else money(line.sgst),
-                    money(line.totalTax)
-                )
-            },
-            details = report.lines.map { line ->
-                buildString {
-                    append("  ")
-                    append(pretty(line.date))
-                    if (report.hasIgst) append("  IGST ${if (line.isVat) "-" else money(line.igst)}")
-                    if (report.hasVat) append("  VAT ${if (line.isVat) money(line.vat) else "-"}")
-                    append("  AMT ${money(line.netAmount)}")
-                }
-            },
-            summary = summaryOf(report).map { (label, value) -> label.uppercase() to value },
-            total = totalOf(report).let { (label, value) -> label.uppercase() to value },
-            emptyNote = "No bills in this period."
+            subtitle = "${report.slabCount} slab(s)",
+            style = PeriodReportRenderer.Style.CLASSIC,
+            range = "F.DT:${shortDate(report.fromDate)}" to "TO.DT:${shortDate(report.toDate)}",
+            columns = listOf("", "AMOUNT", "GST%", "TAX AMOUNT"),
+            evenColumns = true,
+            rows = rows,
+            footerRow = listOf("TOTAL :", "", "", money(report.totalTax)),
+            summary = emptyList(),
+            emptyNote = "No tax was charged in this period."
         )
+    }
+
+    /** "2.5" as "2.50" - a rate reads as a rate, to the same places as the money. */
+    private fun percent(rate: Double): String = String.format(Locale.US, "%.2f", rate)
+
+    /** "2026-08-12" as "12-08-26" - how the F.DT / TO.DT line has always read. */
+    private fun shortDate(date: String): String =
+        pretty(date).let { it.take(6) + it.takeLast(2) }
 
     override fun emptyMessage(
         report: TaxReportDao.Report,
         fromDate: String,
         toDate: String
-    ): Pair<String, String> = "No bills in this period" to
-        "Nothing was billed between ${pretty(fromDate)} and ${pretty(toDate)}, so no tax was charged."
+    ): Pair<String, String> = "No tax in this period" to
+        "Nothing taxable was billed between ${pretty(fromDate)} and ${pretty(toDate)}."
+
+    private companion object {
+        /** "SGST" and "CGST" are four; padding to this lines their colons up. */
+        const val TAX_LABEL_WIDTH = 5
+    }
 }

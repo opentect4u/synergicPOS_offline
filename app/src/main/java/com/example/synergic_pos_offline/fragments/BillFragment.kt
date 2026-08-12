@@ -6,8 +6,10 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.BillDeleteDao
 import com.example.synergic_pos_offline.database.BillSettingsDao
 import com.example.synergic_pos_offline.utils.BillReceiptRenderer
 import com.example.synergic_pos_offline.utils.DialogUtils
@@ -68,6 +70,63 @@ class BillFragment : Fragment(), TitledScreen {
             backgroundTintList = ColorStateList.valueOf(ThemeManager.getThemeColor(requireContext()))
             setOnClickListener { printReceipt(view, receiptNo) }
         }
+
+        view.findViewById<MaterialButton>(R.id.btnDeleteBill).apply {
+            // Outlined and in the warning colour: it sits beside Print, and the two
+            // must not be reachable by the same absent-minded tap.
+            val danger = ContextCompat.getColor(requireContext(), R.color.menu_delete_icon)
+            setTextColor(danger)
+            strokeColor = ColorStateList.valueOf(danger)
+            // Nothing to delete on a bill that was never saved, and nothing to do on
+            // one already deleted - it still opens from Bill History's Cancelled list,
+            // and a second Delete there could only fail.
+            val gone = receiptNo > 0 &&
+                BillDeleteDao(requireContext()).isDeleted(receiptNo)
+            isEnabled = receiptNo > 0 && !gone
+            visibility = if (gone) View.GONE else View.VISIBLE
+            setOnClickListener { confirmDelete(receiptNo) }
+        }
+    }
+
+    /**
+     * Asks before deleting, and says what deleting means.
+     *
+     * Destructive and not undoable from the app, so it is worth a sentence: the bill
+     * leaves the sales figures entirely and can afterwards only be found under
+     * Cancelled bills in Bill History, and on the Void Bill Report.
+     */
+    private fun confirmDelete(receiptNo: Long) {
+        val billNo = arguments?.getString(ARG_BILL_NO).orEmpty().ifBlank { "this bill" }
+        DialogUtils.showConfirm(
+            context = requireContext(),
+            title = "Delete bill $billNo?",
+            message = "It will be taken out of every sales report and total. You will " +
+                "still find it under Cancelled bills in Bill History and on the Void " +
+                "Bill Report.",
+            positiveText = "Delete",
+            destructive = true,
+            onConfirm = { deleteBill(receiptNo) }
+        )
+    }
+
+    private fun deleteBill(receiptNo: Long) {
+        val outcome = BillDeleteDao(requireContext()).delete(receiptNo)
+        if (!outcome.deleted) {
+            // The reason, in a dialog rather than a toast: it names the document
+            // standing in the way and what to do about it, which is more than a
+            // message that disappears in two seconds can carry.
+            DialogUtils.showSuccess(
+                context = requireContext(),
+                title = "Bill not deleted",
+                message = outcome.reason ?: "The bill could not be deleted.",
+                buttonText = "OK"
+            ) {}
+            return
+        }
+        toast("Bill deleted")
+        // Back to wherever this was opened from - Bill History reloads on resume, so
+        // the bill moves to the Cancelled list without anything else being asked.
+        parentFragmentManager.popBackStack()
     }
 
     /**
@@ -78,7 +137,7 @@ class BillFragment : Fragment(), TitledScreen {
      */
     private fun printReceipt(root: View, receiptNo: Long) {
         val card = root.findViewById<View>(R.id.cardReceipt)
-        val button = root.findViewById<View>(R.id.btnPrintBill)
+        val button = root.findViewById<View>(R.id.llBillActions)
 
         // The button floats over the receipt, so it would otherwise be captured
         // onto the paper. Restored right after: both captures are synchronous.
@@ -123,13 +182,13 @@ class BillFragment : Fragment(), TitledScreen {
             when (result) {
                 is ThermalPrinter.Result.Success -> {
                     toast("Printed")
-                    if (receiptNo > 0) BillReceiptRenderer.recordPrint(requireContext(), receiptNo)
+                    if (receiptNo > 0) BillReceiptRenderer.recordPrint(requireContext(), receiptNo, duplicate)
                 }
                 // The printer took the receipt but does not report back, so say what
                 // is actually known rather than claiming paper came out.
                 is ThermalPrinter.Result.Sent -> {
                     toast("Sent to printer")
-                    if (receiptNo > 0) BillReceiptRenderer.recordPrint(requireContext(), receiptNo)
+                    if (receiptNo > 0) BillReceiptRenderer.recordPrint(requireContext(), receiptNo, duplicate)
                 }
                 is ThermalPrinter.Result.Failure -> showPrintFailed(result.message, receiptNo, config)
             }
@@ -169,7 +228,7 @@ class BillFragment : Fragment(), TitledScreen {
         val billNumber = (view?.findViewById<TextView>(R.id.tvBillNo)?.text ?: "")
             .toString().removePrefix("BILL NO:").trim().ifEmpty { "receipt" }
         ReceiptPrinter.print(requireContext(), card, billNumber) {
-            if (receiptNo > 0) BillReceiptRenderer.recordPrint(requireContext(), receiptNo)
+            if (receiptNo > 0) BillReceiptRenderer.recordPrint(requireContext(), receiptNo, duplicate)
         }
     }
 

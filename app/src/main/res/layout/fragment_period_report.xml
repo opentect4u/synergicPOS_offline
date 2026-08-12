@@ -85,6 +85,30 @@
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
+                <!-- An optional dropdown - a payment mode, an operator, whatever the
+                     report narrows by. Hidden unless the screen declares one, so a
+                     report with nothing to filter on shows only its dates. -->
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/tilPeriodFilter"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:visibility="gone"
+                    app:boxCornerRadiusTopStart="12dp"
+                    app:boxCornerRadiusTopEnd="12dp"
+                    app:boxCornerRadiusBottomStart="12dp"
+                    app:boxCornerRadiusBottomEnd="12dp">
+
+                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                        android:id="@+id/actPeriodFilter"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:focusable="false"
+                        android:inputType="none"
+                        android:maxLines="1" />
+                </com.google.android.material.textfield.TextInputLayout>
+
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"

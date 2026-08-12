@@ -1,110 +1,97 @@
 package com.example.synergic_pos_offline.database
 
 import android.content.Context
+import com.example.synergic_pos_offline.utils.BillPricing
 import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.BillSettingsSnapshot
-import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.SessionManager
 
 /**
- * The Tax Report: what tax was collected over a period, and on which bills.
+ * The Tax Report: what was taxed over a period, at what rate, and what that came to.
  *
- * The question a return filing asks - how much CGST, how much SGST, how much IGST -
- * answered off the bills that charged it, with each bill listed so the total can be
- * traced back to the sales it came from rather than taken on trust.
+ * A line per tax and slab - SGST at 2.5%, CGST at 2.5%, SGST at 6% and so on - which
+ * is the shape a return is filed in. Not a line per bill: a filing is made against
+ * rates, and a bill carrying three rates has no single rate of its own to report.
  *
- * Read off the columns the bill already totalled at the time it was saved, the same
- * columns [BillWiseReportDao] reads. Two reports over one set of books have to agree
- * about what a bill's CGST was, and the only way they can is by reading the same
- * figure: re-adding the bill's items would quietly disagree with both the receipt
- * and the bill wise report whenever a tax or rounding rule had since been changed.
+ * ## How the figures are worked out
+ *
+ * By running each bill line back through [BillPricing] - **the same function that
+ * priced it when it was sold**, given the same inputs - rather than by inferring
+ * anything from what it came to. The line stores its rate, quantity, tax rates and
+ * discount; the bill stores the rules those were priced under. Put the two together
+ * and the result is not an approximation of the bill's arithmetic, it *is* the bill's
+ * arithmetic, and it cannot drift from the receipt because there is only one copy of
+ * it.
+ *
+ * That matters because two of the rules genuinely change the answer, and neither can
+ * be recovered from the stored totals alone:
+ *
+ * - **Inclusive or exclusive.** An inclusive line's rate was applied to
+ *   `gross / (1 + r)`, an exclusive line's to the gross itself. The same listed price
+ *   is a different taxable value under each.
+ * - **Discount before or after tax.** A pre-tax discount comes off the base and the
+ *   rate applies to what remains. A post-tax discount leaves the base whole - tax is
+ *   charged on the full value - and reduces only what the customer pays. Same
+ *   discount, same rate, different base and different tax.
+ *
+ * Both come from `settings_snapshot`, frozen onto the bill at the moment of sale.
+ * Today's Tax Settings must never be consulted here: a shop that has since moved from
+ * inclusive to exclusive pricing, or moved its discount across the tax line, still has
+ * the old bills in its books, and they were taxed the way they were taxed.
+ *
+ * A line on a bill with no snapshot, or one carrying IGST (which [BillPricing] does
+ * not model), falls back to what was stored, with the base recovered by inverting the
+ * rate off the booked tax - `tax x 100 / rate`, which needs no rules at all.
  */
 class TaxReportDao(context: Context) {
 
     private val helper = DatabaseHelper.getInstance(context)
 
-    /** One bill on the report - what tax it charged, and what it came to. */
+    /** One tax at one rate, over the whole period. */
     data class Line(
-        val billNumber: String,
-        /** yyyy-MM-dd, as stored. */
-        val date: String,
-        val cgst: Double,
-        val sgst: Double,
-        val igst: Double,
-        val vat: Double,
-        /** What the customer actually paid - the bill's net, tax included. */
-        val netAmount: Double,
-        /**
-         * The tax regime this bill was raised under, read from the settings snapshot
-         * frozen onto it at the time - not from what the till is set to now.
-         *
-         * A shop that has since moved from VAT to GST still has VAT bills in its
-         * books, and their tax is a VAT amount however the till is configured today.
-         */
-        val regime: GstCalculator.TaxRegime
-    ) {
-        /** True where this bill's tax is VAT - the CGST / SGST / IGST columns do not apply. */
-        val isVat: Boolean get() = regime == GstCalculator.TaxRegime.VAT
-
-        /** Everything this bill charged in tax, however the regime splits it. */
-        val totalTax: Double get() = BillRounding.toPaise(cgst + sgst + igst + vat)
-    }
+        /** SGST, CGST, IGST or VAT. */
+        val tax: String,
+        /** The rate it was charged at, as a percentage. */
+        val rate: Double,
+        /** The value that rate was charged on. */
+        val amount: Double,
+        /** What it came to. */
+        val taxAmount: Double
+    )
 
     /**
-     * The whole report: the period asked for and every bill inside it.
+     * The whole report: the period asked for and every tax slab inside it.
      *
-     * The totals are summed here rather than in a second query, so the figures on
-     * the summary are the figures on the rows above it by construction.
-     *
-     * Every total is normalised to paise, since a sum of doubles lands on
-     * 1234.5600000000002 often enough to print - and a tax figure that prints a
-     * hundredth out is a tax figure that has to be explained.
+     * Totalled from the listed lines rather than by a second query, so the figure at
+     * the foot is the figures above it by construction.
      */
     data class Report(
         val fromDate: String,
         val toDate: String,
         val lines: List<Line>
     ) {
-        val billCount: Int get() = lines.size
-        val totalCgst: Double get() = total { it.cgst }
-        val totalSgst: Double get() = total { it.sgst }
-        val totalIgst: Double get() = total { it.igst }
-        val totalVat: Double get() = total { it.vat }
-        val totalAmount: Double get() = total { it.netAmount }
+        val slabCount: Int get() = lines.size
 
         /** Every tax charged over the period - what the report is read for. */
-        val totalTax: Double
-            get() = BillRounding.toPaise(totalCgst + totalSgst + totalIgst + totalVat)
-
-        /**
-         * Whether any bill in the period was raised under VAT.
-         *
-         * The VAT column and its total only appear when there is VAT to show: a
-         * GST-only shop should not be reading a column of zeroes, and a shop with
-         * VAT bills in the period must not have that tax quietly left off.
-         */
-        val hasVat: Boolean get() = lines.any { it.isVat || it.vat > 0.0 }
-
-        /** Whether any bill charged IGST - an inter-state sale, which many tills never make. */
-        val hasIgst: Boolean get() = lines.any { it.igst > 0.0 }
+        val totalTax: Double get() = BillRounding.toPaise(lines.sumOf { it.taxAmount })
 
         val isEmpty: Boolean get() = lines.isEmpty()
+    }
 
-        private fun total(pick: (Line) -> Double): Double =
-            BillRounding.toPaise(lines.sumOf { pick(it) })
+    /** What one slab has accumulated so far, before it becomes a [Line]. */
+    private class Sum {
+        var amount = 0.0
+        var tax = 0.0
     }
 
     /**
-     * Every completed bill dated between [fromDate] and [toDate] inclusive, both
-     * `yyyy-MM-dd`, oldest first.
+     * Every tax slab charged between [fromDate] and [toDate] inclusive, both
+     * `yyyy-MM-dd`, in the order the taxes are read and by rate within each.
      *
      * Voided and cancelled bills are left out: they are not sales, and no tax is
-     * owed on them.
-     *
-     * A bill that charged no tax is still listed. It is tempting to drop it - a row
-     * of zeroes says little - but then the report's bill count would not be the
-     * period's bill count, and anyone reconciling this against the Bill Wise Report
-     * would be chasing a difference that was only ever a filter.
+     * owed on them. A line that carried no tax contributes to no slab - there is
+     * nothing to file against it - so a zero-rated sale is simply absent rather than
+     * listed at 0%.
      */
     fun between(fromDate: String, toDate: String): Report {
         val store = currentStoreId()
@@ -114,67 +101,92 @@ class TaxReportDao(context: Context) {
         // yyyy-MM-dd, but a row that ever carried a time on it would sort outside
         // the range on its final day and silently drop off the report.
         val sql = """
-            SELECT b.bill_number,
-                   substr(b.bill_date, 1, 10),
-                   COALESCE(b.tot_cgst_amount, 0), COALESCE(b.tot_sgst_amount, 0),
-                   COALESCE(b.tot_igst_amount, 0), COALESCE(b.tot_vat_amount, 0),
-                   COALESCE(b.net_amount, 0), b.settings_snapshot
-            FROM ${DatabaseHelper.Tables.TD_BILLS} b
+            SELECT COALESCE(i.rate, 0), COALESCE(i.quantity, 0),
+                   COALESCE(i.cgst_rate, 0), COALESCE(i.sgst_rate, 0),
+                   COALESCE(i.igst_rate, 0), COALESCE(i.vat_rate, 0),
+                   COALESCE(i.discount_amount, 0),
+                   COALESCE(i.cgst_amount, 0), COALESCE(i.sgst_amount, 0),
+                   COALESCE(i.igst_amount, 0), COALESCE(i.vat_amount, 0),
+                   COALESCE(i.item_total, 0),
+                   b.settings_snapshot
+            FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
+            JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
               AND COALESCE(b.is_voided, 0) = 0
               AND COALESCE(b.bill_status, 'COMPLETED') <> 'CANCELLED'
               $storeClause
-            ORDER BY substr(b.bill_date, 1, 10) ASC, b.receipt_no ASC
         """.trimIndent()
 
         val args = mutableListOf(fromDate, toDate).apply {
             if (store != null) add(store.toString())
         }
 
-        val lines = mutableListOf<Line>()
+        val slabs = LinkedHashMap<Pair<String, Double>, Sum>()
+        fun add(tax: String, rate: Double, amount: Double, taxAmount: Double) {
+            // A tax that was never in play on this line has no slab to join. Rate
+            // without amount would list a 0% slab; amount without rate would put a
+            // taxable value against a tax that was not charged.
+            if (rate <= 0.0 && taxAmount <= 0.0) return
+            val sum = slabs.getOrPut(tax to rate) { Sum() }
+            sum.amount += amount
+            sum.tax += taxAmount
+        }
+
         helper.readableDatabase.rawQuery(sql, args.toTypedArray()).use { c ->
             while (c.moveToNext()) {
-                val cgst = c.getDouble(2)
-                val sgst = c.getDouble(3)
-                val igst = c.getDouble(4)
-                val vat = c.getDouble(5)
-                lines.add(
-                    Line(
-                        billNumber = c.getString(0).orEmpty().ifBlank { "-" },
-                        date = c.getString(1).orEmpty(),
-                        cgst = cgst,
-                        sgst = sgst,
-                        igst = igst,
-                        vat = vat,
-                        netAmount = c.getDouble(6),
-                        regime = regimeOf(c.getString(7), cgst + sgst + igst, vat)
+                val cgstRate = c.getDouble(2)
+                val sgstRate = c.getDouble(3)
+                val igstRate = c.getDouble(4)
+                val vatRate = c.getDouble(5)
+                var cgst = c.getDouble(7)
+                var sgst = c.getDouble(8)
+                val igst = c.getDouble(9)
+                var vat = c.getDouble(10)
+                val snapshot = BillSettingsSnapshot.parse(c.getString(12))
+
+                val base: Double
+                if (snapshot != null && igstRate <= 0.0 && igst <= 0.0) {
+                    val priced = BillPricing.price(
+                        rate = c.getDouble(0),
+                        quantity = c.getDouble(1),
+                        cgstRate = cgstRate,
+                        sgstRate = sgstRate,
+                        vatRate = vatRate,
+                        discountAmount = c.getDouble(6),
+                        regime = snapshot.taxRegime,
+                        inclusive = snapshot.inclusive,
+                        discountPreTax = snapshot.discountPreTax
                     )
-                )
+                    base = priced.taxable
+                    cgst = priced.cgst
+                    sgst = priced.sgst
+                    vat = priced.vat
+                } else {
+                    val rate = cgstRate + sgstRate + igstRate + vatRate
+                    val tax = cgst + sgst + igst + vat
+                    base = if (rate > 0.0) tax * 100.0 / rate else c.getDouble(11)
+                }
+
+                // SGST first, as the slip has always set them.
+                add(SGST, sgstRate, base, sgst)
+                add(CGST, cgstRate, base, cgst)
+                add(IGST, igstRate, base, igst)
+                add(VAT, vatRate, base, vat)
             }
         }
-        return Report(fromDate, toDate, lines)
-    }
 
-    /**
-     * Which regime a bill was raised under.
-     *
-     * The settings snapshot frozen onto the bill is the answer wherever there is
-     * one - it is the record of how the sale was actually taxed, and it survives the
-     * till being reconfigured afterwards.
-     *
-     * A bill saved before snapshots existed has none, and the *live* settings are no
-     * guide to how it was taxed. So it is read off the money instead: tax booked as
-     * VAT means it was a VAT bill, tax booked as CGST/SGST/IGST means GST, and no tax
-     * at all means neither applied.
-     */
-    private fun regimeOf(snapshotJson: String?, gstAmount: Double, vatAmount: Double):
-        GstCalculator.TaxRegime {
-        BillSettingsSnapshot.parse(snapshotJson)?.let { return it.taxRegime }
-        return when {
-            vatAmount > 0.0 -> GstCalculator.TaxRegime.VAT
-            gstAmount > 0.0 -> GstCalculator.TaxRegime.GST
-            else -> GstCalculator.TaxRegime.NONE
-        }
+        val order = listOf(SGST, CGST, IGST, VAT)
+        val lines = slabs.entries
+            .sortedWith(compareBy({ order.indexOf(it.key.first) }, { it.key.second }))
+            .map { (key, sum) ->
+                Line(
+                    tax = key.first,
+                    rate = key.second,
+                    amount = BillRounding.toPaise(sum.amount),
+                    taxAmount = BillRounding.toPaise(sum.tax)
+                )
+            }
+        return Report(fromDate, toDate, lines)
     }
 
     /** The signed-in user's store; the registration row is the fallback. */
@@ -187,5 +199,12 @@ class TaxReportDao(context: Context) {
             if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0)
         }
         return null
+    }
+
+    private companion object {
+        const val SGST = "SGST"
+        const val CGST = "CGST"
+        const val IGST = "IGST"
+        const val VAT = "VAT"
     }
 }

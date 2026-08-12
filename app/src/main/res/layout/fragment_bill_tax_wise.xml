@@ -493,20 +493,39 @@
         </com.google.android.material.card.MaterialCardView>
     </ScrollView>
 
-    <!-- Floats over the receipt so it stays reachable while the bill scrolls -->
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnPrintBill"
+    <!-- Floats over the receipt so the actions stay reachable while it scrolls -->
+    <LinearLayout
+        android:id="@+id/llBillActions"
         android:layout_width="wrap_content"
-        android:layout_height="46dp"
+        android:layout_height="wrap_content"
         android:layout_gravity="top|end"
         android:layout_margin="16dp"
-        android:insetTop="0dp"
-        android:insetBottom="0dp"
-        android:minHeight="0dp"
-        android:text="Print"
-        android:textColor="@color/white"
-        app:icon="@drawable/ic_print"
-        app:iconTint="@color/white"
-        app:cornerRadius="12dp"
-        app:elevation="4dp" />
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnPrintBill"
+            android:layout_width="wrap_content"
+            android:layout_height="46dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minHeight="0dp"
+            android:text="Print"
+            android:textColor="@color/white"
+            app:icon="@drawable/ic_print"
+            app:iconTint="@color/white"
+            app:cornerRadius="12dp"
+            app:elevation="4dp" />
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnDeleteBill"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="46dp"
+            android:layout_marginStart="8dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minHeight="0dp"
+            android:text="Delete"
+            app:cornerRadius="12dp"
+            app:elevation="4dp" />
+    </LinearLayout>
 </FrameLayout>

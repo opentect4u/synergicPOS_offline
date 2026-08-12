@@ -17,7 +17,8 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillWiseReportDao
-import com.example.synergic_pos_offline.utils.BillWiseReportPrinter
+import com.example.synergic_pos_offline.utils.PeriodReportPrinter
+import com.example.synergic_pos_offline.utils.PeriodReportRenderer
 import com.example.synergic_pos_offline.utils.ReportTable
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
@@ -90,7 +91,11 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
 
         view.findViewById<MaterialButton>(R.id.btnGenerate).setOnClickListener { generate() }
         btnPrint.setOnClickListener {
-            report?.let { r -> BillWiseReportPrinter.print(requireContext(), r) { if (isAdded) toast(it) } }
+            report?.let { r ->
+                PeriodReportPrinter.print(requireContext(), printContent(r), "bills") {
+                    if (isAdded) toast(it)
+                }
+            }
         }
 
         ThemeManager.applyTheme(view)
@@ -180,23 +185,78 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
 
         val summary = root.findViewById<LinearLayout>(R.id.llReportSummary)
         summary.removeAllViews()
-        // Read straight off the report, in the order they add up: the parts, then
-        // the adjustment, then what the parts came to.
-        buildList {
-            add("Total Bills" to r.billCount.toString())
-            add("Total MRP" to money(r.totalMrp))
-            add("Total CGST" to money(r.totalCgst))
-            add("Total SGST" to money(r.totalSgst))
-            add("Total IGST" to money(r.totalIgst))
-            // Only where the period actually holds VAT bills, so a GST-only shop is
-            // not reading a line of zeroes - and a shop with VAT in the period does
-            // not have that tax left off the totals entirely.
-            if (r.hasVat) add("Total VAT" to money(r.totalVat))
-            add("Total Discount" to money(r.totalDiscount))
-            add("Total Round Off" to money(r.totalRoundOff))
-        }.forEach { (label, value) -> summary.addView(summaryRow(label, value)) }
-        summary.addView(summaryRow("Total Bill Amount", money(r.totalAmount), emphasised = true))
+        // The same figures under the same names as the printed slip, in the same
+        // order - one report should not be two vocabularies depending on whether it
+        // is being read on glass or on paper.
+        summaryLines(r).forEach { (label, value) -> summary.addView(summaryRow(label, value)) }
+        summary.addView(summaryRow("Total Amount", money(r.totalAmount), emphasised = true))
+        summary.addView(summaryRow("Round Off Amount", money(r.totalRoundOff)))
     }
+
+    /**
+     * The totals above the bill amount, named as the slip names them.
+     *
+     * IGST and VAT are only there where the period holds them. The reference slip has
+     * no line for either - a GST shop selling within its own state never charges them -
+     * but a shop that did would otherwise have that tax missing from its totals
+     * altogether, which is a worse fault than an unfamiliar line.
+     */
+    private fun summaryLines(r: BillWiseReportDao.Report): List<Pair<String, String>> = buildList {
+        add("Total Bills" to r.billCount.toString())
+        add("Bill Amount" to money(r.totalMrp))
+        add("SGST Amount" to money(r.totalSgst))
+        add("CGST Amount" to money(r.totalCgst))
+        if (r.totalIgst > 0.0) add("IGST Amount" to money(r.totalIgst))
+        if (r.hasVat) add("VAT Amount" to money(r.totalVat))
+        add("Discount Amount" to money(r.totalDiscount))
+    }
+
+    /**
+     * The printed slip, in the format these tills have always printed it: the machine
+     * ID and clock at the head, the range under it, a line per bill, and the totals
+     * as a plain named list. See [PeriodReportRenderer.Style.CLASSIC].
+     *
+     * Six columns is as many as a roll will hold, so DATE and PAY MODE stay on the
+     * screen only - the date is on the range line above, and the pay mode is the
+     * Payment-Wise Report's whole subject.
+     */
+    private fun printContent(r: BillWiseReportDao.Report): PeriodReportRenderer.Content =
+        PeriodReportRenderer.Content(
+            title = "Bill-Wise Report",
+            period = "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}",
+            subtitle = "${r.billCount} bill(s)",
+            style = PeriodReportRenderer.Style.CLASSIC,
+            range = "F.DT:${shortDate(r.fromDate)}" to "TO.DT:${shortDate(r.toDate)}",
+            columns = listOf("BILL", "AMT", "SGST", "CGST", "DISC.", "TOTAL AMT"),
+            rows = r.lines.map { line ->
+                listOf(
+                    line.billNumber,
+                    money(line.mrp),
+                    if (line.isVat) "-" else money(line.sgst),
+                    if (line.isVat) "-" else money(line.cgst),
+                    money(line.discount),
+                    money(line.netAmount)
+                )
+            },
+            // Every total on one list, round off last - the slip sets them all in one
+            // weight, so nothing is passed as the emphasised `total`. The labels are
+            // padded to the longest so the colons line up down the column; the face is
+            // monospace, so padding is alignment.
+            summary = buildList {
+                add("Bill Amount" to money(r.totalMrp))
+                add("SGST Amount" to money(r.totalSgst))
+                add("CGST Amount" to money(r.totalCgst))
+                if (r.totalIgst > 0.0) add("IGST Amount" to money(r.totalIgst))
+                if (r.hasVat) add("VAT Amount" to money(r.totalVat))
+                add("Total Amount" to money(r.totalAmount))
+                add("Round Off Amount" to money(r.totalRoundOff))
+            }.map { (label, value) -> label.uppercase().padEnd(LABEL_WIDTH) + " :" to value },
+            emptyNote = "No bills in this period."
+        )
+
+    /** "2026-08-12" as "12-08-26" - how the F.DT / TO.DT line has always read. */
+    private fun shortDate(date: String): String =
+        pretty(date).let { it.take(6) + it.takeLast(2) }
 
     private fun showEmpty(title: String, hint: String) {
         root.findViewById<View>(R.id.llReportResult).visibility = View.GONE
@@ -232,8 +292,8 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         add(pretty(line.date))
         add(line.payMode)
         add(money(line.mrp))
-        add(if (line.isVat) "-" else money(line.cgst))
         add(if (line.isVat) "-" else money(line.sgst))
+        add(if (line.isVat) "-" else money(line.cgst))
         add(if (line.isVat) "-" else money(line.igst))
         if (columns.any { it.label == "VAT" }) add(if (line.isVat) money(line.vat) else "-")
         add(money(line.discount))
@@ -381,6 +441,9 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         /** Side padding on every row, header included - and on the list holding them. */
         const val ROW_PADDING_DP = 6
 
+        /** "ROUND OFF AMOUNT" - the longest summary label, which the rest pad out to. */
+        const val LABEL_WIDTH = 16
+
         /**
          * The table, left to right.
          *
@@ -392,15 +455,16 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
          * a bill raised under it.
          */
         val BASE_COLUMNS = listOf(
-            Column("BILL NO", 120, alignEnd = false),
+            Column("BILL", 120, alignEnd = false),
             Column("DATE", 100, alignEnd = false),
             Column("PAY MODE", 90, alignEnd = false),
-            Column("TOTAL MRP", 100, alignEnd = true),
-            Column("CGST", 90, alignEnd = true),
+            Column("AMT", 100, alignEnd = true),
+            // SGST before CGST, as the slip has always set them.
             Column("SGST", 90, alignEnd = true),
+            Column("CGST", 90, alignEnd = true),
             Column("IGST", 90, alignEnd = true),
-            Column("DISCOUNT", 100, alignEnd = true),
-            Column("TOTAL AMOUNT", 120, alignEnd = true)
+            Column("DISC.", 100, alignEnd = true),
+            Column("TOTAL AMT", 120, alignEnd = true)
         )
     }
 }

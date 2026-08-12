@@ -56,13 +56,13 @@ object BillPrinter {
             when (result) {
                 is ThermalPrinter.Result.Success -> {
                     report("Printed")
-                    BillReceiptRenderer.recordPrint(context, receiptNo)
+                    BillReceiptRenderer.recordPrint(context, receiptNo, duplicate)
                 }
                 // The printer took the receipt but does not report back, so say what
                 // is actually known rather than claiming paper came out.
                 is ThermalPrinter.Result.Sent -> {
                     report("Sent to printer")
-                    BillReceiptRenderer.recordPrint(context, receiptNo)
+                    BillReceiptRenderer.recordPrint(context, receiptNo, duplicate)
                 }
                 is ThermalPrinter.Result.Failure -> report("Print failed: ${result.message}")
             }

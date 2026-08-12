@@ -559,7 +559,7 @@ class BillReceiptRenderer(context: Context) {
                        tot_discount_amount, net_amount, operator_id, created_by, bill_type,
                        tot_round_off_amount, amount_in_words, settings_snapshot,
                        COALESCE(service_charge_amount, 0)
-                FROM ${DatabaseHelper.Tables.TD_BILLS} WHERE receipt_no = ?
+                FROM ${billsTableFor(db, receiptNo)} WHERE receipt_no = ?
                 """.trimIndent(),
                 arrayOf(receiptNo.toString())
             ).use { c ->
@@ -1118,7 +1118,7 @@ class BillReceiptRenderer(context: Context) {
                          WHERE r.product_id = i.product_id
                          ORDER BY r.id ASC LIMIT 1)
                    )
-            FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
+            FROM ${itemsTableFor(db, receiptNo)} i
             LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCTS} p ON i.product_id = p.id
             WHERE i.bill_id = ?
             ORDER BY i.id ASC
@@ -1986,6 +1986,29 @@ class BillReceiptRenderer(context: Context) {
         }
     }
 
+
+    /**
+     * Which table holds this bill - the live one, or the archive a delete moved it to.
+     *
+     * A deleted bill is still listed under Cancelled in Bill History and still opens
+     * its receipt, so the preview has to be able to find it after it has left
+     * `td_bills`. Resolved per read rather than passed in, so every caller - the
+     * screen, the printer, a reprint - gets the same answer without having to know
+     * the bill was deleted.
+     */
+    private fun billsTableFor(db: SQLiteDatabase, receiptNo: Long): String =
+        if (existsIn(db, DatabaseHelper.Tables.TD_BILLS, "receipt_no", receiptNo))
+            DatabaseHelper.Tables.TD_BILLS else DatabaseHelper.Tables.TD_BILLS_DELETE
+
+    /** The lines of [receiptNo], from whichever side of the delete they are on. */
+    private fun itemsTableFor(db: SQLiteDatabase, receiptNo: Long): String =
+        if (existsIn(db, DatabaseHelper.Tables.TD_BILLS, "receipt_no", receiptNo))
+            DatabaseHelper.Tables.TD_BILL_ITEMS else DatabaseHelper.Tables.TD_BILL_ITEMS_DELETE
+
+    private fun existsIn(db: SQLiteDatabase, table: String, column: String, value: Long): Boolean =
+        db.rawQuery("SELECT 1 FROM $table WHERE $column = ? LIMIT 1", arrayOf(value.toString()))
+            .use { it.moveToFirst() }
+
     companion object {
         private const val TAG = "BillReceiptRenderer"
 
@@ -2009,25 +2032,29 @@ class BillReceiptRenderer(context: Context) {
                 .getOrDefault(BillSettingsDao.BillFormat.STANDARD))
 
         /**
-         * Logs the print against the bill. The first one is the ORIGINAL; anything
-         * after it is a REPRINT, which is the distinction an audit cares about.
+         * Logs the print against the bill, as an ORIGINAL or a DUPLICATE.
          *
-         * Shared so a checkout auto-print and a bill-screen reprint are counted the
+         * [duplicate] is the caller's own answer, not something worked out here: the
+         * screen doing the printing is the only thing that knows whether this is the
+         * copy that goes with the sale or one run off afterwards from Bill history.
+         *
+         * It used to be inferred - first row logged for a bill was the ORIGINAL, the
+         * rest reprints - and that was wrong whenever the sale-time print never
+         * reached the log. A printer offline at the till, a bill never printed at the
+         * counter: the first duplicate then became the "original", and the Duplicate
+         * Receipt Report undercounted that bill by one for the rest of its life. The
+         * caller already had the answer; it just was not being asked.
+         *
+         * Shared so a checkout auto-print and a Bill history reprint are recorded the
          * same way - otherwise the audit trail depends on which screen printed.
          */
-        fun recordPrint(ctx: Context, receiptNo: Long) {
+        fun recordPrint(ctx: Context, receiptNo: Long, duplicate: Boolean) {
             runCatching {
-                val db = DatabaseHelper.getInstance(ctx).writableDatabase
-                val already = db.rawQuery(
-                    "SELECT count(*) FROM ${DatabaseHelper.Tables.TD_BILL_PRINTS} WHERE bill_id = ?",
-                    arrayOf(receiptNo.toString())
-                ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
-
-                db.insert(
+                DatabaseHelper.getInstance(ctx).writableDatabase.insert(
                     DatabaseHelper.Tables.TD_BILL_PRINTS, null,
                     ContentValues().apply {
                         put("bill_id", receiptNo)
-                        put("print_type", if (already == 0) "ORIGINAL" else "REPRINT")
+                        put("print_type", if (duplicate) "DUPLICATE" else "ORIGINAL")
                         put("print_date", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
                         put("created_by", SessionManager.auditUser)
                     }
