@@ -450,6 +450,8 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_TD_WRITE_OFF)
         db.execSQL(SQL_CREATE_TD_BILLS)
         db.execSQL(SQL_CREATE_TD_BILL_ITEMS)
+        db.execSQL(SQL_CREATE_TD_BILLS_DELETE)
+        db.execSQL(SQL_CREATE_TD_BILL_ITEMS_DELETE)
         db.execSQL(SQL_CREATE_TD_PAYMENTS)
         db.execSQL(SQL_CREATE_TD_SALE_RETURNS)
         db.execSQL(SQL_CREATE_TD_RETURN_ITEMS)
@@ -481,6 +483,10 @@ class DatabaseHelper private constructor(context: Context) :
             // Ensure md_printer exists before adding column in v7 if we jumped directly from < 6 to 14
             db.execSQL(SQL_CREATE_MD_PRINTER)
             addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
+        }
+        if (oldVersion < 17) {
+            db.execSQL(SQL_CREATE_TD_BILLS_DELETE)
+            db.execSQL(SQL_CREATE_TD_BILL_ITEMS_DELETE)
         }
         // gst_rate is dropped in onOpen via a portable table rebuild (see
         // dropProductGstRateIfPresent), which works on every SQLite version.
@@ -957,6 +963,7 @@ class DatabaseHelper private constructor(context: Context) :
         val order = listOf(
             Tables.TD_PAYMENTS, Tables.TD_RETURN_ITEMS, Tables.TD_SALE_RETURNS,
             Tables.TD_BILL_PRINTS, Tables.TD_BILL_ITEMS, Tables.TD_BILLS,
+            Tables.TD_BILL_ITEMS_DELETE, Tables.TD_BILLS_DELETE,
             Tables.TD_KOT_ITEMS, Tables.TD_KOT,
             Tables.TD_RUNNING_ORDER_ITEMS, Tables.TD_RUNNING_ORDER,
             Tables.TD_ASSIGN_WAITER,
@@ -1006,6 +1013,17 @@ class DatabaseHelper private constructor(context: Context) :
         const val TD_WRITE_OFF = "td_write_off"
         const val TD_BILLS = "td_bills"
         const val TD_BILL_ITEMS = "td_bill_items"
+
+        /**
+         * Where a deleted bill and its lines go.
+         *
+         * Deleting a bill moves it out of [TD_BILLS] rather than erasing it, so it
+         * leaves every sales report at once - each of them reads td_bills, and none
+         * of them has to learn a new exclusion - while the record of it survives for
+         * Bill History and the Void Bill Report to show.
+         */
+        const val TD_BILLS_DELETE = "td_bills_delete"
+        const val TD_BILL_ITEMS_DELETE = "td_bill_items_delete"
         const val TD_PAYMENTS = "td_payments"
         const val TD_SALE_RETURNS = "td_sale_returns"
         const val TD_RETURN_ITEMS = "td_return_items"
@@ -1023,7 +1041,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 16
+        private const val DATABASE_VERSION = 17
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of
@@ -1054,7 +1072,8 @@ class DatabaseHelper private constructor(context: Context) :
             Tables.TD_PURCHASE, Tables.TD_PURCHASE_RETURN, Tables.TD_WRITE_OFF, Tables.TD_BILLS,
             Tables.TD_BILL_ITEMS, Tables.TD_PAYMENTS, Tables.TD_SALE_RETURNS, Tables.TD_RETURN_ITEMS,
             Tables.TD_STOCK_TRANSACTIONS, Tables.TD_CUSTOMER_LEDGER, Tables.TD_ADVANCE_PAYMENTS,
-            Tables.TD_KOT, Tables.TD_KOT_ITEMS, Tables.TD_BILL_PRINTS
+            Tables.TD_KOT, Tables.TD_KOT_ITEMS, Tables.TD_BILL_PRINTS,
+            Tables.TD_BILLS_DELETE, Tables.TD_BILL_ITEMS_DELETE
         )
 
         // ---------------------------------------------------------------
@@ -1694,6 +1713,93 @@ class DatabaseHelper private constructor(context: Context) :
                 FOREIGN KEY(product_id) REFERENCES md_products(id),
                 FOREIGN KEY(batch_id) REFERENCES md_batch_stock(id),
                 FOREIGN KEY(unit_id) REFERENCES md_units(id)
+            )
+        """
+
+        /**
+         * A deleted bill, kept exactly as it was billed.
+         *
+         * The same columns as td_bills so a row moves across whole, but without its
+         * foreign keys: a deleted bill may outlive the customer or operator it named,
+         * and refusing the archive because a master row has since gone would leave
+         * the till unable to delete the bill at all.
+         */
+        private const val SQL_CREATE_TD_BILLS_DELETE = """
+            CREATE TABLE IF NOT EXISTS td_bills_delete (
+                receipt_no INTEGER PRIMARY KEY,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                bill_number TEXT,
+                bill_seq_no INTEGER,
+                bill_date TEXT,
+                bill_date_time TEXT,
+                customer_id INTEGER,
+                operator_id INTEGER,
+                waiter_id INTEGER,
+                table_number TEXT,
+                order_type TEXT,
+                service_charge_amount REAL DEFAULT 0,
+                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','VOID')),
+                settings_snapshot TEXT,
+                tot_price REAL DEFAULT 0,
+                tot_discount_amount REAL DEFAULT 0,
+                tot_discount_percentage REAL DEFAULT 0,
+                discount_flag INTEGER NOT NULL DEFAULT 0,
+                discount_type TEXT,
+                tot_cgst_amount REAL DEFAULT 0,
+                tot_sgst_amount REAL DEFAULT 0,
+                tot_igst_amount REAL DEFAULT 0,
+                tot_vat_amount REAL DEFAULT 0,
+                tot_other_charges_amount REAL DEFAULT 0,
+                tot_round_off_amount REAL DEFAULT 0,
+                net_amount REAL DEFAULT 0,
+                amount_in_words TEXT,
+                gst_flag INTEGER NOT NULL DEFAULT 0,
+                vat_flag INTEGER NOT NULL DEFAULT 0,
+                is_mrp_billing INTEGER NOT NULL DEFAULT 0,
+                is_return_bill INTEGER NOT NULL DEFAULT 0,
+                is_duplicate INTEGER NOT NULL DEFAULT 0,
+                is_voided INTEGER NOT NULL DEFAULT 0,
+                bill_status TEXT CHECK(bill_status IN ('DRAFT','COMPLETED','CANCELLED')) DEFAULT 'DRAFT',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
+        /**
+         * A deleted bill's lines. No foreign key to td_bills for the plain reason
+         * that the bill is no longer there - it is in td_bills_delete beside these.
+         */
+        private const val SQL_CREATE_TD_BILL_ITEMS_DELETE = """
+            CREATE TABLE IF NOT EXISTS td_bill_items_delete (
+                id INTEGER PRIMARY KEY,
+                store_id INTEGER,
+                receipt_no INTEGER,
+                trans_dt TEXT,
+                bill_id INTEGER,
+                product_id INTEGER,
+                batch_id INTEGER,
+                quantity REAL,
+                unit_id INTEGER,
+                rate REAL,
+                item_subtotal REAL,
+                discount_amount REAL DEFAULT 0,
+                discount_percentage REAL DEFAULT 0,
+                cgst_rate REAL DEFAULT 0,
+                sgst_rate REAL DEFAULT 0,
+                igst_rate REAL DEFAULT 0,
+                vat_rate REAL DEFAULT 0,
+                cgst_amount REAL DEFAULT 0,
+                sgst_amount REAL DEFAULT 0,
+                igst_amount REAL DEFAULT 0,
+                vat_amount REAL DEFAULT 0,
+                item_total REAL,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
             )
         """
 

@@ -1,5 +1,6 @@
 package com.example.synergic_pos_offline.fragments
 
+import android.content.Context
 import android.content.res.ColorStateList
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -15,6 +16,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.MainActivity
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
 
@@ -75,12 +77,10 @@ class ReportsFragment : Fragment() {
             "Time Wise Item Report"
         )
 
-        // Stock Report only exists where there is a count to report on: with stock
-        // tracking off there are no quantities, and the tile would open a screen
-        // that could only ever show zeroes.
-        val shown = titles.filter {
-            it != STOCK_REPORT || GeneralSettingsDao.isStockEnabled(requireContext())
-        }
+        // Stock Report only exists where there is a count to report on, and the KOT
+        // and UDF reports only in Restaurant - see [isVisible], which the sidebar
+        // asks the same question of.
+        val shown = titles.filter { isVisible(requireContext(), it) }
 
         val reportItems = shown.mapIndexed { index, title ->
             val (bg, icon) = palette[index % palette.size]
@@ -91,8 +91,21 @@ class ReportsFragment : Fragment() {
             when (item.title) {
                 "Bill Wise Report" -> openFragment(BillWiseReportFragment())
                 "Item Wise Report" -> openFragment(ItemWiseReportFragment())
+                "Operator Wise Report" -> openFragment(OperatorWiseReportFragment())
                 "Tax Report" -> openFragment(TaxReportFragment())
+                "Payment-Wise Report" -> openFragment(PaymentWiseReportFragment())
                 "Returned Bill Report" -> openFragment(ReturnedBillReportFragment())
+                "Unsold Product Report" -> openFragment(UnsoldProductReportFragment())
+                "Category/Dept Wise Bill Report" -> openFragment(CategoryWiseReportFragment())
+                "Opr Bill Report" -> openFragment(OperatorBilledReportFragment())
+                "Item Bill Report" -> openFragment(ItemBillReportFragment())
+                "Time Wise Item Report" -> openFragment(TimeWiseItemReportFragment())
+                "Duplicate Bill Report" -> openFragment(DuplicateReportFragment())
+                "Void Bill Report" -> openFragment(VoidBillReportFragment())
+                "Profit & Loss Report" -> openFragment(ProfitLossReportFragment())
+                "Day-Wise Report" -> openFragment(DayWiseReportFragment())
+                "Month Wise Report" -> openFragment(MonthWiseReportFragment())
+                "Year Wise Report" -> openFragment(YearWiseReportFragment())
                 STOCK_REPORT -> openFragment(StockReportFragment())
                 "Customer Ledger" -> openFragment(CustomerLedgerFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
@@ -100,9 +113,36 @@ class ReportsFragment : Fragment() {
         }
     }
 
-    private companion object {
+    companion object {
         /** Named once: the tile is filtered by this and opened by it. */
-        const val STOCK_REPORT = "Stock Report"
+        private const val STOCK_REPORT = "Stock Report"
+
+        /**
+         * Reports that only exist in Restaurant mode.
+         *
+         * A KOT is a kitchen ticket and a UDF is a field of a restaurant order;
+         * neither is ever raised on a grocery till. The tiles would open screens that
+         * could only be empty, and an empty report reads as a broken one.
+         */
+        private val RESTAURANT_ONLY = setOf(
+            "KOT Cancel Report",
+            "UDF-Wise Report",
+            "UDF Wise Item Report"
+        )
+
+        /**
+         * Whether [title] belongs on this till at all.
+         *
+         * The one rule, and both places that list reports ask it: this grid and the
+         * sidebar's Reports branch. They are two descriptions of one menu, and a
+         * report hidden from one of them only is worse than one never hidden - it is
+         * still reachable, just no longer where anyone looks for it.
+         */
+        fun isVisible(context: Context, title: String): Boolean = when {
+            title == STOCK_REPORT -> GeneralSettingsDao.isStockEnabled(context)
+            title in RESTAURANT_ONLY -> SettingsCache.value(context, "G", "Mode") == "R"
+            else -> true
+        }
     }
 
     private fun openFragment(fragment: Fragment) {

@@ -410,8 +410,21 @@ class MainActivity : AppCompatActivity() {
             // by the same call a grocery sale is, so there is one report to open.
             "Bill Wise Report" -> navigateTo(BillWiseReportFragment())
             "Item Wise Report" -> navigateTo(ItemWiseReportFragment())
+            "Operator Wise Report" -> navigateTo(OperatorWiseReportFragment())
             "Tax Report" -> navigateTo(TaxReportFragment())
+            "Payment-Wise Report" -> navigateTo(PaymentWiseReportFragment())
             "Returned Bill Report" -> navigateTo(ReturnedBillReportFragment())
+            "Unsold Product Report" -> navigateTo(UnsoldProductReportFragment())
+            "Category/Dept Wise Bill Report" -> navigateTo(CategoryWiseReportFragment())
+            "Opr Bill Report" -> navigateTo(OperatorBilledReportFragment())
+            "Item Bill Report" -> navigateTo(ItemBillReportFragment())
+            "Time Wise Item Report" -> navigateTo(TimeWiseItemReportFragment())
+            "Duplicate Bill Report" -> navigateTo(DuplicateReportFragment())
+            "Void Bill Report" -> navigateTo(VoidBillReportFragment())
+            "Profit & Loss Report" -> navigateTo(ProfitLossReportFragment())
+            "Day-Wise Report" -> navigateTo(DayWiseReportFragment())
+            "Month Wise Report" -> navigateTo(MonthWiseReportFragment())
+            "Year Wise Report" -> navigateTo(YearWiseReportFragment())
             "Stock Report" -> navigateTo(StockReportFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")
@@ -453,8 +466,9 @@ class MainActivity : AppCompatActivity() {
         // Sale Return and Advance Payment are grocery-only flows; hidden in Restaurant.
         val isRestaurant = SettingsCache.value(context, "G", "Mode") == "R"
 
-        // Stock Report is dropped where stock is not tracked, the same way the tile
-        // on the Reports screen is: with no count kept there is nothing to report.
+        // Filtered by the same rule the Reports grid filters its tiles with, so the
+        // drawer and the grid cannot disagree about which reports this till has -
+        // see [ReportsFragment.isVisible].
         val reportTitles = listOf(
             "Bill Wise Report", "Item Wise Report", "Operator Wise Report", "Void Bill Report",
             "Tax Report", "Duplicate Bill Report", "Stock Report", "Item Bill Report",
@@ -463,7 +477,7 @@ class MainActivity : AppCompatActivity() {
             "Customer Ledger", "Profit & Loss Report", "KOT Cancel Report", "Day-Wise Report",
             "Month Wise Report", "Year Wise Report", "UDF Wise Item Report", "Customer Item Wise RPT",
             "Time Wise Item Report"
-        ).filter { it != "Stock Report" || GeneralSettingsDao.isStockEnabled(context) }
+        ).filter { ReportsFragment.isVisible(context, it) }
 
         val databaseSettingsNodes = mutableListOf(
             TreeNode("Category/Department"),

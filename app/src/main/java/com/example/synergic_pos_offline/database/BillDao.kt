@@ -542,7 +542,16 @@ class BillDao(context: Context) {
          * True for a partial return too - some of the goods are back, so the sale is
          * no longer the plain sale it was, which is what Bill History needs to show.
          */
-        val returned: Boolean = false
+        val returned: Boolean = false,
+        /**
+         * Whether this bill has been deleted - moved out of td_bills and into the
+         * archive, so it counts towards no report.
+         *
+         * History still lists it, filed with the cancelled ones: a deleted bill is
+         * exactly the thing somebody comes looking for, and a till that simply lost it
+         * would look like a till that had lost a sale.
+         */
+        val deleted: Boolean = false
     ) {
         /** Numeric total, tolerant of thousands separators. */
         val amount: Double get() = total.replace(",", "").toDoubleOrNull() ?: 0.0
@@ -556,16 +565,28 @@ class BillDao(context: Context) {
         // Store-scoped: only the current store's bills (all date filters run on top of this).
         val store = currentStoreId()
         val storeClause = if (store != null) "WHERE b.store_id = ?" else ""
-        val args = store?.let { arrayOf(it.toString()) }
+        // Bound twice - the store clause appears in both halves of the union below.
+        val args = store?.let { arrayOf(it.toString(), it.toString()) }
+        // Live bills and deleted ones in one list. Deleted bills are gone from every
+        // report - that is what deleting them did - but History is where somebody
+        // goes to find one, so it reads both tables and marks which is which.
         val sql = """
             SELECT b.receipt_no, b.bill_number, b.bill_date, b.bill_date_time,
                    b.net_amount, b.bill_status, c.customer_name,
                    EXISTS(SELECT 1 FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} r
-                          WHERE r.original_bill_id = b.receipt_no)
+                          WHERE r.original_bill_id = b.receipt_no), 0
             FROM td_bills b
             LEFT JOIN md_customers c ON c.id = b.customer_id
             $storeClause
-            ORDER BY b.receipt_no DESC
+            UNION ALL
+            SELECT b.receipt_no, b.bill_number, b.bill_date, b.bill_date_time,
+                   b.net_amount, b.bill_status, c.customer_name,
+                   EXISTS(SELECT 1 FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} r
+                          WHERE r.original_bill_id = b.receipt_no), 1
+            FROM ${DatabaseHelper.Tables.TD_BILLS_DELETE} b
+            LEFT JOIN md_customers c ON c.id = b.customer_id
+            $storeClause
+            ORDER BY 1 DESC
         """.trimIndent()
 
         helper.readableDatabase.rawQuery(sql, args).use { c ->
@@ -587,8 +608,11 @@ class BillDao(context: Context) {
                         time = formatTime(rawDateTime),
                         total = String.format(Locale.US, "%,.2f", net),
                         items = itemsByBill[receiptNo].orEmpty(),
-                        cancelled = status.equals("CANCELLED", ignoreCase = true),
-                        returned = c.getInt(7) == 1
+                        // A deleted bill files with the cancelled ones, which is where
+                        // History looks for anything that is no longer a plain sale.
+                        cancelled = status.equals("CANCELLED", ignoreCase = true) || c.getInt(8) == 1,
+                        returned = c.getInt(7) == 1,
+                        deleted = c.getInt(8) == 1
                     )
                 )
             }
@@ -606,10 +630,16 @@ class BillDao(context: Context) {
         val store = currentStoreId()
         // Restrict to the current store's bill lines (scoped directly by store_id).
         val storeClause = if (store != null) "WHERE bi.store_id = ?" else ""
-        val args = store?.let { arrayOf(it.toString()) }
+        // Bound twice - once per half of the union.
+        val args = store?.let { arrayOf(it.toString(), it.toString()) }
         val sql = """
             SELECT bi.bill_id, p.product_name
             FROM td_bill_items bi
+            LEFT JOIN md_products p ON p.id = bi.product_id
+            $storeClause
+            UNION ALL
+            SELECT bi.bill_id, p.product_name
+            FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS_DELETE} bi
             LEFT JOIN md_products p ON p.id = bi.product_id
             $storeClause
         """.trimIndent()

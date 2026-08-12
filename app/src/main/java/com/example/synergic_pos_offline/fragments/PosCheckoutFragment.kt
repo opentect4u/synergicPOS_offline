@@ -1138,11 +1138,11 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             when (result) {
                 is ThermalPrinter.Result.Success -> {
                     toast("Printed")
-                    BillReceiptRenderer.recordPrint(requireContext(), receiptNo)
+                    BillReceiptRenderer.recordPrint(requireContext(), receiptNo, duplicate = false)
                 }
                 is ThermalPrinter.Result.Sent -> {
                     toast("Sent to printer")
-                    BillReceiptRenderer.recordPrint(requireContext(), receiptNo)
+                    BillReceiptRenderer.recordPrint(requireContext(), receiptNo, duplicate = false)
                 }
                 is ThermalPrinter.Result.Failure -> toast("Print failed: ${result.message}")
             }

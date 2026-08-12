@@ -2,7 +2,7 @@
 <!--
   The printed shell every period report shares - Tax Report, Returned Bill Report
   and any that follow. Laid out at 300dp for 80mm paper, the same reference width as
-  receipt_bill_wise_report.xml, and scaled from there by PeriodReportRenderer.
+  receipt_ledger.xml, and scaled from there by PeriodReportRenderer.
 
   Nothing here names a particular report: the title, the period line and the table
   are all filled in by the renderer from the content it is handed, so a new report
@@ -92,7 +92,12 @@
                     android:textColor="#222222"
                     android:visibility="gone" />
 
-                <TextView style="@style/BillDashLine" />
+                <!-- Rules off the store block above the title. A classic slip has no
+                     store block, so the renderer hides this rather than opening the
+                     slip with a rule under nothing. -->
+                <TextView
+                    android:id="@+id/tvPeriodTitleRule"
+                    style="@style/BillDashLine" />
 
                 <!-- Which report this is - set by the renderer, not declared here. -->
                 <TextView
@@ -106,23 +111,14 @@
                     android:textColor="#111111"
                     android:text="REPORT" />
 
-                <TextView
-                    android:id="@+id/tvPeriodRange"
+                <!-- Filled by the renderer: the range and what the period holds on a
+                     standard slip, the machine ID, clock and F.DT / TO.DT lines on a
+                     classic one. -->
+                <LinearLayout
+                    android:id="@+id/llPeriodHead"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="center"
-                    android:fontFamily="monospace"
-                    android:textSize="11sp"
-                    android:textColor="#444444" />
-
-                <TextView
-                    android:id="@+id/tvPeriodSubtitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center"
-                    android:fontFamily="monospace"
-                    android:textSize="11sp"
-                    android:textColor="#444444" />
+                    android:orientation="vertical" />
 
                 <TextView style="@style/BillDashLine" />
 
@@ -136,24 +132,39 @@
 
                 <TextView style="@style/BillDashLine" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:textStyle="bold"
-                    android:textSize="13sp"
-                    android:textColor="#111111"
-                    android:text="SUMMARY" />
-
-                <!-- The period's totals -->
+                <!-- Hidden whole where the report's total is a row of the table
+                     itself rather than a block of its own. -->
                 <LinearLayout
-                    android:id="@+id/llPeriodSummary"
+                    android:id="@+id/llPeriodSummaryBlock"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:orientation="vertical" />
+                    android:orientation="vertical">
 
-                <TextView style="@style/BillDashLine" />
+                    <TextView
+                        android:id="@+id/tvPeriodSummaryHeading"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="13sp"
+                        android:textColor="#111111"
+                        android:text="SUMMARY" />
+
+                    <!-- The period's totals -->
+                    <LinearLayout
+                        android:id="@+id/llPeriodSummary"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:orientation="vertical" />
+                </LinearLayout>
+
+                <!-- Closes the summary block, and goes with it: a report whose total
+                     is a row of the table has no block here, and this would then be a
+                     second rule directly under the one that already closed it. -->
+                <TextView
+                    android:id="@+id/tvPeriodSummaryRule"
+                    style="@style/BillDashLine" />
 
                 <TextView
                     android:id="@+id/tvPeriodPrintedBy"

@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.fragments
 
 import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -9,19 +10,25 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.LinearLayout
+import android.widget.NumberPicker
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.utils.CalendarGrain
 import com.example.synergic_pos_offline.utils.PeriodReportPrinter
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
 import com.example.synergic_pos_offline.utils.ReportTable
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -92,6 +99,73 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
     /** What a row is called, for the message when there are too many to print. */
     protected open val rowNoun: String = "rows"
 
+    // ---- What the range is made of -------------------------------------------
+
+    /**
+     * Whether the From / To fields ask for a date, a month or a year.
+     *
+     * Most reports run over dates and leave this alone. The calendar reports do not:
+     * a month-wise report asked for with two calendars would make an operator pick a
+     * day it then ignores, and would quietly turn "August" into "the 11th of August"
+     * for anyone who read the field back.
+     *
+     * The field holds the stored form ([CalendarGrain.now]), so what is on screen is
+     * exactly what is handed to [load] - and, since those forms sort in calendar
+     * order as text, the From-after-To check stays one string comparison.
+     */
+    protected open val grain: CalendarGrain = CalendarGrain.DAY
+
+    /** What the two fields are labelled, which follows [grain]. */
+    private val rangeHints: Pair<String, String>
+        get() = when (grain) {
+            CalendarGrain.MINUTE -> "From date & time" to "To date & time"
+            CalendarGrain.DAY -> "From date" to "To date"
+            CalendarGrain.MONTH -> "From month" to "To month"
+            CalendarGrain.YEAR -> "From year" to "To year"
+        }
+
+    /** What the range is called in a message - "dates", "months", "years". */
+    private val rangeNoun: String
+        get() = when (grain) {
+            CalendarGrain.MINUTE -> "times"
+            CalendarGrain.DAY -> "dates"
+            CalendarGrain.MONTH -> "months"
+            CalendarGrain.YEAR -> "years"
+        }
+
+    // ---- The optional filter -------------------------------------------------
+
+    /**
+     * The label on the dropdown above Generate, or null for a report that narrows by
+     * nothing but its dates - which is most of them, and why the control is hidden
+     * rather than merely empty.
+     */
+    protected open val filterHint: String? = null
+
+    /** What that dropdown offers. The first entry is what the screen opens on. */
+    protected open val filterOptions: List<String> = emptyList()
+
+    /**
+     * Whether the operator can type into the dropdown to narrow it.
+     *
+     * Off, it is a picker: a handful of fixed choices, and typing at them would only
+     * invite entries that are not on the list. On, it is a search - for a list long
+     * enough that scrolling it is worse than naming what you are after. The adapter
+     * matches on any word of an entry, so a row reading "1  rahul01  RAHUL" is found
+     * by the code, the login or the name alike.
+     */
+    protected open val filterSearchable: Boolean = false
+
+    /**
+     * What the dropdown currently reads - blank on a report that has no filter.
+     *
+     * Read inside [load], where a subclass turns it into whatever its query needs.
+     * Held here rather than passed to [load] so a report that ignores the filter is
+     * not made to declare a parameter it has no use for.
+     */
+    protected var filterChoice: String = ""
+        private set
+
     // ---- State ---------------------------------------------------------------
 
     /** The generated report, held so Print sends exactly what was generated. */
@@ -127,14 +201,20 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         etTo = view.findViewById(R.id.etPeriodTo)
         btnPrint = view.findViewById(R.id.btnPeriodPrint)
 
-        // Opens on today, the range asked for far more often than any other, so
-        // Generate works on the first tap rather than after two calendars.
-        val today = Calendar.getInstance().time
-        etFrom.setText(iso(today))
-        etTo.setText(iso(today))
+        val (fromHint, toHint) = rangeHints
+        view.findViewById<TextInputLayout>(R.id.tilPeriodFrom).hint = fromHint
+        view.findViewById<TextInputLayout>(R.id.tilPeriodTo).hint = toHint
 
-        etFrom.setOnClickListener { pickDate(etFrom) }
-        etTo.setOnClickListener { pickDate(etTo) }
+        // Opens on the current day / month / year, the range asked for far more often
+        // than any other, so Generate works on the first tap rather than after two
+        // pickers. A range of minutes opens at the start of today - see [openingFrom].
+        etFrom.setText(grain.openingFrom())
+        etTo.setText(grain.now())
+
+        etFrom.setOnClickListener { pickPeriod(etFrom) }
+        etTo.setOnClickListener { pickPeriod(etTo) }
+
+        setUpFilter(view)
 
         view.findViewById<MaterialButton>(R.id.btnPeriodGenerate).setOnClickListener { generate() }
         btnPrint.setOnClickListener {
@@ -156,18 +236,63 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         }
     }
 
+    /**
+     * Shows the dropdown and seeds it, on a report that declares one.
+     *
+     * The choice is only read on Generate, never live: changing it does not silently
+     * rewrite a report already on the screen into one the operator did not ask for,
+     * and the figures being printed stay the figures that were generated.
+     */
+    private fun setUpFilter(view: View) {
+        val til = view.findViewById<TextInputLayout>(R.id.tilPeriodFilter)
+        val hint = filterHint
+        if (hint == null || filterOptions.isEmpty()) {
+            til.visibility = View.GONE
+            return
+        }
+        til.visibility = View.VISIBLE
+        til.hint = hint
+
+        filterChoice = filterOptions.first()
+        val dropdown = view.findViewById<MaterialAutoCompleteTextView>(R.id.actPeriodFilter)
+        dropdown.setAdapter(
+            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, filterOptions)
+        )
+        dropdown.setText(filterChoice, false)
+
+        if (filterSearchable) {
+            dropdown.isFocusable = true
+            dropdown.isFocusableInTouchMode = true
+            dropdown.inputType = android.text.InputType.TYPE_CLASS_TEXT
+            // One character, so the list narrows from the first keystroke rather than
+            // after three - these lists are short, and waiting is worse than scrolling.
+            dropdown.threshold = 1
+            // A tap re-opens the whole list rather than leaving the operator to clear
+            // the box first: they are usually switching to another operator, not
+            // correcting a typo in this one.
+            dropdown.setOnClickListener { dropdown.showDropDown() }
+        }
+
+        dropdown.setOnItemClickListener { _, _, position, _ ->
+            // The adapter's own list once it has been filtered, not the full one -
+            // position is an index into what is on screen.
+            filterChoice = (dropdown.adapter.getItem(position) as? String) ?: filterChoice
+        }
+    }
+
     // ---- Generating ----------------------------------------------------------
 
     private fun generate() {
         val from = etFrom.text?.toString()?.trim().orEmpty()
         val to = etTo.text?.toString()?.trim().orEmpty()
         if (from.isEmpty() || to.isEmpty()) {
-            toast("Pick both dates")
+            toast("Pick both $rangeNoun")
             return
         }
-        // ISO dates sort lexicographically, so this is the whole check.
+        // yyyy / yyyy-MM / yyyy-MM-dd all sort in calendar order as text, so whichever
+        // grain this report runs at, this is the whole check.
         if (from > to) {
-            toast("The From date is after the To date")
+            toast("The From value is after the To value")
             return
         }
 
@@ -346,6 +471,57 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
 
     // ---- Small helpers -------------------------------------------------------
 
+    /** Opens whichever picker [grain] calls for, seeded with what [field] holds. */
+    private fun pickPeriod(field: TextInputEditText) = when (grain) {
+        CalendarGrain.MINUTE -> pickMoment(field)
+        CalendarGrain.DAY -> pickDate(field)
+        CalendarGrain.MONTH -> pickMonth(field)
+        CalendarGrain.YEAR -> pickYear(field)
+    }
+
+    /**
+     * A calendar, then a clock. Writes back "yyyy-MM-dd HH:mm".
+     *
+     * Two dialogs in sequence rather than one control: Android has no combined picker,
+     * and a date typed into a text field is a date typed wrongly.
+     */
+    private fun pickMoment(field: TextInputEditText) {
+        val calendar = Calendar.getInstance()
+        field.text?.toString()?.takeIf { it.isNotBlank() }?.let { current ->
+            runCatching {
+                val date = current.take(10).split("-")
+                val time = current.drop(11).split(":")
+                calendar.set(date[0].toInt(), date[1].toInt() - 1, date[2].toInt())
+                calendar.set(Calendar.HOUR_OF_DAY, time[0].toInt())
+                calendar.set(Calendar.MINUTE, time[1].toInt())
+            }
+        }
+        DatePickerDialog(
+            requireContext(),
+            { _, year, month, day ->
+                TimePickerDialog(
+                    requireContext(),
+                    { _, hour, minute ->
+                        field.setText(
+                            String.format(
+                                Locale.US, "%04d-%02d-%02d %02d:%02d",
+                                year, month + 1, day, hour, minute
+                            )
+                        )
+                    },
+                    calendar.get(Calendar.HOUR_OF_DAY),
+                    calendar.get(Calendar.MINUTE),
+                    // 24-hour, because the field holds 24-hour and a picker that
+                    // disagreed with the box it fills would be read wrong at a glance.
+                    true
+                ).show()
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        ).show()
+    }
+
     /** Opens a calendar seeded with whatever [field] holds, and writes the pick back. */
     private fun pickDate(field: TextInputEditText) {
         val calendar = Calendar.getInstance()
@@ -366,7 +542,71 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         ).show()
     }
 
-    private fun iso(date: Date): String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(date)
+    /**
+     * A month and a year, side by side. Writes back "yyyy-MM".
+     *
+     * Two wheels rather than a calendar with its day ignored: a picker that offers a
+     * choice the report will throw away invites the operator to believe it mattered.
+     */
+    private fun pickMonth(field: TextInputEditText) {
+        val parts = (field.text?.toString().orEmpty() + "--").split("-")
+        val thisYear = Calendar.getInstance().get(Calendar.YEAR)
+
+        val months = NumberPicker(requireContext()).apply {
+            minValue = 1
+            maxValue = 12
+            displayedValues = MONTH_NAMES
+            value = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(1, 12)
+                ?: (Calendar.getInstance().get(Calendar.MONTH) + 1)
+            wrapSelectorWheel = false
+        }
+        val years = yearPicker(parts.getOrNull(0)?.toIntOrNull() ?: thisYear)
+
+        showPicker("Pick a month", listOf(months, years)) {
+            field.setText(String.format(Locale.US, "%04d-%02d", years.value, months.value))
+        }
+    }
+
+    /** A year on its own. Writes back "yyyy". */
+    private fun pickYear(field: TextInputEditText) {
+        val thisYear = Calendar.getInstance().get(Calendar.YEAR)
+        val years = yearPicker(field.text?.toString()?.trim()?.toIntOrNull() ?: thisYear)
+        showPicker("Pick a year", listOf(years)) {
+            field.setText(years.value.toString())
+        }
+    }
+
+    /**
+     * A wheel of years ending at this one, opened on [selected].
+     *
+     * It does not run past the current year: a till cannot have billed in a year that
+     * has not happened, and a report of it could only ever be empty.
+     */
+    private fun yearPicker(selected: Int): NumberPicker {
+        val thisYear = Calendar.getInstance().get(Calendar.YEAR)
+        return NumberPicker(requireContext()).apply {
+            minValue = thisYear - YEARS_OFFERED
+            maxValue = thisYear
+            value = selected.coerceIn(minValue, maxValue)
+            wrapSelectorWheel = false
+        }
+    }
+
+    /** The wheels in a row, under [title], with the pick applied on OK. */
+    private fun showPicker(title: String, wheels: List<NumberPicker>, onPick: () -> Unit) {
+        val row = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(12), dp(16), 0)
+            wheels.forEach { addView(it, LinearLayout.LayoutParams(0, -2, 1f)) }
+        }
+        AlertDialog.Builder(requireContext())
+            .setTitle(title)
+            .setView(row)
+            .setPositiveButton("OK") { _, _ -> onPick() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
     /** "yyyy-MM-dd" as "dd-MM-yyyy", which is how a date is read on a bill here. */
     protected fun pretty(value: String): String = runCatching {
@@ -389,5 +629,14 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
     private companion object {
         /** Side padding on every row, header included - and on the list holding them. */
         const val ROW_PADDING_DP = 6
+
+        /** How far back the year wheels reach - long enough to outlast any till. */
+        const val YEARS_OFFERED = 20
+
+        /** The month wheel's labels, in the order [NumberPicker] wants them. */
+        val MONTH_NAMES = arrayOf(
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+        )
     }
 }

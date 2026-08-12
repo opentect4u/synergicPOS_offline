@@ -40,7 +40,7 @@ private const val REFERENCE_PAPER_DOTS = PrintType.REFERENCE_PAPER_DOTS
  * One renderer rather than one per report. The store's name, its logos and footer
  * lines, the printed-by block and the way a table is fitted to a roll are the same
  * problem whatever the report is about, and they were already solved once in
- * [BillWiseReportRenderer]; solving them again per new report is how five slips off
+ * the bill wise slip; solving them again per new report is how five slips off
  * one till end up looking like five different programs.
  *
  * What a report actually supplies is [Content]: its title, its columns, its rows as
@@ -77,10 +77,117 @@ class PeriodReportRenderer(context: Context) {
         /** The totals, in the order they add up. */
         val summary: List<Pair<String, String>>,
         /** The one figure the report is read for, set larger under the rest. */
-        val total: Pair<String, String>,
+        val total: Pair<String, String>? = null,
+        /**
+         * A closing row of the table itself, in the table's own columns.
+         *
+         * For a report whose total is a row of figures rather than one figure -
+         * "TOTAL :  6  4852.00" - where each has to land under the column it totals.
+         * Stated as a label/value pair in [total] it would sit at the right-hand edge
+         * instead, under whichever column happened to be last.
+         */
+        val footerRow: List<String>? = null,
         /** Printed in place of the table when the period is empty. */
-        val emptyNote: String = "Nothing in this period."
+        val emptyNote: String = "Nothing in this period.",
+        /** How the slip is laid out - see [Style]. */
+        val style: Style = Style.STANDARD,
+        /**
+         * "F.DT:01-08-26" and "TO.DT:11-08-26", set one at each end of a line.
+         * [Style.CLASSIC] only; a standard slip states its range as [period].
+         */
+        val range: Pair<String, String>? = null,
+        /**
+         * A band printed across the slip above row *i* - "DAY : 07-08-2026" - for the
+         * reports that group their rows rather than labelling each one.
+         *
+         * A grouped report has nothing to put in a first column: every row under the
+         * band belongs to it, and repeating the date down the side of a single-row
+         * group would say it twice. Empty on a report that labels its rows.
+         */
+        val bands: List<String?> = emptyList(),
+        /**
+         * A note set across the foot of the slip, under its own rule - a caveat the
+         * figures have to be read with, not a footer line of the shop's.
+         */
+        val footerNote: String? = null,
+        /**
+         * Heads a *second* line printed under every row, in columns of its own.
+         *
+         * For a report carrying more figures than a roll holds across, where breaking
+         * them over two lines beats setting the type too small to read: the item's
+         * name and quantity on one line, its money on the next. Null for the reports
+         * that fit on one.
+         *
+         * Both lines spread their cells evenly rather than sizing each to its content,
+         * because the two have different column counts - measured widths would leave
+         * the figures of one line sitting under nothing in particular on the other.
+         */
+        val columns2: List<String>? = null,
+        /** The second line of row *i*, in [columns2]'s columns. */
+        val rows2: List<List<String>> = emptyList(),
+        /**
+         * Rule off every row from the next.
+         *
+         * For a two-line row, where without a separator the second line of one item
+         * and the first of the next read as a single block and the eye loses which
+         * figures belong to which name.
+         */
+        val ruleBetweenRows: Boolean = false,
+        /**
+         * Divide the roll evenly between the columns instead of sizing each to its
+         * widest value.
+         *
+         * For a table of two or three columns, where measured widths pack every
+         * figure against the right-hand edge and leave the rest of the paper blank.
+         * A table of five or six wants the opposite - there, even columns would
+         * starve the wide ones - so this is off by default.
+         */
+        val evenColumns: Boolean = false,
+        /**
+         * Whether the first column is set to the right like the rest.
+         *
+         * A first column holding a name or a code reads from the left; one holding a
+         * bill number reads as a figure, and lines up with the figures beside it.
+         * Only meaningful with [evenColumns].
+         */
+        val alignFirstColumnEnd: Boolean = false,
+        /**
+         * Set every column down the middle of its own share of the roll.
+         *
+         * For a table of two or three short values, where flushing them to the edges
+         * leaves them stranded at opposite ends of the paper with nothing between.
+         * Only meaningful with [evenColumns], and it overrides [alignFirstColumnEnd].
+         */
+        val centreColumns: Boolean = false,
+        /**
+         * Label / value lines set between the range and the table - what this run of
+         * the report was asked for, where that is a thing rather than a date.
+         *
+         * The value is centred rather than pushed right: it is an answer to the label
+         * beside it, not a figure in a column of figures.
+         */
+        val heading: List<Pair<String, String>> = emptyList(),
+        /**
+         * A line above the column heads, in the table's own columns.
+         *
+         * For a report run against one thing - an item, an operator - where naming it
+         * over the column it governs says more than a caption above the table would.
+         * Only meaningful with [evenColumns].
+         */
+        val columnsAbove: List<String>? = null
     )
+
+    /**
+     * How a slip is laid out.
+     *
+     * [CLASSIC] is the format the tills these reports replace have always printed,
+     * and the one shopkeepers read without having to be told how: no store block,
+     * the machine's own ID and the clock at the head, the range under it, and the
+     * totals as a plain "TOTAL X :" list. [STANDARD] is the store-headed slip the
+     * rest of this till prints - a logo, the store's name and GSTIN, footer lines and
+     * who printed it.
+     */
+    enum class Style { STANDARD, CLASSIC }
 
     /**
      * Renders [content] to a bitmap without it ever being shown, laid out for a
@@ -123,59 +230,185 @@ class PeriodReportRenderer(context: Context) {
     ) {
         try {
             val db = DatabaseHelper.getInstance(ctx).readableDatabase
+            val classic = content.style == Style.CLASSIC
 
-            db.query(
-                DatabaseHelper.Tables.MD_REGISTRATION,
-                arrayOf("store_name", "address", "phone_no", "store_gstin"),
-                null, null, null, null, "store_id ASC", "1"
-            ).use { c ->
-                if (c.moveToFirst()) {
-                    c.getString(0)?.takeIf { it.isNotBlank() }?.let {
-                        view.findViewById<TextView>(R.id.tvPeriodStoreName).text = it.uppercase()
+            // A classic slip identifies the till by the machine's own ID at the head,
+            // not by a store block - so the whole block, its logos and its footer
+            // lines come off rather than being printed above a slip that then names
+            // the same shop again a line later.
+            listOf(
+                R.id.tvPeriodStoreName, R.id.tvPeriodStoreAddress, R.id.tvPeriodStorePhone,
+                R.id.tvPeriodStoreGstin, R.id.ivPeriodHeaderLogo, R.id.ivPeriodFooterLogo,
+                R.id.llPeriodFooterLines, R.id.tvPeriodPrintedBy, R.id.tvPeriodPrintedAt,
+                R.id.tvPeriodSummaryHeading, R.id.tvPeriodTitleRule
+            ).forEach { view.findViewById<View>(it).visibility = if (classic) View.GONE else View.VISIBLE }
+
+            if (!classic) {
+                db.query(
+                    DatabaseHelper.Tables.MD_REGISTRATION,
+                    arrayOf("store_name", "address", "phone_no", "store_gstin"),
+                    null, null, null, null, "store_id ASC", "1"
+                ).use { c ->
+                    if (c.moveToFirst()) {
+                        c.getString(0)?.takeIf { it.isNotBlank() }?.let {
+                            view.findViewById<TextView>(R.id.tvPeriodStoreName).text = it.uppercase()
+                        }
+                        setIfPresent(view, R.id.tvPeriodStoreAddress, c.getString(1))
+                        setIfPresent(view, R.id.tvPeriodStorePhone, c.getString(2)?.let { "Ph: $it" })
+                        setIfPresent(view, R.id.tvPeriodStoreGstin, c.getString(3)?.let { "GSTIN: $it" })
                     }
-                    setIfPresent(view, R.id.tvPeriodStoreAddress, c.getString(1))
-                    setIfPresent(view, R.id.tvPeriodStorePhone, c.getString(2)?.let { "Ph: $it" })
-                    setIfPresent(view, R.id.tvPeriodStoreGstin, c.getString(3)?.let { "GSTIN: $it" })
                 }
+
+                renderFixedLines(
+                    db, view, R.id.llPeriodFooterLines,
+                    DatabaseHelper.Tables.MD_FOOTERS, "footer_text", "footer_number", "footer_type"
+                )
+                renderLogos(view)
+
+                view.findViewById<TextView>(R.id.tvPeriodPrintedBy).text = "Printed by: $printedBy"
+                view.findViewById<TextView>(R.id.tvPeriodPrintedAt).text =
+                    "Printed on: " + SimpleDateFormat("dd-MM-yyyy hh:mm a", Locale.US).format(Date())
             }
 
-            renderFixedLines(
-                db, view, R.id.llPeriodFooterLines,
-                DatabaseHelper.Tables.MD_FOOTERS, "footer_text", "footer_number", "footer_type"
-            )
-            renderLogos(view)
+            // The report's own closing note, under its own rule. On a classic slip it
+            // stands alone; on a standard one it follows the shop's footer lines.
+            content.footerNote?.takeIf { it.isNotBlank() }?.let { note ->
+                val container = view.findViewById<LinearLayout>(R.id.llPeriodFooterLines)
+                if (classic) container.removeAllViews()
+                container.visibility = View.VISIBLE
+                container.addView(wrapped(note))
+                container.addView(rule())
+            }
 
             view.findViewById<TextView>(R.id.tvPeriodTitle).text = content.title.uppercase()
-            view.findViewById<TextView>(R.id.tvPeriodRange).text = content.period
-            view.findViewById<TextView>(R.id.tvPeriodSubtitle).text = content.subtitle
-            view.findViewById<TextView>(R.id.tvPeriodPrintedBy).text = "Printed by: $printedBy"
-            view.findViewById<TextView>(R.id.tvPeriodPrintedAt).text =
-                "Printed on: " + SimpleDateFormat("dd-MM-yyyy hh:mm a", Locale.US).format(Date())
+
+            // The head block: on a classic slip the machine ID with the clock, then
+            // the range at either end of its own line. On a standard one, the range
+            // spelled out and what the period holds under it.
+            val head = view.findViewById<LinearLayout>(R.id.llPeriodHead)
+            head.removeAllViews()
+            if (classic) {
+                // Ruling the title off from the head. The layout's own rule above the
+                // title is hidden on a classic slip - there is no store block up there
+                // for it to rule off - so this is where that line belongs.
+                head.addView(rule())
+                head.addView(spreadRow(machineId(db), stamp("dd-MM-yy"), stamp("HH:mm:ss")))
+                // And one *between* the two head lines. The block is closed by the
+                // layout's rule below it, so drawing another here would stack two -
+                // and on a report with no range line, three.
+                content.range?.let { (from, to) ->
+                    head.addView(rule())
+                    head.addView(spreadRow(from, to))
+                }
+                // What the report was run for, ruled off from the range above it. The
+                // trailing blank cell centres the value instead of pushing it right.
+                if (content.heading.isNotEmpty()) {
+                    head.addView(rule())
+                    content.heading.forEach { (label, value) ->
+                        head.addView(spreadRow(label, value, ""))
+                    }
+                }
+            } else {
+                head.addView(centred(content.period))
+                head.addView(centred(content.subtitle))
+            }
 
             val rows = view.findViewById<LinearLayout>(R.id.llPeriodRows)
             rows.removeAllViews()
 
             if (content.rows.isEmpty()) {
                 rows.addView(note(content.emptyNote))
-            } else {
-                val metrics = measureTable(listOf(content.columns) + content.rows, paperDots)
-                rows.addView(tableRow(content.columns, metrics, bold = true))
+            } else if (content.columns2 != null) {
+                // Two lines per row, each spread evenly across the roll.
+                val size = measureEven(
+                    listOf(content.columns) + content.rows,
+                    listOf(content.columns2) + content.rows2,
+                    paperDots
+                )
+                rows.addView(evenRow(content.columns, size, bold = true))
+                rows.addView(evenRow(content.columns2, size, bold = true))
+                rows.addView(rule())
                 content.rows.forEachIndexed { i, row ->
+                    if (content.ruleBetweenRows && i > 0) rows.addView(rule())
+                    rows.addView(evenRow(row, size))
+                    content.rows2.getOrNull(i)?.let { rows.addView(evenRow(it, size)) }
+                }
+            } else if (content.evenColumns) {
+                // One line per row, its columns sharing the roll equally.
+                val size = measureEven(
+                    listOf(content.columns) + content.rows +
+                        listOfNotNull(content.footerRow) + listOfNotNull(content.columnsAbove),
+                    emptyList(),
+                    paperDots
+                )
+                val firstEnd = content.alignFirstColumnEnd
+                val mid = content.centreColumns
+                content.columnsAbove?.let {
+                    rows.addView(evenRow(it, size, bold = true, firstAtEnd = firstEnd, centred = mid))
+                }
+                rows.addView(evenRow(content.columns, size, bold = true, firstAtEnd = firstEnd, centred = mid))
+                rows.addView(rule())
+                content.rows.forEach {
+                    rows.addView(evenRow(it, size, firstAtEnd = firstEnd, centred = mid))
+                }
+                content.footerRow?.let {
+                    rows.addView(rule())
+                    rows.addView(evenRow(it, size, firstAtEnd = firstEnd, centred = mid))
+                }
+            } else {
+                // The footer row is measured with the rest, so its figures sit in the
+                // same columns they total rather than in columns of their own.
+                val body = listOf(content.columns) + content.rows +
+                    listOfNotNull(content.footerRow)
+                val metrics = measureTable(body, paperDots)
+
+                rows.addView(tableRow(content.columns, metrics, bold = true))
+                // A rule under the heading, ruling it off from the figures it names.
+                // Not where the first row opens a band: that draws its own rule above
+                // itself, and two together read as a gap rather than a rule.
+                if (content.bands.firstOrNull().isNullOrBlank()) rows.addView(rule())
+                content.rows.forEachIndexed { i, row ->
+                    // The band this row sits under, where the report groups its rows.
+                    content.bands.getOrNull(i)?.takeIf { it.isNotBlank() }?.let {
+                        rows.addView(rule())
+                        rows.addView(centred(it))
+                        rows.addView(rule())
+                    }
                     rows.addView(tableRow(row, metrics))
                     content.details.getOrNull(i)?.takeIf { it.isNotBlank() }
                         ?.let { rows.addView(detailRow(it, metrics, paperDots)) }
                 }
+                content.footerRow?.let {
+                    rows.addView(rule())
+                    rows.addView(tableRow(it, metrics, bold = true))
+                }
+            }
+
+            // A report whose total is a row of the table has nothing to put here, and
+            // the whole block comes off rather than printing an empty heading.
+            val hasSummary = content.summary.isNotEmpty() || content.total != null
+            listOf(R.id.llPeriodSummaryBlock, R.id.tvPeriodSummaryRule).forEach {
+                view.findViewById<View>(it).visibility = if (hasSummary) View.VISIBLE else View.GONE
             }
 
             val summary = view.findViewById<LinearLayout>(R.id.llPeriodSummary)
             summary.removeAllViews()
-            content.summary.forEach { (label, value) -> summary.addView(amountRow(label, value)) }
-            summary.addView(
-                amountRow(
-                    content.total.first, content.total.second,
-                    bold = true, valueSize = PrintType.TOTAL_SP
+            // A classic slip's totals are one plain list: same weight, same size, the
+            // last line no different from the first. "TOTAL AMOUNT :" already says
+            // which one it is, and a column of figures has to stay an even column to
+            // be read down at a glance.
+            content.summary.forEach { (label, value) ->
+                summary.addView(amountRow(label, value, bold = false))
+            }
+            content.total?.let { (label, value) ->
+                summary.addView(
+                    amountRow(
+                        label, value,
+                        bold = !classic,
+                        valueSize = if (classic) PrintType.BODY_SP else PrintType.TOTAL_SP
+                    )
                 )
-            )
+            }
         } catch (e: Exception) {
             android.util.Log.e(TAG, "Error rendering ${content.title}", e)
         }
@@ -265,13 +498,85 @@ class PeriodReportRenderer(context: Context) {
 
         return LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, (2 * density).toInt(), 0, 0)
+            setPadding(0, ROW_GAP_PX(), 0, 0)
             addView(cell(values.firstOrNull().orEmpty(), null, alignEnd = false))
             metrics.fixedPx.forEachIndexed { i, widthPx ->
                 addView(cell(values.getOrNull(i + 1).orEmpty(), widthPx, alignEnd = true))
             }
         }
     }
+
+    /**
+     * The type size that lets both halves of a two-line table fit [paperDots].
+     *
+     * Each line divides the roll evenly between its own cells, so a cell has
+     * `width / cells` to play with and the binding constraint is the widest value in
+     * the busiest line. Both halves are measured together and set at one size: two
+     * sizes would make the second line read as a footnote rather than as the rest of
+     * the row.
+     */
+    private fun measureEven(
+        first: List<List<String>>,
+        second: List<List<String>>,
+        paperDots: Int
+    ): Float {
+        val metrics = ctx.resources.displayMetrics
+        val widthDp = CARD_WIDTH_DP.toDouble() * paperDots / REFERENCE_PAPER_DOTS
+        val contentPx = ((widthDp - CARD_PADDING_DP * 2) * metrics.density).toFloat()
+
+        // What one line needs is its cell count times its longest cell, since every
+        // cell is given the same width.
+        // Zero for a table that is not there - a single-line report passes no second.
+        val demand = { lines: List<List<String>> ->
+            if (lines.isEmpty()) 0
+            else lines.maxOf { it.size }.coerceAtLeast(1) *
+                lines.maxOf { row -> row.maxOfOrNull { it.length } ?: 0 }
+        }
+        val needed = maxOf(demand(first), demand(second))
+
+        val paint = Paint().apply { typeface = Typeface.MONOSPACE }
+        for (size in SIZES) {
+            paint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, size, metrics)
+            if (needed * paint.measureText("0") <= contentPx) return size
+        }
+        return SIZES.last()
+    }
+
+    /**
+     * One line of a two-line table: the first cell to the left, the rest to the right
+     * of their own equal shares of the roll.
+     *
+     * Equal shares rather than measured widths, so the columns of a line land in the
+     * same places whatever is in them - and so a line of four figures and a line of
+     * two still read as one table rather than two.
+     */
+    private fun evenRow(
+        values: List<String>,
+        size: Float,
+        bold: Boolean = false,
+        firstAtEnd: Boolean = false,
+        centred: Boolean = false
+    ): View =
+        LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, ROW_GAP_PX(), 0, 0)
+            values.forEachIndexed { i, value ->
+                addView(TextView(ctx).apply {
+                    text = value
+                    textSize = size
+                    gravity = when {
+                        centred -> Gravity.CENTER
+                        i == 0 && !firstAtEnd -> Gravity.START
+                        else -> Gravity.END
+                    }
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setTypeface(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
+                    setTextColor(0xFF222222.toInt())
+                    layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                })
+            }
+        }
 
     /**
      * A row's second line - the figures that would not fit beside the others.
@@ -300,7 +605,7 @@ class PeriodReportRenderer(context: Context) {
             maxLines = 1
             setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
             setTextColor(0xFF555555.toInt())
-            setPadding(0, 0, 0, (3 * displayMetrics.density).toInt())
+            setPadding(0, 0, 0, ROW_GAP_PX())
         }
     }
 
@@ -315,7 +620,7 @@ class PeriodReportRenderer(context: Context) {
         return LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, (2 * density).toInt(), 0, (2 * density).toInt())
+            setPadding(0, ROW_GAP_PX(), 0, ROW_GAP_PX())
             addView(TextView(ctx).apply {
                 text = label
                 textSize = PrintType.BODY_SP
@@ -333,6 +638,82 @@ class PeriodReportRenderer(context: Context) {
             })
         }
     }
+
+    /**
+     * A line with its parts pushed to the edges and spread evenly between - the
+     * "M.ID … date … time" and "F.DT … TO.DT" lines of a classic slip.
+     *
+     * Laid out rather than padded with spaces: the number of spaces that centres a
+     * value depends on how long the values either side of it are, and a machine ID
+     * one digit longer would silently shunt the clock off the edge of the roll.
+     */
+    private fun spreadRow(vararg cells: String): View = LinearLayout(ctx).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(0, ROW_GAP_PX(), 0, 0)
+        cells.forEachIndexed { i, value ->
+            addView(TextView(ctx).apply {
+                text = value
+                textSize = PrintType.SMALL_SP
+                maxLines = 1
+                gravity = when (i) {
+                    0 -> Gravity.START
+                    cells.lastIndex -> Gravity.END
+                    else -> Gravity.CENTER
+                }
+                setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
+                setTextColor(0xFF222222.toInt())
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+            })
+        }
+    }
+
+    /** A line across the middle - a band, or the range on a standard slip. */
+    private fun centred(text: String): View = TextView(ctx).apply {
+        this.text = text
+        textSize = PrintType.SMALL_SP
+        gravity = Gravity.CENTER
+        maxLines = 1
+        setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
+        setTextColor(0xFF222222.toInt())
+        setPadding(0, ROW_GAP_PX(), 0, ROW_GAP_PX())
+    }
+
+    /** A centred note that may run to more than one line, and wraps rather than clips. */
+    private fun wrapped(text: String): View = TextView(ctx).apply {
+        this.text = text
+        textSize = PrintType.SMALL_SP
+        gravity = Gravity.CENTER
+        setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
+        setTextColor(0xFF222222.toInt())
+        setPadding(0, ROW_GAP_PX(), 0, ROW_GAP_PX())
+    }
+
+    /**
+     * The hyphen rule, the same one `@style/BillDashLine` draws.
+     *
+     * Deliberately longer than any roll: it is cut off square at the edge of the
+     * paper, which is what a printed rule looks like, rather than stopping short.
+     */
+    private fun rule(): View = TextView(ctx).apply {
+        text = PrintType.RULE
+        textSize = PrintType.BODY_SP
+        isSingleLine = true
+        ellipsize = null
+        setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
+        setTextColor(0xFF222222.toInt())
+    }
+
+    /** The machine this till runs on - what a classic slip is identified by. */
+    private fun machineId(db: SQLiteDatabase): String {
+        val id = db.query(
+            DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("device_id"),
+            null, null, null, null, "store_id ASC", "1"
+        ).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        return "M.ID:" + (id?.takeIf { it.isNotBlank() } ?: "-")
+    }
+
+    private fun stamp(pattern: String): String =
+        SimpleDateFormat(pattern, Locale.US).format(Date())
 
     private fun note(text: String): View = TextView(ctx).apply {
         this.text = text
@@ -411,6 +792,16 @@ class PeriodReportRenderer(context: Context) {
             tv.visibility = View.VISIBLE
         }
     }
+
+    /**
+     * The gap above and below a printed line, in pixels.
+     *
+     * One dp, not the four these rows used to carry between them. On a roll that gap
+     * is dead paper on every line of every report, and a table reads better tight -
+     * the type's own leading already separates the rows. Kept as a value rather than
+     * removed altogether so a table does not print as a solid block.
+     */
+    private fun ROW_GAP_PX(): Int = ctx.resources.displayMetrics.density.toInt().coerceAtLeast(1)
 
     private companion object {
         const val TAG = "PeriodReportRenderer"
