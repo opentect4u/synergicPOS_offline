@@ -1412,6 +1412,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
     }
 
+    /**
+     * The customer's total outstanding balance (md_customers.balance_amount) matched by
+     * [phone], or null when there is no matching customer / nothing owed - for the
+     * OUTSTANDING line printed with the totals on the restaurant bill.
+     */
+    private fun customerOutstanding(phone: String): Double? {
+        if (phone.isBlank()) return null
+        val db = com.example.synergic_pos_offline.database.DatabaseHelper
+            .getInstance(requireContext()).readableDatabase
+        return db.query(
+            "md_customers", arrayOf("balance_amount"), "phone_number = ?",
+            arrayOf(phone), null, null, null, "1"
+        ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getDouble(0).takeIf { it > 0.005 } else null }
+    }
+
     /** Maps an order to a grocery-renderer Draft (per-item GST + a service-charge line). */
     private fun buildBillDraft(
         order: OrderCard, billNumber: String, payment: String, tendered: Double = 0.0
@@ -1431,7 +1446,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             dateTime = now,
             cashier = order.cashier,
             customer = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Customer(
-                name = tableLabel, phone = order.phone.takeIf { it.isNotBlank() }
+                name = tableLabel, phone = order.phone.takeIf { it.isNotBlank() },
+                outstanding = customerOutstanding(order.phone)
             ),
             items = items,
             discount = 0.0, roundOff = 0.0, netAmount = b.total,
@@ -1604,40 +1620,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
         }
         printPaidReceipt()
-        // Like the grocery checkout: a completion popup offering Reprint / Start New Sale.
-        showPaidCompletionDialog(billNo, printPaidReceipt)
-    }
-
-    /**
-     * Post-payment popup mirroring the grocery checkout: confirms the sale with its
-     * bill number and offers Reprint or Start New Sale. Start New Sale just closes it —
-     * the table is already settled and the Orders screen is ready for the next order.
-     */
-    private fun showPaidCompletionDialog(billNo: String, reprint: () -> Unit) {
-        // Built as a custom dialog (not showConfirm) on purpose: showConfirm routes both
-        // the negative button AND a back-press/escape through onCancel, which made
-        // dismissing the popup fire the reprint. Here only the explicit Reprint button
-        // reprints; Start New Sale or dismissing (back / escape) just closes it.
-        val (dialog, view) = com.example.synergic_pos_offline.utils.DialogUtils.buildCustom(
-            requireContext(), R.layout.dialog_common
-        )
-        val accent = ThemeManager.getThemeColor(requireContext())
-        view.findViewById<android.widget.ImageView>(R.id.ivDialogIcon).apply {
-            setImageResource(R.drawable.ic_check)
-            imageTintList = android.content.res.ColorStateList.valueOf(accent)
-            visibility = View.VISIBLE
-        }
-        view.findViewById<android.widget.TextView>(R.id.tvDialogTitle).text = "Payment complete"
-        view.findViewById<android.widget.TextView>(R.id.tvDialogMessage).text =
-            if (billNo.isNotBlank()) "Bill No: $billNo" else "The bill has been settled."
-        val btnStartNew = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnDialogPositive)
-        val btnReprint = view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnDialogNegative)
-        btnStartNew.text = "Start New Sale"
-        btnReprint.text = "Reprint"
-        ThemeManager.styleDialogButtons(btnStartNew, btnReprint, accent)
-        btnStartNew.setOnClickListener { dialog.dismiss() }
-        btnReprint.setOnClickListener { dialog.dismiss(); reprint() }
-        dialog.show()
+        // No completion popup: the order is already settled and the Orders (sale) screen
+        // was refreshed above, so just confirm with a toast.
+        toast(if (billNo.isNotBlank()) "Bill No: $billNo — payment complete" else "Payment complete")
     }
 
     /**

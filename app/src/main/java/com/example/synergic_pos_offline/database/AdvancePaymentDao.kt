@@ -152,15 +152,15 @@ class AdvancePaymentDao(private val context: Context) {
             )
             if (id == -1L) return null
 
-            // Numbered off the shared bill sequence, so recoveries run continuously
-            // with normal sales (and returns); bill_seq_no advances that same counter.
-            val shared = BillDao(context).nextSharedBillNumber()
-            val receiptNumber = shared.number
+            // Advance-payment collections carry their OWN sequence - not the sale bill
+            // sequence - stamped as the keyname prefix + that number (e.g. "AP-1").
+            val advSeq = nextAdvanceSequence(db)
+            val receiptNumber = "$RECEIPT_PREFIX-$advSeq"
             db.update(
                 DatabaseHelper.Tables.TD_ADVANCE_PAYMENTS,
                 ContentValues().apply {
                     put("receipt_number", receiptNumber)
-                    put("bill_seq_no", shared.seq)
+                    put("bill_seq_no", advSeq)
                 },
                 "id = ?", arrayOf(id.toString())
             )
@@ -185,6 +185,17 @@ class AdvancePaymentDao(private val context: Context) {
             db.endTransaction()
         }
     }
+
+    /**
+     * The next advance-payment sequence number - its own counter, independent of the
+     * sale bill sequence. Continues from the highest one already used, so a collection
+     * removed mid-sequence never hands its number to a later one; starts at 1 when the
+     * table is empty (the just-inserted row is still NULL here, so MAX skips it).
+     */
+    private fun nextAdvanceSequence(db: android.database.sqlite.SQLiteDatabase): Int =
+        db.rawQuery(
+            "SELECT COALESCE(MAX(bill_seq_no), 0) + 1 FROM ${DatabaseHelper.Tables.TD_ADVANCE_PAYMENTS}", null
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 1 }
 
     /** Net value of every bill raised against the customer, cancellations aside. */
     private fun totalBilled(customerId: Long): Double =
