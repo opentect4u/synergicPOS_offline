@@ -32,6 +32,30 @@ object ImageUtils {
         }
     }
 
+    /** Decodes [uri] into a full bitmap (or null) - for the crop screen. */
+    fun uriToBitmap(context: Context, uri: Uri): Bitmap? =
+        runCatching { decodeBitmap(context, uri) }.getOrNull()
+
+    /**
+     * Flattens [bitmap] onto a white background (so a logo with transparency prints on
+     * white, not black, on the bill), downscales it to [maxDim] longest edge, and
+     * returns JPEG bytes - the standard stored size every logo lands at.
+     */
+    fun bitmapToJpegBytes(
+        bitmap: Bitmap, maxDim: Int = STORE_MAX_DIM, quality: Int = STORE_QUALITY
+    ): ByteArray {
+        val scaled = scaleDown(bitmap, maxDim)
+        val flat = Bitmap.createBitmap(scaled.width, scaled.height, Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(flat).apply {
+            drawColor(android.graphics.Color.WHITE)
+            drawBitmap(scaled, 0f, 0f, null)
+        }
+        return ByteArrayOutputStream().use { out ->
+            flat.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            out.toByteArray()
+        }
+    }
+
     /** Decodes stored JPEG [bytes] into a small bitmap for a list thumbnail. */
     fun decodeThumb(bytes: ByteArray, targetPx: Int = THUMB_DIM): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -50,7 +74,13 @@ object ImageUtils {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             ImageDecoder.decodeBitmap(
                 ImageDecoder.createSource(context.contentResolver, uri)
-            ) { decoder, _, _ -> decoder.isMutableRequired = false }
+            ) { decoder, _, _ ->
+                decoder.isMutableRequired = false
+                // Force a software bitmap: a hardware bitmap cannot be cropped/scaled or
+                // drawn onto a software Canvas (as the crop + white-flatten step does),
+                // which throws "Software rendering doesn't support hardware bitmaps".
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            }
         } else {
             @Suppress("DEPRECATION")
             MediaStore.Images.Media.getBitmap(context.contentResolver, uri)

@@ -423,13 +423,13 @@ class BillDao(context: Context) {
      * numbering continues indefinitely, or 1 when a new period is starting fresh.
      */
     private fun nextBillSequence(db: SQLiteDatabase, settings: BillSettingsDao.BillSettings, nowDate: String): Int {
-        // The sequence is shared across sales, sale returns and credit recoveries, so
-        // each document's number continues on from the last of ANY of them. Each table
-        // dates its rows on its own column, but all carry the same bill_seq_no counter.
+        // The sequence is shared across sales and sale returns, so each document's number
+        // continues on from the last of either. Each table dates its rows on its own
+        // column, but both carry the same bill_seq_no counter. Advance-payment collections
+        // are NOT part of this: they run on their own keyname sequence (see AdvancePaymentDao).
         val maxSeq = listOfNotNull(
             maxSeqIn(db, DatabaseHelper.Tables.TD_BILLS, "bill_date", settings.resetMode, nowDate),
-            maxSeqIn(db, DatabaseHelper.Tables.TD_SALE_RETURNS, "return_date", settings.resetMode, nowDate),
-            maxSeqIn(db, DatabaseHelper.Tables.TD_ADVANCE_PAYMENTS, "payment_date", settings.resetMode, nowDate)
+            maxSeqIn(db, DatabaseHelper.Tables.TD_SALE_RETURNS, "return_date", settings.resetMode, nowDate)
         ).maxOrNull()
         return when {
             maxSeq != null -> maxSeq + 1

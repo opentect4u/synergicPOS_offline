@@ -1428,19 +1428,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun onCheckout() {
         if (cart.isEmpty()) { toast("Cart is empty"); return }
 
-        // With customer capture on, every bill is raised against a customer. The
-        // phone is what identifies one, and is present whether the record was
-        // matched or created on the spot, so a blank here means nothing was
-        // attached. Open the lookup rather than just refusing, so the block can be
-        // cleared without hunting for the button.
-        //
-        // With it off the sale has no customer by design, so there is nothing to
-        // insist on - a credit sale still asks, but it does that at checkout.
-        if (capturesCustomer && customerPhone.isNullOrBlank()) {
-            toast("Add a customer to continue")
-            showCustomerDialog()
-            return
-        }
+        // Customer capture is optional even when the flag is on: the section is offered
+        // so a customer CAN be attached, but a bill can be generated without one - it is
+        // no longer a block to checkout. (A credit sale still asks for a customer, but it
+        // does that at checkout.) When none is attached the sale carries no customer and
+        // its customer_id stays null, exactly as it does with capture off.
 
         // Hand the current sale to the checkout screen.
         CheckoutSession.lines = cart.map { it.toSessionLine() }.toMutableList()

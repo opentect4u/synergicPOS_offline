@@ -678,16 +678,10 @@ class BillReceiptRenderer(context: Context) {
             setIfPresent(view, R.id.tvName, if (showName) cust.name?.let { "NAME  : $it" } else null)
             setIfPresent(view, R.id.tvCustGstin, if (showGstin) cust.gstin?.let { "GSTIN : $it" } else null)
             setIfPresent(view, R.id.tvCustAddress, if (customerAddressPrinting) cust.address?.let { "ADDRESS: $it" } else null)
-            // A credit sale is collected later, so the slip has to say what the
-            // customer now owes in total - this bill plus whatever was already on
-            // their account. It is printed for credit bills whatever "Customer
-            // Details" is set to, for the same reason their GSTIN is: the figure is
-            // the point of the document, not an optional courtesy. A settled sale
-            // has nothing outstanding to report, so the line stays off.
-            setIfPresent(
-                view, R.id.tvCustOutstanding,
-                if (creditSale) cust.outstanding?.let { "OUTSTANDING: ${money(it)}" } else null
-            )
+            // The customer's outstanding balance is printed beside the totals (in the
+            // summary block below), not here in the customer block, so it reads right
+            // next to the amount due on every final bill - grocery or restaurant.
+            setIfPresent(view, R.id.tvCustOutstanding, null)
 
             val (date, time) = splitDateTime(dateTime)
             if (date.isNotEmpty()) view.findViewById<TextView>(R.id.tvDate).text = date
@@ -807,7 +801,8 @@ class BillReceiptRenderer(context: Context) {
                     isGst = isGst, summarySp = summarySp, showTotalTax = !taxWise,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
                     roundOff = roundOff, showRoundOff = roundOffSetting, narrow = narrow,
-                    serviceCharge = serviceCharge
+                    serviceCharge = serviceCharge, outstanding = cust.outstanding,
+                    returnAmount = returnAmount
                 )
                 val big = totalAmountFontSize == BillSettingsDao.FontSize.BIG
                 val grandSp = when {
@@ -826,7 +821,8 @@ class BillReceiptRenderer(context: Context) {
                     llSummary, totals, taxSlabs, isGst, summarySp, netSize,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
                     roundOff = roundOff, showRoundOff = roundOffSetting,
-                    payable = payable, narrow = narrow, serviceCharge = serviceCharge
+                    payable = payable, narrow = narrow, serviceCharge = serviceCharge,
+                    outstanding = cust.outstanding, returnAmount = returnAmount
                 )
             }
 
@@ -839,7 +835,7 @@ class BillReceiptRenderer(context: Context) {
                 view.findViewById<TextView>(R.id.tvAmountWords).visibility = View.GONE
             }
 
-            renderPayment(view, draft?.paymentModes ?: paymentModes(db, receiptNo, billType), returnAmount, narrow)
+            renderPayment(view, draft?.paymentModes ?: paymentModes(db, receiptNo, billType), narrow)
 
             renderFixedLines(
                 db, view, R.id.llBillFooterLines,
@@ -870,7 +866,9 @@ class BillReceiptRenderer(context: Context) {
         showRoundOff: Boolean,
         payable: Double,
         narrow: Boolean,
-        serviceCharge: Double = 0.0
+        serviceCharge: Double = 0.0,
+        outstanding: Double? = null,
+        returnAmount: Double = 0.0
     ) {
         fun row(label: String, value: String, bold: Boolean = false, valueSize: Float = summarySp) {
             llSummary.addView(
@@ -905,6 +903,10 @@ class BillReceiptRenderer(context: Context) {
         if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
         if (showRoundOff) row("ROUND OFF", money(roundOff))
         row("NET AMT", money(payable), bold = true, valueSize = netSize)
+        // Change handed back when the customer tendered more than the payable.
+        if (returnAmount > 0.005) row("CHANGE DUE", money(returnAmount))
+        // The customer's total outstanding balance, printed with the totals.
+        outstanding?.takeIf { it > 0.005 }?.let { row("OUTSTANDING", money(it), bold = true) }
     }
 
     /**
@@ -937,7 +939,9 @@ class BillReceiptRenderer(context: Context) {
         roundOff: Double,
         showRoundOff: Boolean,
         narrow: Boolean,
-        serviceCharge: Double = 0.0
+        serviceCharge: Double = 0.0,
+        outstanding: Double? = null,
+        returnAmount: Double = 0.0
     ) {
         val rows = mutableListOf<Pair<String, String>>()
         fun row(label: String, value: String) { rows.add(label to value) }
@@ -960,6 +964,10 @@ class BillReceiptRenderer(context: Context) {
         row("TOTAL AMOUNT", money(totals.grandTotal))
         if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
         if (showRoundOff) row("ROUNDED OFF", money(roundOff))
+        // Change handed back when the customer tendered more than the payable.
+        if (returnAmount > 0.005) row("CHANGE DUE", money(returnAmount))
+        // The customer's total outstanding balance, printed with the totals.
+        outstanding?.takeIf { it > 0.005 }?.let { row("OUTSTANDING", money(it)) }
 
         // The colons line up in a column, and that column sits directly after the
         // longest label rather than at a fixed fraction of the paper: padding to
@@ -1570,11 +1578,11 @@ class BillReceiptRenderer(context: Context) {
     }
 
     private fun renderPayment(
-        view: View, modes: List<String>, returnAmount: Double = 0.0, narrow: Boolean = false
+        view: View, modes: List<String>, narrow: Boolean = false
     ) {
         val ll = view.findViewById<LinearLayout>(R.id.llBillPayment)
         ll.removeAllViews()
-        if (modes.isEmpty() && returnAmount <= 0.005) return
+        if (modes.isEmpty()) return
 
         modes.forEach { mode ->
             val row = baseRow(narrow)
@@ -1582,14 +1590,7 @@ class BillReceiptRenderer(context: Context) {
             row.addView(cell(mode, 1f, Gravity.END))
             ll.addView(row)
         }
-
-        // Change handed back when the customer tendered more than the payable.
-        if (returnAmount > 0.005) {
-            val row = baseRow(narrow)
-            row.addView(cell("RETURN", 1f, Gravity.START))
-            row.addView(cell(money(returnAmount), 1f, Gravity.END))
-            ll.addView(row)
-        }
+        // The change handed back (RETURN) now prints with the totals - see the summary.
     }
 
     /**
