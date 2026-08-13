@@ -846,11 +846,11 @@ class AboutAppFragment : Fragment(), TitledScreen {
      */
     private fun onBackup() = inBackground("Backing up…") {
         var summary: DatabaseBackup.Export? = null
-        // The same folder and naming the automatic ones use: one place to look, and
-        // one convention, whichever took the file.
-        val now = Date()
+        // Writes the single always-latest backup file, replacing the previous one - the
+        // same file the automatic backup keeps, so there is one place to look and one
+        // file to find, however it was taken.
         val savedTo = Downloads.stream(
-            requireContext(), AutoBackup.fileName(now), "application/sql", AutoBackup.folderFor(now)
+            requireContext(), AutoBackup.LATEST_FILE, "application/sql", AutoBackup.FOLDER, overwrite = true
         ) { writer -> summary = DatabaseBackup.exportTo(requireContext(), writer) }
         val export = summary ?: error("nothing was written")
 
