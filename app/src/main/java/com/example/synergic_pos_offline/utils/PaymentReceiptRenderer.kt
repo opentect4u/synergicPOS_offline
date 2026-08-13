@@ -57,6 +57,8 @@ class PaymentReceiptRenderer(context: Context) {
         /** "yyyy-MM-dd HH:mm:ss", split into the printed date and time. */
         val dateTime: String,
         val cashier: String,
+        /** The customer's master id, printed as CID. */
+        val customerId: Long,
         val customerName: String,
         val customerPhone: String,
         /** Printed only when the customer has one on file. */
@@ -106,148 +108,60 @@ class PaymentReceiptRenderer(context: Context) {
     /** Fills an already-inflated [R.layout.receipt_payment] in place. */
     fun populate(view: View, receipt: Receipt) {
         try {
-            val db = DatabaseHelper.getInstance(ctx).readableDatabase
-
-            db.query(
-                DatabaseHelper.Tables.MD_REGISTRATION,
-                arrayOf("store_name", "address", "phone_no", "store_gstin"),
-                null, null, null, null, "store_id ASC", "1"
-            ).use { c ->
-                if (c.moveToFirst()) {
-                    val name = c.getString(0)
-                    if (!name.isNullOrBlank()) {
-                        view.findViewById<TextView>(R.id.tvPayStoreName).text = name.uppercase()
-                    }
-                    setIfPresent(view, R.id.tvPayStoreAddress, c.getString(1))
-                    setIfPresent(view, R.id.tvPayStorePhone, c.getString(2)?.let { "Ph: $it" })
-                    setIfPresent(view, R.id.tvPayStoreGstin, c.getString(3)?.let { "GSTIN: $it" })
-                }
-            }
-
-            renderFixedLines(
-                db, view, R.id.llPayHeaderLines,
-                DatabaseHelper.Tables.MD_HEADERS, "header_text", "header_number", "header_type"
-            )
-            renderFixedLines(
-                db, view, R.id.llPayFooterLines,
-                DatabaseHelper.Tables.MD_FOOTERS, "footer_text", "footer_number", "footer_type"
-            )
-            renderLogos(view)
+            view.findViewById<TextView>(R.id.tvPayBillNo).text = "B. NO:${receipt.receiptNumber}"
 
             val (date, time) = splitDateTime(receipt.dateTime)
             view.findViewById<TextView>(R.id.tvPayDate).text = date
             view.findViewById<TextView>(R.id.tvPayTime).text = time
-            view.findViewById<TextView>(R.id.tvPayReceiptNo).text = "RECEIPT NO: ${receipt.receiptNumber}"
-            view.findViewById<TextView>(R.id.tvPayCreatedBy).text = "Received by: ${receipt.cashier}"
 
-            // Name, phone and GSTIN are the customer's identity on a receipt they may
-            // have to produce later, so all three print whenever they are on file -
-            // Bill Settings' "Customer Details" governs a sale bill, not this.
-            setIfPresent(view, R.id.tvPayCustName, receipt.customerName.takeIf { it.isNotBlank() }
-                ?.let { "NAME   : ${it.uppercase()}" })
-            setIfPresent(view, R.id.tvPayCustMobile, receipt.customerPhone.takeIf { it.isNotBlank() }
-                ?.let { "MOBILE : $it" })
-            setIfPresent(view, R.id.tvPayCustGstin, receipt.customerGstin.takeIf { it.isNotBlank() }
-                ?.let { "GSTIN  : $it" })
-
+            // Customer + money-received block. CID, NAME and the two figures always
+            // print; GSTIN only when the customer has one on file.
             val summary = view.findViewById<LinearLayout>(R.id.llPaySummary)
             summary.removeAllViews()
-            summary.addView(row("MODE", receipt.mode.uppercase()))
-            summary.addView(row("PREVIOUS DUE", money(receipt.previousDue)))
-            summary.addView(row("AMOUNT PAID", money(receipt.amountPaid), bold = true, valueSize = PrintType.TOTAL_SP))
-            summary.addView(row("TOTAL DUE", money(receipt.totalDue), bold = true))
-            summary.addView(row("TOTAL PAID", money(receipt.totalPaid)))
-            summary.addView(row("CREDIT AVAILABLE", money(receipt.creditLimit)))
+            summary.addView(kvRow("CID", receipt.customerId.toString()))
+            summary.addView(kvRow("NAME", receipt.customerName.uppercase().ifBlank { "-" }))
+            receipt.customerGstin.takeIf { it.isNotBlank() }?.let {
+                summary.addView(kvRow("GSTIN", it))
+            }
+            summary.addView(kvRow("PREV. BALANCE", money(receipt.previousDue)))
+            summary.addView(kvRow("CASH RECEIVED", money(receipt.amountPaid)))
 
-            setIfPresent(view, R.id.tvPayAmountWords, AmountInWords.of(receipt.amountPaid))
+            // The running balance after this collection, set apart between two rules.
+            val total = view.findViewById<LinearLayout>(R.id.llPayTotal)
+            total.removeAllViews()
+            total.addView(kvRow("TOTAL BALANCE", money(receipt.totalDue), bold = true))
         } catch (e: Exception) {
             android.util.Log.e(TAG, "Error rendering payment receipt ${receipt.receiptNumber}", e)
         }
     }
 
-    /** One "LABEL            value" line in the figures block. */
-    private fun row(label: String, value: String, bold: Boolean = false, valueSize: Float = PrintType.BODY_SP): View {
+    /**
+     * One "LABEL         : value" line. The label is padded to a fixed width so the
+     * colons line up in a column, and the value is right-aligned to the paper edge.
+     */
+    private fun kvRow(label: String, value: String, bold: Boolean = false): View {
         val density = ctx.resources.displayMetrics.density
+        val style = if (bold) Typeface.BOLD else Typeface.NORMAL
         return LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
             setPadding(0, (2 * density).toInt(), 0, (2 * density).toInt())
             addView(TextView(ctx).apply {
-                text = label
+                text = label.padEnd(LABEL_WIDTH) + " :"
                 textSize = PrintType.BODY_SP
-                setTypeface(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
+                setTypeface(Typeface.MONOSPACE, style)
                 setTextColor(0xFF222222.toInt())
-                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                )
             })
             addView(TextView(ctx).apply {
                 text = value
-                textSize = valueSize
+                textSize = PrintType.BODY_SP
                 gravity = Gravity.END
-                setTypeface(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
+                setTypeface(Typeface.MONOSPACE, style)
                 setTextColor(0xFF111111.toInt())
-                layoutParams = LinearLayout.LayoutParams(-2, -2)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
-        }
-    }
-
-    /** The store's header / footer logos, hidden when no image is set for a slot. */
-    private fun renderLogos(view: View) {
-        val dao = LogoDao(ctx)
-        listOf(
-            LogoDao.LogoType.BILL_HEADER to R.id.ivPayHeaderLogo,
-            LogoDao.LogoType.BILL_FOOTER to R.id.ivPayFooterLogo
-        ).forEach { (type, viewId) ->
-            val target = view.findViewById<ImageView>(viewId)
-            val bitmap = dao.getAll(listOf(type)).lastOrNull()?.image
-                ?.takeIf { it.isNotEmpty() }
-                ?.let { ImageUtils.decodeThumb(it, LOGO_PX) }
-
-            if (bitmap == null) {
-                target.setImageDrawable(null)
-                target.visibility = View.GONE
-            } else {
-                target.setImageBitmap(bitmap)
-                target.visibility = View.VISIBLE
-            }
-        }
-    }
-
-    /**
-     * The operator's configured BILL header or footer lines - the same ones a sale
-     * bill carries, so a payment slip is recognisably from the same counter.
-     */
-    private fun renderFixedLines(
-        db: SQLiteDatabase,
-        root: View,
-        containerId: Int,
-        table: String,
-        textColumn: String,
-        numberColumn: String,
-        typeColumn: String
-    ) {
-        val container = root.findViewById<LinearLayout>(containerId)
-        container.removeAllViews()
-        db.rawQuery(
-            """
-            SELECT $textColumn, font_size, is_bold FROM $table
-            WHERE is_enabled = 1 AND ($typeColumn IS NULL OR $typeColumn = 'BILL')
-            ORDER BY $numberColumn ASC
-            """.trimIndent(),
-            null
-        ).use { c ->
-            while (c.moveToNext()) {
-                val text = c.getString(0)?.takeIf { it.isNotBlank() } ?: continue
-                val size = BillHeaderFooterDao.FontSize.fromStored(c.getString(1))
-                val bold = c.getInt(2) == 1
-                container.addView(TextView(ctx).apply {
-                    this.text = text
-                    gravity = Gravity.CENTER
-                    textSize = size.sp
-                    setTypeface(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
-                    setTextColor(0xFF333333.toInt())
-                    setPadding(0, (2 * ctx.resources.displayMetrics.density).toInt(), 0, 0)
-                })
-            }
         }
     }
 
@@ -280,7 +194,7 @@ class PaymentReceiptRenderer(context: Context) {
         val parsed = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(value)
         if (parsed != null) {
             SimpleDateFormat("dd-MM-yyyy", Locale.US).format(parsed) to
-                SimpleDateFormat("HH:mm", Locale.US).format(parsed)
+                SimpleDateFormat("HH:mm:ss", Locale.US).format(parsed)
         } else value to ""
     } catch (_: Exception) {
         value to ""
@@ -288,5 +202,7 @@ class PaymentReceiptRenderer(context: Context) {
 
     private companion object {
         const val TAG = "PaymentReceiptRenderer"
+        /** Label column width (chars) so the "LABEL : value" colons line up. */
+        const val LABEL_WIDTH = 13
     }
 }

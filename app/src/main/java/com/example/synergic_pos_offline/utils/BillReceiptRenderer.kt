@@ -588,6 +588,14 @@ class BillReceiptRenderer(context: Context) {
                 arrayOf(receiptNo.toString())
             ).use { c -> if (c.moveToFirst()) returnAmount = c.getDouble(0) }
 
+            // What was actually collected at the till on this bill - 0 on a full credit
+            // sale, the part-payment on a partial one. Drives the CASH RECEIVED line.
+            var cashReceived = 0.0
+            if (draft == null) db.rawQuery(
+                "SELECT COALESCE(SUM(amount_paid), 0) FROM ${DatabaseHelper.Tables.TD_PAYMENTS} WHERE bill_id = ?",
+                arrayOf(receiptNo.toString())
+            ).use { c -> if (c.moveToFirst()) cashReceived = c.getDouble(0) }
+
             // Whichever Bill/Tax Settings were active when this bill was made - not
             // necessarily what is live now - so a reprint reads exactly as it did on
             // the day. Older bills saved before this existed fall back to today's
@@ -789,6 +797,28 @@ class BillReceiptRenderer(context: Context) {
             // where the block sits and what its lines are called differ.
             val showDiscount = totals.totalDiscount > 0.005
 
+            // The account block printed under the totals. On a CREDIT bill it is the
+            // running-account breakdown from the customer's side - what they had, this
+            // bill, what they paid now, and where that leaves them (positive = in credit,
+            // negative = owing), so TOTAL BALANCE = PREVI - BILL + CASH. On any other
+            // bill it is just the change given back and the outstanding, when there is
+            // any. cust.outstanding is md_customers.balance_amount (positive = owes),
+            // which is why it is negated for the customer-side figures.
+            val trailer: List<Pair<String, String>> = if (creditSale) {
+                val current = cust.outstanding ?: 0.0
+                val totalBalance = -current
+                val previBalance = totalBalance + payable - cashReceived
+                listOf(
+                    "PREVI BALANCE" to money(previBalance),
+                    "BILL AMOUNT" to money(payable),
+                    "CASH RECEIVED" to money(cashReceived),
+                    "TOTAL BALANCE" to money(totalBalance)
+                )
+            } else buildList {
+                if (returnAmount > 0.005) add("CHANGE DUE" to money(returnAmount))
+                cust.outstanding?.takeIf { it > 0.005 }?.let { add("OUTSTANDING" to money(it)) }
+            }
+
             if (classic) {
                 // Tax wise short reports its tax in the table above the totals, so
                 // the block below them carries none: no line per rate, and no total
@@ -801,8 +831,7 @@ class BillReceiptRenderer(context: Context) {
                     isGst = isGst, summarySp = summarySp, showTotalTax = !taxWise,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
                     roundOff = roundOff, showRoundOff = roundOffSetting, narrow = narrow,
-                    serviceCharge = serviceCharge, outstanding = cust.outstanding,
-                    returnAmount = returnAmount
+                    serviceCharge = serviceCharge, trailer = trailer
                 )
                 val big = totalAmountFontSize == BillSettingsDao.FontSize.BIG
                 val grandSp = when {
@@ -822,7 +851,7 @@ class BillReceiptRenderer(context: Context) {
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
                     roundOff = roundOff, showRoundOff = roundOffSetting,
                     payable = payable, narrow = narrow, serviceCharge = serviceCharge,
-                    outstanding = cust.outstanding, returnAmount = returnAmount
+                    trailer = trailer
                 )
             }
 
@@ -867,8 +896,8 @@ class BillReceiptRenderer(context: Context) {
         payable: Double,
         narrow: Boolean,
         serviceCharge: Double = 0.0,
-        outstanding: Double? = null,
-        returnAmount: Double = 0.0
+        /** Account lines printed under the totals - see where it is built in render(). */
+        trailer: List<Pair<String, String>> = emptyList()
     ) {
         fun row(label: String, value: String, bold: Boolean = false, valueSize: Float = summarySp) {
             llSummary.addView(
@@ -903,10 +932,10 @@ class BillReceiptRenderer(context: Context) {
         if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
         if (showRoundOff) row("ROUND OFF", money(roundOff))
         row("NET AMT", money(payable), bold = true, valueSize = netSize)
-        // Change handed back when the customer tendered more than the payable.
-        if (returnAmount > 0.005) row("CHANGE DUE", money(returnAmount))
-        // The customer's total outstanding balance, printed with the totals.
-        outstanding?.takeIf { it > 0.005 }?.let { row("OUTSTANDING", money(it), bold = true) }
+        // The account block under the totals (credit breakdown, or change + outstanding).
+        trailer.forEach { (label, value) ->
+            row(label, value, bold = label == "TOTAL BALANCE" || label == "OUTSTANDING")
+        }
     }
 
     /**
@@ -940,8 +969,8 @@ class BillReceiptRenderer(context: Context) {
         showRoundOff: Boolean,
         narrow: Boolean,
         serviceCharge: Double = 0.0,
-        outstanding: Double? = null,
-        returnAmount: Double = 0.0
+        /** Account lines printed under the totals - see where it is built in render(). */
+        trailer: List<Pair<String, String>> = emptyList()
     ) {
         val rows = mutableListOf<Pair<String, String>>()
         fun row(label: String, value: String) { rows.add(label to value) }
@@ -964,10 +993,9 @@ class BillReceiptRenderer(context: Context) {
         row("TOTAL AMOUNT", money(totals.grandTotal))
         if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
         if (showRoundOff) row("ROUNDED OFF", money(roundOff))
-        // Change handed back when the customer tendered more than the payable.
-        if (returnAmount > 0.005) row("CHANGE DUE", money(returnAmount))
-        // The customer's total outstanding balance, printed with the totals.
-        outstanding?.takeIf { it > 0.005 }?.let { row("OUTSTANDING", money(it)) }
+        // The account block under the totals (credit breakdown, or change + outstanding),
+        // added to the rows so its colons line up with the totals above.
+        trailer.forEach { (label, value) -> row(label, value) }
 
         // The colons line up in a column, and that column sits directly after the
         // longest label rather than at a fixed fraction of the paper: padding to

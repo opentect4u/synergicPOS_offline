@@ -261,6 +261,7 @@ class AdvancePaymentFragment : Fragment(), TitledScreen {
             receiptNumber = collection.receiptNumber,
             dateTime = collection.dateTime,
             cashier = SessionManager.currentUser?.userId?.uppercase() ?: "---",
+            customerId = acc.customer.id,
             customerName = acc.customer.name,
             customerPhone = acc.customer.phone,
             customerGstin = acc.customer.gstin,

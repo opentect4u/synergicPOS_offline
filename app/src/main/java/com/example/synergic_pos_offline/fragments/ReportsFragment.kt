@@ -107,6 +107,7 @@ class ReportsFragment : Fragment() {
                 "Month Wise Report" -> openFragment(MonthWiseReportFragment())
                 "Year Wise Report" -> openFragment(YearWiseReportFragment())
                 STOCK_REPORT -> openFragment(StockReportFragment())
+                "Customer Payment" -> openFragment(CustomerPaymentReportFragment())
                 "Customer Ledger" -> openFragment(CustomerLedgerFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             }

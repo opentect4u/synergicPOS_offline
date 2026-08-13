@@ -425,6 +425,7 @@ class MainActivity : AppCompatActivity() {
             "Day-Wise Report" -> navigateTo(DayWiseReportFragment())
             "Month Wise Report" -> navigateTo(MonthWiseReportFragment())
             "Year Wise Report" -> navigateTo(YearWiseReportFragment())
+            "Customer Payment" -> navigateTo(CustomerPaymentReportFragment())
             "Stock Report" -> navigateTo(StockReportFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")

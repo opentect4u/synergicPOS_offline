@@ -1483,18 +1483,40 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         val customerDao = CustomerDao(ctx)
         val suggestionsContainer = view.findViewById<LinearLayout>(R.id.llSuggestions)
 
+        // Fills every field from a customer already on file - used both when a phone
+        // suggestion is picked and when a full 10-digit number matches one directly.
+        fun fillFrom(customer: CustomerDao.Customer) {
+            etName.setText(customer.name)
+            etAddress.setText(customer.address)
+            etGstin.setText(customer.gstin)
+            etBirthday.setText(customer.birthday)
+            etAnniversary.setText(customer.anniversary)
+            swCredit.isChecked = customer.creditEnabled
+            editText(tilLimit).setText(trimNumber(customer.creditLimit))
+            editText(tilBalance).setText(trimNumber(customer.balance))
+        }
+
         etPhone.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 val query = s?.toString() ?: ""
-                if (query.length >= 3 && query.all { it.isDigit() }) {
-                    val allCustomers = customerDao.getAll()
-                    val suggestions = allCustomers.filter { it.phone.startsWith(query) }
 
+                // A complete 10-digit number that matches a customer on file fills the
+                // whole record into the fields automatically - no suggestion to pick.
+                if (query.length == 10 && query.all { it.isDigit() }) {
+                    suggestionsContainer.removeAllViews()
+                    suggestionsContainer.visibility = View.GONE
+                    customerDao.getAll().firstOrNull { it.phone == query }?.let { fillFrom(it) }
+                    return
+                }
+
+                // While the number is being typed (3-9 digits), offer matches to pick
+                // from so a known customer can be found without typing all ten.
+                if (query.length in 3..9 && query.all { it.isDigit() }) {
+                    val suggestions = customerDao.getAll().filter { it.phone.startsWith(query) }
                     if (suggestions.isNotEmpty()) {
                         suggestionsContainer.removeAllViews()
                         suggestionsContainer.visibility = View.VISIBLE
-
                         suggestions.take(5).forEach { customer ->
                             val suggestionView = android.widget.TextView(ctx).apply {
                                 text = "${customer.name} - ${customer.phone}"
@@ -1507,17 +1529,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                                     LinearLayout.LayoutParams.WRAP_CONTENT
                                 )
                                 setOnClickListener {
-                                    // Picking a suggestion fills the whole record, not
-                                    // just the four details the bill needs.
-                                    etPhone.setText(customer.phone)
-                                    etName.setText(customer.name)
-                                    etAddress.setText(customer.address)
-                                    etGstin.setText(customer.gstin)
-                                    etBirthday.setText(customer.birthday)
-                                    etAnniversary.setText(customer.anniversary)
-                                    swCredit.isChecked = customer.creditEnabled
-                                    editText(tilLimit).setText(trimNumber(customer.creditLimit))
-                                    editText(tilBalance).setText(trimNumber(customer.balance))
+                                    etPhone.setText(customer.phone)   // completes to 10 → also auto-fills
+                                    fillFrom(customer)
                                     suggestionsContainer.visibility = View.GONE
                                 }
                             }
