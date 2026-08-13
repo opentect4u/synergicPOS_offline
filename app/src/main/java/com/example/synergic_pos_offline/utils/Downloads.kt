@@ -46,11 +46,25 @@ object Downloads {
         // Folders under Downloads to put it in, e.g. "POSbackup/2026-08-08". Created
         // as needed; empty means Downloads itself.
         folder: String = "",
+        // Replace any file already at this name/path instead of letting MediaStore add
+        // " (1)" beside it - so a single, always-latest file can be kept.
+        overwrite: Boolean = false,
         write: (java.io.Writer) -> Unit
     ): String =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val relative = if (folder.isBlank()) Environment.DIRECTORY_DOWNLOADS
             else "${Environment.DIRECTORY_DOWNLOADS}/${folder.trim('/')}"
+            val resolver = context.contentResolver
+            // MediaStore never overwrites - it appends " (1)". Delete the old entry
+            // first so the new write genuinely replaces it. (RELATIVE_PATH is stored
+            // with a trailing slash.)
+            if (overwrite) runCatching {
+                resolver.delete(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    "${MediaStore.Downloads.RELATIVE_PATH}=? AND ${MediaStore.Downloads.DISPLAY_NAME}=?",
+                    arrayOf("$relative/", fileName)
+                )
+            }
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, fileName)
                 put(MediaStore.Downloads.MIME_TYPE, mimeType)
@@ -59,7 +73,6 @@ object Downloads {
                 put(MediaStore.Downloads.RELATIVE_PATH, relative)
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
-            val resolver = context.contentResolver
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: throw IllegalStateException("could not create file")
             resolver.openOutputStream(uri)?.use { out ->

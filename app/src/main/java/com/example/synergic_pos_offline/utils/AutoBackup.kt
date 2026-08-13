@@ -45,6 +45,15 @@ object AutoBackup {
     /** The folder every backup goes under, automatic or not. */
     const val FOLDER = "POSbackup"
 
+    /**
+     * The single, always-latest backup file. Both the automatic backup and the manual
+     * Backup button write to this one name in [FOLDER] and overwrite it each time, so a
+     * new backup replaces the old rather than piling up a file per run. (The safety
+     * backups taken before an irreversible action keep their own dated names - those
+     * are meant to be found and restored individually, see [backupBefore].)
+     */
+    const val LATEST_FILE = "synergic_backup.sql"
+
     /** How often, when nobody has said otherwise. */
     const val DEFAULT_INTERVAL_HOURS = 1
 
@@ -140,7 +149,7 @@ object AutoBackup {
         val now = Date()
         return try {
             val savedTo = Downloads.stream(
-                context, fileName(now), "application/sql", folderFor(now)
+                context, LATEST_FILE, "application/sql", FOLDER, overwrite = true
             ) { writer -> DatabaseBackup.exportTo(context, writer) }
             AppSettingsDao(context).put(KEY_LAST_RUN, System.currentTimeMillis().toString())
             Outcome(taken = true, savedTo = savedTo)
