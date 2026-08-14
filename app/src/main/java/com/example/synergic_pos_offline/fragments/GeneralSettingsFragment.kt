@@ -15,6 +15,7 @@ import com.example.synergic_pos_offline.database.GeneralSettingsDao.GeneralSetti
 import com.example.synergic_pos_offline.database.UserDao
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.SessionManager
+import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import android.widget.ArrayAdapter
 import android.widget.RadioGroup
@@ -221,11 +222,17 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                             DatabaseHelper.getInstance(requireContext()).eraseBusinessDataForModeChange()
                             dao.save(settings)
                             if (modeVal == Mode.RESTAURANT) enableRestaurantDefaults()
+                            // The menus and the landing screen read the cache, so it
+                            // has to know about the new mode before the next sign-in.
+                            SettingsCache.storeFromDb(requireContext())
                             DialogUtils.showSuccess(
                                 context = requireContext(),
                                 title = "Mode changed",
-                                message = "Switched to ${modeVal.label}. All previous data was erased."
-                            )
+                                message = "Switched to ${modeVal.label}. All previous data was " +
+                                    "erased. You will be signed out - sign back in and the till " +
+                                    "opens in ${modeVal.label} mode.",
+                                buttonText = "Sign out"
+                            ) { signOut() }
                         }
                     )
                 }
@@ -283,6 +290,26 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     }
 
     /** Turns on the restaurant App Settings by default when Restaurant mode is enabled. */
+    /**
+     * Ends the session so the new mode takes effect.
+     *
+     * The mode decides the landing screen and the whole sidebar, and both are built
+     * once when a session starts - saving the setting alone would leave the till
+     * showing the old mode's menu over the new mode's data until someone happened to
+     * sign out. The same thing Change Mode does in Calculator mode, for the same
+     * reason.
+     */
+    private fun signOut() {
+        SessionManager.logout()
+        val fm = requireActivity().supportFragmentManager
+        // The screen signed in on is the root of the stack, so there is nothing
+        // underneath to pop back to - the login form is put up outright.
+        fm.popBackStack(null, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
+        fm.beginTransaction()
+            .replace(R.id.fragment_container, LoginFragment())
+            .commit()
+    }
+
     private fun enableRestaurantDefaults() {
         val appDao = com.example.synergic_pos_offline.database.AppSettingsDao(requireContext())
         val a = appDao.load()

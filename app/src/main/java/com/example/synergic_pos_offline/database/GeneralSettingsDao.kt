@@ -20,10 +20,18 @@ class GeneralSettingsDao(context: Context) {
     private val table = DatabaseHelper.Tables.MD_APP_SETTINGS
 
     /** Business mode of the app. Persisted as a single-letter [code] (G / R). */
+    /**
+     * What kind of till this is.
+     *
+     * [CALCULATOR] is not a smaller Grocery: it has no products, no tax and no
+     * masters, only a rate and a quantity typed straight in. A shop running one has
+     * no use for the rest of the app, so in that mode there is one screen and no menu
+     * at all - see `CalculatorFragment`.
+     */
     enum class Mode(val code: String, val label: String) {
-        GROCERY("G", "Grocery"), RESTAURANT("R", "Restaurant");
+        GROCERY("G", "Grocery"), RESTAURANT("R", "Restaurant"), CALCULATOR("C", "Calculator");
         companion object {
-            /** Accepts the stored code (G/R) or the display label. */
+            /** Accepts the stored code (G/R/C) or the display label. */
             fun fromStored(value: String?): Mode? = value?.let { v ->
                 values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
             }

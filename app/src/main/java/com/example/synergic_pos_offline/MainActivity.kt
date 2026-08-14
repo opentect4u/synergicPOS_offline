@@ -48,6 +48,12 @@ class MainActivity : AppCompatActivity() {
          * of its hour rather than up to an hour late.
          */
         private const val AUTO_BACKUP_CHECK_MS = 5 * 60_000L
+
+        /** Named once: the drawer lists this leaf by it and [handleLeaf] opens it by it. */
+        private const val CHANGE_MODE = "Change Mode"
+
+        /** Named once: the drawer lists this leaf by it and [handleLeaf] opens it by it. */
+        private const val CALCULATOR = "Calculator"
     }
 
     private lateinit var drawerLayout: DrawerLayout
@@ -202,6 +208,42 @@ class MainActivity : AppCompatActivity() {
         is HeaderFooterFragment -> "Header & Footer"
         is DatabaseSettingsFragment -> "Database Settings"
         else -> "Synergic POS"
+    }
+
+    /**
+     * Switches what kind of till this is, and signs out so it takes effect.
+     *
+     * The mode decides the landing screen and the whole menu, both of which are built
+     * once when a session starts - so the only honest way to apply a change is to end
+     * the session. Signing back in opens the till in whichever mode was chosen.
+     */
+    private fun chooseMode() {
+        val modes = GeneralSettingsDao.Mode.entries
+        val current = GeneralSettingsDao(this).load().mode
+        DialogUtils.showList(
+            context = this,
+            title = "Change mode",
+            items = modes.map {
+                DialogUtils.ListItem(it.label, trailing = if (it == current) "Current" else "")
+            }
+        ) { index ->
+            val chosen = modes[index]
+            if (chosen == current) return@showList
+            DialogUtils.showConfirm(
+                context = this,
+                title = "Switch to ${chosen.label}?",
+                message = "You will be signed out. Sign back in and the till opens in " +
+                    "${chosen.label} mode.",
+                positiveText = "Switch",
+                destructive = true
+            ) {
+                val dao = GeneralSettingsDao(this)
+                dao.save(dao.load().copy(mode = chosen))
+                // The menus and the landing screen read the cache, not the table.
+                SettingsCache.storeFromDb(this)
+                logout()
+            }
+        }
     }
 
     private fun confirmLogout() {
@@ -381,12 +423,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Clears the back stack and shows the Dashboard as the single root screen. */
+    /**
+     * Back to the top.
+     *
+     * In Calculator mode the top *is* the calculator: there is no dashboard behind it
+     * to go back to, and sending Home there would be the one tap that escaped a mode
+     * whose whole point is that it has one screen.
+     */
     private fun goHome() {
         closeDrawer()
+        val home: Fragment =
+            if (SettingsCache.value(this, "G", "Mode") == "C") CalculatorFragment()
+            else DashboardFragment()
         val fm = supportFragmentManager
         fm.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
         fm.beginTransaction()
-            .replace(R.id.fragment_container, DashboardFragment())
+            .replace(R.id.fragment_container, home)
             .commit()
     }
 
@@ -402,6 +454,8 @@ class MainActivity : AppCompatActivity() {
             "About App" -> navigateTo(AboutAppFragment())
             // Opens on Connections; the Print Template tab is the other half of it.
             "Printer Settings" -> navigateTo(PrintSettingsFragment())
+            CALCULATOR -> navigateTo(CalculatorFragment())
+            CHANGE_MODE -> chooseMode()
             "Stock & Inventory" -> navigateTo(InventoryFragment())
             "Stock In" -> navigateTo(StockListFragment.newInstance(StockListFragment.Mode.IN))
             "Write Off" -> navigateTo(StockListFragment.newInstance(StockListFragment.Mode.OUT))
@@ -464,6 +518,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildMenuTree(): List<TreeNode> {
         val context = this
+        // Calculator mode is one screen and two settings. Everything else the drawer
+        // offers - masters, reports, the other sale screens - belongs to a till that
+        // has products, and this one does not; listing them would open pages that
+        // could only be empty or, worse, could change what the calculator prints.
+        //
+        // What is left is what a calculator till still needs: somewhere to set the
+        // printer up, and a way back out of the mode.
+        if (SettingsCache.value(context, "G", "Mode") == "C") {
+            return listOf(
+                // The way back: Printer Settings is the only page a calculator till
+                // can reach, and without this there is nothing to reach the
+                // calculator from once it is open.
+                TreeNode(CALCULATOR),
+                TreeNode("Settings", listOf(TreeNode("Printer Settings"), TreeNode(CHANGE_MODE)))
+            )
+        }
+
         val isGrocery = SettingsCache.value(context, "G", "Mode") == "G"
         // Sale Return and Advance Payment are grocery-only flows; hidden in Restaurant.
         val isRestaurant = SettingsCache.value(context, "G", "Mode") == "R"
