@@ -174,7 +174,16 @@ class PeriodReportRenderer(context: Context) {
          * over the column it governs says more than a caption above the table would.
          * Only meaningful with [evenColumns].
          */
-        val columnsAbove: List<String>? = null
+        val columnsAbove: List<String>? = null,
+        /**
+         * Replaces the machine-ID line at the head of a [Style.CLASSIC] slip.
+         *
+         * A report is identified by the till that ran it; a *bill* is identified by
+         * its own number. Same three-part line either way - something on the left, the
+         * date in the middle, the clock on the right - so the difference is what goes
+         * in it, not how it is set.
+         */
+        val headLine: Triple<String, String, String>? = null
     )
 
     /**
@@ -292,7 +301,9 @@ class PeriodReportRenderer(context: Context) {
                 // title is hidden on a classic slip - there is no store block up there
                 // for it to rule off - so this is where that line belongs.
                 head.addView(rule())
-                head.addView(spreadRow(machineId(db), stamp("dd-MM-yy"), stamp("HH:mm:ss")))
+                val (left, middle, right) = content.headLine
+                    ?: Triple(machineId(db), stamp("dd-MM-yy"), stamp("HH:mm:ss"))
+                head.addView(spreadRow(left, middle, right))
                 // And one *between* the two head lines. The block is closed by the
                 // layout's rule below it, so drawing another here would stack two -
                 // and on a report with no range line, three.

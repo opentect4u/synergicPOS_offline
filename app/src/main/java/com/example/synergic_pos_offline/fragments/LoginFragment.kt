@@ -599,12 +599,18 @@ class LoginFragment : Fragment() {
         // shift; Home for a till that is also a back office. Either way it is
         // committed as the root of the back stack, not pushed over the login form,
         // which is nowhere to go back to.
-        val restaurant = SettingsCache.value(requireContext(), "G", "Mode") == "R"
-        val landing: Fragment = when (GeneralSettingsDao(requireContext()).load().landingScreen) {
-            GeneralSettingsDao.LandingScreen.HOME -> DashboardFragment()
+        val mode = GeneralSettingsDao(requireContext()).load().mode
+        val landing: Fragment = when {
+            // Calculator mode has one screen, and this is it. The Landing Screen
+            // setting does not apply: there is nowhere else to land.
+            mode == GeneralSettingsDao.Mode.CALCULATOR -> CalculatorFragment()
+
+            GeneralSettingsDao(requireContext()).load().landingScreen ==
+                GeneralSettingsDao.LandingScreen.HOME -> DashboardFragment()
+
             // Sale lands on the restaurant Orders screen in Restaurant mode, else grocery POS.
-            GeneralSettingsDao.LandingScreen.SALE ->
-                if (restaurant) RestaurantOrdersFragment() else PosBillingFragment()
+            mode == GeneralSettingsDao.Mode.RESTAURANT -> RestaurantOrdersFragment()
+            else -> PosBillingFragment()
         }
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_container, landing)
