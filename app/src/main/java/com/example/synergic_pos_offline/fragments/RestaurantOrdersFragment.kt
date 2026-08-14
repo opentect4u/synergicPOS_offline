@@ -597,7 +597,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 etTable.error = "Table $table is $status"
                 return@setOnClickListener
             }
+            // A valid table auto-fills its section; a blank section means the code
+            // matches no table in the master, so the order is not created for it.
             val section = etSection.text?.toString()?.trim().orEmpty()
+            if (section.isEmpty()) {
+                etTable.error = "No such table — pick a table that has a section"
+                return@setOnClickListener
+            }
             dialog.dismiss()
             openNewOrder(table, section, phone, type = "Dine In")
             toast("Order created for table $table")
