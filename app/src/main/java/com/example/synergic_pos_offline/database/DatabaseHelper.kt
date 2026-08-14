@@ -954,9 +954,10 @@ class DatabaseHelper private constructor(context: Context) :
 
     /**
      * Wipes the mode-specific business data when the app switches Grocery ↔ Restaurant:
-     * the product/category masters, restaurant masters (section/table/waiter), and all
-     * sales transactions (bills, KOTs, payments, returns, running orders). Registration,
-     * users, and settings are left intact. Children are cleared before parents.
+     * the product/category masters, the units and rate names those products used,
+     * restaurant masters (section/table/waiter), and all sales transactions (bills,
+     * KOTs, payments, returns, running orders). Registration, users, and settings are
+     * left intact. Children are cleared before parents.
      */
     fun eraseBusinessDataForModeChange() {
         val db = writableDatabase
@@ -969,7 +970,9 @@ class DatabaseHelper private constructor(context: Context) :
             Tables.TD_ASSIGN_WAITER,
             Tables.MD_SUBTABLE, Tables.MD_TABLE_UNIT, Tables.MD_TABLE, Tables.MD_SECTION,
             Tables.MD_WAITERS,
-            Tables.MD_PRODUCT_RATES, Tables.MD_PRODUCTS, Tables.MD_CATEGORY
+            // Product rates reference units and rate names, so those go after it.
+            Tables.MD_PRODUCT_RATES, Tables.MD_PRODUCTS, Tables.MD_CATEGORY,
+            Tables.MD_UNITS, Tables.MD_RATE_NAME
         )
         db.beginTransaction()
         try {

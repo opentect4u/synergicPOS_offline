@@ -481,6 +481,10 @@ class MainActivity : AppCompatActivity() {
             "Year Wise Report" -> navigateTo(YearWiseReportFragment())
             "Customer Payment" -> navigateTo(CustomerPaymentReportFragment())
             "UDF-Wise Report" -> navigateTo(UdfWiseReportFragment())
+            "UDF Wise Item Report" -> navigateTo(UdfWiseItemReportFragment())
+            "Customer Item Wise RPT" -> navigateTo(CustomerItemWiseReportFragment())
+            "KOT Cancel Report" -> navigateTo(KotCancelReportFragment())
+            "Calculator Report" -> navigateTo(CalculatorReportFragment())
             "Stock Report" -> navigateTo(StockReportFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")
@@ -531,6 +535,7 @@ class MainActivity : AppCompatActivity() {
                 // can reach, and without this there is nothing to reach the
                 // calculator from once it is open.
                 TreeNode(CALCULATOR),
+                TreeNode("Calculator Report"),
                 TreeNode("Settings", listOf(TreeNode("Printer Settings"), TreeNode(CHANGE_MODE)))
             )
         }
