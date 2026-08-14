@@ -113,7 +113,17 @@ class GeneralSettingsDao(context: Context) {
         val stockAlert: Boolean = false,
         /** The on-hand quantity at or below which an item is low. Only meaningful
          *  while [stockAlert] is on. */
-        val stockAlertQty: Int = 0
+        val stockAlertQty: Int = 0,
+        /**
+         * Section access, set by an admin. When off, that top-level section (Master /
+         * Settings / Reports) is hidden from a NON-admin user's menu and drawer; an
+         * admin always sees all three, so turning one off can never lock the admin out
+         * of the screen these are set on. All OFF by default - a general user sees none
+         * of the three until an admin grants access.
+         */
+        val accessMaster: Boolean = false,
+        val accessSettings: Boolean = false,
+        val accessReports: Boolean = false
     )
 
     /** Reads every general setting for the current store, applying defaults. */
@@ -132,7 +142,10 @@ class GeneralSettingsDao(context: Context) {
             landingScreen = LandingScreen.fromStored(m[KEY_LANDING_SCREEN]) ?: d.landingScreen,
             stockFlag = m[KEY_STOCK_FLAG]?.toBool() ?: d.stockFlag,
             stockAlert = m[KEY_STOCK_ALERT]?.toBool() ?: d.stockAlert,
-            stockAlertQty = m[KEY_STOCK_ALERT_QTY]?.toIntOrNull() ?: d.stockAlertQty
+            stockAlertQty = m[KEY_STOCK_ALERT_QTY]?.toIntOrNull() ?: d.stockAlertQty,
+            accessMaster = m[KEY_ACCESS_MASTER]?.toBool() ?: d.accessMaster,
+            accessSettings = m[KEY_ACCESS_SETTINGS]?.toBool() ?: d.accessSettings,
+            accessReports = m[KEY_ACCESS_REPORTS]?.toBool() ?: d.accessReports
         )
     }
 
@@ -157,6 +170,9 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_STOCK_FLAG, s.stockFlag.b())
         put(KEY_STOCK_ALERT, alertApply.b())
         put(KEY_STOCK_ALERT_QTY, if (alertApply) s.stockAlertQty.toString() else "0")
+        put(KEY_ACCESS_MASTER, s.accessMaster.b())
+        put(KEY_ACCESS_SETTINGS, s.accessSettings.b())
+        put(KEY_ACCESS_REPORTS, s.accessReports.b())
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "General settings save (type G)")
     }
@@ -242,6 +258,23 @@ class GeneralSettingsDao(context: Context) {
         private const val KEY_STOCK_FLAG = "Stock Flag"
         private const val KEY_STOCK_ALERT = "Stock Alert"
         private const val KEY_STOCK_ALERT_QTY = "Stock Alert Quantity"
+        const val KEY_ACCESS_MASTER = "Access Master"
+        const val KEY_ACCESS_SETTINGS = "Access Settings"
+        const val KEY_ACCESS_REPORTS = "Access Reports"
+
+        /**
+         * Whether the signed-in user may open [key] (one of the KEY_ACCESS_* keys).
+         *
+         * An admin always may - the toggles restrict general users only, so an admin
+         * can never hide the section they are set on from themselves. For everyone else
+         * it reads the cached flag, defaulting OFF when it has never been set - a
+         * general user sees the section only once an admin has switched it on.
+         */
+        fun canAccessSection(context: Context, key: String): Boolean {
+            if (com.example.synergic_pos_offline.utils.SessionManager.isAdmin()) return true
+            val cached = com.example.synergic_pos_offline.utils.SettingsCache.value(context, "G", key)
+            return cached == "1"
+        }
 
         /**
          * Whether stock tracking is on - the one answer every Stock & Inventory

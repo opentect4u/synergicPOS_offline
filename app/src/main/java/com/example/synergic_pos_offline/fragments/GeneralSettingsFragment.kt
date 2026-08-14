@@ -56,6 +56,10 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var llStockAlertQty: View
     private lateinit var tilStockAlertQty: View
     private lateinit var etStockAlertQty: TextInputEditText
+    private lateinit var cardAccessControl: View
+    private lateinit var swAccessMaster: SwitchMaterial
+    private lateinit var swAccessSettings: SwitchMaterial
+    private lateinit var swAccessReports: SwitchMaterial
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -82,8 +86,17 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         llStockAlertQty = view.findViewById(R.id.llStockAlertQty)
         tilStockAlertQty = view.findViewById(R.id.tilStockAlertQty)
         etStockAlertQty = view.findViewById(R.id.etStockAlertQty)
+        cardAccessControl = view.findViewById(R.id.cardAccessControl)
+        swAccessMaster = view.findViewById(R.id.swAccessMaster)
+        swAccessSettings = view.findViewById(R.id.swAccessSettings)
+        swAccessReports = view.findViewById(R.id.swAccessReports)
 
         val s = dao.load()
+        // Section access is an admin-only control: only an admin sees or sets it.
+        cardAccessControl.isVisible = SessionManager.isAdmin()
+        swAccessMaster.isChecked = s.accessMaster
+        swAccessSettings.isChecked = s.accessSettings
+        swAccessReports.isChecked = s.accessReports
         swLastBillStatus.isChecked = s.lastBillStatus
         swQuantityStatus.isChecked = s.quantityStatus
         swCustomerInfo.isChecked = s.customerInfo
@@ -179,7 +192,13 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 landingScreen = landingScreenVal,
                 stockFlag = swStockFlag.isChecked,
                 stockAlert = alertApply,
-                stockAlertQty = alertQty
+                stockAlertQty = alertQty,
+                // Section access is admin-only: take the toggles when an admin is
+                // signing off on it, otherwise keep whatever was already saved so a
+                // non-admin save can never silently change who can see what.
+                accessMaster = if (SessionManager.isAdmin()) swAccessMaster.isChecked else s.accessMaster,
+                accessSettings = if (SessionManager.isAdmin()) swAccessSettings.isChecked else s.accessSettings,
+                accessReports = if (SessionManager.isAdmin()) swAccessReports.isChecked else s.accessReports
             )
 
             // Switching mode wipes the mode-specific business data. Because it is

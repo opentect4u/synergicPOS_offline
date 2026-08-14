@@ -590,8 +590,12 @@ class AboutAppFragment : Fragment(), TitledScreen {
      */
     private fun onExportMasters() = inBackground("Exporting masters…") {
         var summary: DatabaseBackup.Export? = null
+        // Name the file after the current mode so it reads "…_restaurant_…" or
+        // "…_grocery_…" and the kind of till it came from is clear without opening it.
+        val mode = if (com.example.synergic_pos_offline.utils.SettingsCache
+                .value(requireContext(), "G", "Mode") == "R") "restaurant" else "grocery"
         val savedTo = Downloads.stream(
-            requireContext(), MasterData.fileName(Date()), "application/sql", MasterData.FOLDER
+            requireContext(), MasterData.fileName(Date(), mode), "application/sql", MasterData.FOLDER
         ) { writer -> summary = MasterData.exportTo(requireContext(), writer) }
         val export = summary ?: error("nothing was written")
 

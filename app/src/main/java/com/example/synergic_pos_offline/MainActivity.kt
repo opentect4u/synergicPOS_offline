@@ -426,6 +426,7 @@ class MainActivity : AppCompatActivity() {
             "Month Wise Report" -> navigateTo(MonthWiseReportFragment())
             "Year Wise Report" -> navigateTo(YearWiseReportFragment())
             "Customer Payment" -> navigateTo(CustomerPaymentReportFragment())
+            "UDF-Wise Report" -> navigateTo(UdfWiseReportFragment())
             "Stock Report" -> navigateTo(StockReportFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")
@@ -467,6 +468,12 @@ class MainActivity : AppCompatActivity() {
         // Sale Return and Advance Payment are grocery-only flows; hidden in Restaurant.
         val isRestaurant = SettingsCache.value(context, "G", "Mode") == "R"
 
+        // Admin-set section access: a section switched off is hidden from a general
+        // user's drawer; an admin always sees all three.
+        val canMaster = GeneralSettingsDao.canAccessSection(context, GeneralSettingsDao.KEY_ACCESS_MASTER)
+        val canSettings = GeneralSettingsDao.canAccessSection(context, GeneralSettingsDao.KEY_ACCESS_SETTINGS)
+        val canReports = GeneralSettingsDao.canAccessSection(context, GeneralSettingsDao.KEY_ACCESS_REPORTS)
+
         // Filtered by the same rule the Reports grid filters its tiles with, so the
         // drawer and the grid cannot disagree about which reports this till has -
         // see [ReportsFragment.isVisible].
@@ -502,8 +509,8 @@ class MainActivity : AppCompatActivity() {
             ))
         ) else emptyList()
 
-        return listOf(
-            TreeNode("Master", listOf(
+        return buildList {
+            if (canMaster) add(TreeNode("Master", listOf(
                 TreeNode("Captions"),
                 TreeNode("Header & Footer", buildList {
                     // Bill header/footer + logo always; the KOT pair only in Restaurant.
@@ -514,8 +521,8 @@ class MainActivity : AppCompatActivity() {
                 }),
                 TreeNode("User Management"),
                 TreeNode("Database Settings", databaseSettingsNodes)
-            )),
-            TreeNode("Settings", listOf(
+            )))
+            if (canSettings) add(TreeNode("Settings", listOf(
                 TreeNode("General Settings"),
                 TreeNode("Bill Settings"),
                 TreeNode("Tax Settings"),
@@ -525,18 +532,17 @@ class MainActivity : AppCompatActivity() {
                 TreeNode("Printer Settings"),
                 TreeNode("App Settings"),
                 TreeNode("About App")
-            )),
-            *stockNodes.toTypedArray(),
-            TreeNode("Sale"),
+            )))
+            addAll(stockNodes)
+            add(TreeNode("Sale"))
             // Sale Return + Advance Payment are grocery-only; omitted in Restaurant.
-            *(if (isRestaurant) emptyArray<TreeNode>() else arrayOf(
-                TreeNode("Sale Return"),
-                TreeNode("Advance Payment")
-            )),
-            // TreeNode("Duplicate Bill"),
-            // TreeNode("Delete Bill"),
-            TreeNode("Reports", reportTitles.map { TreeNode(it) })
-        )
+            if (!isRestaurant) {
+                add(TreeNode("Sale Return"))
+                add(TreeNode("Advance Payment"))
+            }
+            // TreeNode("Duplicate Bill"); TreeNode("Delete Bill")
+            if (canReports) add(TreeNode("Reports", reportTitles.map { TreeNode(it) }))
+        }
     }
 
     class TreeNode(

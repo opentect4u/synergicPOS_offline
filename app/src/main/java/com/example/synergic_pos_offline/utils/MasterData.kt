@@ -75,13 +75,17 @@ object MasterData {
     // ---- Export ---------------------------------------------------------------
 
     /**
-     * The file's name, carrying the date and time it was taken - the same convention
-     * as the database backups, so a folder of them sorts into the order they were
-     * made and one can be picked out without opening any.
+     * The file's name, carrying the business mode it was taken in ("restaurant" /
+     * "grocery") and the date and time - the same dated convention as the database
+     * backups, plus the mode so a masters file says at a glance which kind of till it
+     * came from.
      */
-    fun fileName(at: Date): String =
-        "synergic_masters_" +
+    fun fileName(at: Date, mode: String): String {
+        val modeTag = mode.trim().lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), "_").trim('_')
+            .ifEmpty { "grocery" }
+        return "synergic_masters_${modeTag}_" +
             SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(at) + ".sql"
+    }
 
     /**
      * Writes the catalogue straight to [out].

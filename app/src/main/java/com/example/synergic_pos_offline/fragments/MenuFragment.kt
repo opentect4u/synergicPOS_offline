@@ -43,9 +43,16 @@ class MenuFragment : Fragment() {
         val isRestaurant = com.example.synergic_pos_offline.utils.SettingsCache
             .value(requireContext(), "G", "Mode") == "R"
 
+        // Admin-set section access: a section switched off is hidden from a general
+        // user's menu; an admin always sees all three (GeneralSettingsDao.canAccessSection).
+        val ctx = requireContext()
+        val canMaster = GeneralSettingsDao.canAccessSection(ctx, GeneralSettingsDao.KEY_ACCESS_MASTER)
+        val canSettings = GeneralSettingsDao.canAccessSection(ctx, GeneralSettingsDao.KEY_ACCESS_SETTINGS)
+        val canReports = GeneralSettingsDao.canAccessSection(ctx, GeneralSettingsDao.KEY_ACCESS_REPORTS)
+
         val menuItems = buildList {
-            add(MenuItem("Master", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon))
-            add(MenuItem("Settings", android.R.drawable.ic_menu_preferences, R.color.menu_settings, R.color.menu_settings_icon))
+            if (canMaster) add(MenuItem("Master", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon))
+            if (canSettings) add(MenuItem("Settings", android.R.drawable.ic_menu_preferences, R.color.menu_settings, R.color.menu_settings_icon))
             if (stockOn) {
                 add(MenuItem("Stock & Inventory", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon))
             }
@@ -56,7 +63,7 @@ class MenuFragment : Fragment() {
                 add(MenuItem("Advance Payment", android.R.drawable.ic_menu_today, R.color.menu_sale, R.color.menu_sale_icon))
             }
             // MenuItem("Duplicate Bill", ...); MenuItem("Delete Bill", ...)
-            add(MenuItem("Reports", android.R.drawable.ic_menu_view, R.color.menu_report, R.color.menu_report_icon))
+            if (canReports) add(MenuItem("Reports", android.R.drawable.ic_menu_view, R.color.menu_report, R.color.menu_report_icon))
         }
 
         rvMenu.adapter = MenuAdapter(menuItems) { item ->
