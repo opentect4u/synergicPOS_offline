@@ -669,16 +669,21 @@ class LoginFragment : Fragment() {
      * and the remembered operator arrives with the first password login.
      */
     private fun showBiometricOffer(view: View) {
-        val offered = BiometricLogin.offeredUser(requireContext())
-        val button = view.findViewById<MaterialButton>(R.id.btnBiometricLogin)
+        // Looked up leniently, and this is not belt-and-braces: this screen has a
+        // portrait layout and a landscape one, and a shortcut that is only worth
+        // having on one of them is not worth crashing the other over. The login
+        // screen is the one screen a till cannot get past.
+        val button = view.findViewById<MaterialButton>(R.id.btnBiometricLogin) ?: return
         val divider = view.findViewById<View>(R.id.tvBiometricOr)
+
+        val offered = BiometricLogin.offeredUser(requireContext())
         if (offered == null) {
             button.visibility = View.GONE
-            divider.visibility = View.GONE
+            divider?.visibility = View.GONE
             return
         }
         button.visibility = View.VISIBLE
-        divider.visibility = View.VISIBLE
+        divider?.visibility = View.VISIBLE
         // Named on the button as well as on the system sheet. An operator has to know
         // whose session this opens *before* deciding to press it.
         button.text = "Use fingerprint  ·  $offered"

@@ -138,6 +138,34 @@
                 android:backgroundTint="@color/primary_blue"
                 android:textColor="@color/white" />
 
+            <!-- The fingerprint offer. Must exist in both this layout and the portrait
+                 one: a till runs landscape, so a button added only to layout/ is a
+                 button the shop never sees. See LoginFragment.showBiometricOffer. -->
+            <TextView
+                android:id="@+id/tvBiometricOr"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:gravity="center"
+                android:text="or"
+                android:textSize="13sp"
+                android:textColor="@color/text_secondary"
+                android:visibility="gone" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnBiometricLogin"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="8dp"
+                android:text="Use fingerprint"
+                android:textSize="17sp"
+                android:textStyle="bold"
+                app:cornerRadius="12dp"
+                app:icon="@drawable/ic_fingerprint"
+                app:iconGravity="textStart"
+                android:visibility="gone" />
+
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
