@@ -15,7 +15,7 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.utils.PrintLanguage
-import com.example.synergic_pos_offline.utils.Transliterator
+import com.example.synergic_pos_offline.utils.ProductName
 import com.example.synergic_pos_offline.utils.SettingsHighlighter
 import com.example.synergic_pos_offline.utils.ThemeManager
 
@@ -145,8 +145,8 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
         val note = view.findViewById<TextView>(R.id.tvProductNamesNote)
         rows.removeAllViews()
 
-        // Nothing is respelled in English, so there is nothing to show.
-        if (!Transliterator.applies(language)) {
+        // Nothing changes in English, so there is nothing to show.
+        if (!ProductName.applies(language)) {
             card.visibility = View.GONE
             return
         }
@@ -154,13 +154,16 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
 
         val names = productNames()
         note.text = if (names.isEmpty()) {
-            "No products on this till yet. These are examples of how names are spelled."
+            "No products on this till yet. These are examples of what happens to a name."
         } else {
-            "How the bill will spell these. It is the same name in ${language.englishName} " +
-                "letters, not a different word - a customer can read it aloud and recognise it."
+            "How the bill will print these. Everyday words are translated into " +
+                "${language.englishName}; brand names are spelled in its letters, since a " +
+                "brand is the same in every language."
         }
         val sample = names.ifEmpty { EXAMPLES }
-        sample.forEach { name -> rows.addView(nameRow(name, Transliterator.to(language, name))) }
+        sample.forEach { name ->
+            rows.addView(nameRow(name, ProductName.inPrintLanguage(language, name)))
+        }
     }
 
     /** "PARLE-G  →  पार्ले-जी" - what was typed, and what will print. */
@@ -235,9 +238,12 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
                 append("and reports.")
             }
             if (!english) {
-                append("\n\nProduct names are respelled in the ${language.englishName} ")
-                append("alphabet, letter for sound - the same name, in letters your ")
-                append("customer can read. They are not translated into different words.")
+                append("\n\nProduct names are handled a word at a time. Everyday retail ")
+                append("words - rice, sugar, soap, oil - are translated into ")
+                append("${language.englishName}. Anything else, a brand above all, is ")
+                append("spelled in ${language.englishName} letters instead: a brand is the ")
+                append("same name in every language, and a customer looking for it on a ")
+                append("shelf would not find it translated.")
             }
             append("\n\nLeft as they are, in every language:")
             append("\n•  The store name, address and GSTIN, and your header and footer lines.")

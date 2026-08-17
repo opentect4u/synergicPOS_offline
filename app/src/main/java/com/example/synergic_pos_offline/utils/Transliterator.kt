@@ -50,7 +50,7 @@ object Transliterator {
     fun to(language: PrintLanguage.Language, text: String?): String {
         val raw = text ?: return ""
         val script = scriptFor(language) ?: return raw
-        if (raw.isBlank() || !hasLatinLetters(raw) || hasNonLatinLetters(raw)) return raw
+        if (raw.isBlank() || !hasLatinLetters(raw)) return raw
         return runCatching { transliterate(script, raw) }.getOrDefault(raw)
     }
 
@@ -98,6 +98,11 @@ object Transliterator {
 
     /** One run of letters, respelled - or kept, where respelling it would lose it. */
     private fun token(script: Script, word: String, countedBefore: Boolean): String {
+        // A word already in a script of its own is one somebody has settled - either
+        // the shop typed it that way, or [ProductName] has just translated it. Either
+        // way there is nothing here that could improve on it. Asked per word rather
+        // than of the whole name, so "बासमती RICE" still gets its second word done.
+        if (hasNonLatinLetters(word)) return word
         val lower = word.lowercase(Locale.ROOT)
         // A unit is read as a quantity, not as a word. "1 KG" respelled phonetically
         // is still legible, but it is no longer the symbol printed in the quantity

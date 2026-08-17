@@ -87,7 +87,7 @@ class UdfWiseItemReportRenderer(context: Context) {
             g.items.forEach { item ->
                 root.addView(
                     itemRow(
-                        Transliterator.to(lang, item.name),
+                        ProductName.inPrintLanguage(lang, item.name),
                         qtyFmt(item.qty), money(item.amount), bold = false
                     )
                 )

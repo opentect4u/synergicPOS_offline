@@ -218,10 +218,10 @@ class ReturnReceiptRenderer(context: Context) {
 
             addView(TextView(ctx).apply {
                 layoutParams = LinearLayout.LayoutParams(-1, -2)
-                // The product's name in the print language's script - see
-                // [Transliterator]. The same treatment the sale bill gives it, so a
-                // return reads as the bill it came off.
-                text = "$serial ${Transliterator.to(lang, line.name)}"
+                // The product's name in the print language - see [ProductName]. The
+                // same treatment the sale bill gives it, so a return reads as the
+                // bill it came off.
+                text = "$serial ${ProductName.inPrintLanguage(lang, line.name)}"
                 gravity = Gravity.START
                 typeface = Typeface.MONOSPACE
                 textSize = sizeSp

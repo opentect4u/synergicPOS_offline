@@ -252,14 +252,14 @@ class BillReceiptRenderer(context: Context) {
     private fun t(text: String): String = PrintLanguage.tr(lang, text)
 
     /**
-     * A product's name as it prints - upper-cased, and written in the print
-     * language's script.
+     * A product's name as it prints - upper-cased, then put into the print language.
      *
-     * Respelled rather than translated: the shop's word for the thing, in letters the
-     * customer can read. Upper-casing first and not after, because it is the Latin
-     * name that has a case to change; the scripts this becomes have none.
+     * Translated where the words are words and respelled where they are names; see
+     * [ProductName], which decides which is which. Upper-cased first and not after,
+     * because it is the Latin name that has a case to change - the scripts it becomes
+     * have none.
      */
-    private fun productName(name: String): String = Transliterator.to(lang, name.uppercase())
+    private fun productName(name: String): String = ProductName.inPrintLanguage(lang, name.uppercase())
 
     /**
      * The bill's typeface — the bundled Roboto Mono font (res/font/roboto_mono_regular.ttf).
