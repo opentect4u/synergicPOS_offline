@@ -189,7 +189,23 @@ class PeriodReportRenderer(context: Context) {
          * date in the middle, the clock on the right - so the difference is what goes
          * in it, not how it is set.
          */
-        val headLine: Triple<String, String, String>? = null
+        val headLine: Triple<String, String, String>? = null,
+        /**
+         * Which of the table's columns hold a name the shop typed - a product, a
+         * department - so they can be put into the print language the way a bill's
+         * item names are. See [ProductName].
+         *
+         * Declared by the report rather than worked out here, and empty by default,
+         * because from inside this renderer a cell is just a string: the first column
+         * of one report is a product, of the next a customer, of the next a bill
+         * number. Only the report that built the row knows which, and a guess would
+         * rewrite a customer's name or a bill number.
+         *
+         * Applied to [rows], [rows2] and [columnsAbove] alike, since a name can be
+         * declared in any of them. Naming a column that turns out to hold a figure
+         * costs nothing - a cell with no letters in it comes back untouched.
+         */
+        val nameColumns: Set<Int> = emptySet()
     )
 
     /**
@@ -255,15 +271,29 @@ class PeriodReportRenderer(context: Context) {
      * The report as it will be printed: its labels in the print language, its figures
      * and the shop's own words untouched.
      *
-     * Only the parts of a [Content] that are the app's own labelling are translated.
-     * [Content.rows] is deliberately not among them - those cells hold product names,
-     * customer names, bill numbers and money, none of which is this app's to rewrite.
-     * The exception is [Content.footerRow], whose first cell is the table's own
-     * "TOTAL :" rather than a value.
+     * Two different things happen here, to two different kinds of text.
+     *
+     * The app's own labelling - titles, column heads, totals - is *translated* from
+     * the dictionary in [PrintLanguage]. The shop's own words are not, with one
+     * exception: the cells a report has declared in [Content.nameColumns] hold
+     * product and department names, and those go through [ProductName] exactly as a
+     * bill's item names do, so the same product reads the same way on a bill and in
+     * the report that counts it.
+     *
+     * Everything else in [Content.rows] is left alone. Those cells hold customer
+     * names, bill numbers and money, and none of that is this app's to rewrite.
      */
     private fun translated(content: Content): Content {
         if (lang == PrintLanguage.Language.ENGLISH) return content
+        val names = content.nameColumns
+        fun renameRow(row: List<String>): List<String> =
+            if (names.isEmpty()) row
+            else row.mapIndexed { i, cell ->
+                if (i in names) ProductName.inPrintLanguage(lang, cell) else cell
+            }
         return content.copy(
+            rows = content.rows.map(::renameRow),
+            rows2 = content.rows2.map(::renameRow),
             title = t(content.title),
             period = t(content.period),
             subtitle = t(content.subtitle),
@@ -278,7 +308,16 @@ class PeriodReportRenderer(context: Context) {
             footerNote = content.footerNote?.let(::t),
             columns2 = content.columns2?.let { PrintLanguage.tr(lang, it) },
             heading = PrintLanguage.trLabels(lang, content.heading),
-            columnsAbove = content.columnsAbove?.let { PrintLanguage.tr(lang, it) }
+            // The line above the column heads names the one thing the report was run
+            // for, so a declared name column there is a product like any other - it
+            // just happens to be a heading rather than a row.
+            columnsAbove = content.columnsAbove
+                ?.let { renameRow(it) }
+                ?.let { above ->
+                    above.mapIndexed { i, cell ->
+                        if (i in names) cell else PrintLanguage.tr(lang, cell)
+                    }
+                }
             // headLine is the machine's id, the date and the clock - figures, all three.
         )
     }

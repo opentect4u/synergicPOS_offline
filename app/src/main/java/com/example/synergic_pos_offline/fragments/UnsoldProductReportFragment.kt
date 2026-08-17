@@ -71,6 +71,8 @@ class UnsoldProductReportFragment : PeriodReportFragment<UnsoldProductReportDao.
             subtitle = "${report.unsoldCount} of ${report.productCount} product(s) unsold",
             style = PeriodReportRenderer.Style.CLASSIC,
             range = "F.DT:${shortDate(report.fromDate)}" to "TO.DT:${shortDate(report.toDate)}",
+            // The item name, put into the print language as it is on a bill.
+            nameColumns = setOf(0),
             columns = listOf("ITEM NAME"),
             rows = report.lines.map { line -> listOf(line.name) },
             summary = emptyList(),

@@ -64,6 +64,8 @@ class ProfitLossReportFragment : PeriodReportFragment<ProfitLossReportDao.Report
             subtitle = "${report.itemCount} item(s)",
             style = PeriodReportRenderer.Style.CLASSIC,
             range = "F.DT:${shortDate(report.fromDate)}" to "TO.DT:${shortDate(report.toDate)}",
+            // The item name, put into the print language as it is on a bill.
+            nameColumns = setOf(0),
             columns = listOf("ITEM NAME", "QTY", "PROFIT"),
             rows = rowsOf(report),
             footerRow = listOf(

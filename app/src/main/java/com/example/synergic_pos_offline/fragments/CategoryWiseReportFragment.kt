@@ -72,6 +72,8 @@ class CategoryWiseReportFragment : PeriodReportFragment<CategoryWiseReportDao.Re
             subtitle = "${report.categoryCount} department(s)",
             style = PeriodReportRenderer.Style.CLASSIC,
             range = "F.DT:${shortDate(report.fromDate)}" to "TO.DT:${shortDate(report.toDate)}",
+            // The department is a name the shop typed, like a product's.
+            nameColumns = setOf(0),
             columns = listOf("DEPT NAME", "S.QTY", "AMOUNT"),
             // Three columns across a whole roll: sized to their contents they would
             // huddle against the right-hand edge with the paper blank beside them.

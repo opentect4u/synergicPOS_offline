@@ -144,6 +144,16 @@ class ProductNameTest {
     }
 
     @Test
+    fun `a cell that holds a figure comes back untouched`() {
+        // What lets a report declare a name column without having to be sure every
+        // row of it is a name - see PeriodReportRenderer.Content.nameColumns. A
+        // report that mislabels a money or quantity column loses nothing by it.
+        listOf("1,250.00", "5", "0.00", "-", "12.50", "5 PKT", "2 KG").forEach {
+            assertEquals(it, hi(it))
+        }
+    }
+
+    @Test
     fun `null and blank are safe`() {
         assertEquals("", ProductName.inPrintLanguage(Language.HINDI, null))
         assertEquals("   ", ProductName.inPrintLanguage(Language.HINDI, "   "))

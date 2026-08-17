@@ -26,7 +26,7 @@ object KotPrinter {
             report("KOT printer '${printer.printerName}' is not fully configured")
             return
         }
-        val bitmap = render(batch, config.paperDots)
+        val bitmap = render(batch, config.paperDots, PrintLanguage.of(context))
         ThermalPrinter.print(context, bitmap, config) { result ->
             when (result) {
                 is ThermalPrinter.Result.Success -> report("${batch.kotNumber} printed at ${printer.printerName}")
@@ -70,8 +70,20 @@ object KotPrinter {
         return out.ifEmpty { listOf(text) }
     }
 
-    /** Draws the ticket at [width] dots (the printer's printable width) and returns it. */
-    fun render(batch: RunningOrderDao.KotBatch, width: Int): Bitmap {
+    /**
+     * Draws the ticket at [width] dots (the printer's printable width) and returns it.
+     *
+     * [language] puts the dish names into the till's print language, the same way the
+     * bill does - the kitchen reads this ticket, and it is the one document in the
+     * shop whose reader is most likely to want it in their own. The ticket's own
+     * words are left in English: KOT, the table and the section are the till's
+     * labels, and they are what the staff already work from.
+     */
+    fun render(
+        batch: RunningOrderDao.KotBatch,
+        width: Int,
+        language: PrintLanguage.Language = PrintLanguage.Language.ENGLISH
+    ): Bitmap {
         // Set from [PrintType], so the ticket carries the same face and the same
         // sizes as the bill. These used to be fractions of the paper width, which
         // made a KOT off a 58mm roll a visibly smaller document than one off an 80mm
@@ -94,13 +106,28 @@ object KotPrinter {
         lines += Line(batch.kotNumber, sub, center = true)
         if (batch.section.isNotBlank()) lines += Line("Section: ${batch.section}", sub, center = true)
         lines += Line("Table: ${batch.tableCode}    ${batch.time}", sub, center = true)
+        /**
+         * One dish: how many, and what - in the print language, and wrapped.
+         *
+         * Wrapped because it has to be. A dish line is the one thing on this ticket
+         * that cannot be allowed to run off the edge, and a name in another script is
+         * not the width the English one was. The note below it has always been
+         * wrapped for the same reason; this simply stops the item lines being the
+         * exception.
+         */
+        fun dish(name: String, qty: Double): List<Line> =
+            wrapToWidth(
+                "${qty.toInt()} x  ${ProductName.inPrintLanguage(language, name)}",
+                item, width - padX * 2
+            ).map { Line(it, item, center = false) }
+
         if (batch.lines.isNotEmpty()) ruleBefore += lines.size
-        batch.lines.forEach { (name, qty) -> lines += Line("${qty.toInt()} x  $name", item, center = false) }
+        batch.lines.forEach { (name, qty) -> lines += dish(name, qty) }
         // Cancelled items — a clearly separated section.
         if (batch.cancelLines.isNotEmpty()) {
             ruleBefore += lines.size
             lines += Line("** CANCELLED **", cancelHdr, center = true)
-            batch.cancelLines.forEach { (name, qty) -> lines += Line("${qty.toInt()} x  $name", item, center = false) }
+            batch.cancelLines.forEach { (name, qty) -> lines += dish(name, qty) }
         }
         if (batch.note.isNotBlank()) {
             ruleBefore += lines.size

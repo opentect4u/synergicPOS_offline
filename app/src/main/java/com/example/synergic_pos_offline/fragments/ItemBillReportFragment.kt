@@ -94,6 +94,8 @@ class ItemBillReportFragment : PeriodReportFragment<ItemBillReportDao.Report>() 
             style = PeriodReportRenderer.Style.CLASSIC,
             range = "F.DT:${shortDate(report.fromDate)}" to "TO.DT:${shortDate(report.toDate)}",
             // The item's name sits over the quantity column, above the heads.
+            // The item this report was run for, named over the column it governs.
+            nameColumns = setOf(1),
             columnsAbove = listOf("", report.item?.name?.uppercase().orEmpty(), "", ""),
             columns = listOf("BILL", "QTY", "RATE", "AMOUNT"),
             evenColumns = true,
