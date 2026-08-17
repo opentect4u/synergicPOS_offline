@@ -252,6 +252,16 @@ class BillReceiptRenderer(context: Context) {
     private fun t(text: String): String = PrintLanguage.tr(lang, text)
 
     /**
+     * A product's name as it prints - upper-cased, and written in the print
+     * language's script.
+     *
+     * Respelled rather than translated: the shop's word for the thing, in letters the
+     * customer can read. Upper-casing first and not after, because it is the Latin
+     * name that has a case to change; the scripts this becomes have none.
+     */
+    private fun productName(name: String): String = Transliterator.to(lang, name.uppercase())
+
+    /**
      * The bill's typeface — the bundled Roboto Mono font (res/font/roboto_mono_regular.ttf).
      * Every code-built cell renders with it (the bill XML layouts point their fontFamily
      * at the same font), so the whole slip prints in one face. Falls back to the platform
@@ -1380,7 +1390,10 @@ class BillReceiptRenderer(context: Context) {
                 list.add(
                     BillItem(
                         sr = list.size + 1,
-                        name = name.uppercase(),
+                        // Respelled in the print language's script where there is one -
+                        // the name the shop typed, in letters the customer can read.
+                        // See [Transliterator] for what that does and does not mean.
+                        name = productName(name),
                         qty = qtyText(qty),
                         price = money(rate),
                         netAmount = money(lineNetListed),

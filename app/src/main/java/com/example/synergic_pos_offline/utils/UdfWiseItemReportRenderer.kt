@@ -85,7 +85,12 @@ class UdfWiseItemReportRenderer(context: Context) {
         report.groups.forEach { g ->
             root.addView(band("UDF NO: ${g.udf}"))
             g.items.forEach { item ->
-                root.addView(itemRow(item.name, qtyFmt(item.qty), money(item.amount), bold = false))
+                root.addView(
+                    itemRow(
+                        Transliterator.to(lang, item.name),
+                        qtyFmt(item.qty), money(item.amount), bold = false
+                    )
+                )
             }
             root.addView(rule())
             root.addView(spreadRow("${t("QTY")} : ${qtyFmt(g.qty)}", "${t("AMT")} : ${money(g.amount)}"))

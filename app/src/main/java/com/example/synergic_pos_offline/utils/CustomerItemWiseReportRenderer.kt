@@ -85,7 +85,7 @@ class CustomerItemWiseReportRenderer(context: Context) {
         }
 
         report.items.forEach { item ->
-            root.addView(twoCol(item.name, qtyFmt(item.qty), bold = false))
+            root.addView(twoCol(Transliterator.to(lang, item.name), qtyFmt(item.qty), bold = false))
             root.addView(threeCol(money(item.amount), money(item.sgst), money(item.cgst), bold = false))
         }
         root.addView(rule())

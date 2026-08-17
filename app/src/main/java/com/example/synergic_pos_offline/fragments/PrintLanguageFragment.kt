@@ -12,8 +12,10 @@ import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.utils.PrintLanguage
+import com.example.synergic_pos_offline.utils.Transliterator
 import com.example.synergic_pos_offline.utils.SettingsHighlighter
 import com.example.synergic_pos_offline.utils.ThemeManager
 
@@ -60,6 +62,7 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
             PrintLanguage.Language.values().getOrNull(checkedId - 1)?.let { choose(it) }
         }
 
+        showProductNames(view, current)
         showScope(view, current)
         ThemeManager.applyTheme(view)
         SettingsHighlighter.apply(view, arguments?.getString(SettingsHighlighter.ARG_SETTING))
@@ -117,9 +120,101 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
             toast("Could not save the print language")
             return
         }
-        view?.let { showScope(it, language) }
+        view?.let {
+            showProductNames(it, language)
+            showScope(it, language)
+        }
         toast("Bills and reports will print in ${language.englishName}")
     }
+
+    /**
+     * This shop's own product names, beside how the bill will spell them.
+     *
+     * The reason this screen exists in the shape it does. A product name is not
+     * translated - it is respelled in the other script, letter for sound - and how
+     * well that reads depends entirely on what is in *this* catalogue. Told about it
+     * in the abstract, an operator has no way to judge it; shown six of their own
+     * products, they can tell in a second whether it is worth having.
+     *
+     * Real names, not examples, wherever the till has any. A demonstration on
+     * invented products would be a demonstration of nothing.
+     */
+    private fun showProductNames(view: View, language: PrintLanguage.Language) {
+        val card = view.findViewById<View>(R.id.cardProductNames)
+        val rows = view.findViewById<LinearLayout>(R.id.llProductNames)
+        val note = view.findViewById<TextView>(R.id.tvProductNamesNote)
+        rows.removeAllViews()
+
+        // Nothing is respelled in English, so there is nothing to show.
+        if (!Transliterator.applies(language)) {
+            card.visibility = View.GONE
+            return
+        }
+        card.visibility = View.VISIBLE
+
+        val names = productNames()
+        note.text = if (names.isEmpty()) {
+            "No products on this till yet. These are examples of how names are spelled."
+        } else {
+            "How the bill will spell these. It is the same name in ${language.englishName} " +
+                "letters, not a different word - a customer can read it aloud and recognise it."
+        }
+        val sample = names.ifEmpty { EXAMPLES }
+        sample.forEach { name -> rows.addView(nameRow(name, Transliterator.to(language, name))) }
+    }
+
+    /** "PARLE-G  →  पार्ले-जी" - what was typed, and what will print. */
+    private fun nameRow(from: String, to: String): View =
+        LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val pad = (5 * resources.displayMetrics.density).toInt()
+            setPadding(0, pad, 0, pad)
+            addView(TextView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                text = from
+                textSize = 14f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setTextColor(resources.getColor(R.color.text_secondary, null))
+            })
+            addView(TextView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(-2, -2)
+                text = "→"
+                textSize = 14f
+                setTextColor(resources.getColor(R.color.text_secondary, null))
+                setPadding(pad, 0, pad, 0)
+            })
+            addView(TextView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                text = to
+                textSize = 15f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setTextColor(resources.getColor(R.color.text_main, null))
+            })
+        }
+
+    /**
+     * A handful of this till's product names, longest-selling first would be better
+     * but the master is not ordered that way - so simply the first few it holds.
+     */
+    private fun productNames(): List<String> = runCatching {
+        val found = mutableListOf<String>()
+        DatabaseHelper.getInstance(requireContext()).readableDatabase.query(
+            DatabaseHelper.Tables.MD_PRODUCTS, arrayOf("product_name"),
+            "product_name IS NOT NULL AND product_name <> ''", null, null, null, "id ASC", "6"
+        ).use { c ->
+            while (c.moveToNext()) {
+                c.getString(0)?.takeIf { it.isNotBlank() }?.let { found.add(it.uppercase()) }
+            }
+        }
+        found
+    }.getOrDefault(emptyList())
+
+    /** Shown only on a till with no catalogue yet - chosen to show the range. */
+    private val EXAMPLES = listOf(
+        "PARLE-G 100G", "TOOTHPASTE", "BASMATI RICE 5KG", "ATTA", "COLGATE", "PEPSI 500ML"
+    )
 
     /**
      * What the stored choice reaches, and what it deliberately does not.
@@ -139,9 +234,15 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
                 append("titles - come out in ${language.englishName} on bills, receipts ")
                 append("and reports.")
             }
+            if (!english) {
+                append("\n\nProduct names are respelled in the ${language.englishName} ")
+                append("alphabet, letter for sound - the same name, in letters your ")
+                append("customer can read. They are not translated into different words.")
+            }
             append("\n\nLeft as they are, in every language:")
             append("\n•  The store name, address and GSTIN, and your header and footer lines.")
-            append("\n•  Product, customer and operator names, and your own bill captions.")
+            append("\n•  Customer and operator names, and your own bill captions.")
+            append("\n•  Quantities and units - 500ML stays 500ML, beside the figure it matches.")
             append("\n•  GST, SGST, CGST, IGST, VAT, HSN, KOT and UDF - the statutory short forms.")
             append("\n•  Amount in words, dates, figures and the app's own screens.")
         }
