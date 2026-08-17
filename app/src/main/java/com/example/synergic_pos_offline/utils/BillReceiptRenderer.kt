@@ -161,17 +161,20 @@ private const val NAME_COLUMN_MIN_CHARS = 6f
  * The longest item name that shares its line with the figures on a Classic bill.
  *
  * A count of characters rather than a measurement, because that is the rule the
- * bill is meant to follow: up to ten characters the name sits beside its quantity
- * and price, and past ten it takes a line of its own. Ten is about what the name
- * column holds on 80mm paper, so the rule and the room agree there - which is the
- * paper this was set against.
+ * bill is meant to follow: up to twelve characters the name sits beside its quantity
+ * and price, and past twelve it takes a line of its own. Raised from ten, so that
+ * the fuller names a shop actually types keep their figures alongside them instead
+ * of being pushed onto a line of their own.
  *
- * It is a ceiling, not a guarantee: on a 2-inch roll carrying a DISC column the
- * name column holds nearer nine characters, and a name that will not fit still
- * takes its own line whatever its length. Otherwise it would wrap inside the
- * column, which is the thing giving the name its own line exists to prevent.
+ * It is a ceiling, not a guarantee, and this is where the two halves can disagree:
+ * the *room* has not changed, only the rule. A name of eleven or twelve characters
+ * now passes this test and may still be measured too wide for the name column - on a
+ * 2-inch roll carrying a DISC column that column holds nearer nine characters - in
+ * which case it takes its own line as before. A name that will not fit always does,
+ * whatever its length, because wrapping it inside the column is the thing giving it
+ * its own line exists to prevent.
  */
-private const val CLASSIC_NAME_MAX_CHARS = 10
+private const val CLASSIC_NAME_MAX_CHARS = 12
 
 /**
  * The same on a 2-inch roll, where the item name is given a larger share.
@@ -1819,7 +1822,7 @@ class BillReceiptRenderer(context: Context) {
             }
         }
 
-        // Ten characters or fewer share the line with the figures; anything longer
+        // Twelve characters or fewer share the line with the figures; anything longer
         // takes a line of its own - and so does a shorter name that still will not
         // fit the column on this paper, see [CLASSIC_NAME_MAX_CHARS].
         val sharesTheLine = item.name.length <= CLASSIC_NAME_MAX_CHARS &&
