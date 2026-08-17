@@ -116,6 +116,10 @@ class DashboardHomeFragment : Fragment() {
             fun billAmount(type: String) =
                 num("SELECT COALESCE(SUM(net_amount),0) FROM td_bills WHERE $billOk AND bill_type = '$type'")
             val stockOf = "COALESCE((SELECT SUM(current_quantity) FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} s WHERE s.product_id = p.id),0)"
+            // Nothing is "low" without a quantity that says so, and Stock Alert is the
+            // switch that supplies one - the same gate [StockAlerts] and [StockDao] use.
+            val settings = GeneralSettingsDao(requireContext()).load()
+            val alertQty = if (settings.stockFlag && settings.stockAlert) settings.stockAlertQty else 0
             Stats(
                 salesToday = sales,
                 billsToday = bills,
@@ -137,9 +141,16 @@ class DashboardHomeFragment : Fragment() {
                 newMembers = num("SELECT COUNT(*) FROM ${DatabaseHelper.Tables.MD_CUSTOMERS} WHERE date(created_at) = $today").toInt(),
                 totalSkus = num("SELECT COUNT(*) FROM ${DatabaseHelper.Tables.MD_PRODUCTS}").toInt(),
                 outOfStock = num("SELECT COUNT(*) FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p WHERE $stockOf <= 0").toInt(),
-                lowStock = num(
+                // Measured against General Settings' Alert Quantity, which is the rule
+                // [StockDao.levels] applies to the badges on the sale screen and
+                // [StockAlerts] applies to the header count. This card used to read
+                // md_products.stock_alert_qty instead - a column nothing on the product
+                // form can set - so the dashboard could report five items low while
+                // the grid showed four badges, with nothing on either screen to say
+                // which was right.
+                lowStock = if (alertQty <= 0) 0 else num(
                     "SELECT COUNT(*) FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p " +
-                        "WHERE p.stock_alert_qty > 0 AND $stockOf > 0 AND $stockOf <= p.stock_alert_qty"
+                        "WHERE $stockOf > 0 AND $stockOf <= $alertQty"
                 ).toInt()
             )
         } catch (_: Exception) {

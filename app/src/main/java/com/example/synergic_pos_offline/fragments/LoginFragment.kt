@@ -615,6 +615,17 @@ class LoginFragment : Fragment() {
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_container, landing)
             .commit()
+
+        // What is out or running low, said once, now. Raised from the activity rather
+        // than here because this fragment is being replaced as it asks - and it has to
+        // be asked from somewhere that outlives the login, or the dialog would be
+        // dismissed by the transaction that answered it.
+        //
+        // It reaches the operator whichever screen they land on, which the Dashboard
+        // alone would not: Sale is the default landing screen, so a shop that never
+        // opens the Dashboard would never have seen this.
+        (activity as? com.example.synergic_pos_offline.MainActivity)
+            ?.announceStockAlertsAfterLogin()
     }
 
     /**

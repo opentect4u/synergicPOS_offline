@@ -78,12 +78,36 @@
                 app:tint="@color/primary_blue"
                 android:contentDescription="Home / Dashboard" />
 
+            <!-- How many products are out or running low. Gone unless stock tracking
+                 is on and there is something to report, so a shop that does not count
+                 its stock never sees it. Tapping it lists them. -->
+            <TextView
+                android:id="@+id/tvStockAlert"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_toStartOf="@id/btnHome"
+                android:layout_centerVertical="true"
+                android:layout_marginEnd="4dp"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="6dp"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/white"
+                android:singleLine="true"
+                android:visibility="gone"
+                android:background="?attr/selectableItemBackground"
+                android:contentDescription="Stock needing attention"
+                tools:text="7 low" />
+
+            <!-- Ends at the stock badge rather than at the Home button, so a long
+                 screen title gives way to the badge instead of running under it.
+                 With the badge gone the two anchors are the same place. -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_centerVertical="true"
                 android:layout_toEndOf="@id/btnBack"
-                android:layout_toStartOf="@id/btnHome"
+                android:layout_toStartOf="@id/tvStockAlert"
                 android:layout_marginStart="8dp"
                 android:orientation="vertical">
 
