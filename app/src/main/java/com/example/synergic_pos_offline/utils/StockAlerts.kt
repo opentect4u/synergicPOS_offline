@@ -3,6 +3,7 @@ package com.example.synergic_pos_offline.utils
 import android.content.Context
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.database.StockDao
 
 /**
  * What is running out, for the till to say so at the start of a shift.
@@ -66,13 +67,14 @@ object StockAlerts {
         val headline: String
             get() = when {
                 isEmpty -> "Stock is fine"
-                out.isEmpty() -> "${count(low.size)} running low"
-                low.isEmpty() -> "${count(out.size)} out of stock"
-                else -> "${count(out.size)} out of stock, ${low.size} running low"
+                out.isEmpty() -> "${items(low.size)} running low"
+                low.isEmpty() -> "${items(out.size)} out of stock"
+                else -> "${items(out.size)} out of stock, ${low.size} running low"
             }
-
-        private fun count(n: Int) = if (n == 1) "1 item" else "$n items"
     }
+
+    /** "1 item" / "4 items", so every screen counts the same way out loud. */
+    fun items(n: Int): String = if (n == 1) "1 item" else "$n items"
 
     /** Nothing to report - what a till with stock tracking off always gets. */
     val NONE = Summary(emptyList(), emptyList())
@@ -145,6 +147,56 @@ object StockAlerts {
     }.getOrElse {
         android.util.Log.e(TAG, "Could not read the stock alerts", it)
         NONE
+    }
+
+    // ---- Showing it ---------------------------------------------------------
+
+    /**
+     * How many products the list names before it stops.
+     *
+     * Long enough to be worth reading and short enough to be read. A till with more
+     * than this many items out has a supply problem rather than a stock alert, and
+     * scrolling forty rows would not help it - the count that opened the list still
+     * reports the whole figure.
+     */
+    const val MAX_LISTED = 15
+
+    /**
+     * The list of what needs attention - the same dialog wherever it is opened from.
+     *
+     * Here rather than at its two call sites so the header badge and the dashboard's
+     * inventory panel cannot drift into showing the same products two different ways.
+     * An operator who reached this list from the dashboard and then from the header
+     * should have no way to tell which route they took.
+     *
+     * [onOpenStock] runs when a row is tapped. Every row does the same thing, because
+     * which item was tapped does not change what an operator does next - and a picker
+     * that looked like it would open the product and did not would be worse than one
+     * that plainly does one thing.
+     */
+    fun showList(
+        context: Context,
+        title: String,
+        headline: String,
+        items: List<Item>,
+        onOpenStock: () -> Unit
+    ) {
+        if (items.isEmpty()) return
+        val shown = items.take(MAX_LISTED)
+        val more = items.size - shown.size
+        DialogUtils.showList(
+            context = context,
+            title = title,
+            subtitle = headline + if (more > 0) "  ·  showing the first ${shown.size}" else "",
+            items = shown.map {
+                DialogUtils.ListItem(
+                    title = it.name,
+                    subtitle = if (it.isOut) "Out of stock" else "Running low",
+                    trailing = StockDao.trim(it.quantity)
+                )
+            },
+            negativeText = "Close"
+        ) { onOpenStock() }
     }
 
     /**

@@ -12,11 +12,13 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.utils.StockAlerts
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
 import java.text.NumberFormat
@@ -207,8 +209,13 @@ class DashboardHomeFragment : Fragment() {
                 statCard(
                     ctx, accent, "INVENTORY", "NEEDS ATTENTION", attention.toString(), "$attention items",
                     if (attention > 0) red else textSec, "of ${stats.totalSkus} SKUs",
-                    listOf("LOW STOCK" to stats.lowStock.toString(), "OUT OF STOCK" to stats.outOfStock.toString())
-                ) { navigate(InventoryFragment()) }.apply { fullWidth() }
+                    listOf("LOW STOCK" to stats.lowStock.toString(), "OUT OF STOCK" to stats.outOfStock.toString()),
+                    onMore = { navigate(InventoryFragment()) },
+                    // The counts open the list of what they are counting. A figure on a
+                    // dashboard says there is a problem; the names say whether to deal
+                    // with it now, and that is the whole reason to look.
+                    onStat = { which -> showStockList(low = which == "LOW STOCK") }
+                ).apply { fullWidth() }
             )
         }
 
@@ -332,7 +339,11 @@ class DashboardHomeFragment : Fragment() {
     private fun statCard(
         ctx: Context, accent: Int, label: String, topRight: String, value: String,
         delta: String, deltaColor: Int, deltaSub: String,
-        stats: List<Pair<String, String>>, onMore: () -> Unit
+        stats: List<Pair<String, String>>,
+        /** Makes the foot figures tappable, reporting which - see [statBox]. Declared
+         *  before [onMore] so the other cards can keep passing that as a trailing lambda. */
+        onStat: ((String) -> Unit)? = null,
+        onMore: () -> Unit
     ): MaterialCardView {
         val card = card(ctx)
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
@@ -361,7 +372,7 @@ class DashboardHomeFragment : Fragment() {
         })
         body.addView(deltaRow)
 
-        body.addView(statBox(ctx, stats))
+        body.addView(statBox(ctx, stats, onStat))
         // MORE button hidden for now.
         // body.addView(moreButton(ctx, onMore))
         col.addView(body)
@@ -411,7 +422,20 @@ class DashboardHomeFragment : Fragment() {
         return card
     }
 
-    private fun statBox(ctx: Context, stats: List<Pair<String, String>>): View {
+    /**
+     * The figures along the foot of a card.
+     *
+     * [onStat] makes them tappable, reporting the label of the one tapped - which is
+     * what turns the inventory panel's counts into a way of seeing *which* items they
+     * are counting. A cell reading "0" is left alone whatever [onStat] says: there is
+     * no list behind it, and a number that opens an empty popup is worse than one that
+     * does nothing.
+     */
+    private fun statBox(
+        ctx: Context,
+        stats: List<Pair<String, String>>,
+        onStat: ((String) -> Unit)? = null
+    ): View {
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -428,8 +452,21 @@ class DashboardHomeFragment : Fragment() {
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 if (i > 0) setPadding(dp(10), 0, 0, 0)
             }
+            // Tappable only where there is something behind the number. The value is
+            // drawn in the accent colour when it is, which is the only thing telling
+            // an operator the figure can be opened at all.
+            val opens = onStat != null && v != "0"
             cell.addView(label(ctx, k, 10f, textSec, bold = false, spacing = 0.04f))
-            cell.addView(text(ctx, v, 15f, textMain, bold = true))
+            cell.addView(text(ctx, v, 15f, if (opens) accent else textMain, bold = true))
+            if (opens) {
+                cell.isClickable = true
+                cell.setOnClickListener { onStat?.invoke(k) }
+                cell.background = GradientDrawable().apply {
+                    cornerRadius = dp(8f)
+                    setColor(ColorUtils.setAlphaComponent(accent, 0x14))
+                }
+                cell.setPadding(dp(8), dp(6), dp(8), dp(6))
+            }
             box.addView(cell)
         }
         return box
@@ -496,6 +533,35 @@ class DashboardHomeFragment : Fragment() {
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).also { it.topMargin = dp(10) }
+    }
+
+    /**
+     * Names the products behind one of the inventory panel's two counts.
+     *
+     * Read again here rather than kept from [loadStats], which counts rather than
+     * names - and the count on screen may be a minute old by the time it is tapped, so
+     * the list is fetched fresh and is the one the header badge would show too.
+     *
+     * Off the main thread, since it is a query over the product master, and dropped
+     * silently if the screen has gone in the meantime.
+     */
+    private fun showStockList(low: Boolean) {
+        val ctx = requireContext().applicationContext
+        Thread {
+            val summary = StockAlerts.find(ctx)
+            view?.post {
+                if (!isAdded) return@post
+                val items = if (low) summary.low else summary.out
+                if (items.isEmpty()) return@post
+                StockAlerts.showList(
+                    context = requireContext(),
+                    title = if (low) "Running low" else "Out of stock",
+                    headline = StockAlerts.items(items.size) +
+                        if (low) " running low" else " out of stock",
+                    items = items
+                ) { navigate(InventoryFragment()) }
+            }
+        }.start()
     }
 
     private fun navigate(fragment: Fragment) {

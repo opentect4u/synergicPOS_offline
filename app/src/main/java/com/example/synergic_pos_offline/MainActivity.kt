@@ -56,16 +56,6 @@ class MainActivity : AppCompatActivity() {
         /** Named once: the drawer lists this leaf by it and [handleLeaf] opens it by it. */
         private const val CALCULATOR = "Calculator"
 
-        /**
-         * How many products the stock dialog names before it stops.
-         *
-         * A list long enough to be worth reading and short enough to be read. A till
-         * with more than this many items out has a supply problem rather than a stock
-         * alert, and scrolling forty rows at the start of a shift would not help it -
-         * the count in the header still reports the whole figure.
-         */
-        private const val STOCK_ALERT_ROWS = 15
-
         /** Anything out of stock, which cannot be sold at all. */
         private const val STOCK_OUT_COLOUR = "#D93025"
 
@@ -291,30 +281,12 @@ class MainActivity : AppCompatActivity() {
      * already empty.
      */
     private fun showStockAlerts() {
-        val summary = stockAlerts
-        if (summary.isEmpty) return
-        val shown = summary.items.take(STOCK_ALERT_ROWS)
-        val rows = shown.map {
-            DialogUtils.ListItem(
-                title = it.name,
-                subtitle = if (it.isOut) "Out of stock" else "Running low",
-                trailing = StockDao.trim(it.quantity)
-            )
-        }
-        val more = summary.total - shown.size
-        DialogUtils.showList(
+        StockAlerts.showList(
             context = this,
             title = "Stock needs attention",
-            subtitle = summary.headline + if (more > 0) "  ·  showing the first ${shown.size}" else "",
-            items = rows,
-            negativeText = "Close"
-        ) {
-            // Every row goes to the same place: the screen that receives stock. Which
-            // item was tapped does not change what an operator does next, and a picker
-            // that looked like it would open the product and did not would be worse
-            // than one that plainly does one thing.
-            navigateTo(InventoryFragment())
-        }
+            headline = stockAlerts.headline,
+            items = stockAlerts.items
+        ) { navigateTo(InventoryFragment()) }
     }
 
     /**
