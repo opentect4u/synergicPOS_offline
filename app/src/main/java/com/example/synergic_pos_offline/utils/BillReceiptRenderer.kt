@@ -158,23 +158,31 @@ private val ITEM_FIGURE_COLUMNS = listOf(QTY_COLUMN, PRICE_COLUMN, DISC_COLUMN, 
 private const val NAME_COLUMN_MIN_CHARS = 6f
 
 /**
- * The longest item name that shares its line with the figures on a Classic bill.
+ * The longest item name that shares its line with the figures on a 3-inch Classic bill.
  *
- * A count of characters rather than a measurement, because that is the rule the
- * bill is meant to follow: up to twelve characters the name sits beside its quantity
- * and price, and past twelve it takes a line of its own. Raised from ten, so that
- * the fuller names a shop actually types keep their figures alongside them instead
- * of being pushed onto a line of their own.
+ * A count of characters rather than a measurement, because that is the rule the bill
+ * is meant to follow: up to eleven characters the name sits beside its quantity and
+ * price, and past eleven it takes a line of its own.
  *
- * It is a ceiling, not a guarantee, and this is where the two halves can disagree:
- * the *room* has not changed, only the rule. A name of eleven or twelve characters
- * now passes this test and may still be measured too wide for the name column - on a
- * 2-inch roll carrying a DISC column that column holds nearer nine characters - in
- * which case it takes its own line as before. A name that will not fit always does,
- * whatever its length, because wrapping it inside the column is the thing giving it
- * its own line exists to prevent.
+ * It is a ceiling and not a guarantee. The name column is measured as well, and a
+ * name that will not fit takes its own line whatever its length - otherwise it would
+ * wrap inside the column, which is the thing giving the name its own line exists to
+ * prevent. On 80mm paper the two agree closely, which is the paper this was set
+ * against.
  */
-private const val CLASSIC_NAME_MAX_CHARS = 12
+private const val CLASSIC_NAME_MAX_CHARS = 11
+
+/**
+ * The same on a 2-inch roll, where there is less line to share.
+ *
+ * Set against the room rather than scaled from the number above it. A 58mm roll gives
+ * the name column around seven or eight characters once the figures have taken what
+ * they need - fewer still with a DISC column among them - so eleven would be a rule
+ * the paper could not keep: the name would pass the count, fail the measurement, and
+ * take its own line anyway. Seven is the count that agrees with the width, so a name
+ * that shares its line on a narrow slip is one that genuinely fits there.
+ */
+private const val CLASSIC_NARROW_NAME_MAX_CHARS = 7
 
 /**
  * The same on a 2-inch roll, where the item name is given a larger share.
@@ -1791,7 +1799,8 @@ class BillReceiptRenderer(context: Context) {
      * to, passed in rather than restated so a figure cannot end up in a different
      * column, or at a different size, from the label above it.
      *
-     * A name of more than [CLASSIC_NAME_MAX_CHARS] takes a line to itself, whole and
+     * A name longer than the paper allows - [CLASSIC_NAME_MAX_CHARS] on a 3-inch roll,
+     * [CLASSIC_NARROW_NAME_MAX_CHARS] on a 2-inch one - takes a line to itself, whole and
      * unbroken, and the figures drop to the line beneath - still in their own
      * columns, still under their own headings. Short names keep the old single row.
      * Before this, a name too long for its column wrapped inside it, breaking the
@@ -1822,10 +1831,13 @@ class BillReceiptRenderer(context: Context) {
             }
         }
 
-        // Twelve characters or fewer share the line with the figures; anything longer
-        // takes a line of its own - and so does a shorter name that still will not
-        // fit the column on this paper, see [CLASSIC_NAME_MAX_CHARS].
-        val sharesTheLine = item.name.length <= CLASSIC_NAME_MAX_CHARS &&
+        // Eleven characters on a 3-inch roll and seven on a 2-inch one share the line
+        // with the figures; anything longer takes a line of its own - and so does a
+        // shorter name that still will not fit the column on this paper. See
+        // [CLASSIC_NAME_MAX_CHARS] and [CLASSIC_NARROW_NAME_MAX_CHARS].
+        val maxNameChars =
+            if (narrow) CLASSIC_NARROW_NAME_MAX_CHARS else CLASSIC_NAME_MAX_CHARS
+        val sharesTheLine = item.name.length <= maxNameChars &&
             measure(sizeSp).measureText(heading) <= columnPx[0]
 
         if (sharesTheLine) {
