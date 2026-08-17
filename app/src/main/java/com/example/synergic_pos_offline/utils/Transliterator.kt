@@ -111,7 +111,11 @@ object Transliterator {
         // An acronym or a single letter is read out letter by letter, which is what a
         // reader does with it too: the G of PARLE-G is "jee", not a consonant with no
         // vowel. Spelled through the same rules by way of each letter's English name.
-        if (word.length <= 4 && lower.none { it in "aeiou" }) {
+        //
+        // "y" counts as a vowel for this one question. It is the only vowel FRY, DRY
+        // and TRY have, and read as a consonant they would be spelled out letter by
+        // letter - FISH FRY came out as "मछली एफआरवै".
+        if (word.length <= 4 && lower.none { it in "aeiouy" }) {
             return word.map { letter ->
                 LETTER_NAMES[letter.lowercaseChar()]?.let { render(script, sounds(it)) } ?: letter.toString()
             }.joinToString("")
@@ -329,9 +333,13 @@ object Transliterator {
         val before = word[word.length - 2]
         if (isVowelLetter(before)) return word          // already a vowel pair
         return when (last) {
-            'a' -> word + "a"       // ATTA    -> आटा
+            'a' -> word + "a"                // ATTA  -> आटा
             'i' -> word.dropLast(1) + "ee"   // MAGGI -> मगी
-            'y' -> word.dropLast(1) + "ee"   // CANDY -> कंडी
+            // A "y" that is the word's only vowel is the long one of FRY and DRY;
+            // one that follows a vowel elsewhere in the word is the short ending of
+            // CANDY and CITY. Told apart by whether there is another vowel at all.
+            'y' -> word.dropLast(1) +
+                if (word.dropLast(1).any { isVowelLetter(it) }) "ee" else "aai"
             else -> word
         }
     }
@@ -347,7 +355,9 @@ object Transliterator {
         "jh" to c("jh"), "zh" to c("j"), "ck" to c("k"), "qu" to c("k", "v"),
         "wh" to c("v"), "ng" to { _, _ -> listOf(Nasal, Cons("g")) },
         // Vowels
-        "aa" to v("aa"), "ee" to v("ii"), "oo" to v("uu"), "ai" to v("ai"),
+        // English "ai" is the vowel of PLAIN, TRAIN and MAIN, which these scripts
+        // write with the "e" sign - प्लेन, not प्लैन.
+        "aa" to v("aa"), "ee" to v("ii"), "oo" to v("uu"), "ai" to v("e"),
         "ea" to v("ii"), "ie" to v("ii"), "ei" to v("e"),
         "oa" to v("o"), "oe" to v("o"), "ou" to v("au"), "au" to v("au"),
         "ue" to v("uu"),

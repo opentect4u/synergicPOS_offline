@@ -78,6 +78,22 @@ class TransliteratorTest {
     }
 
     @Test
+    fun `a word whose only vowel is y is a word, not an acronym`() {
+        // FISH FRY once printed as "मछली एफआरवै" - F, R and Y read out one at a time,
+        // because the acronym test did not count y as a vowel.
+        assertEquals("फ्राइ", hi("FRY"))
+        assertEquals("ड्राइ", hi("DRY"))
+        // …while a y beside another vowel is still the short ending of CANDY.
+        assertEquals("कंडी", hi("CANDY"))
+    }
+
+    @Test
+    fun `English ai is the vowel of PLAIN and TRAIN`() {
+        assertEquals("प्लेन", hi("PLAIN"))
+        assertEquals("ट्रेन", hi("TRAIN"))
+    }
+
+    @Test
     fun `an acronym is read out letter by letter`() {
         // The G of PARLE-G is "jee", not a consonant with no vowel after it - and not
         // grams either, which is what it would be after a figure.
