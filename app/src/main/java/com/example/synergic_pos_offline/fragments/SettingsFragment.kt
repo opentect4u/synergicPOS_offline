@@ -89,6 +89,8 @@ class SettingsFragment : Fragment() {
             e("Cash Reception", "App Settings", app),
             e("Other Charges", "App Settings", app),
             e("Payment Mode", "App Settings", app),
+            e("Biometric Login", "App Settings", app),
+            e("Fingerprint Login", "App Settings", app, match = "Biometric Login"),
             // Printer
             e("Printer", "Printer Settings", printer),
             e("Print Template", "Printer Settings", printTemplate),

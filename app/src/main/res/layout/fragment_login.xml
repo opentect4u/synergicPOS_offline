@@ -124,6 +124,36 @@
                     android:backgroundTint="@color/primary_blue"
                     android:textColor="@color/white" />
 
+                <!-- The fingerprint offer. Gone unless App Settings has it on, the
+                     device has a usable reader, and somebody has signed in with a
+                     password before - see BiometricLogin.offeredUser. It sits under
+                     the Login button rather than replacing it: the password is still
+                     the way in, and this is the shortcut. -->
+                <TextView
+                    android:id="@+id/tvBiometricOr"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:gravity="center"
+                    android:text="or"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary"
+                    android:visibility="gone" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnBiometricLogin"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="8dp"
+                    android:text="Use fingerprint"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="12dp"
+                    app:icon="@drawable/ic_fingerprint"
+                    app:iconGravity="textStart"
+                    android:visibility="gone" />
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

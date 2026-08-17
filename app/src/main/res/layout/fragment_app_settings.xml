@@ -42,6 +42,19 @@
 
                 <View style="@style/BillSettingDivider" />
 
+                <!-- Biometric Login -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Biometric Login" />
+                        <TextView android:id="@+id/tvBiometricSub" style="@style/BillSettingSub"
+                            android:text="Offer the fingerprint reader on the login screen" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swBiometricLogin" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
                 <!-- Cash Reception -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">

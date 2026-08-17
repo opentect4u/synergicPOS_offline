@@ -108,7 +108,8 @@ class RestoreDefaultsTest {
         AppSettingsDao(ctx).save(
             AppSettingsDao.AppSettings(
                 manualRate = true, cashReception = true, paymentMode = true,
-                otherCharges = true, directAddToCart = true, couponMode = true,
+                otherCharges = true, directAddToCart = true, biometricLogin = true,
+                couponMode = true,
                 kot = true, tableMerge = true, tableShift = true, tableSplit = true
             )
         )
