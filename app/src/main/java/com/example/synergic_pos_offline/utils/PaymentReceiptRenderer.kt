@@ -3,7 +3,9 @@ package com.example.synergic_pos_offline.utils
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.graphics.Bitmap
+import android.graphics.Paint
 import android.graphics.Typeface
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -50,6 +52,32 @@ class PaymentReceiptRenderer(context: Context) {
 
     /** Pinned to a standard font scale - see [ReceiptContext]. */
     private val ctx: Context = ReceiptContext.standardFontScale(context)
+
+    /** The language this till labels its slips in - see [PrintLanguage]. */
+    private val lang: PrintLanguage.Language = PrintLanguage.of(context)
+
+    /** [text] in the till's print language, or as it is where there is no translation. */
+    private fun t(text: String): String = PrintLanguage.tr(lang, text)
+
+    /**
+     * Every label this slip can print, so the label column can be sized to hold the
+     * widest of them.
+     *
+     * Only used off English, where [kvRow]'s character padding cannot align anything -
+     * see there. Listed rather than collected as the rows are built because the rows
+     * go into two separate containers, and the two have to agree on where the colons
+     * sit or the slip reads as two tables.
+     */
+    private val labelWidthPx: Int by lazy {
+        val paint = Paint().apply {
+            typeface = Typeface.MONOSPACE
+            textSize = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_SP, PrintType.BODY_SP, ctx.resources.displayMetrics
+            )
+        }
+        listOf("CID", "NAME", "GSTIN", "PREV. BALANCE", "CASH RECEIVED", "TOTAL BALANCE")
+            .maxOf { paint.measureText("${t(it)} :") }.toInt() + 1
+    }
 
     /** Everything the slip states, as of the moment the collection was taken. */
     data class Receipt(
@@ -108,7 +136,9 @@ class PaymentReceiptRenderer(context: Context) {
     /** Fills an already-inflated [R.layout.receipt_payment] in place. */
     fun populate(view: View, receipt: Receipt) {
         try {
-            view.findViewById<TextView>(R.id.tvPayBillNo).text = "B. NO:${receipt.receiptNumber}"
+            view.findViewById<TextView>(R.id.tvPayTitle).text = t("CUSTOMER BILL")
+            view.findViewById<TextView>(R.id.tvPayBillNo).text =
+                "${t("B. NO")}:${receipt.receiptNumber}"
 
             val (date, time) = splitDateTime(receipt.dateTime)
             view.findViewById<TextView>(R.id.tvPayDate).text = date
@@ -118,18 +148,18 @@ class PaymentReceiptRenderer(context: Context) {
             // print; GSTIN only when the customer has one on file.
             val summary = view.findViewById<LinearLayout>(R.id.llPaySummary)
             summary.removeAllViews()
-            summary.addView(kvRow("CID", receipt.customerId.toString()))
-            summary.addView(kvRow("NAME", receipt.customerName.uppercase().ifBlank { "-" }))
+            summary.addView(kvRow(t("CID"), receipt.customerId.toString()))
+            summary.addView(kvRow(t("NAME"), receipt.customerName.uppercase().ifBlank { "-" }))
             receipt.customerGstin.takeIf { it.isNotBlank() }?.let {
                 summary.addView(kvRow("GSTIN", it))
             }
-            summary.addView(kvRow("PREV. BALANCE", money(receipt.previousDue)))
-            summary.addView(kvRow("CASH RECEIVED", money(receipt.amountPaid)))
+            summary.addView(kvRow(t("PREV. BALANCE"), money(receipt.previousDue)))
+            summary.addView(kvRow(t("CASH RECEIVED"), money(receipt.amountPaid)))
 
             // The running balance after this collection, set apart between two rules.
             val total = view.findViewById<LinearLayout>(R.id.llPayTotal)
             total.removeAllViews()
-            total.addView(kvRow("TOTAL BALANCE", money(receipt.totalDue), bold = true))
+            total.addView(kvRow(t("TOTAL BALANCE"), money(receipt.totalDue), bold = true))
         } catch (e: Exception) {
             android.util.Log.e(TAG, "Error rendering payment receipt ${receipt.receiptNumber}", e)
         }
@@ -146,12 +176,19 @@ class PaymentReceiptRenderer(context: Context) {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, (2 * density).toInt(), 0, (2 * density).toInt())
             addView(TextView(ctx).apply {
-                text = label.padEnd(LABEL_WIDTH) + " :"
+                // Padding to a character count only aligns anything in a face where
+                // every character is one width, which none of the print language's
+                // scripts is set in. Off English the label column is measured instead
+                // and every label given that width, which puts the colons in a column
+                // whatever the script.
+                val english = lang == PrintLanguage.Language.ENGLISH
+                text = if (english) label.padEnd(LABEL_WIDTH) + " :" else "$label :"
                 textSize = PrintType.BODY_SP
                 setTypeface(Typeface.MONOSPACE, style)
                 setTextColor(0xFF222222.toInt())
                 layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                    if (english) LinearLayout.LayoutParams.WRAP_CONTENT else labelWidthPx,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
                 )
             })
             addView(TextView(ctx).apply {

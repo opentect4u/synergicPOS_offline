@@ -47,6 +47,7 @@ class SettingsFragment : Fragment() {
         val printTemplate = {
             PrintSettingsFragment.newInstance(PrintSettingsFragment.TAB_TEMPLATE) as Fragment
         }
+        val printLanguage = { PrintLanguageFragment() as Fragment }
         fun e(name: String, screen: String, open: () -> Fragment, match: String = name) =
             SettingEntry(name, screen, open, match)
         listOf(
@@ -91,7 +92,12 @@ class SettingsFragment : Fragment() {
             // Printer
             e("Printer", "Printer Settings", printer),
             e("Print Template", "Printer Settings", printTemplate),
-            e("Bill Template", "Printer Settings", printTemplate, match = "Print Template")
+            e("Bill Template", "Printer Settings", printTemplate, match = "Print Template"),
+            // Print Language
+            e("Print Language", "Print Language", printLanguage, match = "PRINT LANGUAGE"),
+            e("Language", "Print Language", printLanguage, match = "PRINT LANGUAGE"),
+            e("Bill Language", "Print Language", printLanguage, match = "PRINT LANGUAGE"),
+            e("Report Language", "Print Language", printLanguage, match = "PRINT LANGUAGE")
         ) + restaurantAppSettings(app)
     }
 
@@ -170,7 +176,10 @@ class SettingsFragment : Fragment() {
             // and spot in the grid, routed via its own key so the two don't collide below.
             SettingsItem("Printer Settings", R.drawable.ic_print, R.color.menu_report, R.color.menu_report_icon, key = "Operating Printer"),
             SettingsItem("App Settings", android.R.drawable.ic_menu_manage, R.color.menu_sale, R.color.menu_sale_icon),
-            SettingsItem("About App", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon)
+            SettingsItem("About App", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon),
+            // Beside About App: it is about how the till prints rather than about a
+            // part of the sale, which is what the four tiles above it are each for.
+            SettingsItem("Print Language", android.R.drawable.ic_menu_sort_alphabetically, R.color.menu_sale, R.color.menu_sale_icon)
         )
 
         // One decision, on the tile's key. It used to be two `when` blocks running
@@ -183,6 +192,7 @@ class SettingsFragment : Fragment() {
                 "Tax Settings" -> openFragment(TaxSettingsFragment())
                 "App Settings" -> openFragment(AppSettingsFragment())
                 "About App" -> openFragment(AboutAppFragment())
+                "Print Language" -> openFragment(PrintLanguageFragment())
                 "Printer Settings" -> openFragment(PrinterSettingsFragment())
                 "Operating Printer" -> openFragment(PrintSettingsFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()

@@ -185,6 +185,26 @@ class GeneralSettingsDao(context: Context) {
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "General settings save (type G)")
     }
 
+    /**
+     * The language printed slips are labelled in.
+     *
+     * Kept out of [GeneralSettings] deliberately. That data class is loaded and saved
+     * as a block by the General Settings screen, and this setting has a screen of its
+     * own - folding it in would mean every save of one screen rewrote a value the
+     * other screen owns, and a stale copy in memory would quietly put the language
+     * back.
+     */
+    fun loadPrintLanguage(): String? = readAll()[KEY_PRINT_LANGUAGE]?.takeIf { it.isNotBlank() }
+
+    /** Stores [code] (an EN/HI/… language code) and republishes the settings cache. */
+    fun savePrintLanguage(code: String) {
+        put(KEY_PRINT_LANGUAGE, code)
+        helper.regroupAppSettingsByType()
+        com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(
+            appContext, "Print language save (type G)"
+        )
+    }
+
     // ---- Low-level key/value access ----------------------------------------
 
     private fun readAll(): Map<String, String> {
@@ -266,6 +286,9 @@ class GeneralSettingsDao(context: Context) {
         private const val KEY_STOCK_FLAG = "Stock Flag"
         private const val KEY_STOCK_ALERT = "Stock Alert"
         private const val KEY_STOCK_ALERT_QTY = "Stock Alert Quantity"
+        /** Shared with `PrintLanguage`, which reads it out of the login cache. */
+        const val KEY_PRINT_LANGUAGE =
+            com.example.synergic_pos_offline.utils.PrintLanguage.SETTING_KEY
         const val KEY_ACCESS_MASTER = "Access Master"
         const val KEY_ACCESS_SETTINGS = "Access Settings"
         const val KEY_ACCESS_REPORTS = "Access Reports"

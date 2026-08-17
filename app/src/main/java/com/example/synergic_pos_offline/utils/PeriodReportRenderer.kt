@@ -53,6 +53,12 @@ class PeriodReportRenderer(context: Context) {
     /** Pinned to a standard font scale - see [ReceiptContext]. */
     private val ctx: Context = ReceiptContext.standardFontScale(context)
 
+    /** The language this till labels its slips in - see [PrintLanguage]. */
+    private val lang: PrintLanguage.Language = PrintLanguage.of(context)
+
+    /** [text] in the till's print language, or as it is where there is no translation. */
+    private fun t(text: String): String = PrintLanguage.tr(lang, text)
+
     /**
      * A report, ready to print.
      *
@@ -230,12 +236,58 @@ class PeriodReportRenderer(context: Context) {
         null
     }
 
-    /** Fills an already-inflated [R.layout.receipt_period_report] in place. */
+    /**
+     * Fills an already-inflated [R.layout.receipt_period_report] in place.
+     *
+     * The one place a report is put into the till's print language. Every report in
+     * the app arrives here as a [Content] of its own title, columns and totals, so
+     * translating it here reaches all of them - and a report added tomorrow is
+     * translated without its author having to know this setting exists.
+     */
     fun populate(
         view: View,
         content: Content,
         printedBy: String,
         paperDots: Int = REFERENCE_PAPER_DOTS
+    ) = populateTranslated(view, translated(content), printedBy, paperDots)
+
+    /**
+     * The report as it will be printed: its labels in the print language, its figures
+     * and the shop's own words untouched.
+     *
+     * Only the parts of a [Content] that are the app's own labelling are translated.
+     * [Content.rows] is deliberately not among them - those cells hold product names,
+     * customer names, bill numbers and money, none of which is this app's to rewrite.
+     * The exception is [Content.footerRow], whose first cell is the table's own
+     * "TOTAL :" rather than a value.
+     */
+    private fun translated(content: Content): Content {
+        if (lang == PrintLanguage.Language.ENGLISH) return content
+        return content.copy(
+            title = t(content.title),
+            period = t(content.period),
+            subtitle = t(content.subtitle),
+            columns = PrintLanguage.tr(lang, content.columns),
+            details = content.details.map { it?.let(::t) },
+            summary = PrintLanguage.trLabels(lang, content.summary),
+            total = content.total?.let { (label, value) -> t(label) to value },
+            footerRow = content.footerRow?.mapIndexed { i, cell -> if (i == 0) t(cell) else cell },
+            emptyNote = t(content.emptyNote),
+            range = content.range?.let { (from, to) -> t(from) to t(to) },
+            bands = content.bands.map { it?.let(::t) },
+            footerNote = content.footerNote?.let(::t),
+            columns2 = content.columns2?.let { PrintLanguage.tr(lang, it) },
+            heading = PrintLanguage.trLabels(lang, content.heading),
+            columnsAbove = content.columnsAbove?.let { PrintLanguage.tr(lang, it) }
+            // headLine is the machine's id, the date and the clock - figures, all three.
+        )
+    }
+
+    private fun populateTranslated(
+        view: View,
+        content: Content,
+        printedBy: String,
+        paperDots: Int
     ) {
         try {
             val db = DatabaseHelper.getInstance(ctx).readableDatabase
@@ -274,9 +326,11 @@ class PeriodReportRenderer(context: Context) {
                 )
                 renderLogos(view)
 
-                view.findViewById<TextView>(R.id.tvPeriodPrintedBy).text = "Printed by: $printedBy"
+                view.findViewById<TextView>(R.id.tvPeriodPrintedBy).text =
+                    "${t("Printed by")}: $printedBy"
                 view.findViewById<TextView>(R.id.tvPeriodPrintedAt).text =
-                    "Printed on: " + SimpleDateFormat("dd-MM-yyyy hh:mm a", Locale.US).format(Date())
+                    "${t("Printed on")}: " +
+                        SimpleDateFormat("dd-MM-yyyy hh:mm a", Locale.US).format(Date())
             }
 
             // The report's own closing note, under its own rule. On a classic slip it
@@ -401,6 +455,7 @@ class PeriodReportRenderer(context: Context) {
             listOf(R.id.llPeriodSummaryBlock, R.id.tvPeriodSummaryRule).forEach {
                 view.findViewById<View>(it).visibility = if (hasSummary) View.VISIBLE else View.GONE
             }
+            view.findViewById<TextView>(R.id.tvPeriodSummaryHeading).text = t("SUMMARY")
 
             val summary = view.findViewById<LinearLayout>(R.id.llPeriodSummary)
             summary.removeAllViews()
@@ -454,29 +509,33 @@ class PeriodReportRenderer(context: Context) {
         val contentPx = ((widthDp - CARD_PADDING_DP * 2) * metrics.density).toFloat()
 
         val columnCount = lines.maxOf { it.size }
-        val widest = (0 until columnCount).map { column ->
-            lines.maxOf { it.getOrNull(column)?.length ?: 0 }
-        }
 
         val paint = Paint().apply { typeface = Typeface.MONOSPACE }
         var chosen = SIZES.last()
-        var charPx = 0f
         var gutterPx = 0f
+        var widest = List(columnCount) { 0f }
         for (size in SIZES) {
             paint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, size, metrics)
-            val cw = paint.measureText("0")
             val gutter = (if (size <= 10f) 3f else 6f) * metrics.density
-            val needed = widest.sum() * cw + gutter * (columnCount - 1)
+            // Measured, not counted. In a monospace face the two are the same number
+            // - a column's widest string is its longest one - so an English report is
+            // set exactly as it always was. In the scripts the print language brings,
+            // they are not: a heading of eight Devanagari characters is not eight
+            // monospace characters wide, and a column sized by counting them would be
+            // the wrong width for the only line that is not a figure.
+            val columns = (0 until columnCount).map { column ->
+                lines.maxOf { paint.measureText(it.getOrNull(column).orEmpty()) }
+            }
             chosen = size
-            charPx = cw
             gutterPx = gutter
-            if (needed <= contentPx) break
+            widest = columns
+            if (columns.sum() + gutter * (columnCount - 1) <= contentPx) break
         }
 
         return TableMetrics(
             textSize = chosen,
             gutterPx = gutterPx.toInt(),
-            fixedPx = widest.drop(1).map { (it * charPx).toInt() + 1 }
+            fixedPx = widest.drop(1).map { it.toInt() + 1 }
         )
     }
 
@@ -535,20 +594,20 @@ class PeriodReportRenderer(context: Context) {
         val widthDp = CARD_WIDTH_DP.toDouble() * paperDots / REFERENCE_PAPER_DOTS
         val contentPx = ((widthDp - CARD_PADDING_DP * 2) * metrics.density).toFloat()
 
-        // What one line needs is its cell count times its longest cell, since every
-        // cell is given the same width.
+        // What one line needs is its cell count times its widest cell, since every
+        // cell is given the same width. Measured rather than counted, for the reason
+        // set out in [measureTable] - the two agree in a monospace face and part
+        // company in the scripts the print language brings.
         // Zero for a table that is not there - a single-line report passes no second.
-        val demand = { lines: List<List<String>> ->
-            if (lines.isEmpty()) 0
-            else lines.maxOf { it.size }.coerceAtLeast(1) *
-                lines.maxOf { row -> row.maxOfOrNull { it.length } ?: 0 }
-        }
-        val needed = maxOf(demand(first), demand(second))
-
         val paint = Paint().apply { typeface = Typeface.MONOSPACE }
+        val demand = { lines: List<List<String>> ->
+            if (lines.isEmpty()) 0f
+            else lines.maxOf { it.size }.coerceAtLeast(1) *
+                lines.maxOf { row -> row.maxOfOrNull { paint.measureText(it) } ?: 0f }
+        }
         for (size in SIZES) {
             paint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, size, metrics)
-            if (needed * paint.measureText("0") <= contentPx) return size
+            if (maxOf(demand(first), demand(second)) <= contentPx) return size
         }
         return SIZES.last()
     }

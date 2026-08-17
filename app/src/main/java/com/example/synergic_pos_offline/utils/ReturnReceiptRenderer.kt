@@ -55,6 +55,12 @@ class ReturnReceiptRenderer(context: Context) {
     /** Pinned to a standard font scale - see [ReceiptContext]. */
     private val ctx: Context = ReceiptContext.standardFontScale(context)
 
+    /** The language this till labels its slips in - see [PrintLanguage]. */
+    private val lang: PrintLanguage.Language = PrintLanguage.of(context)
+
+    /** [text] in the till's print language, or as it is where there is no translation. */
+    private fun t(text: String): String = PrintLanguage.tr(lang, text)
+
     /**
      * Renders the return to a bitmap without it ever being shown, laid out for a
      * printer whose head is [paperDots] wide (defaults to 80mm).
@@ -129,23 +135,31 @@ class ReturnReceiptRenderer(context: Context) {
             val (date, time) = splitDateTime(result.dateTime)
             view.findViewById<TextView>(R.id.tvReturnDate).text = date
             view.findViewById<TextView>(R.id.tvReturnTime).text = time
-            view.findViewById<TextView>(R.id.tvReturnNo).text = "RETURN NO: ${result.returnNumber}"
-            view.findViewById<TextView>(R.id.tvReturnCreatedBy).text = "Returned by: $cashier"
+            view.findViewById<TextView>(R.id.tvReturnTitle)?.text = t("SALE RETURN")
+            view.findViewById<TextView>(R.id.tvReturnNo).text =
+                "${t("RETURN NO")}: ${result.returnNumber}"
+            view.findViewById<TextView>(R.id.tvReturnCreatedBy).text =
+                "${t("Returned by")}: $cashier"
             // Only a bill-wise return has an original to point back at; an item-wise
             // one is taken on the item alone.
             setIfPresent(
                 view, R.id.tvReturnAgainstBill,
-                result.originalBillNumber?.let { "AGAINST BILL: $it" }
+                result.originalBillNumber?.let { "${t("AGAINST BILL")}: $it" }
             )
 
             // Headings, sized - and on a 2-inch roll shortened - like the bill's.
             listOf(
-                R.id.tvReturnColItem, R.id.tvReturnColQty,
-                R.id.tvReturnColRate, R.id.tvReturnColAmount
-            ).forEach { view.findViewById<TextView>(it).textSize = itemSp }
+                R.id.tvReturnColItem to "SR.NO ITEM", R.id.tvReturnColQty to "QTY",
+                R.id.tvReturnColRate to "PER UNIT PRICE", R.id.tvReturnColAmount to "NET AMT"
+            ).forEach { (id, label) ->
+                view.findViewById<TextView>(id).let {
+                    it.text = t(label)
+                    it.textSize = itemSp
+                }
+            }
             if (narrow) {
-                view.findViewById<TextView>(R.id.tvReturnColRate).text = "RATE"
-                view.findViewById<TextView>(R.id.tvReturnColAmount).text = "AMOUNT"
+                view.findViewById<TextView>(R.id.tvReturnColRate).text = t("RATE")
+                view.findViewById<TextView>(R.id.tvReturnColAmount).text = t("AMOUNT")
             }
 
             val items = view.findViewById<LinearLayout>(R.id.llReturnItems)
@@ -163,7 +177,7 @@ class ReturnReceiptRenderer(context: Context) {
             ReturnDao.summaryRows(result.lines).forEach { line ->
                 summary.addView(
                     summaryRow(
-                        label = line.label,
+                        label = t(line.label),
                         value = if (line.isMoney) money(line.value) else count(line.value),
                         sizeSp = itemSp,
                         spacing = spacing,

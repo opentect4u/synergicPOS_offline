@@ -31,6 +31,12 @@ class CustomerPaymentReportRenderer(context: Context) {
     /** Pinned to a standard font scale - see [ReceiptContext]. */
     private val ctx: Context = ReceiptContext.standardFontScale(context)
 
+    /** The language this till labels its slips in - see [PrintLanguage]. */
+    private val lang: PrintLanguage.Language = PrintLanguage.of(context)
+
+    /** [text] in the till's print language, or as it is where there is no translation. */
+    private fun t(text: String): String = PrintLanguage.tr(lang, text)
+
     /**
      * Renders [report] to a bitmap for a head [paperDots] wide (defaults to 80mm),
      * or null if it could not be rendered.
@@ -67,7 +73,7 @@ class CustomerPaymentReportRenderer(context: Context) {
             )
         }
 
-        root.addView(title("CUSTOMER PAYMENT REPORT"))
+        root.addView(title(t("CUSTOMER PAYMENT REPORT")))
         root.addView(rule())
         // The head: the machine's own id with the clock, then the date range.
         root.addView(spreadRow(machineId(), stamp("dd-MM-yy"), stamp("HH:mm:ss")))
@@ -76,16 +82,19 @@ class CustomerPaymentReportRenderer(context: Context) {
         root.addView(rule())
 
         if (report.entries.isEmpty()) {
-            root.addView(centred("No customer payments in this period."))
+            root.addView(centred(t("No customer payments in this period.")))
             root.addView(rule())
             return root
         }
 
         report.entries.forEach { e ->
-            root.addView(spreadRow("C.ID : ${e.customerId}", "C.NAME: ${e.customerName.uppercase()}"))
-            root.addView(spreadRow(dateTime(e.paymentDateTime), "B.NO:${e.billNo}"))
-            root.addView(kvRow("PAID AMT", money(e.paidAmount)))
-            root.addView(kvRow("BALANCE AMT", money(e.balanceAmount)))
+            root.addView(spreadRow(
+                "${t("C.ID")} : ${e.customerId}",
+                "${t("C.NAME")}: ${e.customerName.uppercase()}"
+            ))
+            root.addView(spreadRow(dateTime(e.paymentDateTime), "${t("B.NO")}:${e.billNo}"))
+            root.addView(kvRow(t("PAID AMT"), money(e.paidAmount)))
+            root.addView(kvRow(t("BALANCE AMT"), money(e.balanceAmount)))
             root.addView(rule())
         }
         return root
@@ -129,13 +138,19 @@ class CustomerPaymentReportRenderer(context: Context) {
         orientation = LinearLayout.HORIZONTAL
         setPadding(0, gap(), 0, 0)
         addView(TextView(ctx).apply {
-            text = label.padEnd(LABEL_WIDTH) + " :"
+            // Padded to a character count only where every character is one width,
+            // which is English alone here - the print language's scripts are set in a
+            // proportional face, so off English the label takes a weighted column and
+            // the two rows still line their colons up.
+            val english = lang == PrintLanguage.Language.ENGLISH
+            text = if (english) label.padEnd(LABEL_WIDTH) + " :" else "$label :"
             textSize = PrintType.SMALL_SP
             setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
             setTextColor(0xFF222222.toInt())
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            layoutParams =
+                if (english) LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ) else LinearLayout.LayoutParams(0, -2, 1f)
         })
         addView(TextView(ctx).apply {
             text = value

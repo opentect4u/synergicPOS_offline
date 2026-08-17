@@ -28,6 +28,12 @@ class UdfWiseItemReportRenderer(context: Context) {
 
     private val ctx: Context = ReceiptContext.standardFontScale(context)
 
+    /** The language this till labels its slips in - see [PrintLanguage]. */
+    private val lang: PrintLanguage.Language = PrintLanguage.of(context)
+
+    /** [text] in the till's print language, or as it is where there is no translation. */
+    private fun t(text: String): String = PrintLanguage.tr(lang, text)
+
     fun renderToBitmap(
         report: UdfWiseItemReportDao.Report,
         paperDots: Int = PrintType.REFERENCE_PAPER_DOTS
@@ -60,18 +66,18 @@ class UdfWiseItemReportRenderer(context: Context) {
             )
         }
 
-        root.addView(title("UDF-WISE ITEM REPORT"))
+        root.addView(title(t("UDF-WISE ITEM REPORT")))
         root.addView(rule())
         root.addView(spreadRow(machineId(), stamp("dd-MM-yy"), stamp("HH:mm")))
         root.addView(rule())
         root.addView(spreadRow("F.DT:${shortDate(report.fromDate)}", "TO.DT:${shortDate(report.toDate)}"))
         root.addView(rule())
         // Column heads.
-        root.addView(itemRow("NAME", "QTY", "AMOUNT", bold = true))
+        root.addView(itemRow(t("NAME"), t("QTY"), t("AMOUNT"), bold = true))
         root.addView(rule())
 
         if (report.groups.isEmpty()) {
-            root.addView(centred("No items in this period."))
+            root.addView(centred(t("No items in this period.")))
             root.addView(rule())
             return root
         }
@@ -82,14 +88,14 @@ class UdfWiseItemReportRenderer(context: Context) {
                 root.addView(itemRow(item.name, qtyFmt(item.qty), money(item.amount), bold = false))
             }
             root.addView(rule())
-            root.addView(spreadRow("QTY : ${qtyFmt(g.qty)}", "AMT : ${money(g.amount)}"))
+            root.addView(spreadRow("${t("QTY")} : ${qtyFmt(g.qty)}", "${t("AMT")} : ${money(g.amount)}"))
             root.addView(rule())
         }
 
         root.addView(
             fourCol(
-                "TOTAL QTY :", qtyFmt(report.totalQty),
-                "TOTAL AMT :", money(report.totalAmount)
+                t("TOTAL QTY :"), qtyFmt(report.totalQty),
+                t("TOTAL AMT :"), money(report.totalAmount)
             )
         )
         root.addView(rule())

@@ -13,6 +13,7 @@ import com.example.synergic_pos_offline.database.PrinterDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
 import com.example.synergic_pos_offline.utils.AutoBackup
 import com.example.synergic_pos_offline.utils.DefaultSettings
+import com.example.synergic_pos_offline.utils.PrintLanguage
 import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import org.junit.Assert.assertEquals
@@ -111,6 +112,7 @@ class RestoreDefaultsTest {
                 kot = true, tableMerge = true, tableShift = true, tableSplit = true
             )
         )
+        GeneralSettingsDao(ctx).savePrintLanguage(PrintLanguage.Language.TAMIL.code)
         AutoBackup.save(ctx, enabled = true, intervalHours = 6)
         ThemeManager.setThemeColor(ctx, "#8E24AA")
     }
@@ -136,6 +138,10 @@ class RestoreDefaultsTest {
         assertEquals(
             Color.parseColor(DefaultSettings.THEME_COLOR), ThemeManager.getThemeColor(ctx)
         )
+        // The print language is stored in the same table but written on its own,
+        // so a reset that cleared the table and forgot to write it back would leave
+        // the till printing whatever the reader happened to fall back to.
+        assertEquals(DefaultSettings.PRINT_LANGUAGE, PrintLanguage.of(ctx))
     }
 
     /**

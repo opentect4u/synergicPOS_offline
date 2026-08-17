@@ -113,8 +113,11 @@ private const val CLASSIC_NARROW_HEAD_SP = 10f
  * about ten characters here - and "BILL NO: " spends nine of them on the label
  * before the number starts. Shortening the label is what keeps the number itself on
  * the line; beside a date and a time, "NO:" is not ambiguous.
+ *
+ * The colon is added where it is printed, not carried here: this is the word that is
+ * looked up in the print language, and the punctuation is not part of it.
  */
-private const val NARROW_BILL_NO_LABEL = "NO:"
+private const val NARROW_BILL_NO_LABEL = "NO"
 
 /** GRAND TOTAL on a Classic slip, at Bill Settings' Regular and Big sizes. */
 private const val CLASSIC_GRAND_TOTAL_SP = 17f
@@ -242,14 +245,28 @@ class BillReceiptRenderer(context: Context) {
      */
     private val ctx: Context = ReceiptContext.standardFontScale(context)
 
+    /** The language this till labels its slips in - see [PrintLanguage]. */
+    private val lang: PrintLanguage.Language = PrintLanguage.of(context)
+
+    /** [text] in the till's print language, or as it is where there is no translation. */
+    private fun t(text: String): String = PrintLanguage.tr(lang, text)
+
     /**
      * The bill's typeface — the bundled Roboto Mono font (res/font/roboto_mono_regular.ttf).
      * Every code-built cell renders with it (the bill XML layouts point their fontFamily
      * at the same font), so the whole slip prints in one face. Falls back to the platform
      * monospace if the font ever fails to load.
+     *
+     * A slip in any other language is set in the platform's own monospace family
+     * instead - Roboto Mono carries no Indic script, and a face with no fallback
+     * behind it prints those labels as empty boxes. See [PrintLanguage.typeface].
      */
     private val billTypeface: Typeface by lazy {
-        androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.roboto_mono_regular) ?: Typeface.MONOSPACE
+        PrintLanguage.typeface(
+            lang,
+            androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.roboto_mono_regular)
+                ?: Typeface.MONOSPACE
+        )
     }
 
     /**
@@ -649,11 +666,11 @@ class BillReceiptRenderer(context: Context) {
             // is written above it and needs the same answer.
             val narrow = paperDots < NARROW_PAPER_DOTS
 
-            val billNoLabel = if (classic && narrow) NARROW_BILL_NO_LABEL else "BILL NO:"
-            view.findViewById<TextView>(R.id.tvBillNo).text = "$billNoLabel $billNumber"
+            val billNoLabel = t(if (classic && narrow) NARROW_BILL_NO_LABEL else "BILL NO")
+            view.findViewById<TextView>(R.id.tvBillNo).text = "$billNoLabel: $billNumber"
             // Moved to the foot of the bill, where "created by" belongs.
             view.findViewById<TextView>(R.id.tvBillCreatedBy).text =
-                "Created by: ${draft?.cashier ?: cashierName(db, operatorId, createdBy)}"
+                "${t("Created by")}: ${draft?.cashier ?: cashierName(db, operatorId, createdBy)}"
 
             // Which of mobile/name/gstin print is driven by "Customer Details"; the
             // address line is a separate on/off. Each still only shows when the
@@ -682,10 +699,10 @@ class BillReceiptRenderer(context: Context) {
             // from Bill history carries all three sets.
             renderCaptions(view, creditSale = creditSale, duplicate = duplicate)
 
-            setIfPresent(view, R.id.tvCustMobile, if (showMobile) cust.phone?.let { "MOBILE : $it" } else null)
-            setIfPresent(view, R.id.tvName, if (showName) cust.name?.let { "NAME  : $it" } else null)
-            setIfPresent(view, R.id.tvCustGstin, if (showGstin) cust.gstin?.let { "GSTIN : $it" } else null)
-            setIfPresent(view, R.id.tvCustAddress, if (customerAddressPrinting) cust.address?.let { "ADDRESS: $it" } else null)
+            setIfPresent(view, R.id.tvCustMobile, if (showMobile) cust.phone?.let { custLine("MOBILE ", "MOBILE", it) } else null)
+            setIfPresent(view, R.id.tvName, if (showName) cust.name?.let { custLine("NAME  ", "NAME", it) } else null)
+            setIfPresent(view, R.id.tvCustGstin, if (showGstin) cust.gstin?.let { custLine("GSTIN ", "GSTIN", it) } else null)
+            setIfPresent(view, R.id.tvCustAddress, if (customerAddressPrinting) cust.address?.let { custLine("ADDRESS", "ADDRESS", it) } else null)
             // The customer's outstanding balance is printed beside the totals (in the
             // summary block below), not here in the customer block, so it reads right
             // next to the amount due on every final bill - grocery or restaurant.
@@ -727,6 +744,14 @@ class BillReceiptRenderer(context: Context) {
             val headings = listOf(
                 R.id.tvColSrItem, R.id.tvColQty, R.id.tvColPrice, R.id.tvColDisc, R.id.tvColNet
             )
+            // Translated before anything is measured, not after. The column widths
+            // below are settled from the width of these headings, so a heading
+            // replaced afterwards would be laid out to the width of the English one
+            // it replaced - and a wider word in another script would then wrap.
+            listOf(
+                R.id.tvColSrItem to "SR.NO ITEM", R.id.tvColQty to "QTY",
+                R.id.tvColPrice to "PRICE", R.id.tvColDisc to "DISC", R.id.tvColNet to "AMOUNT"
+            ).forEach { (id, label) -> view.findViewById<TextView>(id).text = t(label) }
             headings.forEach { view.findViewById<TextView>(it).textSize = headingSp }
             val classicColumns = when {
                 narrow && showDisc -> CLASSIC_NARROW_DISC_COLUMNS
@@ -734,7 +759,7 @@ class BillReceiptRenderer(context: Context) {
                 else -> CLASSIC_COLUMNS
             }
             if (narrow && showDisc) {
-                view.findViewById<TextView>(R.id.tvColSrItem).text = CLASSIC_NARROW_ITEM_HEADING
+                view.findViewById<TextView>(R.id.tvColSrItem).text = t(CLASSIC_NARROW_ITEM_HEADING)
             }
             // Fixed widths, not weights - see [itemColumnWidths]. Applied to the
             // headings and to the rows beneath them from the one array, so a figure
@@ -762,7 +787,7 @@ class BillReceiptRenderer(context: Context) {
             // wrapping under itself.
             view.findViewById<TextView>(R.id.tvColSrItem).let { srItem ->
                 if (measure(headingSp).measureText(srItem.text.toString()) > columnPx[0]) {
-                    srItem.text = CLASSIC_NARROW_ITEM_HEADING
+                    srItem.text = t(CLASSIC_NARROW_ITEM_HEADING)
                 }
             }
             items.forEach {
@@ -809,15 +834,19 @@ class BillReceiptRenderer(context: Context) {
                 val totalBalance = -current
                 val previBalance = totalBalance + payable - cashReceived
                 listOf(
-                    "PREVI BALANCE" to money(previBalance),
-                    "BILL AMOUNT" to money(payable),
-                    "CASH RECEIVED" to money(cashReceived),
-                    "TOTAL BALANCE" to money(totalBalance)
+                    t("PREVI BALANCE") to money(previBalance),
+                    t("BILL AMOUNT") to money(payable),
+                    t("CASH RECEIVED") to money(cashReceived),
+                    t("TOTAL BALANCE") to money(totalBalance)
                 )
             } else buildList {
-                if (returnAmount > 0.005) add("CHANGE DUE" to money(returnAmount))
-                cust.outstanding?.takeIf { it > 0.005 }?.let { add("OUTSTANDING" to money(it)) }
+                if (returnAmount > 0.005) add(t("CHANGE DUE") to money(returnAmount))
+                cust.outstanding?.takeIf { it > 0.005 }?.let { add(t("OUTSTANDING") to money(it)) }
             }
+            // Which of the trailer's lines is set in bold is decided from the English
+            // label, before it was translated - matching on the printed text would
+            // stop working the moment the slip stopped being in English.
+            val boldTrailer = if (creditSale) setOf(t("TOTAL BALANCE")) else setOf(t("OUTSTANDING"))
 
             if (classic) {
                 // Tax wise short reports its tax in the table above the totals, so
@@ -833,6 +862,7 @@ class BillReceiptRenderer(context: Context) {
                     roundOff = roundOff, showRoundOff = roundOffSetting, narrow = narrow,
                     serviceCharge = serviceCharge, trailer = trailer
                 )
+                view.findViewById<TextView>(R.id.tvGrandTotalLabel)?.text = "${t("GRAND TOTAL")}:"
                 val big = totalAmountFontSize == BillSettingsDao.FontSize.BIG
                 val grandSp = when {
                     narrow && big -> CLASSIC_NARROW_GRAND_TOTAL_BIG_SP
@@ -851,7 +881,7 @@ class BillReceiptRenderer(context: Context) {
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
                     roundOff = roundOff, showRoundOff = roundOffSetting,
                     payable = payable, narrow = narrow, serviceCharge = serviceCharge,
-                    trailer = trailer
+                    trailer = trailer, boldTrailer = boldTrailer
                 )
             }
 
@@ -873,6 +903,7 @@ class BillReceiptRenderer(context: Context) {
             )
 
             if (narrow) enlargeBodyForNarrowPaper(view, classic)
+            applyPrintTypeface(view)
         } catch (e: Exception) {
             android.util.Log.e(TAG, "Error loading bill $receiptNo", e)
         }
@@ -897,11 +928,13 @@ class BillReceiptRenderer(context: Context) {
         narrow: Boolean,
         serviceCharge: Double = 0.0,
         /** Account lines printed under the totals - see where it is built in render(). */
-        trailer: List<Pair<String, String>> = emptyList()
+        trailer: List<Pair<String, String>> = emptyList(),
+        /** Which of [trailer]'s labels are set in bold, in the print language. */
+        boldTrailer: Set<String> = emptySet()
     ) {
         fun row(label: String, value: String, bold: Boolean = false, valueSize: Float = summarySp) {
             llSummary.addView(
-                summaryRow(label, value, bold, valueSize, labelSize = summarySp, narrow = narrow)
+                summaryRow(t(label), value, bold, valueSize, labelSize = summarySp, narrow = narrow)
             )
         }
 
@@ -912,10 +945,10 @@ class BillReceiptRenderer(context: Context) {
         // itself it breaks as "QTY:" / "3", splitting a label from its number.
         // Stacked deliberately instead, each count stays with its own label.
         val separator = if (narrow) "\n" else "  "
-        val counts = "ITEM: ${totals.itemCount}$separator" +
-            "QTY: ${qtyText(totals.qtyCount)}"
+        val counts = "${t("ITEM")}: ${totals.itemCount}$separator" +
+            "${t("QTY")}: ${qtyText(totals.qtyCount)}"
         llSummary.addView(
-            summaryHead(counts, "AMT: ${money(totals.grossMrp)}", summarySp, narrow)
+            summaryHead(counts, "${t("AMT")}: ${money(totals.grossMrp)}", summarySp, narrow)
         )
         if (showDiscount && discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
         taxSlabs.forEach { slab ->
@@ -933,8 +966,15 @@ class BillReceiptRenderer(context: Context) {
         if (showRoundOff) row("ROUND OFF", money(roundOff))
         row("NET AMT", money(payable), bold = true, valueSize = netSize)
         // The account block under the totals (credit breakdown, or change + outstanding).
+        // Its labels arrive already translated, so they go through summaryRow directly
+        // rather than through row(), which translates what it is given.
         trailer.forEach { (label, value) ->
-            row(label, value, bold = label == "TOTAL BALANCE" || label == "OUTSTANDING")
+            llSummary.addView(
+                summaryRow(
+                    label, value, bold = label in boldTrailer,
+                    valueSize = summarySp, labelSize = summarySp, narrow = narrow
+                )
+            )
         }
     }
 
@@ -973,7 +1013,7 @@ class BillReceiptRenderer(context: Context) {
         trailer: List<Pair<String, String>> = emptyList()
     ) {
         val rows = mutableListOf<Pair<String, String>>()
-        fun row(label: String, value: String) { rows.add(label to value) }
+        fun row(label: String, value: String) { rows.add(t(label) to value) }
 
         if (showDiscount && discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
         // [loadItems] orders the slabs highest-rate first, the Standard order; the
@@ -994,8 +1034,9 @@ class BillReceiptRenderer(context: Context) {
         if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
         if (showRoundOff) row("ROUNDED OFF", money(roundOff))
         // The account block under the totals (credit breakdown, or change + outstanding),
-        // added to the rows so its colons line up with the totals above.
-        trailer.forEach { (label, value) -> row(label, value) }
+        // added to the rows so its colons line up with the totals above. Its labels
+        // are already in the print language, so they skip row()'s translation.
+        trailer.forEach { (label, value) -> rows.add(label to value) }
 
         // The colons line up in a column, and that column sits directly after the
         // longest label rather than at a fixed fraction of the paper: padding to
@@ -1003,9 +1044,24 @@ class BillReceiptRenderer(context: Context) {
         // "SGST @ 2.50%:". Done by padding a monospace string rather than by giving
         // the colon a weighted column of its own, so the label block takes only the
         // width it needs and leaves the rest of a narrow roll to the figures.
-        val pad = rows.maxOf { it.first.length }
+        if (lang == PrintLanguage.Language.ENGLISH) {
+            val pad = rows.maxOf { it.first.length }
+            rows.forEach { (label, value) ->
+                llSummary.addView(classicSummaryRow(label.padEnd(pad) + " :", value, summarySp, narrow))
+            }
+            return
+        }
+        // Counting characters only aligns anything in a face where every character
+        // is the same width, and none of the other scripts is set in one - padded to
+        // an equal length, "मूल्य :" and "सेवा शुल्क :" still end in different places.
+        // So the label column is measured instead and every label is given that
+        // width, which puts the colons in a column whatever the script.
+        val paint = measure(summarySp)
+        val labelPx = rows.maxOf { paint.measureText("${it.first} :") }.toInt() + 1
         rows.forEach { (label, value) ->
-            llSummary.addView(classicSummaryRow(label.padEnd(pad) + " :", value, summarySp, narrow))
+            llSummary.addView(
+                classicSummaryRow("$label :", value, summarySp, narrow, labelWidthPx = labelPx)
+            )
         }
     }
 
@@ -1058,6 +1114,11 @@ class BillReceiptRenderer(context: Context) {
                 }
             }
         }
+        // The rate and the two money columns are words; SGST and CGST are statutory
+        // short forms and print as themselves in every language.
+        view.findViewById<TextView>(R.id.tvTaxColRate).text = t("TAX%")
+        view.findViewById<TextView>(R.id.tvTaxColBase).text = t("B.AMT")
+        view.findViewById<TextView>(R.id.tvTaxColTotal).text = t("TOTAL")
         // Under VAT the tax is not split, so the second tax column goes and the
         // first is headed for what it holds.
         view.findViewById<TextView>(R.id.tvTaxColSgst).text = if (isGst) "SGST" else "VAT"
@@ -1092,12 +1153,14 @@ class BillReceiptRenderer(context: Context) {
         label: String,
         value: String,
         sizeSp: Float,
-        narrow: Boolean
+        narrow: Boolean,
+        /** A measured label column, for the scripts that cannot be aligned by padding. */
+        labelWidthPx: Int = ViewGroup.LayoutParams.WRAP_CONTENT
     ): View {
         val row = summaryRowContainer(narrow)
         row.addView(TextView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                labelWidthPx, ViewGroup.LayoutParams.WRAP_CONTENT
             )
             text = label
             typeface = billTypeface
@@ -1451,6 +1514,40 @@ class BillReceiptRenderer(context: Context) {
         }
     }
 
+    /**
+     * One line of the customer block: "MOBILE : 9800000000".
+     *
+     * [padded] is the English label with the spaces that line the colons up in a
+     * monospace face, and it is used exactly as it is so an English slip prints
+     * character for character as it always has. A translated label is set from [key]
+     * and left unpadded: its script is not monospace, so padding it out to the same
+     * number of characters would line nothing up and only cost width on the roll.
+     */
+    private fun custLine(padded: String, key: String, value: String): String =
+        (if (lang == PrintLanguage.Language.ENGLISH) padded else t(key)) + ": $value"
+
+    /**
+     * Re-sets every line of the slip in the face the print language needs.
+     *
+     * The layouts name Roboto Mono in their own XML, which the cells built in code
+     * cannot reach: setting [billTypeface] on those alone would leave the bill
+     * number, the store block and the GRAND TOTAL line still asking for a font with
+     * no Devanagari, Tamil or Bengali in it, and those are exactly the lines an
+     * operator would notice printing as empty boxes.
+     *
+     * Nothing happens on an English slip. It already has the face it was laid out
+     * against, and walking the tree to set it again could only change something.
+     */
+    private fun applyPrintTypeface(root: View) {
+        if (lang == PrintLanguage.Language.ENGLISH) return
+        when (root) {
+            // Bold stays bold: the style is read off what the view already has, so
+            // only the family is replaced.
+            is TextView -> root.setTypeface(billTypeface, root.typeface?.style ?: Typeface.NORMAL)
+            is ViewGroup -> for (i in 0 until root.childCount) applyPrintTypeface(root.getChildAt(i))
+        }
+    }
+
     /** Fills a receipt line, or hides it when there is nothing to print there. */
     private fun setIfPresent(root: View, id: Int, value: String?) {
         val tv = root.findViewById<TextView>(id)
@@ -1614,8 +1711,11 @@ class BillReceiptRenderer(context: Context) {
 
         modes.forEach { mode ->
             val row = baseRow(narrow)
-            row.addView(cell("PAY MODE", 1f, Gravity.START))
-            row.addView(cell(mode, 1f, Gravity.END))
+            row.addView(cell(t("PAY MODE"), 1f, Gravity.START))
+            // The mode itself is one of a handful of known words - CASH, CARD,
+            // CREDIT - so it is translated too where it is one of them, and left as
+            // it was recorded where it is not.
+            row.addView(cell(t(mode), 1f, Gravity.END))
             ll.addView(row)
         }
         // The change handed back (RETURN) now prints with the totals - see the summary.

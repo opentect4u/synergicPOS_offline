@@ -26,6 +26,12 @@ class CustomerItemWiseReportRenderer(context: Context) {
 
     private val ctx: Context = ReceiptContext.standardFontScale(context)
 
+    /** The language this till labels its slips in - see [PrintLanguage]. */
+    private val lang: PrintLanguage.Language = PrintLanguage.of(context)
+
+    /** [text] in the till's print language, or as it is where there is no translation. */
+    private fun t(text: String): String = PrintLanguage.tr(lang, text)
+
     fun renderToBitmap(
         report: CustomerItemWiseReportDao.Report,
         paperDots: Int = PrintType.REFERENCE_PAPER_DOTS
@@ -58,22 +64,22 @@ class CustomerItemWiseReportRenderer(context: Context) {
             )
         }
 
-        root.addView(title("CUSTOMER ITEMWISE RPT"))
+        root.addView(title(t("CUSTOMER ITEMWISE RPT")))
         root.addView(rule())
         root.addView(spreadRow(machineId(), stamp("dd-MM-yy"), stamp("HH:mm")))
         root.addView(rule())
         root.addView(spreadRow("F.DT:${shortDate(report.fromDate)}", "TO.DT:${shortDate(report.toDate)}"))
         root.addView(rule())
-        root.addView(leftLine("CUSTOMER ID : ${report.customerId}"))
-        root.addView(leftLine("NAME : ${report.customerName}"))
+        root.addView(leftLine("${t("CUSTOMER ID")} : ${report.customerId}"))
+        root.addView(leftLine("${t("NAME")} : ${report.customerName}"))
         root.addView(rule())
         // Two-line column heads.
-        root.addView(twoCol("ITEM NAME", "QUANTITY", bold = true))
-        root.addView(threeCol("AMOUNT", "SGST", "CGST", bold = true))
+        root.addView(twoCol(t("ITEM NAME"), t("QUANTITY"), bold = true))
+        root.addView(threeCol(t("AMOUNT"), "SGST", "CGST", bold = true))
         root.addView(rule())
 
         if (report.items.isEmpty()) {
-            root.addView(centred("No items in this period."))
+            root.addView(centred(t("No items in this period.")))
             root.addView(rule())
             return root
         }
@@ -83,10 +89,10 @@ class CustomerItemWiseReportRenderer(context: Context) {
             root.addView(threeCol(money(item.amount), money(item.sgst), money(item.cgst), bold = false))
         }
         root.addView(rule())
-        root.addView(totalLine("TOTAL QTY :", qtyFmt(report.totalQty)))
-        root.addView(totalLine("TOTAL SGST:", money(report.totalSgst)))
-        root.addView(totalLine("TOTAL CGST:", money(report.totalCgst)))
-        root.addView(totalLine("TOTAL AMT :", money(report.totalAmount)))
+        root.addView(totalLine(t("TOTAL QTY :"), qtyFmt(report.totalQty)))
+        root.addView(totalLine(t("TOTAL SGST:"), money(report.totalSgst)))
+        root.addView(totalLine(t("TOTAL CGST:"), money(report.totalCgst)))
+        root.addView(totalLine(t("TOTAL AMT :"), money(report.totalAmount)))
         root.addView(rule())
         return root
     }

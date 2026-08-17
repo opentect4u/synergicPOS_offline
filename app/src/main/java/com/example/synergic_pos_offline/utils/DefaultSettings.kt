@@ -135,6 +135,16 @@ object DefaultSettings {
         tableSplit = false
     )
 
+    /**
+     * Slips are printed with English labels.
+     *
+     * Stored in the same table as the four groups above but written on its own, like
+     * the automatic backup below it - it has a settings screen of its own rather than
+     * being a field of [GENERAL], so clearing the table would otherwise leave it to
+     * the reader's fallback instead of stating it here.
+     */
+    val PRINT_LANGUAGE = PrintLanguage.DEFAULT
+
     // ---- Everything else ------------------------------------------------------
 
     /** Automatic backup is off; backups are taken when the operator asks for one. */
@@ -167,7 +177,10 @@ object DefaultSettings {
         val helper = DatabaseHelper.getInstance(context)
         helper.clearAppSettings()
 
-        GeneralSettingsDao(context).save(GENERAL)
+        GeneralSettingsDao(context).apply {
+            save(GENERAL)
+            savePrintLanguage(PRINT_LANGUAGE.code)
+        }
         BillSettingsDao(context).apply {
             save(BILL)
             saveTemplatePaperMm(TEMPLATE_PAPER_MM)
