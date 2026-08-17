@@ -210,15 +210,28 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             showNewOrderDialog()
         }
 
-        // Add Item → product-grid modal (only when a table/order is active and not billed).
-        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAddItem).setOnClickListener {
-            val order = currentOrder()
-            when {
-                order == null -> toast("Create or select a table order first")
-                order.completed -> toast("Table already billed — cannot add items")
-                else -> showAddItemDialog()
-            }
+        // Choose Table → table-picker grid (sections as tabs, tables as cards).
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnChooseTable).setOnClickListener {
+            showChooseTableDialog()
         }
+
+        // More → the whole order in a roomy popup, since this panel is narrow.
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnMoreItems)
+            .setOnClickListener { showOrderItemsDialog() }
+
+        // The active-order list slides in over the menu and back off it.
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnToggleOrders)
+            .setOnClickListener { setOrdersPanelOpen(!ordersPanelOpen) }
+        view.findViewById<View>(R.id.vOrdersScrim).setOnClickListener { setOrdersPanelOpen(false) }
+        // Starts closed - the menu covers the page until the list is asked for. Posted
+        // so the panel has been measured and its own width is what it slides by.
+        view.findViewById<View>(R.id.panelOrders).post {
+            if (isAdded) setOrdersPanelOpen(ordersPanelOpen, animate = false)
+        }
+
+        // The menu sits on the page itself - see setupProductSection - so there is no
+        // Add Item button to open a grid in a popup.
+        setupProductSection(view)
 
         // Print KOT → resolve the kitchen printer, then cut a ticket for the new items.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnPrintKot).setOnClickListener {
@@ -346,11 +359,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // MainActivity re-themes the whole tree on resume (by button name), which
         // would clobber our button styling — re-apply ours after that pass.
         view.post { restyle(view, accent) }
+
+        // Opening the sale screen asks which table first: that is the decision every
+        // restaurant order starts with, so the picker comes up rather than waiting to
+        // be asked for. Only on a fresh open - a rotation keeps whatever was on screen.
+        if (savedInstanceState == null) {
+            view.post { if (isAdded) showChooseTableDialog() }
+        }
     }
 
     override fun onResume() {
         super.onResume()
         view?.let { v -> v.post { restyle(v, ThemeManager.getThemeColor(requireContext())) } }
+        // The menu is on the page now, so it has to be current whenever the page is:
+        // a product edited, or stock moved by a settled bill, shows on the way back.
+        reloadProductsAndRefresh()
     }
 
     /** Called by MainActivity when the palette colour changes — recolour instantly. */
@@ -397,11 +420,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val soft = ColorUtils.setAlphaComponent(accent, 0x14)   // ~8% accent tint
         list.removeAllViews()
 
-        // Active-orders count badge.
+        // Active-orders count badge, and the same count on the button that slides the
+        // list in - with the list closed that button is the only place it shows.
         root.findViewById<TextView>(R.id.tabActive).setTextColor(accent)
         root.findViewById<TextView>(R.id.badgeActive).apply {
             text = orders.size.toString(); backgroundTintList = ColorStateList.valueOf(accent)
         }
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnToggleOrders)?.text =
+            if (orders.isEmpty()) "Active Orders" else "Active Orders (${orders.size})"
 
         // Empty state: no orders yet.
         val emptyView = root.findViewById<TextView>(R.id.tvNoOrders)
@@ -455,6 +481,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         showOrderDetail(order)
         renderCart()   // show this table's own items + totals
+        // The table has been chosen, so the list slides back off and hands the page
+        // to the menu - which is what the operator wants next.
+        setOrdersPanelOpen(false)
     }
 
     /** Updates the detail-panel header for the given order. */
@@ -528,8 +557,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             strokeColor = ColorStateList.valueOf(accent); strokeWidth = strokePx
             iconTint = ColorStateList.valueOf(accent)
         }
-        filled(R.id.btnNewOrder); filled(R.id.btnAddItem); filled(R.id.btnBillPay)
-        outlined(R.id.btnRefreshOrders); outlined(R.id.btnPrintKot)
+        filled(R.id.btnNewOrder); filled(R.id.btnBillPay)
+        outlined(R.id.btnRefreshOrders); outlined(R.id.btnPrintKot); outlined(R.id.btnChooseTable)
+        outlined(R.id.btnToggleOrders)
         outlined(R.id.btnTransfer); outlined(R.id.btnMerge); outlined(R.id.btnSplit)
         outlined(R.id.btnCancelOrder); outlined(R.id.btnBillPrint)
 
@@ -629,7 +659,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val dbId = roDao.createOrder(table, section, null, type, phone, cashier)
         if (dbId == -1L) { toast("Could not create order"); return }
         if (!type.equals("Take Away", ignoreCase = true))
-            tableDao.setStatusByCode(table, "Occupied")   // dine-in table now has a live order
+            updateTableStatus(table, "Occupied")   // dine-in table now has a live order
 
         orders.forEach { it.selected = false }
         val order = OrderCard(
@@ -698,8 +728,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun performTransfer(order: OrderCard, to: String) {
         val from = order.id
         roDao.transferTable(order.dbId, to)
-        tableDao.setStatusByCode(from, "Available")   // old table freed
-        tableDao.setStatusByCode(to, "Occupied")      // new table taken
+        updateTableStatus(from, "Available")   // old table freed
+        updateTableStatus(to, "Occupied")      // new table taken
         order.id = to
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -871,7 +901,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val code = subTableDao.create(parent, ('A' + i).toString(), status = "Available")
             roDao.createOrder(code, order.section, waiterId, order.type, order.phone, cashier)
         }
-        tableDao.setStatusByCode(parent, "Occupied")   // parent stays occupied by its parts
+        updateTableStatus(parent, "Occupied")   // parent stays occupied by its parts
 
         loadRunningOrders()
         val root = view ?: return
@@ -893,7 +923,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (parts.all { it.items.isEmpty() }) {
             parts.forEach { roDao.close(it.dbId) }
             orders.removeAll { it.id.startsWith("$parent ") }
-            tableDao.setStatusByCode(parent, "Available")
+            updateTableStatus(parent, "Available")
             subTableDao.clearForParent(parent)
         }
     }
@@ -1038,45 +1068,199 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         return null
     }
 
-    // ---- Add Item: product-grid modal --------------------------------------
+    // ---- Products: the menu, on the page itself -----------------------------
 
-    private fun showAddItemDialog() {
-        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
+    /** Redraws the product grid for the current search text and category. */
+    private var refreshProducts: (() -> Unit)? = null
+
+    // ---- The slide-over order list ------------------------------------------
+
+    /** Whether the active-order list is currently slid in over the menu. */
+    private var ordersPanelOpen = false
+
+    /** How long the list takes to slide in or out. */
+    private val SLIDE_MS_VALUE = 220L
+
+    /**
+     * Slides the active-order list in over the page, or off it.
+     *
+     * Closed is the resting state: the list sits one panel-width to the left of the
+     * screen and the menu has the whole page. Open brings it back to 0 with a dimmed
+     * backdrop behind it. [animate] is false for the first pass, where there is nothing
+     * to animate from.
+     */
+    private fun setOrdersPanelOpen(open: Boolean, animate: Boolean = true) {
+        val root = view ?: return
+        val panel = root.findViewById<View>(R.id.panelOrders) ?: return
+        val scrim = root.findViewById<View>(R.id.vOrdersScrim) ?: return
+        ordersPanelOpen = open
+
+        // Before the first layout the panel has no width yet; its declared 320dp is
+        // the same distance, so it stands in rather than leaving the panel on screen.
+        val width = (if (panel.width > 0) panel.width else dp(320)).toFloat()
+        val target = if (open) 0f else -width
+
+        if (open) {
+            scrim.alpha = 0f
+            scrim.visibility = View.VISIBLE
+        }
+        if (animate) {
+            panel.animate().translationX(target).setDuration(SLIDE_MS_VALUE)
+                .withEndAction { if (!open) scrim.visibility = View.GONE }
+                .start()
+            scrim.animate().alpha(if (open) 1f else 0f).setDuration(SLIDE_MS_VALUE).start()
+        } else {
+            panel.translationX = target
+            scrim.alpha = if (open) 1f else 0f
+            scrim.visibility = if (open) View.VISIBLE else View.GONE
+        }
+    }
+
+    /**
+     * The menu section that sits beside the order: a search box, the categories as
+     * tabs, and the products as a grid. Tapping a tile puts that item on the selected
+     * table's order - the same add the Add Item popup used to do, without the popup.
+     *
+     * The catalogue is read once here rather than per tap; [reloadProductsAndRefresh]
+     * re-reads it when something that changes it (a settled bill moving stock) happens.
+     */
+    private fun setupProductSection(root: View) {
+        val ctx = requireContext()
         val accent = ThemeManager.getThemeColor(ctx)
-        val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_add_item, null)
-        val dialog = AlertDialog.Builder(ctx).setView(v).create()
-        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
-        val etSearch = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etSearch)
-        val llCats = v.findViewById<LinearLayout>(R.id.llCategories)
-        val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProducts)
-
-        // Live data from md_products / md_category (store-scoped).
-        val products = loadProductsFromDb()
-        val catNames = listOf("All") + products.map { it.product.category }.filter { it.isNotBlank() }.distinct()
+        val etSearch = root.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etProductSearch)
+        val llCats = root.findViewById<LinearLayout>(R.id.llProductCategories)
+        val rv = root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProductGrid)
 
         var selectedCat = "All"
         var query = ""
 
-        // Picking a product opens the qty dialog; once it's added, clear the search
-        // box so the next item can be searched from a clean slate. Clearing the text
-        // fires the watcher below, which resets the list back to z full menu.
-        //
-        // Direct Add to Cart (App Settings): skip the popup and add one of the tapped
-        // item at its default rate straight to the cart; each tap adds one more.
+        val adapter = ProductAdapter(accent) { picked -> onProductPicked(picked) { etSearch.setText("") } }
+        // Three across: this grid shares the page with the order panel rather than
+        // filling a full-width dialog, so a four-column tile would be too narrow to read.
+        rv.layoutManager = androidx.recyclerview.widget.GridLayoutManager(ctx, 3)
+        rv.adapter = adapter
+
+        // Category tabs, rebuilt whenever the catalogue is re-read so a newly added
+        // category cannot be missing from the tabs until the screen is reopened.
+        fun rebuildTabs() {
+            val catNames = listOf("All") +
+                allProducts.map { it.product.category }.filter { it.isNotBlank() }.distinct()
+            if (catNames.none { it == selectedCat }) selectedCat = "All"
+            llCats.removeAllViews()
+            val tabViews = linkedMapOf<String, TextView>()
+            catNames.forEach { c ->
+                val tv = TextView(ctx).apply {
+                    text = c
+                    textSize = 15f
+                    setPadding(dp(10), dp(10), dp(10), dp(12))
+                    setOnClickListener {
+                        selectedCat = c
+                        styleCats(tabViews, selectedCat, accent)
+                        refreshProducts?.invoke()
+                    }
+                }
+                tabViews[c] = tv
+                llCats.addView(tv)
+            }
+            styleCats(tabViews, selectedCat, accent)
+        }
+
+        refreshProducts = {
+            val q = query.trim().lowercase()
+            adapter.submit(allProducts.filter {
+                (selectedCat == "All" || it.product.category == selectedCat) &&
+                    (q.isEmpty() || it.product.name.lowercase().contains(q) ||
+                        it.product.sku.contains(q) || it.barcode.contains(q))
+            })
+        }
+
+        etSearch.addTextChangedListener { query = it?.toString().orEmpty(); refreshProducts?.invoke() }
+
+        loadProductsFromDb()   // fills allProducts
+        rebuildTabs()
+        refreshProducts?.invoke()
+    }
+
+    /**
+     * A product tapped on the grid. Refuses politely when there is no order to put it
+     * on, or the table is already billed; otherwise honours App Settings' Direct Add to
+     * Cart - straight in at its default rate, or through the quantity popup.
+     */
+    private fun onProductPicked(picked: ProductEntryDialog.Product, onAdded: () -> Unit) {
+        val order = currentOrder()
+        when {
+            order == null -> { toast("Create or select a table order first"); return }
+            order.completed -> { toast("Table already billed — cannot add items"); return }
+        }
         val directAdd = com.example.synergic_pos_offline.utils.SettingsCache
-            .value(ctx, "A", "Direct Add to Cart") == "1"
-        val adapter = ProductAdapter(accent) { picked ->
-            if (directAdd) {
-                val before = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
-                addToCart(picked, 1.0, picked.price)
-                // Only announce when the tap actually added (order selected, in stock),
-                // and show the running count: "1 item added", "2 items added", …
-                val after = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
-                if (after > before) toast(itemsAddedMessage(after))
-                etSearch.setText("")
+            .value(requireContext(), "A", "Direct Add to Cart") == "1"
+        if (directAdd) {
+            val before = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
+            addToCart(picked, 1.0, picked.price)
+            val after = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
+            if (after > before) toast(itemsAddedMessage(after))
+            onAdded()
+        } else {
+            showProductEntry(picked) { onAdded() }
+        }
+    }
+
+    /** Re-reads the catalogue (stock levels move as orders settle) and redraws the grid. */
+    private fun reloadProductsAndRefresh() {
+        if (view == null) return
+        loadProductsFromDb()
+        refreshProducts?.invoke()
+    }
+
+    // ---- Choose Table: table-grid modal ------------------------------------
+
+    private data class TableTile(
+        val code: String,
+        val section: String,
+        val status: String,
+        val capacity: Int = 0,
+        val waiter: String = ""
+    )
+
+    /**
+     * The table picker: the same grid modal as Add Item, but tables as cards and their
+     * sections as the category tabs. Tapping a table selects its order if it already has
+     * one, or starts a new dine-in order on it when it is free.
+     */
+    private fun showChooseTableDialog() {
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
+        val accent = ThemeManager.getThemeColor(ctx)
+        val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_add_item, null)
+        val dialog = AlertDialog.Builder(ctx).setView(v).create()
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
+
+        v.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilSearch).hint = "Search table or section"
+        val etSearch = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etSearch)
+        val llCats = v.findViewById<LinearLayout>(R.id.llCategories)
+        val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProducts)
+
+        val tables = loadTables()
+        val catNames = listOf("All") + loadSectionNames()
+        var selectedCat = "All"
+        var query = ""
+
+        val adapter = TableAdapter(accent) { t ->
+            dialog.dismiss()
+            val existing = orders.firstOrNull { it.id.equals(t.code, ignoreCase = true) }
+            if (existing != null) {
+                selectOrder(existing)
+                toast("Table ${t.code} selected")
             } else {
-                showProductEntry(picked) { etSearch.setText("") }
+                // Only a free table can start a new order; an occupied/billing one is
+                // busy on an order this table picker cannot reach.
+                val status = TableDao(requireContext()).statusOf(t.code)
+                if (!status.isNullOrBlank() && !status.equals("Available", ignoreCase = true)) {
+                    toast("Table ${t.code} is $status")
+                } else {
+                    openNewOrder(t.code, t.section, "", "Dine In")
+                    toast("Order created for table ${t.code}")
+                }
             }
         }
         rv.layoutManager = androidx.recyclerview.widget.GridLayoutManager(ctx, 4)
@@ -1084,15 +1268,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         fun refresh() {
             val q = query.trim().lowercase()
-            adapter.submit(products.filter {
-                (selectedCat == "All" || it.product.category == selectedCat) &&
-                    (q.isEmpty() || it.product.name.lowercase().contains(q) || it.product.sku.contains(q) || it.barcode.contains(q))
+            adapter.submit(tables.filter {
+                (selectedCat == "All" || it.section == selectedCat) &&
+                    (q.isEmpty() || it.code.lowercase().contains(q) || it.section.lowercase().contains(q))
             })
         }
 
-        // Category tabs — the selected one gets an accent underline.
         val tabViews = linkedMapOf<String, TextView>()
-        catNames.forEach { c ->
+        catNames.distinct().forEach { c ->
             val tv = TextView(ctx).apply {
                 text = c
                 textSize = 15f
@@ -1110,11 +1293,112 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         ThemeManager.applyTheme(v)
         refresh()
         dialog.show()
-        // AlertDialog caps its width by default; widen it so the grid has room.
         dialog.window?.setLayout(
             (resources.displayMetrics.widthPixels * 0.94f).toInt(),
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
+    }
+
+    /** Every active section name for the Choose Table tabs. */
+    private fun loadSectionNames(): List<String> {
+        val db = com.example.synergic_pos_offline.database.DatabaseHelper.getInstance(requireContext()).readableDatabase
+        val store = currentStoreId(db)
+        val out = mutableListOf<String>()
+        val where = if (store != null) "WHERE store_id = ? AND is_active = 1" else "WHERE is_active = 1"
+        val args = store?.let { arrayOf(it.toString()) }
+        db.rawQuery("SELECT section_name FROM md_section $where ORDER BY section_name", args).use { c ->
+            while (c.moveToNext()) {
+                c.getString(0)?.takeIf { it.isNotBlank() }?.let { out.add(it) }
+            }
+        }
+        return out
+    }
+
+    /** Every table with its section and current status, for the Choose Table grid. */
+    private fun loadTables(): List<TableTile> {
+        val db = com.example.synergic_pos_offline.database.DatabaseHelper.getInstance(requireContext()).readableDatabase
+        val store = currentStoreId(db)
+        val out = mutableListOf<TableTile>()
+        val where = if (store != null) "WHERE t.store_id = ?" else ""
+        val args = store?.let { arrayOf(it.toString()) }
+        db.rawQuery(
+            "SELECT t.table_code, COALESCE(s.section_name,'') AS section, COALESCE(t.table_status,'Available'), " +
+                "COALESCE(t.seating_capacity, 0), COALESCE(w.waiter_name, '') " +
+                "FROM ${com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_TABLE} t " +
+                "LEFT JOIN ${com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_SECTION} s ON s.id = t.section_id " +
+                "LEFT JOIN ${com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_WAITERS} w ON w.id = t.waiter_id " +
+                "$where ORDER BY s.section_name COLLATE NOCASE, CAST(t.table_code AS INTEGER), t.table_code",
+            args
+        ).use { c ->
+            while (c.moveToNext()) {
+                val code = c.getString(0)?.takeIf { it.isNotBlank() } ?: continue
+                out.add(
+                    TableTile(
+                        code = code,
+                        section = c.getString(1).orEmpty(),
+                        status = c.getString(2).orEmpty(),
+                        capacity = c.getInt(3),
+                        waiter = c.getString(4).orEmpty()
+                    )
+                )
+            }
+        }
+        return out
+    }
+
+    private inner class TableAdapter(
+        private val accent: Int,
+        private val onPick: (TableTile) -> Unit
+    ) : androidx.recyclerview.widget.RecyclerView.Adapter<TableAdapter.VH>() {
+        private val items = mutableListOf<TableTile>()
+        fun submit(list: List<TableTile>) { items.clear(); items.addAll(list); notifyDataSetChanged() }
+        inner class VH(v: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(v)
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
+            VH(LayoutInflater.from(parent.context).inflate(R.layout.item_table_tile, parent, false))
+        override fun onBindViewHolder(holder: VH, position: Int) {
+            val t = items[position]
+            // The table status drives the colour palette for the card.
+            val statusColor = when (t.status.lowercase()) {
+                "available", "" -> 0xFF2E7D32.toInt() // Green
+                "occupied" -> 0xFFEF6C00.toInt()      // Orange
+                "kot printed" -> 0xFF0097A7.toInt()   // Cyan/Teal
+                "billing" -> 0xFF1565C0.toInt()       // Blue
+                "reserved" -> 0xFF6A1B9A.toInt()      // Purple
+                else -> 0xFF757575.toInt()            // Grey
+            }
+
+            holder.itemView.findViewById<TextView>(R.id.tvTableCode).apply {
+                text = t.code
+                setTextColor(statusColor)
+            }
+            holder.itemView.findViewById<View>(R.id.vTableCodeBg).apply {
+                val shape = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setStroke((holder.itemView.resources.displayMetrics.density * 2).toInt(), statusColor)
+                    setColor(ColorUtils.setAlphaComponent(statusColor, 0x0D)) // ~5% alpha
+                }
+                background = shape
+            }
+
+            holder.itemView.findViewById<TextView>(R.id.tvTableStatusPill).apply {
+                text = t.status.ifBlank { "Available" }
+                backgroundTintList = ColorStateList.valueOf(statusColor)
+            }
+
+            holder.itemView.findViewById<TextView>(R.id.tvTableSection).text = t.section.ifBlank { "—" }
+            holder.itemView.findViewById<TextView>(R.id.tvTableCapacity).text = t.capacity.toString()
+            holder.itemView.findViewById<TextView>(R.id.tvTableWaiter).apply {
+                text = t.waiter
+                visibility = if (t.waiter.isNotBlank()) View.VISIBLE else View.GONE
+            }
+
+            (holder.itemView as com.google.android.material.card.MaterialCardView).apply {
+                strokeColor = ColorUtils.setAlphaComponent(statusColor, 0x33) // ~20% alpha
+            }
+
+            holder.itemView.setOnClickListener { onPick(t) }
+        }
+        override fun getItemCount() = items.size
     }
 
     /** Selected category shows an accent underline; the rest are muted. */
@@ -1296,7 +1580,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (exceedsStock(p.id, qty)) return
         roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate, p.cgst, p.sgst)
         // A split sub-table with its first item is now Occupied.
-        if (order.id.contains(" ")) subTableDao.setStatus(order.id, "Occupied")
+        if (!order.type.equals("Take Away", ignoreCase = true)) {
+            updateTableStatus(order.id, "Occupied")
+        }
         reloadItems(order)
         renderCart()
     }
@@ -1319,45 +1605,124 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val locked = order?.completed == true      // billed → read-only
         val cart = order?.items ?: emptyList<CartItem>()
         cart.forEach { item ->
-            val row = inflater.inflate(R.layout.item_order_line, container, false)
-            row.findViewById<TextView>(R.id.tvLineName).text = item.name
-            row.findViewById<TextView>(R.id.tvLineQty).text = qtyText(item.qty)
-            row.findViewById<TextView>(R.id.tvLineRate).text = money(item.rate)
-            row.findViewById<TextView>(R.id.tvLineAmount).text = money(item.qty * item.rate)
-            // KOT status: any quantity not yet sent shows NEW ×n (accent); else ✓ Sent.
-            row.findViewById<TextView>(R.id.tvLineNote).apply {
-                if (item.pending > 0.0) { text = "NEW ×${qtyText(item.pending)}"; setTextColor(accent) }
-                else { text = "✓ Sent"; setTextColor(0xFF9AA0A6.toInt()) }
-            }
-            val btnPlus = row.findViewById<ImageButton>(R.id.btnPlus)
-            val btnMinus = row.findViewById<ImageButton>(R.id.btnMinus)
-            val btnRemove = row.findViewById<ImageButton>(R.id.btnRemoveLine)
-            if (locked) {
-                // Billed order — hide the editing controls entirely.
-                btnPlus.visibility = View.GONE
-                btnMinus.visibility = View.GONE
-                btnRemove.visibility = View.GONE
-            } else {
-                btnPlus.setOnClickListener {
-                    // Only a step up can outrun the shelf; stepping down never can.
-                    if (exceedsStock(item.productId.toString(), item.qty + 1.0, item.dbItemId)) {
-                        return@setOnClickListener
-                    }
-                    roDao.setItemQty(item.dbItemId, item.qty + 1.0); order?.let { reloadItems(it) }; renderCart()
+            container.addView(
+                orderRow(inflater, container, item, R.layout.item_order_line_compact, locked, accent) {
+                    renderCart()
                 }
-                btnMinus.setOnClickListener {
-                    roDao.setItemQty(item.dbItemId, (item.qty - 1.0).coerceAtLeast(0.0))
-                    order?.let { reloadItems(it) }; renderCart()
-                }
-                btnRemove.setOnClickListener {
-                    roDao.removeItem(item.dbItemId); order?.let { reloadItems(it) }; renderCart()
-                }
-            }
-            container.addView(row)
-            ThemeManager.applyTheme(row)
+            )
         }
         updateTotals()
     }
+
+    /**
+     * One cart line, built the same way wherever it is shown.
+     *
+     * [layoutRes] is the narrow row for the order panel or the wide one for the More
+     * popup - both carry the same ids, so this fills either. [onChanged] is called
+     * after a quantity or a removal has been written, for the caller to redraw itself.
+     */
+    private fun orderRow(
+        inflater: LayoutInflater,
+        parent: LinearLayout,
+        item: CartItem,
+        layoutRes: Int,
+        locked: Boolean,
+        accent: Int,
+        onChanged: () -> Unit
+    ): View {
+        val order = currentOrder()
+        val row = inflater.inflate(layoutRes, parent, false)
+        row.findViewById<TextView>(R.id.tvLineName).text = item.name
+        row.findViewById<TextView>(R.id.tvLineQty).text = qtyText(item.qty)
+        row.findViewById<TextView>(R.id.tvLineRate).text = money(item.rate)
+        row.findViewById<TextView>(R.id.tvLineAmount).text = money(item.qty * item.rate)
+        // KOT status: any quantity not yet sent shows NEW ×n (accent); else ✓ Sent.
+        row.findViewById<TextView>(R.id.tvLineNote).apply {
+            if (item.pending > 0.0) { text = "NEW ×${qtyText(item.pending)}"; setTextColor(accent) }
+            else { text = "✓ Sent"; setTextColor(0xFF9AA0A6.toInt()) }
+        }
+        val btnPlus = row.findViewById<ImageButton>(R.id.btnPlus)
+        val btnMinus = row.findViewById<ImageButton>(R.id.btnMinus)
+        val btnRemove = row.findViewById<ImageButton>(R.id.btnRemoveLine)
+        if (locked) {
+            // Billed order — hide the editing controls entirely.
+            btnPlus.visibility = View.GONE
+            btnMinus.visibility = View.GONE
+            btnRemove.visibility = View.GONE
+        } else {
+            btnPlus.setOnClickListener {
+                // Only a step up can outrun the shelf; stepping down never can.
+                if (exceedsStock(item.productId.toString(), item.qty + 1.0, item.dbItemId)) {
+                    return@setOnClickListener
+                }
+                roDao.setItemQty(item.dbItemId, item.qty + 1.0); order?.let { reloadItems(it) }; onChanged()
+            }
+            btnMinus.setOnClickListener {
+                roDao.setItemQty(item.dbItemId, (item.qty - 1.0).coerceAtLeast(0.0))
+                order?.let { reloadItems(it) }; onChanged()
+            }
+            btnRemove.setOnClickListener {
+                roDao.removeItem(item.dbItemId); order?.let { reloadItems(it) }; onChanged()
+            }
+        }
+        ThemeManager.applyTheme(row)
+        return row
+    }
+
+    /**
+     * The whole order in a popup, opened from "More" beside ORDER ITEMS.
+     *
+     * The panel on the page is narrow by design - the menu takes the width - so this
+     * is the same order in a proper table, with the same steppers. Editing here redraws
+     * both this and the panel behind it, so the two never disagree.
+     */
+    private fun showOrderItemsDialog() {
+        val order = currentOrder() ?: run { toast("Select a table order first"); return }
+        val (dialog, v) = com.example.synergic_pos_offline.utils.DialogUtils
+            .buildCustom(requireContext(), R.layout.dialog_order_items)
+        val accent = ThemeManager.getThemeColor(requireContext())
+        val inflater = LayoutInflater.from(requireContext())
+        val container = v.findViewById<LinearLayout>(R.id.llDialogOrderItems)
+        val empty = v.findViewById<TextView>(R.id.tvOrderItemsEmpty)
+
+        val label = if (order.type.equals("Take Away", ignoreCase = true))
+            "Take Away ${order.id}" else "Table ${order.id}"
+        v.findViewById<TextView>(R.id.tvOrderItemsTitle).text = "Order Items — $label"
+
+        fun fill() {
+            val current = currentOrder()
+            val items = current?.items.orEmpty()
+            val locked = current?.completed == true
+            container.removeAllViews()
+            items.forEach { item ->
+                container.addView(
+                    orderRow(inflater, container, item, R.layout.item_order_line, locked, accent) {
+                        renderCart()   // keep the panel behind in step
+                        // Re-fill after the change; the dialog closes if nothing is left
+                        // to show, since an empty order has nothing to correct.
+                        if (currentOrder()?.items.isNullOrEmpty()) dialog.dismiss() else fillAgain()
+                    }
+                )
+            }
+            empty.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
+            v.findViewById<TextView>(R.id.tvOrderItemsCount).text =
+                "${items.size} item(s)  ·  ${qtyText(items.sumOf { it.qty })} qty"
+            v.findViewById<TextView>(R.id.tvOrderItemsTotal).text =
+                "₹ ${money(items.sumOf { it.qty * it.rate })}"
+        }
+        // Held so a row's callback can call back into the fill above it.
+        refillOrderItemsDialog = { fill() }
+        fill()
+
+        v.findViewById<ImageButton>(R.id.btnOrderItemsClose).setOnClickListener { dialog.dismiss() }
+        dialog.setOnDismissListener { refillOrderItemsDialog = null }
+        dialog.show()
+    }
+
+    /** Redraws the open More popup, or does nothing when it is closed. */
+    private var refillOrderItemsDialog: (() -> Unit)? = null
+
+    private fun fillAgain() { refillOrderItemsDialog?.invoke() }
 
     /**
      * Picks the kitchen (KOT) printer from the Operating Printer master (print_flag = 'K'):
@@ -1547,7 +1912,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (order.id.contains(" ")) {
             roDao.clearItems(order.dbId)
             order.items.clear()
-            subTableDao.setStatus(order.id, "Available")
+            updateTableStatus(order.id, "Available")
             freeParentIfSplitDone(order.id)              // if every part is now empty, tear the split down
             if (orders.any { it.id == order.id }) {      // still there → kept as an available part
                 populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -1563,8 +1928,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val mergedTables = roDao.mergedTablesOf(order.dbId)
         roDao.close(order.dbId)                          // delete order + items, close KOT
         if (!order.type.equals("Take Away", ignoreCase = true))
-            tableDao.setStatusByCode(order.id, "Available")   // free the dine-in table
-        mergedTables.forEach { tableDao.setStatusByCode(it, "Available") }
+            updateTableStatus(order.id, "Available")   // free the dine-in table
+        mergedTables.forEach { updateTableStatus(it, "Available") }
         orders.removeAll { it.id == order.id }
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         clearDetail(root)
@@ -1598,9 +1963,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val saved = persistBill(order, payMethod, tendered)  // save to td_bills / td_bill_items / td_payments
         val mergedTables = roDao.mergedTablesOf(order.dbId)
         roDao.close(order.dbId)                          // payment done → remove from temp table
-        tableDao.setStatusByCode(order.id, "Available")  // table freed for the next guest
-        if (order.id.contains(" ")) subTableDao.setStatus(order.id, "Available")  // split part settled → freed
-        mergedTables.forEach { tableDao.setStatusByCode(it, "Available") }   // merged tables freed too
+        updateTableStatus(order.id, "Available")  // table freed for the next guest
+        mergedTables.forEach { updateTableStatus(it, "Available") }   // merged tables freed too
         orders.removeAll { it.id == order.id }
         freeParentIfSplitDone(order.id)                  // free the parent once all parts are done
         view?.let { root ->
@@ -1639,8 +2003,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun completeTable(order: OrderCard) {
         val mergedBefore = roDao.mergedTablesOf(order.dbId)
         roDao.markCompleted(order.dbId)
-        tableDao.setStatusByCode(order.id, "Billing")   // billed → awaiting payment
-        mergedBefore.forEach { tableDao.setStatusByCode(it, "Billing") }   // merged tables too
+        updateTableStatus(order.id, "Billing")   // billed → awaiting payment
+        mergedBefore.forEach { updateTableStatus(it, "Billing") }   // merged tables too
         order.status = "COMPLETED"
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -1676,6 +2040,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val batch = roDao.printKot(order.dbId, order.id, null, order.section, note) ?: run {
             toast("No new items to send to kitchen"); return
         }
+
+        // Once items go to kitchen, the table status reflects that KOT has been printed.
+        if (!order.type.equals("Take Away", ignoreCase = true)) {
+            updateTableStatus(order.id, "KOT Printed")
+            roDao.mergedTablesOf(order.dbId).forEach { updateTableStatus(it, "KOT Printed") }
+        }
+
         reloadItems(order)
         renderCart()
         com.example.synergic_pos_offline.utils.KotPrinter.print(requireContext(), batch, printer) { msg -> toast(msg) }
@@ -1695,6 +2066,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Reflect the running total on the active order card.
         order?.let { it.amount = "₹ ${money(b.total)}" }
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+    }
+
+    private fun updateTableStatus(code: String, status: String) {
+        if (code.contains(" ")) subTableDao.setStatus(code, status)
+        else tableDao.setStatusByCode(code, status)
     }
 
     private fun toast(msg: String) =

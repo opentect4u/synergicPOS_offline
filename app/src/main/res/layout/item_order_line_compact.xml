@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One cart line as it reads in the order panel beside the product grid.
+
+  The same ids as item_order_line so the one renderCart() fills either, but stacked
+  over two lines instead of spread across a wide table: the panel is ~350dp, which is
+  not enough for name, stepper, rate, amount, KOT status and a delete button in a row.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingVertical="10dp"
+    android:background="@drawable/bg_line_divider">
+
+    <!-- Line 1: what it is, and what it comes to -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tvLineName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="Chicken Biryani"
+            android:textSize="15sp"
+            android:textColor="@color/text_main" />
+
+        <TextView
+            android:id="@+id/tvLineAmount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:gravity="end"
+            android:text="280.00"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_main" />
+    </LinearLayout>
+
+    <!-- Line 2: quantity stepper, unit rate, KOT status, remove -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="6dp">
+
+        <ImageButton
+            android:id="@+id/btnMinus"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:background="@drawable/bg_stepper_btn"
+            android:src="@drawable/ic_minus"
+            android:scaleType="centerInside"
+            app:tint="@color/text_main"
+            android:contentDescription="Decrease" />
+
+        <TextView
+            android:id="@+id/tvLineQty"
+            android:layout_width="34dp"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="1"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_main" />
+
+        <ImageButton
+            android:id="@+id/btnPlus"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:background="@drawable/bg_stepper_btn"
+            android:src="@drawable/ic_plus"
+            android:scaleType="centerInside"
+            app:tint="@color/text_main"
+            android:contentDescription="Increase" />
+
+        <TextView
+            android:id="@+id/tvLineRate"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="10dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="280.00"
+            android:textSize="12sp"
+            android:textColor="@color/text_secondary" />
+
+        <TextView
+            android:id="@+id/tvLineNote"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="Normal"
+            android:textSize="11sp"
+            android:textColor="@color/text_secondary" />
+
+        <ImageButton
+            android:id="@+id/btnRemoveLine"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_delete"
+            android:scaleType="centerInside"
+            app:tint="@color/primary_blue"
+            android:contentDescription="Remove" />
+    </LinearLayout>
+</LinearLayout>
