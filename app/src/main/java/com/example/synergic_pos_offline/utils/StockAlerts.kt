@@ -89,12 +89,34 @@ object StockAlerts {
         // The Stock flag is the whole feature's switch: no tracking, no alerts.
         if (!settings.stockFlag) return NONE
         // …and Stock Alert is the narrower one, over "low" alone. See the class note.
-        val alertQty = if (settings.stockAlert) settings.stockAlertQty.toDouble() else 0.0
+        // Held as the whole number the setting stores, so it can go into the SQL as a
+        // number - see [lowClause] for why that matters here.
+        val alertQty = if (settings.stockAlert) settings.stockAlertQty else 0
 
         val storeClause = currentStoreId(context)?.let { " WHERE p.store_id = $it" } ?: ""
         val onHand =
             "COALESCE((SELECT SUM(s.current_quantity) FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} s " +
                 "WHERE s.product_id = p.id), 0)"
+
+        /**
+         * The "running low" half of the filter, written as a numeric literal.
+         *
+         * Not a bound `?`, and this is the whole reason the clause is built rather
+         * than parameterised: `rawQuery` binds every argument as **text**, and in
+         * SQLite a number always compares less than a string. `onHand` here is an
+         * expression and so carries no affinity for SQLite to convert against, which
+         * leaves `onHand <= '10.0'` true of *every* product - a jar with 1000 on the
+         * shelf reported as running low against a threshold of 10.
+         *
+         * The value is the Alert Quantity from General Settings, an Int the settings
+         * screen has already validated, so there is nothing here to inject.
+         *
+         * Left out entirely when there is no threshold, rather than compared against
+         * zero: with Stock Alert off nothing is low, and `onHand <= 0` on the line
+         * above is already the out-of-stock half.
+         */
+        val lowClause = if (alertQty > 0) " OR (onHand > 0 AND onHand <= $alertQty)" else ""
+
         // Filtered in SQL rather than in Kotlin: a shop's master runs to thousands of
         // products and its short list to a handful, and there is no reason to carry
         // the difference back across.
@@ -104,14 +126,14 @@ object StockAlerts {
                 FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p$storeClause
             )
             WHERE name IS NOT NULL AND name <> ''
-              AND (onHand <= 0 OR (? > 0 AND onHand <= ?))
+              AND (onHand <= 0$lowClause)
             ORDER BY onHand ASC, name ASC
         """.trimIndent()
 
         val out = mutableListOf<Item>()
         val low = mutableListOf<Item>()
         DatabaseHelper.getInstance(context).readableDatabase
-            .rawQuery(sql, arrayOf(alertQty.toString(), alertQty.toString()))
+            .rawQuery(sql, null)
             .use { c ->
                 while (c.moveToNext()) {
                     val quantity = c.getDouble(1)
