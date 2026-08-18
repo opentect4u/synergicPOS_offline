@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<!--
+  The dashboard.
+
+  Held as a page rather than as Android views on purpose: the design came in as HTML
+  and is meant to be fine-tuned, and a stylesheet is a far shorter way to move a card
+  than a rebuild. Nothing here reaches the network - Chart.js sits beside this file and
+  is loaded from the APK's own assets - so it draws with the aeroplane mode on, which a
+  till has to.
+
+  It is given its figures by DashboardHomeFragment, which calls render(data) once the
+  page has loaded. See DashboardDao for where each number comes from. Taps go back the
+  other way through the POS bridge; the page never navigates itself.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="chart.umd.js"></script>
+  <style>
+    :root {
+      /* Overwritten at load with the till's own accent - see applyAccent(). */
+      --teal: #008B8B;
+      --teal-bg: #E8F5F5;
+      --success: #0ca30c;
+      --danger: #e34948;
+      --warning: #fab219;
+      --gray-light: #f5f5f5;
+      --gray-dark: #333;
+      --border-color: #ddd;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--gray-light);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .dashboard { padding: 1.25rem; }
+    .header { background: var(--teal); color: #fff; padding: 1rem 1.5rem; margin: -1.25rem -1.25rem 1.25rem; text-align: center; }
+    .header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+    .header p { margin: 4px 0 0; font-size: 13px; opacity: .9; }
+
+    .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 1.25rem; }
+    .metric-card { background: #fff; border: .5px solid var(--border-color); border-radius: 8px; padding: 1rem; }
+    .metric-card[data-nav] { cursor: pointer; }
+    .metric-card[data-nav]:active { background: var(--teal-bg); }
+    .metric-label { font-size: 12px; color: #888; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .04em; }
+    .metric-value { font-size: 28px; font-weight: 600; color: var(--gray-dark); margin: 0; }
+    .metric-change { font-size: 12px; margin-top: 6px; font-weight: 500; color: #999; }
+    .metric-change.positive { color: var(--success); }
+    .metric-change.negative { color: var(--danger); }
+    .metric-sub { font-size: 12px; color: #999; margin-top: 8px; }
+
+    .charts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .chart-card { background: #fff; border: .5px solid var(--border-color); border-radius: 8px; padding: 1rem; }
+    .chart-title { font-size: 14px; font-weight: 600; color: var(--gray-dark); margin: 0 0 1rem; }
+    .chart-note { font-weight: 400; color: #999; font-size: 12px; margin-left: 6px; }
+    .chart-container { position: relative; width: 100%; height: 260px; }
+    .full-width { grid-column: 1 / -1; }
+
+    /* Nothing sold yet, or nothing to chart - said in the card rather than left as an
+       empty white rectangle, which reads as a chart that failed to load. */
+    .empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #aaa; font-size: 13px; text-align: center; padding: 0 1rem; }
+
+    /* What is out or running low, across the head of the page. */
+    .alerts { margin-bottom: 1.25rem; }
+    .alerts-head { font-size: 12px; font-weight: 700; color: var(--danger); letter-spacing: .05em; margin-bottom: 8px; }
+    .alert-box { display: flex; align-items: center; gap: 12px; background: rgba(227,73,72,.10); border: 1px solid rgba(227,73,72,.4); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer; }
+    .alert-name { flex: 1; font-size: 15px; font-weight: 600; color: var(--gray-dark); }
+    .alert-state { font-size: 12px; color: var(--danger); margin-top: 2px; font-weight: 500; }
+    .alert-qty { font-size: 20px; font-weight: 700; color: var(--danger); }
+    .alert-x { font-size: 15px; color: rgba(227,73,72,.7); padding: 4px 2px 4px 12px; }
+    .alert-more { text-align: center; font-size: 13px; font-weight: 700; color: var(--danger); border: 1px solid rgba(227,73,72,.4); border-radius: 10px; padding: 10px; cursor: pointer; }
+
+    /* The trade band, sitting between the first row of charts and the rest. */
+    .specialty-section { margin: 1.25rem 0; }
+    .specialty-row { margin-bottom: 1.25rem; }
+    .specialty-row:last-child { margin-bottom: 0; }
+    .specialty-label { font-size: 12px; font-weight: 700; color: #fff; padding: .5rem 1rem; margin: 0 0 .75rem; border-radius: 4px; text-transform: uppercase; letter-spacing: .05em; }
+    .grocery-label { background: var(--success); }
+    .restaurant-label { background: var(--warning); }
+    .specialty-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .specialty-card { background: #fff; border: .5px solid var(--border-color); border-radius: 8px; padding: 1rem; }
+    .specialty-card-label { font-size: 11px; color: #888; font-weight: 700; margin-bottom: 10px; text-transform: uppercase; letter-spacing: .05em; }
+    .specialty-value { font-size: 32px; font-weight: 700; color: var(--gray-dark); margin: 0 0 6px; }
+    .specialty-metric { font-size: 13px; color: #666; font-weight: 500; margin: 4px 0; }
+    .specialty-foot { font-size: 11px; color: #999; margin-top: 8px; }
+    .progress-bar { width: 100%; height: 6px; background: #eee; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--teal); border-radius: 3px; }
+    .status-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 4px; margin-top: 8px; }
+    .status-good { background: #E8F5E9; color: var(--success); }
+    .status-warning { background: #FFF3E0; color: #b57a00; }
+    .status-critical { background: #FFEBEE; color: var(--danger); }
+
+    /* A tablet held upright, or a phone: one column reads better than four squeezed. */
+    @media (max-width: 700px) {
+      .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+      .charts-grid { grid-template-columns: 1fr; }
+      .specialty-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+<div class="dashboard">
+  <div class="header">
+    <h1>Retail POS Analytics</h1>
+    <p id="subtitle">Live dashboard</p>
+  </div>
+
+  <div class="alerts" id="alerts"></div>
+
+  <div class="metrics-grid" id="metrics"></div>
+
+  <!-- Two grids rather than one, so the band for this shop's trade sits between the
+       first row of charts and the rest without being a grid item of either. -->
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3 class="chart-title">Hourly sales trend</h3>
+      <div class="chart-container" id="wrap-hourly"><canvas id="hourlyChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3 class="chart-title">Payment method breakdown</h3>
+      <div class="chart-container" id="wrap-payment"><canvas id="paymentChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="specialty-section" id="specialty"></div>
+
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3 class="chart-title">Top product categories</h3>
+      <div class="chart-container" id="wrap-category"><canvas id="categoryChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3 class="chart-title">Fast &amp; slow moving items<span class="chart-note" id="movementNote"></span></h3>
+      <div class="chart-container" id="wrap-movement"><canvas id="movementChart"></canvas></div>
+    </div>
+    <div class="chart-card full-width">
+      <h3 class="chart-title">7-day sales performance</h3>
+      <div class="chart-container" id="wrap-daily" style="height:280px"><canvas id="dailyChart"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var charts = {};
+  var CUR = '₹';
+
+  /* ---- Formatting ------------------------------------------------------- */
+
+  /* Indian grouping: 12,34,567 rather than 1,234,567, since that is how the figure
+     is read back to a shopkeeper and how every printed slip already shows it. */
+  function money(v) { return CUR + Math.round(v).toLocaleString('en-IN'); }
+  function shortMoney(v) {
+    if (Math.abs(v) >= 100000) return CUR + (v / 100000).toFixed(1) + 'L';
+    if (Math.abs(v) >= 1000) return CUR + (v / 1000).toFixed(1) + 'k';
+    return CUR + Math.round(v);
+  }
+  function pct(v) { return (v >= 0 ? '↑ ' : '↓ ') + Math.abs(v).toFixed(1) + '%'; }
+  function accent() {
+    return getComputedStyle(document.documentElement).getPropertyValue('--teal').trim();
+  }
+
+  /* ---- The cards -------------------------------------------------------- */
+
+  function metricCard(o) {
+    var change = o.change === null || o.change === undefined
+      ? '<div class="metric-change">' + (o.changeText || '') + '</div>'
+      : '<div class="metric-change ' + (o.change >= 0 ? 'positive' : 'negative') + '">'
+        + pct(o.change) + ' ' + (o.changeText || '') + '</div>';
+    return '<div class="metric-card"' + (o.nav ? ' data-nav="' + o.nav + '"' : '') + '>'
+      + '<div class="metric-label">' + o.label + '</div>'
+      + '<p class="metric-value">' + o.value + '</p>'
+      + change
+      + '<div class="metric-sub">' + o.sub + '</div>'
+      + '</div>';
+  }
+
+  function renderMetrics(d) {
+    document.getElementById('metrics').innerHTML = [
+      metricCard({
+        label: 'Total Sales', value: money(d.salesToday),
+        change: d.salesChange, changeText: 'vs yesterday',
+        sub: d.bills + ' bills • Avg ' + money(d.avgBill), nav: 'bills'
+      }),
+      metricCard({
+        label: 'Transactions', value: d.bills,
+        change: d.billsChange, changeText: 'vs daily avg',
+        sub: money(d.avgBill) + ' avg per transaction', nav: 'bills'
+      }),
+      metricCard({
+        label: 'Payments Collected', value: money(d.collected),
+        change: null, changeText: d.collectedPct.toFixed(0) + '% collected',
+        sub: d.pending > 0 ? money(d.pending) + ' pending' : 'Nothing pending', nav: 'reports'
+      }),
+      metricCard({
+        label: 'Customers', value: d.customers,
+        change: null, changeText: d.newMembers + ' new members',
+        sub: d.repeat + ' repeat customers', nav: 'customers'
+      })
+    ].join('');
+    document.querySelectorAll('.metric-card[data-nav]').forEach(function (el) {
+      el.addEventListener('click', function () { POS.open(el.getAttribute('data-nav')); });
+    });
+  }
+
+  /* ---- The alert band --------------------------------------------------- */
+
+  function renderAlerts(a) {
+    var host = document.getElementById('alerts');
+    if (!a || !a.enabled || !a.shown.length) { host.innerHTML = ''; return; }
+    var html = '<div class="alerts-head">STOCK ALERTS</div>';
+    a.shown.forEach(function (it) {
+      html += '<div class="alert-box" data-id="' + it.id + '">'
+        + '<div style="flex:1"><div class="alert-name">' + esc(it.name) + '</div>'
+        + '<div class="alert-state">' + (it.out ? 'Out of stock' : 'Running low') + '</div></div>'
+        + '<div class="alert-qty">' + it.quantity + '</div>'
+        + '<div class="alert-x" data-x="' + it.id + '">✕</div>'
+        + '</div>';
+    });
+    var more = a.total - a.shown.length;
+    if (more > 0) html += '<div class="alert-more" id="alertMore">+' + more + ' more  →</div>';
+    host.innerHTML = html;
+
+    host.querySelectorAll('.alert-box').forEach(function (el) {
+      el.addEventListener('click', function () { POS.open('lowstock'); });
+    });
+    host.querySelectorAll('.alert-x').forEach(function (el) {
+      el.addEventListener('click', function (e) {
+        e.stopPropagation();
+        POS.dismissAlert(parseInt(el.getAttribute('data-x'), 10));
+      });
+    });
+    var m = document.getElementById('alertMore');
+    if (m) m.addEventListener('click', function () { POS.open('lowstock'); });
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  /* ---- The charts ------------------------------------------------------- */
+
+  var gray = '#999', gridColor = '#f0f0f0';
+
+  function base() {
+    return {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 300 },
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: gray }, grid: { color: gridColor } },
+        y: { ticks: { color: gray }, grid: { color: gridColor } }
+      }
+    };
+  }
+
+  /* A card with nothing to draw says so. Returns false when there is data, so each
+     chart reads "if (!ready(...)) return;" and gets out of its own way. */
+  function ready(wrapId, canvasId, rows, message) {
+    var wrap = document.getElementById(wrapId);
+    if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
+    if (rows && rows.length) {
+      wrap.innerHTML = '<canvas id="' + canvasId + '"></canvas>';
+      return true;
+    }
+    wrap.innerHTML = '<div class="empty">' + message + '</div>';
+    return false;
+  }
+
+  function ctx(id) { return document.getElementById(id).getContext('2d'); }
+
+  function renderHourly(rows) {
+    if (!ready('wrap-hourly', 'hourlyChart', rows, 'No sales yet today')) return;
+    var o = base();
+    o.scales.y.ticks.callback = shortMoney;
+    charts.hourlyChart = new Chart(ctx('hourlyChart'), {
+      type: 'line',
+      data: {
+        labels: rows.map(function (r) { return r.label; }),
+        datasets: [{
+          data: rows.map(function (r) { return r.value; }),
+          borderColor: accent(), backgroundColor: accent() + '20',
+          borderWidth: 2.5, fill: true, tension: 0.4,
+          pointRadius: 4, pointBackgroundColor: accent(),
+          pointBorderColor: '#fff', pointBorderWidth: 2
+        }]
+      },
+      options: o
+    });
+  }
+
+  function renderPayment(rows) {
+    if (!ready('wrap-payment', 'paymentChart', rows, 'Nothing collected yet today')) return;
+    var total = rows.reduce(function (s, r) { return s + r.value; }, 0);
+    charts.paymentChart = new Chart(ctx('paymentChart'), {
+      type: 'doughnut',
+      data: {
+        labels: rows.map(function (r) { return r.label; }),
+        datasets: [{
+          data: rows.map(function (r) { return r.value; }),
+          backgroundColor: [accent(), '#EB6834', '#1baf7a', '#7a6ff0', '#f0b429'],
+          borderColor: '#fff', borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 300 },
+        plugins: {
+          legend: { display: true, position: 'right', labels: { color: '#666', boxWidth: 12, font: { size: 12 } } },
+          tooltip: {
+            callbacks: {
+              label: function (c) {
+                var share = total ? (c.parsed / total * 100).toFixed(0) : 0;
+                return c.label + ': ' + money(c.parsed) + ' (' + share + '%)';
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  function horizontalBars(wrapId, canvasId, rows, message) {
+    if (!ready(wrapId, canvasId, rows, message)) return;
+    var o = base();
+    o.indexAxis = 'y';
+    o.scales.x.ticks.callback = shortMoney;
+    charts[canvasId] = new Chart(ctx(canvasId), {
+      type: 'bar',
+      data: {
+        labels: rows.map(function (r) { return r.label; }),
+        datasets: [{
+          data: rows.map(function (r) { return r.value; }),
+          backgroundColor: accent(), borderRadius: 4, borderSkipped: false
+        }]
+      },
+      options: o
+    });
+  }
+
+  /* Fast movers and slow movers in one chart, and they are two groups rather than
+     one ranking: the point is not that this item outsold that one, it is which end of
+     the shelf each is at. So they are two datasets with two colours and a legend, and
+     the slow half keeps its labels even when its bars are nothing - an item that sold
+     zero is exactly the one being looked for, and a missing bar is the finding. */
+  function renderMovement(m) {
+    var note = document.getElementById('movementNote');
+    if (note) note.textContent = m ? '· last ' + m.days + ' days' : '';
+    var rows = m ? m.fast.concat(m.slow) : [];
+    if (!ready('wrap-movement', 'movementChart', rows, 'Nothing has sold in the last 30 days')) return;
+
+    var labels = rows.map(function (r) { return r.label; });
+    var fastN = m.fast.length;
+    var o = base();
+    o.indexAxis = 'y';
+    o.scales.x.beginAtZero = true;
+    o.scales.x.ticks.precision = 0;
+    o.plugins.legend = {
+      display: true, position: 'bottom',
+      labels: { color: '#666', boxWidth: 12, font: { size: 12 } }
+    };
+    o.plugins.tooltip = {
+      callbacks: {
+        label: function (c) {
+          var r = rows[c.dataIndex];
+          var line = qty(r.value) + ' sold';
+          return m.stockTracked ? line + ' · ' + r.stock + ' in stock' : line;
+        }
+      }
+    };
+    charts.movementChart = new Chart(ctx('movementChart'), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'Fast moving',
+            /* One bar per row across both datasets, with the other half left null,
+               so the two colours sit in one column of labels rather than in two. */
+            data: rows.map(function (r, i) { return i < fastN ? r.value : null; }),
+            backgroundColor: accent(), borderRadius: 4, borderSkipped: false
+          },
+          {
+            label: 'Slow moving',
+            data: rows.map(function (r, i) { return i >= fastN ? r.value : null; }),
+            backgroundColor: '#EB6834', borderRadius: 4, borderSkipped: false
+          }
+        ]
+      },
+      options: o
+    });
+  }
+
+  /* Whole counts stay whole - "3 sold", not "3.00 sold" - but a shop selling by
+     weight gets its decimals. */
+  function qty(v) { return v % 1 === 0 ? String(v) : v.toFixed(2); }
+
+  function renderDaily(rows) {
+    if (!ready('wrap-daily', 'dailyChart', rows, 'No sales in the last seven days')) return;
+    var o = base();
+    o.scales.y.beginAtZero = true;
+    o.scales.y.ticks.callback = shortMoney;
+    charts.dailyChart = new Chart(ctx('dailyChart'), {
+      type: 'bar',
+      data: {
+        labels: rows.map(function (r) { return r.label; }),
+        datasets: [{
+          data: rows.map(function (r) { return r.value; }),
+          backgroundColor: accent(), borderRadius: 4, borderSkipped: false
+        }]
+      },
+      options: o
+    });
+  }
+
+  /* ---- The trade bands -------------------------------------------------- */
+
+  /* One card. Everything under the big figure is optional, so a card with nothing
+     sensible to put in a bar or nothing to conclude simply leaves them out rather
+     than drawing an empty track or an unearned verdict. */
+  function specialtyCard(o) {
+    var html = '<div class="specialty-card">'
+      + '<div class="specialty-card-label">' + o.label + '</div>'
+      + '<p class="specialty-value">' + o.value + '</p>'
+      + '<div class="specialty-metric">' + o.sub + '</div>';
+    if (o.pct !== undefined && o.pct !== null) {
+      html += '<div class="progress-bar"><div class="progress-fill" style="width:'
+        + Math.max(0, Math.min(100, o.pct)) + '%'
+        + (o.color ? ';background:' + o.color : '') + '"></div></div>';
+    }
+    if (o.badge) html += '<div class="status-badge status-' + o.badge.kind + '">' + o.badge.text + '</div>';
+    if (o.foot) html += '<div class="specialty-foot">' + o.foot + '</div>';
+    return html + '</div>';
+  }
+
+  function band(labelClass, title, cards) {
+    return '<div class="specialty-row">'
+      + '<div class="specialty-label ' + labelClass + '">' + title + '</div>'
+      + '<div class="specialty-grid">' + cards.join('') + '</div>'
+      + '</div>';
+  }
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  /* How long ago, as a person would say it rather than as a number of minutes. */
+  function ago(minutes) {
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return Math.round(minutes) + ' min ago';
+    if (minutes < 1440) {
+      var hours = minutes / 60;
+      return (hours < 2 ? '1 hour' : Math.round(hours) + ' hours') + ' ago';
+    }
+    var days = Math.round(minutes / 1440);
+    return days === 1 ? 'yesterday' : days + ' days ago';
+  }
+
+  /* The four a counter asks about: what is not selling, what came in last, what is in
+     the drawer, and what has gone out on trust. Each reads a column this app's own
+     screens write - see the note above DashboardDao.retail for the ones that do not
+     exist and are therefore not here. */
+  function retailBand(g) {
+    var danger = cssVar('--danger'), warning = cssVar('--warning');
+    return band('grocery-label', '📦 Retail Metrics', [
+      specialtyCard({
+        label: 'Unsold products', value: g.unsold,
+        sub: g.products ? 'of ' + g.products + ', no sale in ' + g.days + ' days'
+                        : 'No products yet',
+        pct: g.products ? g.unsold / g.products * 100 : 0, color: warning,
+        badge: !g.products ? null
+             : g.unsold === 0 ? { kind: 'good', text: 'All moving' }
+             : g.unsold / g.products >= 0.4 ? { kind: 'critical', text: 'Long tail' }
+             : { kind: 'warning', text: 'Worth a look' },
+        /* Only the ones actually holding something cost anything to keep, so that is
+           the half worth pricing. */
+        foot: g.stockTracked && g.unsoldStocked
+            ? g.unsoldStocked + ' of them holding ' + money(g.unsoldValue) + ' of stock' : ''
+      }),
+      specialtyCard({
+        label: 'Last bill', value: g.hasLast ? money(g.lastAmount) : '—',
+        sub: g.hasLast ? (g.lastNumber ? 'Bill ' + esc(g.lastNumber) : 'Most recent sale')
+                       : 'Nothing billed yet',
+        badge: !g.hasLast ? null
+             : g.lastToday ? { kind: 'good', text: 'Today' }
+             : { kind: 'warning', text: 'Nothing today yet' },
+        foot: g.hasLast ? ago(g.lastMinutes) : ''
+      }),
+      specialtyCard({
+        label: 'Cash in hand', value: money(g.cash),
+        sub: 'Taken today, net of change',
+        pct: g.takings ? g.cash / g.takings * 100 : 0,
+        /* Takings, not a reconciled drawer: this app records no opening float and no
+           money taken out, so it can only speak for what came over the counter. */
+        foot: g.takings ? Math.round(g.cash / g.takings * 100) + '% of ' + money(g.takings) + ' taken today'
+                        : 'Nothing taken yet today'
+      }),
+      specialtyCard({
+        label: 'Credit sales', value: g.creditCount,
+        sub: g.creditCount ? money(g.creditValue) + ' out on trust today'
+                           : 'Nothing on credit today',
+        pct: g.bills ? g.creditCount / g.bills * 100 : 0, color: danger,
+        badge: !g.owed ? { kind: 'good', text: 'Nothing outstanding' }
+             : { kind: 'warning', text: money(g.owed) + ' owed' },
+        foot: g.bills ? 'of ' + g.bills + ' bills today' : ''
+      })
+    ]);
+  }
+
+  /* The floor and the kitchen, mostly in the present tense. Nothing here claims to
+     know how long a finished meal took - settling a table stamps no second time - so
+     the durations are all "so far". */
+  function restaurantBand(r) {
+    var occupancy = r.tables ? r.occupied / r.tables * 100 : 0;
+    var danger = cssVar('--danger');
+    var takings = r.dineIn + r.takeAway;
+    var dineShare = takings ? r.dineIn / takings * 100 : 0;
+    return band('restaurant-label', '🍽️ Restaurant Metrics', [
+      specialtyCard({
+        label: 'Tables occupied', value: r.tables ? Math.round(occupancy) + '%' : '—',
+        sub: r.tables ? r.occupied + ' of ' + r.tables + ' tables' : 'No tables set up',
+        pct: occupancy,
+        badge: !r.tables ? null
+             : occupancy >= 80 ? { kind: 'critical', text: 'Full' }
+             : occupancy >= 30 ? { kind: 'good', text: 'Busy' }
+             : { kind: 'warning', text: 'Quiet' },
+        foot: r.occupied ? 'Seated ' + Math.round(r.seatedMinutes) + ' min on average so far' : 'Room is empty'
+      }),
+      specialtyCard({
+        label: 'Table turns', value: r.tables ? r.turns.toFixed(1) + 'x' : '—',
+        sub: r.tables ? r.seatings + ' seatings across ' + r.tables + ' tables' : 'No tables set up',
+        pct: r.turns / r.turnsTarget * 100,
+        foot: 'Today, target ' + r.turnsTarget.toFixed(1) + 'x'
+      }),
+      specialtyCard({
+        label: 'Kitchen queue', value: r.openKots,
+        sub: r.openKots ? 'Tickets not yet billed' : 'Kitchen is clear',
+        pct: r.openKots ? r.oldestKot / r.kotLate * 100 : 0, color: danger,
+        badge: !r.openKots ? { kind: 'good', text: 'Clear' }
+             : r.oldestKot >= r.kotLate ? { kind: 'critical', text: 'Running late' }
+             : { kind: 'good', text: 'On time' },
+        /* Age since raised: a ticket is only ever closed when the bill prints, so
+           "prepared" is not a state this database has. */
+        foot: r.openKots ? 'Oldest raised ' + Math.round(r.oldestKot) + ' min ago' : ''
+      }),
+      specialtyCard({
+        label: 'Dine in vs take away', value: takings ? Math.round(dineShare) + '%' : '—',
+        sub: takings ? 'of today’s takings dine in' : 'Nothing billed yet today',
+        pct: dineShare,
+        foot: takings ? money(r.dineIn) + ' dine in · ' + money(r.takeAway) + ' take away' : ''
+      })
+    ]);
+  }
+
+  /* The band for this till's trade - DashboardDao sends one key or the other, never
+     both. Each is still guarded, so a snapshot carrying neither leaves the section
+     out entirely rather than throwing. */
+  function renderSpecialty(d) {
+    var html = '';
+    if (d.retail) html += retailBand(d.retail);
+    if (d.restaurant) html += restaurantBand(d.restaurant);
+    var host = document.getElementById('specialty');
+    host.innerHTML = html;
+    host.style.display = html ? '' : 'none';
+  }
+
+  /* ---- The one entry point --------------------------------------------- */
+
+  function applyAccent(hex) {
+    if (!hex) return;
+    document.documentElement.style.setProperty('--teal', hex);
+    document.documentElement.style.setProperty('--teal-bg', hex + '1A');
+  }
+
+  /* Called by the fragment, with everything DashboardDao read. */
+  function render(json) {
+    var d = typeof json === 'string' ? JSON.parse(json) : json;
+    CUR = d.currency || '₹';
+    applyAccent(d.accent);
+    document.getElementById('subtitle').textContent = 'Today, ' + d.date + ' • Live dashboard';
+    renderAlerts(d.alerts);
+    renderMetrics(d);
+    renderHourly(d.hourly);
+    renderPayment(d.payments);
+    horizontalBars('wrap-category', 'categoryChart', d.categories, 'Nothing sold yet today');
+    renderMovement(d.movement);
+    renderDaily(d.daily);
+    renderSpecialty(d);
+  }
+</script>
+</body>
+</html>
