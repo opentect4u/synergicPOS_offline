@@ -55,12 +55,6 @@ class MainActivity : AppCompatActivity() {
 
         /** Named once: the drawer lists this leaf by it and [handleLeaf] opens it by it. */
         private const val CALCULATOR = "Calculator"
-
-        /** Anything out of stock, which cannot be sold at all. */
-        private const val STOCK_OUT_COLOUR = "#D93025"
-
-        /** Only running low - the same amber the sale screen's stock pill uses. */
-        private const val STOCK_LOW_COLOUR = "#F9AB00"
     }
 
     private lateinit var drawerLayout: DrawerLayout
@@ -72,9 +66,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var headerBar: View
     private lateinit var btnBack: ImageButton
     private lateinit var tvHeaderTitle: TextView
-
-    /** The stock badge in the header - see [refreshStockAlert]. */
-    private lateinit var tvStockAlert: TextView
     private lateinit var tvHeaderSubtitle: TextView
 
     /** Title of the page currently open, used to highlight its sidebar item and keep
@@ -109,8 +100,6 @@ class MainActivity : AppCompatActivity() {
         btnBack = findViewById(R.id.btnBack)
         tvHeaderTitle = findViewById(R.id.tvHeaderTitle)
         tvHeaderSubtitle = findViewById(R.id.tvHeaderSubtitle)
-        tvStockAlert = findViewById(R.id.tvStockAlert)
-        tvStockAlert.setOnClickListener { showStockAlerts() }
 
         // Global header actions
         findViewById<View>(R.id.btnMenu).setOnClickListener { openDrawer() }
@@ -130,10 +119,6 @@ class MainActivity : AppCompatActivity() {
                 override fun onFragmentResumed(fm: FragmentManager, f: Fragment) {
                     if (f is LoginFragment || f is RegistrationFragment) {
                         headerBar.visibility = View.GONE
-                        // Nobody is signed in, so there is no store to count and the
-                        // badge must not survive a logout into the next login.
-                        stockAlerts = StockAlerts.NONE
-                        tvStockAlert.visibility = View.GONE
                         drawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
                         if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
                             drawerLayout.closeDrawer(GravityCompat.START, false)
@@ -195,115 +180,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         autoBackupHandler.removeCallbacksAndMessages(null)
-        stockHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
-    }
-
-    // ---- Low stock ----------------------------------------------------------
-
-    /** What the last look at the stock found, so the badge and the list agree. */
-    private var stockAlerts: StockAlerts.Summary = StockAlerts.NONE
-
-    private val stockHandler = android.os.Handler(android.os.Looper.getMainLooper())
-
-    /** Whether a count is already running - see [refreshStockAlert]. Main thread only. */
-    private var stockRefreshing = false
-
-    /**
-     * Re-counts what is out or running low and shows it in the header.
-     *
-     * Called on every screen change rather than once, because the count moves as the
-     * till is used: a sale takes the last of something, a Stock In entry puts it back,
-     * and a badge fixed at what login found would be wrong within the hour.
-     *
-     * Read on a worker thread - it is a query over the product master, and the screen
-     * change that triggered it is not something to hold up. [after] runs on the main
-     * thread once the count is in, for the caller that wants to do something with it.
-     *
-     * A count already running means this one can be dropped: navigating twice quickly
-     * would otherwise start a thread per screen, and the second answer would be the
-     * same as the first. [force] is for the caller that cannot be dropped - the login
-     * announcement, which has to run even if the landing screen's own refresh got
-     * there first, or the operator would never be told.
-     */
-    private fun refreshStockAlert(
-        force: Boolean = false,
-        after: (StockAlerts.Summary) -> Unit = {}
-    ) {
-        if (!StockAlerts.enabled(this)) {
-            stockAlerts = StockAlerts.NONE
-            tvStockAlert.visibility = View.GONE
-            after(StockAlerts.NONE)
-            return
-        }
-        if (stockRefreshing && !force) return
-        stockRefreshing = true
-        Thread {
-            val found = StockAlerts.find(applicationContext)
-            stockHandler.post {
-                stockRefreshing = false
-                if (isFinishing || isDestroyed) return@post
-                stockAlerts = found
-                showStockBadge(found)
-                after(found)
-            }
-        }.start()
-    }
-
-    /**
-     * Draws the badge, or takes it away when there is nothing to say.
-     *
-     * Coloured for the worse of the two states it is reporting: red while anything is
-     * out of stock, amber when the shelf is only thinning. An operator reads the
-     * colour before the number.
-     */
-    private fun showStockBadge(summary: StockAlerts.Summary) {
-        if (summary.isEmpty) {
-            tvStockAlert.visibility = View.GONE
-            return
-        }
-        val colour = Color.parseColor(if (summary.out.isNotEmpty()) STOCK_OUT_COLOUR else STOCK_LOW_COLOUR)
-        tvStockAlert.visibility = View.VISIBLE
-        tvStockAlert.text = "⚠  ${summary.total}"
-        tvStockAlert.contentDescription = summary.headline
-        tvStockAlert.background = android.graphics.drawable.GradientDrawable().apply {
-            cornerRadius = 10 * resources.displayMetrics.density
-            setColor(colour)
-        }
-    }
-
-    /**
-     * Lists what needs attention, and offers the screen that does something about it.
-     *
-     * Named rather than counted. "7 items need attention" tells an operator to go and
-     * look; the names tell them whether it is worth going now, and that is the whole
-     * value of raising this at the start of a shift rather than when the shelf is
-     * already empty.
-     */
-    private fun showStockAlerts() {
-        StockAlerts.showList(
-            context = this,
-            title = "Stock needs attention",
-            headline = stockAlerts.headline,
-            items = stockAlerts.items
-        ) { navigateTo(InventoryFragment()) }
-    }
-
-    /**
-     * The one look at the stock that the operator did not ask for.
-     *
-     * Raised once, just after login, because that is when it can still be acted on -
-     * before the shop opens rather than when a customer is at the counter. Everything
-     * after that is the header badge, which waits to be tapped.
-     */
-    fun announceStockAlertsAfterLogin() {
-        refreshStockAlert(force = true) { summary -> if (!summary.isEmpty) showStockAlerts() }
     }
 
     /** Updates the global header title/subtitle and back-button for [f]. */
     private fun updateHeader(f: Fragment) {
         tvHeaderTitle.text = titleFor(f)
-        refreshStockAlert()
         val user = SessionManager.currentUser
         tvHeaderSubtitle.text = "Hello, ${user?.userId ?: "User"}"
         // Back is hidden on whatever screen is the root - the Sale screen after login,
@@ -605,6 +487,7 @@ class MainActivity : AppCompatActivity() {
             "KOT Cancel Report" -> navigateTo(KotCancelReportFragment())
             "Calculator Report" -> navigateTo(CalculatorReportFragment())
             "Stock Report" -> navigateTo(StockReportFragment())
+            "Low Stock Report" -> navigateTo(LowStockReportFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")
                     com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment()

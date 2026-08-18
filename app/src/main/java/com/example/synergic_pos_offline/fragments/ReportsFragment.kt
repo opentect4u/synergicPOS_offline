@@ -62,6 +62,7 @@ class ReportsFragment : Fragment() {
             "UDF-Wise Report",
             "Payment-Wise Report",
             "Unsold Product Report",
+            LOW_STOCK_REPORT,
             "Opr Bill Report",
             "Category/Dept Wise Bill Report",
             "Payment & Receipt",
@@ -107,6 +108,7 @@ class ReportsFragment : Fragment() {
                 "Month Wise Report" -> openFragment(MonthWiseReportFragment())
                 "Year Wise Report" -> openFragment(YearWiseReportFragment())
                 STOCK_REPORT -> openFragment(StockReportFragment())
+                LOW_STOCK_REPORT -> openFragment(LowStockReportFragment())
                 "UDF-Wise Report" -> openFragment(UdfWiseReportFragment())
                 "UDF Wise Item Report" -> openFragment(UdfWiseItemReportFragment())
                 "Customer Item Wise RPT" -> openFragment(CustomerItemWiseReportFragment())
@@ -121,6 +123,9 @@ class ReportsFragment : Fragment() {
     companion object {
         /** Named once: the tile is filtered by this and opened by it. */
         private const val STOCK_REPORT = "Stock Report"
+
+        /** Named once, for the same reason - and gated on the same setting. */
+        private const val LOW_STOCK_REPORT = "Low Stock Report"
 
         /**
          * Reports that only exist in Restaurant mode.
@@ -144,7 +149,8 @@ class ReportsFragment : Fragment() {
          * still reachable, just no longer where anyone looks for it.
          */
         fun isVisible(context: Context, title: String): Boolean = when {
-            title == STOCK_REPORT -> GeneralSettingsDao.isStockEnabled(context)
+            title == STOCK_REPORT || title == LOW_STOCK_REPORT ->
+                GeneralSettingsDao.isStockEnabled(context)
             title in RESTAURANT_ONLY -> SettingsCache.value(context, "G", "Mode") == "R"
             else -> true
         }

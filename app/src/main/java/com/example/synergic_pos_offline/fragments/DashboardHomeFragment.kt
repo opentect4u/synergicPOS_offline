@@ -18,6 +18,7 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.database.StockDao
 import com.example.synergic_pos_offline.utils.StockAlerts
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
@@ -171,6 +172,11 @@ class DashboardHomeFragment : Fragment() {
         // theme change, coming back from settings) picks the flag up.
         val stockOn = GeneralSettingsDao.isStockEnabled(ctx)
         content.removeAllViews()
+
+        // Before anything else on the page. What is out or running low is the one
+        // thing on this dashboard that is not a figure to read but a job to do, and
+        // it is worth less the further down it sits.
+        if (stockOn) content.addView(stockAlertPanel(ctx))
 
         content.addView(snapshotHeader(ctx))
 
@@ -535,6 +541,125 @@ class DashboardHomeFragment : Fragment() {
         ).also { it.topMargin = dp(10) }
     }
 
+    // ---- The stock alerts at the head of the page ---------------------------
+
+    /**
+     * What the alert panel found, held so a rebuild does not blank it.
+     *
+     * Filled asynchronously, because it is a query over the product master and the
+     * dashboard has plenty else to draw first. Until it arrives the panel takes no
+     * height at all, which is better than a box that appears empty and then fills.
+     */
+    private var alerts: StockAlerts.Summary = StockAlerts.NONE
+
+    /**
+     * The red boxes at the top of the dashboard: one per item that needs attention,
+     * up to [ALERT_BOXES], and a way to see the rest.
+     *
+     * Named rather than counted, which is the whole point of putting them here. A
+     * figure saying "5 items need attention" is one an operator has to go and act on;
+     * five names are five things they can decide about while looking at them.
+     */
+    private fun stockAlertPanel(ctx: Context): View {
+        val panel = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            id = View.generateViewId()
+        }
+        alertPanelId = panel.id
+        fillStockAlerts(ctx, panel)
+        // Read after the panel exists, so the first draw is not held up by it.
+        refreshStockAlerts()
+        return panel
+    }
+
+    /** The id of the panel above, so a later count can find and refill it. */
+    private var alertPanelId: Int = View.NO_ID
+
+    private fun fillStockAlerts(ctx: Context, panel: LinearLayout) {
+        panel.removeAllViews()
+        if (alerts.isEmpty) return
+
+        panel.addView(label(ctx, "STOCK ALERTS", 11f, red, bold = true, spacing = 0.05f).apply {
+            (LinearLayout.LayoutParams(-1, -2)).also { it.bottomMargin = dp(6); layoutParams = it }
+        })
+        alerts.items.take(ALERT_BOXES).forEach { panel.addView(alertBox(ctx, it)) }
+
+        // Only where there is something the three boxes did not say. A More button
+        // over a complete list would send an operator somewhere to read what they
+        // have just read.
+        val more = alerts.total - ALERT_BOXES
+        if (more > 0) panel.addView(moreAlertsButton(ctx, more))
+    }
+
+    /**
+     * One item, in red, with what is left of it.
+     *
+     * Red for both states rather than red and amber. On this panel the two are one
+     * message - go and look at the shelf - and the box says which it is in words
+     * beside the count, where an operator reads it rather than has to decode it.
+     */
+    private fun alertBox(ctx: Context, item: StockAlerts.Item): View {
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10f)
+                setColor(ColorUtils.setAlphaComponent(red, 0x1A))
+                setStroke(dp(1), ColorUtils.setAlphaComponent(red, 0x66))
+            }
+            (LinearLayout.LayoutParams(-1, -2)).also { it.bottomMargin = dp(8); layoutParams = it }
+            isClickable = true
+            setOnClickListener { navigate(LowStockReportFragment()) }
+        }
+        val text = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        }
+        text.addView(this.text(ctx, item.name, 15f, textMain, bold = true))
+        text.addView(
+            this.text(
+                ctx,
+                if (item.isOut) "Out of stock" else "Running low",
+                12f, red
+            )
+        )
+        box.addView(text)
+        box.addView(this.text(ctx, StockDao.trim(item.quantity), 20f, red, bold = true))
+        return box
+    }
+
+    /** "+2 MORE" - opens the report that lists every one of them. */
+    private fun moreAlertsButton(ctx: Context, more: Int): View = TextView(ctx).apply {
+        text = "+$more more  →"
+        textSize = 13f
+        gravity = Gravity.CENTER
+        setTextColor(red)
+        setTypeface(typeface, Typeface.BOLD)
+        setPadding(0, dp(10), 0, dp(10))
+        background = GradientDrawable().apply {
+            cornerRadius = dp(10f)
+            setStroke(dp(1), ColorUtils.setAlphaComponent(red, 0x66))
+        }
+        (LinearLayout.LayoutParams(-1, -2)).also { it.bottomMargin = dp(14); layoutParams = it }
+        isClickable = true
+        setOnClickListener { navigate(LowStockReportFragment()) }
+    }
+
+    /** Counts what needs attention off the main thread, then fills the panel. */
+    private fun refreshStockAlerts() {
+        val appCtx = requireContext().applicationContext
+        Thread {
+            val found = StockAlerts.find(appCtx)
+            view?.post {
+                if (!isAdded || alertPanelId == View.NO_ID) return@post
+                alerts = found
+                val panel = view?.findViewById<LinearLayout>(alertPanelId) ?: return@post
+                fillStockAlerts(requireContext(), panel)
+            }
+        }.start()
+    }
+
     /**
      * Names the products behind one of the inventory panel's two counts.
      *
@@ -569,6 +694,18 @@ class DashboardHomeFragment : Fragment() {
             .replace(R.id.fragment_container, fragment)
             .addToBackStack(null)
             .commit()
+    }
+
+    private companion object {
+        /**
+         * How many items get a box of their own at the top of the dashboard.
+         *
+         * Three, because the panel sits above everything else on the page and a
+         * fourth would start pushing the day's figures off the first screen. The
+         * rest are reached through the More button, which is what the Low Stock
+         * Report is for.
+         */
+        const val ALERT_BOXES = 3
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
