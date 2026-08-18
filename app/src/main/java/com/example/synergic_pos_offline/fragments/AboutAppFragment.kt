@@ -361,9 +361,21 @@ class AboutAppFragment : Fragment(), TitledScreen {
             R.id.tilAutoBackupHours
         )
 
+        // How long backups are kept. A fixed set of periods rather than a typed number:
+        // this is a filing decision, not a measurement, and every choice here is one
+        // somebody would actually make.
+        val retention = view.findViewById<com.google.android.material.textfield.MaterialAutoCompleteTextView>(
+            R.id.actBackupRetention
+        )
+        val retentionLabels = AutoBackup.RETENTION_CHOICES.map { "$it days" }
+        retention.setAdapter(
+            android.widget.ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, retentionLabels)
+        )
+
         val current = AutoBackup.settings(requireContext())
         toggle.isChecked = current.enabled
         hours.setText(current.intervalHours.toString())
+        retention.setText("${current.retentionDays} days", false)
         intervalRow.visibility = if (current.enabled) View.VISIBLE else View.GONE
         showAutoBackupState(view)
 
@@ -391,18 +403,31 @@ class AboutAppFragment : Fragment(), TitledScreen {
             hoursField.error = null
 
             val interval = value ?: AutoBackup.settings(requireContext()).intervalHours
-            AutoBackup.save(requireContext(), toggle.isChecked, interval)
+            // The chosen period, or whatever is already stored if the box was left alone.
+            val keepDays = retention.text?.toString()?.filter { it.isDigit() }?.toIntOrNull()
+                ?: AutoBackup.settings(requireContext()).retentionDays
+            AutoBackup.save(requireContext(), toggle.isChecked, interval, keepDays)
             hours.setText(interval.toString())
+            retention.setText("$keepDays days", false)
+            // Apply the window straight away, so a shortened period clears the backups
+            // it just excluded rather than waiting for the next backup to do it.
+            val removed = AutoBackup.pruneOldBackups(requireContext())
             showAutoBackupState(view)
             DialogUtils.showSuccess(
                 context = requireContext(),
                 title = "Saved",
-                message = if (!toggle.isChecked) {
-                    "Automatic backup is off. Backups are only taken when you press Backup."
-                } else {
-                    "A backup will be taken every " +
-                        (if (interval == 1) "hour" else "$interval hours") +
-                        ", while the app is open, into Downloads/POSbackup."
+                message = buildString {
+                    append(
+                        if (!toggle.isChecked) {
+                            "Automatic backup is off. Backups are only taken when you press Backup."
+                        } else {
+                            "A backup will be taken every " +
+                                (if (interval == 1) "hour" else "$interval hours") +
+                                ", while the app is open, into Downloads/POSbackup."
+                        }
+                    )
+                    append("\n\nBackups are kept for $keepDays days; older ones are cleared away.")
+                    if (removed > 0) append(" $removed old backup(s) removed just now.")
                 }
             )
         }
@@ -424,7 +449,7 @@ class AboutAppFragment : Fragment(), TitledScreen {
         } else {
             val every = if (settings.intervalHours == 1) "every hour"
             else "every ${settings.intervalHours} hours"
-            "On - $every, while the app is open. " +
+            "On - $every, while the app is open, kept ${settings.retentionDays} days. " +
                 "Last: ${AutoBackup.lastRunDescription(requireContext())}"
         }
     }
@@ -850,12 +875,14 @@ class AboutAppFragment : Fragment(), TitledScreen {
      */
     private fun onBackup() = inBackground("Backing up…") {
         var summary: DatabaseBackup.Export? = null
-        // Writes the single always-latest backup file, replacing the previous one - the
-        // same file the automatic backup keeps, so there is one place to look and one
-        // file to find, however it was taken.
+        // The same folder, naming and retention the automatic ones use: one place to
+        // look, one convention, and a manual backup ages out of the window like any
+        // other rather than sitting there for ever.
+        val now = Date()
         val savedTo = Downloads.stream(
-            requireContext(), AutoBackup.LATEST_FILE, "application/sql", AutoBackup.FOLDER, overwrite = true
+            requireContext(), AutoBackup.fileName(now), "application/sql", AutoBackup.folderFor(now)
         ) { writer -> summary = DatabaseBackup.exportTo(requireContext(), writer) }
+        AutoBackup.pruneOldBackups(requireContext())
         val export = summary ?: error("nothing was written")
 
         // Says what was read as well as what was written. Reporting only the tables

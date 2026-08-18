@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One table on the Choose Table grid.
+
+  The status is the card: its tint, its border, its icon and its label all come from
+  the one colour, so a floor can be read at a glance - green free, red occupied,
+  amber reserved, blue waiting on its bill. Filled in TableAdapter.
+-->
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/cardTableTile"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="7dp"
+    app:cardCornerRadius="14dp"
+    app:cardElevation="0dp"
+    app:cardBackgroundColor="#E7F8EE"
+    app:strokeWidth="1.5dp"
+    app:strokeColor="#16A34A"
+    android:clickable="true"
+    android:focusable="true"
+    app:rippleColor="#15000000">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="16dp">
+
+        <ImageView
+            android:id="@+id/ivTableIcon"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:src="@drawable/ic_table"
+            app:tint="#16A34A"
+            android:contentDescription="Table" />
+
+        <TextView
+            android:id="@+id/tvTableCode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="Table 1"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_main" />
+
+        <TextView
+            android:id="@+id/tvTableStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:gravity="center"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="Available"
+            android:textSize="12sp"
+            android:textColor="#16A34A" />
+
+        <!-- Where the table's order stands with the kitchen. Hidden for a table with
+             no order on it, which has nothing to have sent. -->
+        <TextView
+            android:id="@+id/tvTableKot"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="2dp"
+            android:background="@drawable/bg_status_tag"
+            android:maxLines="1"
+            android:text="KOT Pending"
+            android:textSize="9sp"
+            android:textStyle="bold"
+            android:textAllCaps="true"
+            android:letterSpacing="0.04"
+            android:textColor="@color/white"
+            android:visibility="gone" />
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

@@ -451,7 +451,14 @@ class MainActivity : AppCompatActivity() {
             "Bill Settings" -> navigateTo(BillSettingsFragment())
             "Tax Settings" -> navigateTo(TaxSettingsFragment())
             "App Settings" -> navigateTo(AppSettingsFragment())
-            "About App" -> navigateTo(AboutAppFragment())
+            // Hidden from a general user's menus when access is off - and refused here
+            // too, so a stale menu or a back-stack route cannot walk in behind that.
+            "About App" ->
+                if (GeneralSettingsDao.canAccessSection(this, GeneralSettingsDao.KEY_ACCESS_ABOUT_APP))
+                    navigateTo(AboutAppFragment())
+                else android.widget.Toast.makeText(
+                    this, "About App is not available for your login", android.widget.Toast.LENGTH_SHORT
+                ).show()
             // Opens on Connections; the Print Template tab is the other half of it.
             "Printer Settings" -> navigateTo(PrintSettingsFragment())
             CALCULATOR -> navigateTo(CalculatorFragment())
@@ -549,6 +556,7 @@ class MainActivity : AppCompatActivity() {
         val canMaster = GeneralSettingsDao.canAccessSection(context, GeneralSettingsDao.KEY_ACCESS_MASTER)
         val canSettings = GeneralSettingsDao.canAccessSection(context, GeneralSettingsDao.KEY_ACCESS_SETTINGS)
         val canReports = GeneralSettingsDao.canAccessSection(context, GeneralSettingsDao.KEY_ACCESS_REPORTS)
+        val canAboutApp = GeneralSettingsDao.canAccessSection(context, GeneralSettingsDao.KEY_ACCESS_ABOUT_APP)
 
         // Filtered by the same rule the Reports grid filters its tiles with, so the
         // drawer and the grid cannot disagree about which reports this till has -
@@ -598,17 +606,18 @@ class MainActivity : AppCompatActivity() {
                 TreeNode("User Management"),
                 TreeNode("Database Settings", databaseSettingsNodes)
             )))
-            if (canSettings) add(TreeNode("Settings", listOf(
-                TreeNode("General Settings"),
-                TreeNode("Bill Settings"),
-                TreeNode("Tax Settings"),
-               // TreeNode("Inventory & Stock Settings"),
+            if (canSettings) add(TreeNode("Settings", buildList {
+                add(TreeNode("General Settings"))
+                add(TreeNode("Bill Settings"))
+                add(TreeNode("Tax Settings"))
+               // add(TreeNode("Inventory & Stock Settings"))
                 // Same position it holds in the Settings tile grid, so the two ways
                 // in list the screens in one order.
-                TreeNode("Printer Settings"),
-                TreeNode("App Settings"),
-                TreeNode("About App")
-            )))
+                add(TreeNode("Printer Settings"))
+                add(TreeNode("App Settings"))
+                // About App is granted on its own - it carries the irreversible actions.
+                if (canAboutApp) add(TreeNode("About App"))
+            }))
             addAll(stockNodes)
             add(TreeNode("Sale"))
             // Sale Return + Advance Payment are grocery-only; omitted in Restaurant.

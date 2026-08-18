@@ -1,8 +1,14 @@
 package com.example.synergic_pos_offline.utils
 
+import android.content.ContentUris
 import android.content.Context
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import com.example.synergic_pos_offline.database.AppSettingsDao
+import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -42,17 +48,11 @@ object AutoBackup {
     /** When the last automatic backup was taken, as epoch millis. */
     private const val KEY_LAST_RUN = "Auto Backup Last Run"
 
+    /** How many days of backups to keep before the oldest are cleared away. */
+    private const val KEY_RETENTION = "Auto Backup Retention Days"
+
     /** The folder every backup goes under, automatic or not. */
     const val FOLDER = "POSbackup"
-
-    /**
-     * The single, always-latest backup file. Both the automatic backup and the manual
-     * Backup button write to this one name in [FOLDER] and overwrite it each time, so a
-     * new backup replaces the old rather than piling up a file per run. (The safety
-     * backups taken before an irreversible action keep their own dated names - those
-     * are meant to be found and restored individually, see [backupBefore].)
-     */
-    const val LATEST_FILE = "synergic_backup.sql"
 
     /** How often, when nobody has said otherwise. */
     const val DEFAULT_INTERVAL_HOURS = 1
@@ -66,16 +66,35 @@ object AutoBackup {
     const val MIN_INTERVAL_HOURS = 1
     const val MAX_INTERVAL_HOURS = 168
 
+    /**
+     * How long a backup is kept before it is cleared away, in days.
+     *
+     * The window rolls: at seven days, today's backups join the folder and the ones
+     * from eight days ago leave it, so the shop always has the last week and never an
+     * ever-growing pile. The choices the About screen offers.
+     */
+    val RETENTION_CHOICES = listOf(7, 15, 30, 60, 90)
+
+    /** How long backups are kept when nobody has said otherwise. */
+    const val DEFAULT_RETENTION_DAYS = 7
+
     // ---- The setting ---------------------------------------------------------
 
-    data class Settings(val enabled: Boolean, val intervalHours: Int)
+    data class Settings(
+        val enabled: Boolean,
+        val intervalHours: Int,
+        /** Days of backups to keep - see [RETENTION_CHOICES]. */
+        val retentionDays: Int = DEFAULT_RETENTION_DAYS
+    )
 
     fun settings(context: Context): Settings {
         val dao = AppSettingsDao(context)
         val hours = dao.get(KEY_INTERVAL)?.toIntOrNull() ?: DEFAULT_INTERVAL_HOURS
+        val days = dao.get(KEY_RETENTION)?.toIntOrNull() ?: DEFAULT_RETENTION_DAYS
         return Settings(
             enabled = dao.get(KEY_ENABLED) == "1",
-            intervalHours = hours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS)
+            intervalHours = hours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS),
+            retentionDays = days.coerceAtLeast(1)
         )
     }
 
@@ -95,13 +114,19 @@ object AutoBackup {
         return value.takeIf { it in MIN_INTERVAL_HOURS..MAX_INTERVAL_HOURS }
     }
 
-    fun save(context: Context, enabled: Boolean, intervalHours: Int) {
+    fun save(
+        context: Context,
+        enabled: Boolean,
+        intervalHours: Int,
+        retentionDays: Int = settings(context).retentionDays
+    ) {
         val dao = AppSettingsDao(context)
         dao.put(KEY_ENABLED, if (enabled) "1" else "0")
         dao.put(
             KEY_INTERVAL,
             intervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS).toString()
         )
+        dao.put(KEY_RETENTION, retentionDays.coerceAtLeast(1).toString())
     }
 
     /** When the last automatic backup was taken, or null if none has been. */
@@ -148,10 +173,17 @@ object AutoBackup {
     fun backupNow(context: Context): Outcome {
         val now = Date()
         return try {
+            // A file per backup, in that day's folder: the retention window keeps a
+            // rolling stretch of them, so each has to stand on its own rather than
+            // overwrite the one before it.
             val savedTo = Downloads.stream(
-                context, LATEST_FILE, "application/sql", FOLDER, overwrite = true
+                context, fileName(now), "application/sql", folderFor(now)
             ) { writer -> DatabaseBackup.exportTo(context, writer) }
             AppSettingsDao(context).put(KEY_LAST_RUN, System.currentTimeMillis().toString())
+            // Clear away whatever has aged out of the window, now that a fresh backup
+            // is safely on disk - never before, so a failed prune cannot leave the till
+            // with neither the old backups nor a new one.
+            pruneOldBackups(context)
             Outcome(taken = true, savedTo = savedTo)
         } catch (e: Exception) {
             android.util.Log.e("AutoBackup", "Automatic backup failed", e)
@@ -187,6 +219,77 @@ object AutoBackup {
         ) { writer ->
             DatabaseBackup.exportTo(context, writer, DatabaseBackup.DEVICE_IDENTITY)
         }
+    }
+
+    // ---- Retention -----------------------------------------------------------
+
+    /**
+     * Deletes the backups that have aged out of the retention window.
+     *
+     * The window is counted in whole days from today, and a backup's day is read from
+     * the folder it sits in (`POSbackup/2026-08-17`) rather than from a file timestamp:
+     * the folder is what the backup itself declared its day to be, and it survives the
+     * file being copied about. A retention of 7 keeps today plus the six days before
+     * it; on the eighth day the oldest of them goes.
+     *
+     * Best-effort by design - a backup that cannot be deleted (a file held open, a
+     * permission withdrawn) is left where it is rather than failing the backup that
+     * has just been taken.
+     *
+     * @return how many files were removed
+     */
+    fun pruneOldBackups(context: Context): Int {
+        val keepDays = settings(context).retentionDays
+        val cutoff = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, -(keepDays - 1))
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.time
+        val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+
+        /** True when [folderDay] ("2026-08-17") falls before the window opens. */
+        fun expired(folderDay: String): Boolean = runCatching {
+            dayFormat.parse(folderDay)!!.before(cutoff)
+        }.getOrDefault(false)   // an unreadable name is left alone rather than deleted
+
+        var removed = 0
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val projection = arrayOf(
+                MediaStore.Downloads._ID, MediaStore.Downloads.RELATIVE_PATH
+            )
+            // Everything this app has filed under the backup folder.
+            val where = "${MediaStore.Downloads.RELATIVE_PATH} LIKE ?"
+            val args = arrayOf("%${Environment.DIRECTORY_DOWNLOADS}/$FOLDER/%")
+            runCatching {
+                resolver.query(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, projection, where, args, null
+                )?.use { c ->
+                    val idCol = c.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+                    val pathCol = c.getColumnIndexOrThrow(MediaStore.Downloads.RELATIVE_PATH)
+                    while (c.moveToNext()) {
+                        // ".../POSbackup/2026-08-17/" - the day is the last part.
+                        val day = c.getString(pathCol).orEmpty().trim('/').substringAfterLast('/')
+                        if (!expired(day)) continue
+                        val uri = ContentUris.withAppendedId(
+                            MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(idCol)
+                        )
+                        if (runCatching { resolver.delete(uri, null, null) }.getOrDefault(0) > 0) removed++
+                    }
+                }
+            }
+        } else {
+            val base = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), FOLDER)
+            base.listFiles()?.forEach { dayDir ->
+                if (!dayDir.isDirectory || !expired(dayDir.name)) return@forEach
+                dayDir.listFiles()?.forEach { if (runCatching { it.delete() }.getOrDefault(false)) removed++ }
+                runCatching { dayDir.delete() }
+            }
+        }
+        if (removed > 0) {
+            android.util.Log.i("AutoBackup", "retention $keepDays day(s): removed $removed old backup file(s)")
+        }
+        return removed
     }
 
     // ---- Naming --------------------------------------------------------------

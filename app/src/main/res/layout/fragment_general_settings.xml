@@ -444,6 +444,19 @@
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swAccessReports" style="@style/BillSettingSwitch" />
                 </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- About App -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="About App" />
+                        <TextView style="@style/BillSettingSub"
+                            android:text="Access to About App - backup, restore and the actions that cannot be undone" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swAccessAboutApp" style="@style/BillSettingSwitch" />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

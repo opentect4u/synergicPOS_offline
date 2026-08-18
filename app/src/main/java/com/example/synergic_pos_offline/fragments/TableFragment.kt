@@ -35,7 +35,7 @@ class TableFragment : DataTableFragment() {
     private var sections: List<TableDao.SectionOption> = emptyList()
     private var waiterNames: Map<Long, String> = emptyMap()
 
-    private val statuses = listOf("Available", "Occupied", "Reserved", "Cleaning", "Billing", "Blocked")
+    private val statuses = listOf("Available", "Occupied", "KOT Printed", "Reserved", "Cleaning", "Billing", "Blocked")
 
     override fun loadRows(): MutableList<DataRow> {
         cache.clear()

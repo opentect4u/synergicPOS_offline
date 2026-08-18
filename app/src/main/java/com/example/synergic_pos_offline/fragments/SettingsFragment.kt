@@ -171,7 +171,12 @@ class SettingsFragment : Fragment() {
             SettingsItem("Printer Settings", R.drawable.ic_print, R.color.menu_report, R.color.menu_report_icon, key = "Operating Printer"),
             SettingsItem("App Settings", android.R.drawable.ic_menu_manage, R.color.menu_sale, R.color.menu_sale_icon),
             SettingsItem("About App", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon)
-        )
+        ).filter {
+            // About App is granted separately in General Settings ▸ Access Control: an
+            // admin always sees it, a general user only when it has been switched on.
+            it.key != "About App" || com.example.synergic_pos_offline.database.GeneralSettingsDao
+                .canAccessSection(requireContext(), com.example.synergic_pos_offline.database.GeneralSettingsDao.KEY_ACCESS_ABOUT_APP)
+        }
 
         // One decision, on the tile's key. It used to be two `when` blocks running
         // one after the other, so opening any settings screen also fell through the
@@ -182,7 +187,17 @@ class SettingsFragment : Fragment() {
                 "Bill Settings" -> openFragment(BillSettingsFragment())
                 "Tax Settings" -> openFragment(TaxSettingsFragment())
                 "App Settings" -> openFragment(AppSettingsFragment())
-                "About App" -> openFragment(AboutAppFragment())
+                // The tile is filtered out when access is off; refused here as well so
+                // the rule holds however the screen is reached.
+                "About App" ->
+                    if (com.example.synergic_pos_offline.database.GeneralSettingsDao.canAccessSection(
+                            requireContext(),
+                            com.example.synergic_pos_offline.database.GeneralSettingsDao.KEY_ACCESS_ABOUT_APP
+                        )
+                    ) openFragment(AboutAppFragment())
+                    else Toast.makeText(
+                        requireContext(), "About App is not available for your login", Toast.LENGTH_SHORT
+                    ).show()
                 "Printer Settings" -> openFragment(PrinterSettingsFragment())
                 "Operating Printer" -> openFragment(PrintSettingsFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
