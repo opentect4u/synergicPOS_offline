@@ -19,6 +19,7 @@ import com.example.synergic_pos_offline.database.BillDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.database.StockDao
+import com.example.synergic_pos_offline.utils.RenewalStatus
 import com.example.synergic_pos_offline.utils.StockAlerts
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
@@ -173,9 +174,13 @@ class DashboardHomeFragment : Fragment() {
         val stockOn = GeneralSettingsDao.isStockEnabled(ctx)
         content.removeAllViews()
 
-        // Before anything else on the page. What is out or running low is the one
-        // thing on this dashboard that is not a figure to read but a job to do, and
-        // it is worth less the further down it sits.
+        // Above everything, including the stock alerts: a registration about to run out
+        // stops the whole till, not one line of one order, and it is the one thing here
+        // that cannot be dealt with at the counter - somebody has to be called.
+        renewalAlert(ctx)?.let { content.addView(it) }
+
+        // Then what is out or running low: the one thing on this dashboard that is not
+        // a figure to read but a job to do, and it is worth less the further down it sits.
         if (stockOn) content.addView(stockAlertPanel(ctx))
 
         content.addView(snapshotHeader(ctx))
@@ -491,6 +496,52 @@ class DashboardHomeFragment : Fragment() {
             .also { it.topMargin = dp(12); layoutParams = it }
         isClickable = true
         setOnClickListener { onClick() }
+    }
+
+    /**
+     * The renewal warning, or null while the date is far enough off to say nothing.
+     *
+     * Shown from a month before the registration runs out (see [RenewalStatus]), and
+     * kept up once it has passed - an expired till is not less urgent than one about to
+     * expire. Amber while there is still time, red once there is not, so the two read
+     * apart at a glance rather than needing the sentence read.
+     */
+    private fun renewalAlert(ctx: Context): View? {
+        val status = RenewalStatus.of(ctx)?.takeIf { it.needsAttention } ?: return null
+        val urgent = status.expired || status.daysLeft <= 7
+        val tone = if (urgent) 0xFFDC2626.toInt() else 0xFFD97706.toInt()
+        val wash = if (urgent) 0xFFFDECEC.toInt() else 0xFFFEF6E0.toInt()
+
+        val card = card(ctx).apply {
+            setCardBackgroundColor(wash)
+            setStrokeColor(tone)
+            fullWidth()
+        }
+        val body = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            isBaselineAligned = false
+        }
+        body.addView(android.widget.ImageView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
+                .also { it.topMargin = dp(2); it.marginEnd = dp(12) }
+            setImageResource(android.R.drawable.ic_dialog_alert)
+            imageTintList = android.content.res.ColorStateList.valueOf(tone)
+        })
+        body.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(text(ctx, RenewalStatus.headline(status), 15f, tone, bold = true))
+            addView(
+                text(ctx, RenewalStatus.detail(status), 12.5f, textSec).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).also { it.topMargin = dp(2) }
+                }
+            )
+        })
+        card.addView(body)
+        return card
     }
 
     private fun accentBar(ctx: Context, color: Int): View = View(ctx).apply {
