@@ -1231,14 +1231,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun showChooseTableDialog() {
         val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
-        val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_add_item, null)
+        val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_choose_table, null)
         val dialog = AlertDialog.Builder(ctx).setView(v).create()
         dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
-        v.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilSearch).hint = "Search table or section"
-        val etSearch = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etSearch)
-        val llCats = v.findViewById<LinearLayout>(R.id.llCategories)
-        val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProducts)
+        val etSearch = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etTableSearch)
+        val llCats = v.findViewById<LinearLayout>(R.id.llTableSections)
+        val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvTables)
+        val emptyNote = v.findViewById<TextView>(R.id.tvNoTables)
 
         val tables = loadTables()
         val catNames = listOf("All") + loadSectionNames()
@@ -1268,35 +1268,107 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         fun refresh() {
             val q = query.trim().lowercase()
-            adapter.submit(tables.filter {
+            val shown = tables.filter {
                 (selectedCat == "All" || it.section == selectedCat) &&
                     (q.isEmpty() || it.code.lowercase().contains(q) || it.section.lowercase().contains(q))
-            })
+            }
+            adapter.submit(shown)
+            emptyNote.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
+            rv.visibility = if (shown.isEmpty()) View.GONE else View.VISIBLE
         }
 
+        // Sections read as chips across the top - the categories of this grid.
         val tabViews = linkedMapOf<String, TextView>()
         catNames.distinct().forEach { c ->
             val tv = TextView(ctx).apply {
                 text = c
-                textSize = 15f
-                setPadding(dp(10), dp(10), dp(10), dp(12))
-                setOnClickListener { selectedCat = c; styleCats(tabViews, selectedCat, accent); refresh() }
+                textSize = 14f
+                setPadding(dp(16), dp(9), dp(16), dp(9))
+                setOnClickListener {
+                    selectedCat = c
+                    styleSectionChips(tabViews, selectedCat, accent)
+                    refresh()
+                }
+            }
+            (tv.layoutParams as? LinearLayout.LayoutParams ?: LinearLayout.LayoutParams(-2, -2)).let {
+                it.marginEnd = dp(8); tv.layoutParams = it
             }
             tabViews[c] = tv
             llCats.addView(tv)
         }
-        styleCats(tabViews, selectedCat, accent)
+        styleSectionChips(tabViews, selectedCat, accent)
 
         etSearch.addTextChangedListener { query = it?.toString().orEmpty(); refresh() }
-        v.findViewById<ImageButton>(R.id.btnCloseAddItem).setOnClickListener { dialog.dismiss() }
+        v.findViewById<ImageButton>(R.id.btnCloseChooseTable).setOnClickListener { dialog.dismiss() }
 
         ThemeManager.applyTheme(v)
+        // After the theme pass, so it cannot repaint the chips out from under us.
+        styleSectionChips(tabViews, selectedCat, accent)
         refresh()
         dialog.show()
         dialog.window?.setLayout(
             (resources.displayMetrics.widthPixels * 0.94f).toInt(),
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
+    }
+
+    /**
+     * The section chips: the chosen one filled in the accent, the rest outlined.
+     *
+     * Chips rather than the underlined tabs the product grid uses - a floor is a place
+     * and reads as a button you press, and it keeps the two grids visibly different.
+     */
+    private fun styleSectionChips(tabs: Map<String, TextView>, selected: String, accent: Int) {
+        tabs.forEach { (name, tv) ->
+            val on = name == selected
+            tv.background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(20).toFloat()
+                if (on) setColor(accent)
+                else { setColor(Color.WHITE); setStroke(dp(1), 0xFFDDE1E6.toInt()) }
+            }
+            tv.setTextColor(if (on) Color.WHITE else 0xFF6B7280.toInt())
+            tv.setTypeface(null, if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+        }
+    }
+
+    /**
+     * The colour a table's status is drawn in: the card's border and label, and the
+     * tint of its icon. [fill] is the same colour as the card's wash behind it.
+     *
+     * 'Billing' is the app's name for a table that has been billed and is waiting to
+     * pay, which reads as Bill Pending on the floor plan.
+     */
+    private data class StatusLook(val label: String, val color: Int, val fill: Int)
+
+    /**
+     * Where [tableCode]'s order stands with the kitchen, or null when it has no order
+     * (or an empty one) - there is nothing to have sent, so the card shows no badge.
+     *
+     * Read from the orders already loaded on this screen rather than the KOT tables:
+     * `pending` is the quantity on a line that has not gone to the kitchen yet, which
+     * is the same figure Print KOT acts on, so the badge and that button agree.
+     */
+    private fun kotLookOf(tableCode: String): StatusLook? {
+        val order = orders.firstOrNull { it.id.equals(tableCode, ignoreCase = true) } ?: return null
+        if (order.items.isEmpty()) return null
+        return if (order.items.any { it.pending > 0.0 })
+            StatusLook("KOT Pending", 0xFF7C3AED.toInt(), 0xFFF3E8FF.toInt())
+        else StatusLook("KOT Sent", 0xFF0D9488.toInt(), 0xFFE6F6F4.toInt())
+    }
+
+    private fun lookOf(status: String): StatusLook = when (status.trim().lowercase()) {
+        "", "available" -> StatusLook("Available", 0xFF16A34A.toInt(), 0xFFE7F8EE.toInt())
+        "occupied" -> StatusLook("Occupied", 0xFFDC2626.toInt(), 0xFFFDECEC.toInt())
+        // Written by older builds when a KOT was sent. The table was in use then and is
+        // in use now, so it reads as occupied rather than as anything of its own.
+        "kot printed" -> StatusLook("Occupied", 0xFFDC2626.toInt(), 0xFFFDECEC.toInt())
+        "reserved" -> StatusLook("Reserved", 0xFFF59E0B.toInt(), 0xFFFEF6E0.toInt())
+        "billing" -> StatusLook("Bill Pending", 0xFF2563EB.toInt(), 0xFFE7F0FE.toInt())
+        "cleaning" -> StatusLook("Cleaning", 0xFF0891B2.toInt(), 0xFFE6F6FA.toInt())
+        "blocked" -> StatusLook("Blocked", 0xFF6B7280.toInt(), 0xFFF1F3F5.toInt())
+        // Never fall back to Available: a status this does not know is still not proof
+        // the table is free, and showing a taken table as free is the costly mistake.
+        else -> StatusLook(status, 0xFF6B7280.toInt(), 0xFFF1F3F5.toInt())
     }
 
     /** Every active section name for the Choose Table tabs. */
@@ -1357,45 +1429,34 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             VH(LayoutInflater.from(parent.context).inflate(R.layout.item_table_tile, parent, false))
         override fun onBindViewHolder(holder: VH, position: Int) {
             val t = items[position]
-            // The table status drives the colour palette for the card.
-            val statusColor = when (t.status.lowercase()) {
-                "available", "" -> 0xFF2E7D32.toInt() // Green
-                "occupied" -> 0xFFEF6C00.toInt()      // Orange
-                "kot printed" -> 0xFF0097A7.toInt()   // Cyan/Teal
-                "billing" -> 0xFF1565C0.toInt()       // Blue
-                "reserved" -> 0xFF6A1B9A.toInt()      // Purple
-                else -> 0xFF757575.toInt()            // Grey
-            }
-
-            holder.itemView.findViewById<TextView>(R.id.tvTableCode).apply {
-                text = t.code
-                setTextColor(statusColor)
-            }
-            holder.itemView.findViewById<View>(R.id.vTableCodeBg).apply {
-                val shape = android.graphics.drawable.GradientDrawable().apply {
-                    shape = android.graphics.drawable.GradientDrawable.OVAL
-                    setStroke((holder.itemView.resources.displayMetrics.density * 2).toInt(), statusColor)
-                    setColor(ColorUtils.setAlphaComponent(statusColor, 0x0D)) // ~5% alpha
-                }
-                background = shape
-            }
-
-            holder.itemView.findViewById<TextView>(R.id.tvTableStatusPill).apply {
-                text = t.status.ifBlank { "Available" }
-                backgroundTintList = ColorStateList.valueOf(statusColor)
-            }
-
-            holder.itemView.findViewById<TextView>(R.id.tvTableSection).text = t.section.ifBlank { "—" }
-            holder.itemView.findViewById<TextView>(R.id.tvTableCapacity).text = t.capacity.toString()
-            holder.itemView.findViewById<TextView>(R.id.tvTableWaiter).apply {
-                text = t.waiter
-                visibility = if (t.waiter.isNotBlank()) View.VISIBLE else View.GONE
-            }
+            // One colour drives the whole card - wash, border, icon and label - so the
+            // floor reads by colour alone; the legend under the grid keys them.
+            val look = lookOf(t.status)
 
             (holder.itemView as com.google.android.material.card.MaterialCardView).apply {
-                strokeColor = ColorUtils.setAlphaComponent(statusColor, 0x33) // ~20% alpha
+                setCardBackgroundColor(look.fill)
+                strokeColor = look.color
             }
-
+            holder.itemView.findViewById<android.widget.ImageView>(R.id.ivTableIcon)
+                .imageTintList = ColorStateList.valueOf(look.color)
+            // Numbered tables read as "Table 5"; a coded one (a take-away token, a split
+            // part like "5 A") is already named, so it is printed as it stands.
+            holder.itemView.findViewById<TextView>(R.id.tvTableCode).text =
+                if (t.code.all { it.isDigit() }) "Table ${t.code}" else t.code
+            holder.itemView.findViewById<TextView>(R.id.tvTableStatus).apply {
+                text = look.label
+                setTextColor(look.color)
+            }
+            // KOT badge: only for a table that actually has an order to send.
+            holder.itemView.findViewById<TextView>(R.id.tvTableKot).apply {
+                val kot = kotLookOf(t.code)
+                if (kot == null) visibility = View.GONE
+                else {
+                    text = kot.label
+                    backgroundTintList = ColorStateList.valueOf(kot.color)
+                    visibility = View.VISIBLE
+                }
+            }
             holder.itemView.setOnClickListener { onPick(t) }
         }
         override fun getItemCount() = items.size
@@ -2041,10 +2102,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             toast("No new items to send to kitchen"); return
         }
 
-        // Once items go to kitchen, the table status reflects that KOT has been printed.
+        // Sending a KOT does not change what the table IS: it is still occupied, and
+        // stays that way until the bill is paid. It used to be set to "KOT Printed",
+        // which is not one of the statuses the table master allows
+        // ('Available','Occupied','Reserved','Cleaning','Billing','Blocked') - so the
+        // value either failed to save or read back as unknown, and an unknown status
+        // showed the table as free while guests were sitting at it. Where the order
+        // stands with the kitchen is carried by the KOT badge instead, off the items'
+        // own pending quantity.
         if (!order.type.equals("Take Away", ignoreCase = true)) {
-            updateTableStatus(order.id, "KOT Printed")
-            roDao.mergedTablesOf(order.dbId).forEach { updateTableStatus(it, "KOT Printed") }
+            updateTableStatus(order.id, "Occupied")
+            roDao.mergedTablesOf(order.dbId).forEach { updateTableStatus(it, "Occupied") }
         }
 
         reloadItems(order)

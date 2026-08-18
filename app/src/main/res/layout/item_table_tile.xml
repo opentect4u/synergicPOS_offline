@@ -1,14 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  One table on the Choose Table grid.
+
+  The status is the card: its tint, its border, its icon and its label all come from
+  the one colour, so a floor can be read at a glance - green free, red occupied,
+  amber reserved, blue waiting on its bill. Filled in TableAdapter.
+-->
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/cardTableTile"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="8dp"
-    app:cardCornerRadius="16dp"
-    app:cardElevation="3dp"
-    app:cardBackgroundColor="@color/white"
+    android:layout_margin="7dp"
+    app:cardCornerRadius="14dp"
+    app:cardElevation="0dp"
+    app:cardBackgroundColor="#E7F8EE"
     app:strokeWidth="1.5dp"
-    app:strokeColor="#F1F3F5"
+    app:strokeColor="#16A34A"
     android:clickable="true"
     android:focusable="true"
     app:rippleColor="#15000000">
@@ -17,110 +25,60 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="14dp">
+        android:gravity="center"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="16dp">
 
-        <!-- Top: Status Pill + Capacity -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="12dp">
+        <ImageView
+            android:id="@+id/ivTableIcon"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:src="@drawable/ic_table"
+            app:tint="#16A34A"
+            android:contentDescription="Table" />
 
-            <TextView
-                android:id="@+id/tvTableStatusPill"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingHorizontal="8dp"
-                android:paddingVertical="3dp"
-                android:text="Available"
-                android:textSize="10sp"
-                android:textStyle="bold"
-                android:textAllCaps="true"
-                android:letterSpacing="0.05"
-                android:textColor="@color/white"
-                android:background="@drawable/bg_status_tag" />
-
-            <View
-                android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
-
-            <LinearLayout
-                android:id="@+id/llCapacity"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:alpha="0.6">
-
-                <ImageView
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:src="@android:drawable/ic_menu_myplaces"
-                    app:tint="@color/text_secondary" />
-
-                <TextView
-                    android:id="@+id/tvTableCapacity"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="3dp"
-                    android:text="4"
-                    android:textSize="11sp"
-                    android:textColor="@color/text_secondary" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- Center: Table Code -->
-        <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="72dp"
-            android:layout_marginBottom="12dp">
-
-            <View
-                android:id="@+id/vTableCodeBg"
-                android:layout_width="64dp"
-                android:layout_height="64dp"
-                android:layout_gravity="center"
-                android:background="@drawable/bg_circle_outline" />
-
-            <TextView
-                android:id="@+id/tvTableCode"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:text="12"
-                android:textSize="28sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_main" />
-        </FrameLayout>
-
-        <!-- Bottom: Section Name -->
         <TextView
-            android:id="@+id/tvTableSection"
+            android:id="@+id/tvTableCode"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
             android:gravity="center"
-            android:text="Main Hall"
-            android:textSize="13sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_secondary"
             android:maxLines="1"
-            android:ellipsize="end" />
+            android:ellipsize="end"
+            android:text="Table 1"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_main" />
 
-        <!-- Waiter Info (Optional) -->
         <TextView
-            android:id="@+id/tvTableWaiter"
+            android:id="@+id/tvTableStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
             android:gravity="center"
-            android:text="Arindam"
-            android:textSize="11sp"
-            android:textColor="@color/text_secondary"
-            android:alpha="0.7"
             android:maxLines="1"
-            android:ellipsize="end" />
+            android:ellipsize="end"
+            android:text="Available"
+            android:textSize="12sp"
+            android:textColor="#16A34A" />
 
+        <!-- Where the table's order stands with the kitchen. Hidden for a table with
+             no order on it, which has nothing to have sent. -->
+        <TextView
+            android:id="@+id/tvTableKot"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="2dp"
+            android:background="@drawable/bg_status_tag"
+            android:maxLines="1"
+            android:text="KOT Pending"
+            android:textSize="9sp"
+            android:textStyle="bold"
+            android:textAllCaps="true"
+            android:letterSpacing="0.04"
+            android:textColor="@color/white"
+            android:visibility="gone" />
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>
