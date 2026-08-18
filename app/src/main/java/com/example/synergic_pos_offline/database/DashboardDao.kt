@@ -111,12 +111,12 @@ class DashboardDao(context: Context) {
             put("movement", movement())
             put("daily", lastSevenDays())
             put("alerts", alerts())
-            // The two specialty bands. Each is present only where it means something -
-            // a grocery till has no tables, and a shop that does not count its stock
-            // has no turnover to report. An absent section draws nothing at all,
-            // rather than four cards of zeroes.
-            if (GeneralSettingsDao.isStockEnabled(appContext)) put("grocery", grocery())
-            if (isRestaurant()) put("restaurant", restaurant())
+            // Both specialty bands, always - the eight tiles are the dashboard as it
+            // was designed, and a till in one trade still shows the other's figures
+            // rather than a gap where four cards were. A shop with no tables reads
+            // zeroes there, which is the truth about its floor.
+            put("grocery", grocery())
+            put("restaurant", restaurant())
         }
     }
 
@@ -373,8 +373,9 @@ class DashboardDao(context: Context) {
     /**
      * The four figures a shop that holds stock is judged on.
      *
-     * Only drawn where stock is tracked, since every one of them is a fact about a
-     * count this till may not be keeping.
+     * Every one of them is a fact about a count, so a till that keeps no stock reads
+     * zeroes here - and the cards say so in words rather than reporting a shop with
+     * nothing on its shelves as one in trouble.
      */
     private fun grocery(): JSONObject {
         val from = dayOffset(-(MOVEMENT_DAYS - 1))
@@ -527,9 +528,6 @@ class DashboardDao(context: Context) {
             .put("kotMinutes", kotMinutes)
             .put("activeKots", activeKots)
     }
-
-    private fun isRestaurant(): Boolean =
-        com.example.synergic_pos_offline.utils.SettingsCache.value(appContext, "G", "Mode") == "R"
 
     private fun query1(sql: String): Double = runCatching {
         helper.readableDatabase.rawQuery(sql, null).use { c ->

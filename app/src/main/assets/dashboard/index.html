@@ -73,9 +73,10 @@
     .alert-x { font-size: 15px; color: rgba(227,73,72,.7); padding: 4px 2px 4px 12px; }
     .alert-more { text-align: center; font-size: 13px; font-weight: 700; color: var(--danger); border: 1px solid rgba(227,73,72,.4); border-radius: 10px; padding: 10px; cursor: pointer; }
 
-    /* The two trade bands under the charts, shown only to the trade they belong to. */
-    .specialty-section { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 2px solid var(--border-color); }
+    /* The two trade bands, sitting between the four headline cards and the charts. */
+    .specialty-section { margin-bottom: 1.25rem; }
     .specialty-row { margin-bottom: 1.25rem; }
+    .specialty-row:last-child { margin-bottom: 0; }
     .specialty-label { font-size: 12px; font-weight: 700; color: #fff; padding: .5rem 1rem; margin: 0 0 .75rem; border-radius: 4px; text-transform: uppercase; letter-spacing: .05em; }
     .grocery-label { background: var(--success); }
     .restaurant-label { background: var(--warning); }
@@ -111,6 +112,8 @@
 
   <div class="metrics-grid" id="metrics"></div>
 
+  <div class="specialty-section" id="specialty"></div>
+
   <div class="charts-grid">
     <div class="chart-card">
       <h3 class="chart-title">Hourly sales trend</h3>
@@ -133,8 +136,6 @@
       <div class="chart-container" id="wrap-daily" style="height:280px"><canvas id="dailyChart"></canvas></div>
     </div>
   </div>
-
-  <div class="specialty-section" id="specialty"></div>
 </div>
 
 <script>
@@ -519,9 +520,8 @@
     ]);
   }
 
-  /* Each band belongs to a trade, and DashboardDao only sends the one whose trade
-     this till is in - a grocery has no tables and a restaurant has no expiry dates -
-     so an absent key here means "not this shop", not "no data". */
+  /* Both bands, drawn under the four headline cards. A key is still guarded, so an
+     older snapshot that carries neither leaves the section out rather than throwing. */
   function renderSpecialty(d) {
     var html = '';
     if (d.grocery) html += groceryBand(d.grocery);
