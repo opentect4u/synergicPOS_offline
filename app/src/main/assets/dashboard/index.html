@@ -448,79 +448,100 @@
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
 
-  function groceryBand(g) {
+  /* Four figures a shop selling off a shelf is judged on: what it earned, what it is
+     holding, what is not moving, and what it lost. Each reads a column this app's own
+     screens write - see the note above DashboardDao.retail for the ones that do not
+     exist and are therefore not here. */
+  function retailBand(g) {
     var danger = cssVar('--danger'), warning = cssVar('--warning');
-    return band('grocery-label', '📦 Grocery Metrics', [
+    var noStock = !g.stockTracked ? 'Stock tracking is off' : 'No stock recorded yet';
+    return band('grocery-label', '📦 Retail Metrics', [
       specialtyCard({
-        label: 'Stock turnover', value: g.turnover.toFixed(1) + 'x',
-        sub: 'Approx, last ' + g.days + ' days',
-        /* Six turns in a month is a fast-moving kirana, so the bar is a fraction of
-           that rather than of a ratio with no ceiling. */
-        pct: g.turnover / 6 * 100,
-        /* No stock at all is a till that has not started, not a shop with a problem,
-           so it gets no verdict rather than a bad one. */
-        badge: !g.stocked ? null
-             : g.turnover >= 2 ? { kind: 'good', text: 'Healthy' }
-             : g.turnover >= 1 ? { kind: 'warning', text: 'Slowing' }
-             : { kind: 'critical', text: 'Sluggish' },
-        foot: g.stocked ? money(g.stockValue) + ' on the shelf' : 'No stock recorded yet'
+        label: 'Gross margin', value: g.marginRevenue ? g.margin.toFixed(1) + '%' : '—',
+        sub: g.marginRevenue ? money(g.marginProfit) + ' on ' + money(g.marginRevenue) + ' sold'
+                             : 'No cost prices entered',
+        pct: g.marginRevenue ? g.margin : 0,
+        badge: !g.marginRevenue ? null
+             : g.margin >= 25 ? { kind: 'good', text: 'Healthy' }
+             : g.margin >= 10 ? { kind: 'warning', text: 'Thin' }
+             : { kind: 'critical', text: 'Below cost' },
+        /* A margin worked out over a fifth of the day's takings is not the day's
+           margin, and the card has to be able to say so. */
+        foot: !g.marginRevenue ? 'Add purchase prices to products'
+            : g.costCoverage < 99 ? 'Costed on ' + Math.round(g.costCoverage) + '% of sales'
+            : 'Costed on every line sold'
       }),
       specialtyCard({
-        label: 'Items out of stock', value: g.outOfStock,
-        sub: g.lowStock + ' more running low',
-        /* Share of the products this shop carries, so the empty shelves are measured
-           against the full ones and not against themselves. */
-        pct: (g.stocked + g.outOfStock) ? g.outOfStock / (g.stocked + g.outOfStock) * 100 : 0,
-        color: danger,
-        badge: g.outOfStock === 0 ? { kind: 'good', text: 'All stocked' }
-             : { kind: 'critical', text: 'Restock needed' }
+        label: 'Stock on hand', value: g.stocked ? shortMoney(g.stockValue) : '—',
+        sub: g.stocked ? g.stocked + ' products stocked' : noStock,
+        foot: !g.stockTracked ? ''
+            : g.received ? qty(g.received) + ' units received in ' + g.days + ' days'
+            : 'Nothing received in ' + g.days + ' days'
       }),
       specialtyCard({
-        label: 'Expiry items', value: g.expiring,
-        sub: 'Expiring within ' + g.expiryDays + ' days',
-        pct: g.stocked ? g.expiring / g.stocked * 100 : 0, color: warning,
-        foot: g.expiring ? money(g.expiringValue) + ' at risk' : 'Nothing going out of date'
-      }),
-      specialtyCard({
-        label: 'Dead stock', value: g.dead,
-        sub: 'Held, unsold in ' + g.days + ' days',
+        label: 'Dead stock', value: g.stocked ? g.dead : '—',
+        sub: g.stocked ? 'Held, unsold in ' + g.days + ' days' : noStock,
         pct: g.stocked ? g.dead / g.stocked * 100 : 0, color: warning,
-        foot: g.dead ? money(g.deadValue) + ' tied up' : 'Everything is moving'
+        badge: !g.stocked ? null
+             : g.dead === 0 ? { kind: 'good', text: 'All moving' }
+             : g.dead / g.stocked >= 0.3 ? { kind: 'critical', text: 'Money tied up' }
+             : { kind: 'warning', text: 'Watch these' },
+        foot: g.dead ? money(g.deadValue) + ' tied up' : ''
+      }),
+      specialtyCard({
+        label: 'Written off', value: g.stockTracked ? qty(g.writtenOff) : '—',
+        sub: g.stockTracked ? 'Units off the shelf, ' + g.days + ' days' : noStock,
+        /* Against what is on the shelf, so a write-off reads as a share of the stock
+           it came out of rather than as a bare number. */
+        pct: g.stockValue ? g.writeOffValue / g.stockValue * 100 : 0, color: danger,
+        foot: !g.stockTracked ? ''
+            : g.writtenOff ? money(g.writeOffValue) + ' at selling price'
+            : 'Nothing damaged or returned'
       })
     ]);
   }
 
+  /* The floor and the kitchen, mostly in the present tense. Nothing here claims to
+     know how long a finished meal took - settling a table stamps no second time - so
+     the durations are all "so far". */
   function restaurantBand(r) {
     var occupancy = r.tables ? r.occupied / r.tables * 100 : 0;
-    var warning = cssVar('--warning');
+    var danger = cssVar('--danger');
+    var takings = r.dineIn + r.takeAway;
+    var dineShare = takings ? r.dineIn / takings * 100 : 0;
     return band('restaurant-label', '🍽️ Restaurant Metrics', [
       specialtyCard({
-        label: 'Table occupancy', value: r.tables ? Math.round(occupancy) + '%' : '—',
+        label: 'Tables occupied', value: r.tables ? Math.round(occupancy) + '%' : '—',
         sub: r.tables ? r.occupied + ' of ' + r.tables + ' tables' : 'No tables set up',
         pct: occupancy,
         badge: !r.tables ? null
-             : occupancy >= 70 ? { kind: 'critical', text: 'Nearly full' }
+             : occupancy >= 80 ? { kind: 'critical', text: 'Full' }
              : occupancy >= 30 ? { kind: 'good', text: 'Busy' }
-             : { kind: 'warning', text: 'Quiet' }
+             : { kind: 'warning', text: 'Quiet' },
+        foot: r.occupied ? 'Seated ' + Math.round(r.seatedMinutes) + ' min on average so far' : 'Room is empty'
       }),
       specialtyCard({
-        label: 'Avg table time', value: Math.round(r.tableMinutes),
-        sub: 'Minutes seated, tables open now',
-        pct: r.tableMinutes / r.tableTarget * 100,
-        foot: 'Target ' + r.tableTarget + ' min'
+        label: 'Table turns', value: r.tables ? r.turns.toFixed(1) + 'x' : '—',
+        sub: r.tables ? r.seatings + ' seatings across ' + r.tables + ' tables' : 'No tables set up',
+        pct: r.turns / r.turnsTarget * 100,
+        foot: 'Today, target ' + r.turnsTarget.toFixed(1) + 'x'
       }),
       specialtyCard({
-        label: 'Avg KOT age', value: r.kotMinutes.toFixed(1),
-        sub: 'Minutes since raised',
-        pct: r.kotMinutes / 15 * 100,
-        /* Not time to prepare: nothing records when the kitchen finished a ticket,
-           so this is how long the open ones have been waiting. */
-        foot: r.activeKots ? 'Tickets still open' : 'Kitchen is clear'
+        label: 'Kitchen queue', value: r.openKots,
+        sub: r.openKots ? 'Tickets not yet billed' : 'Kitchen is clear',
+        pct: r.openKots ? r.oldestKot / r.kotLate * 100 : 0, color: danger,
+        badge: !r.openKots ? { kind: 'good', text: 'Clear' }
+             : r.oldestKot >= r.kotLate ? { kind: 'critical', text: 'Running late' }
+             : { kind: 'good', text: 'On time' },
+        /* Age since raised: a ticket is only ever closed when the bill prints, so
+           "prepared" is not a state this database has. */
+        foot: r.openKots ? 'Oldest raised ' + Math.round(r.oldestKot) + ' min ago' : ''
       }),
       specialtyCard({
-        label: 'Active KOTs', value: r.activeKots,
-        sub: 'Orders with the kitchen',
-        pct: r.tables ? r.activeKots / r.tables * 100 : 0, color: warning
+        label: 'Dine in vs take away', value: takings ? Math.round(dineShare) + '%' : '—',
+        sub: takings ? 'of today’s takings dine in' : 'Nothing billed yet today',
+        pct: dineShare,
+        foot: takings ? money(r.dineIn) + ' dine in · ' + money(r.takeAway) + ' take away' : ''
       })
     ]);
   }
@@ -530,7 +551,7 @@
      out entirely rather than throwing. */
   function renderSpecialty(d) {
     var html = '';
-    if (d.grocery) html += groceryBand(d.grocery);
+    if (d.retail) html += retailBand(d.retail);
     if (d.restaurant) html += restaurantBand(d.restaurant);
     var host = document.getElementById('specialty');
     host.innerHTML = html;
