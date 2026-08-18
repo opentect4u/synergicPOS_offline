@@ -626,8 +626,44 @@ class DashboardHomeFragment : Fragment() {
         )
         box.addView(text)
         box.addView(this.text(ctx, StockDao.trim(item.quantity), 20f, red, bold = true))
+        box.addView(dismissButton(ctx, item))
         return box
     }
+
+    /**
+     * The × that puts one alert away.
+     *
+     * Its own view rather than a swipe or a long press, because an operator has to be
+     * able to see that the box can be dismissed at all - and because the box itself
+     * already does something else when it is tapped.
+     *
+     * A snooze rather than a delete: it comes back when the count moves or the day
+     * turns. See [StockAlerts.dismiss], where the rule is set out and lives.
+     */
+    private fun dismissButton(ctx: Context, item: StockAlerts.Item): View =
+        TextView(ctx).apply {
+            text = "✕"
+            textSize = 15f
+            setTextColor(ColorUtils.setAlphaComponent(red, 0xB0))
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(6), dp(4), dp(6))
+            isClickable = true
+            contentDescription = "Dismiss the alert for ${item.name}"
+            setOnClickListener {
+                StockAlerts.dismiss(requireContext(), item)
+                alerts = StockAlerts.undismissed(requireContext(), alerts)
+                // Found by id rather than walked up to from here: the × sits two
+                // levels inside the panel, and a layout change that moved it would
+                // break a walk silently.
+                view?.findViewById<LinearLayout>(alertPanelId)
+                    ?.let { panel -> fillStockAlerts(requireContext(), panel) }
+                toast("${item.name} hidden until the stock changes or tomorrow")
+            }
+        }
+
+    private fun toast(message: String) =
+        android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_SHORT)
+            .show()
 
     /** "+2 MORE" - opens the report that lists every one of them. */
     private fun moreAlertsButton(ctx: Context, more: Int): View = TextView(ctx).apply {
@@ -653,7 +689,10 @@ class DashboardHomeFragment : Fragment() {
             val found = StockAlerts.find(appCtx)
             view?.post {
                 if (!isAdded || alertPanelId == View.NO_ID) return@post
-                alerts = found
+                // Whatever has been put away stays away until its count moves or the
+                // day turns - so a refresh, a rebuild or a pull-down does not undo a
+                // dismissal the operator meant.
+                alerts = StockAlerts.undismissed(requireContext(), found)
                 val panel = view?.findViewById<LinearLayout>(alertPanelId) ?: return@post
                 fillStockAlerts(requireContext(), panel)
             }

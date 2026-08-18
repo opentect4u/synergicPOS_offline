@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.database.StockDao
+import java.util.Locale
 
 /**
  * What is running out, for the till to say so at the start of a shift.
@@ -43,8 +44,19 @@ import com.example.synergic_pos_offline.database.StockDao
  */
 object StockAlerts {
 
-    /** One product that needs attention, and how much of it is left. */
-    data class Item(val name: String, val quantity: Double, val isOut: Boolean)
+    /**
+     * One product that needs attention, and how much of it is left.
+     *
+     * [id] is the product's row id, and it is what a dismissal is remembered
+     * against - a name can be edited on the product form, and an alert an operator
+     * had already dealt with should not come back because somebody fixed a typo.
+     */
+    data class Item(
+        val id: Long,
+        val name: String,
+        val quantity: Double,
+        val isOut: Boolean
+    )
 
     /**
      * What the till found. [out] and [low] are kept apart rather than added up,
@@ -123,8 +135,8 @@ object StockAlerts {
         // products and its short list to a handful, and there is no reason to carry
         // the difference back across.
         val sql = """
-            SELECT name, onHand FROM (
-                SELECT p.product_name AS name, $onHand AS onHand
+            SELECT id, name, onHand FROM (
+                SELECT p.id AS id, p.product_name AS name, $onHand AS onHand
                 FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p$storeClause
             )
             WHERE name IS NOT NULL AND name <> ''
@@ -138,8 +150,13 @@ object StockAlerts {
             .rawQuery(sql, null)
             .use { c ->
                 while (c.moveToNext()) {
-                    val quantity = c.getDouble(1)
-                    val item = Item(c.getString(0), quantity, isOut = quantity <= 0.0)
+                    val quantity = c.getDouble(2)
+                    val item = Item(
+                        id = c.getLong(0),
+                        name = c.getString(1),
+                        quantity = quantity,
+                        isOut = quantity <= 0.0
+                    )
                     if (item.isOut) out.add(item) else low.add(item)
                 }
             }
@@ -148,6 +165,60 @@ object StockAlerts {
         android.util.Log.e(TAG, "Could not read the stock alerts", it)
         NONE
     }
+
+    // ---- Dismissing one ------------------------------------------------------
+
+    /**
+     * Puts an alert away - and says plainly when it will be back.
+     *
+     * A dismissal that lasted forever would be the end of the alert rather than a
+     * pause on it: the operator who cleared "SUGAR - out of stock" in March would
+     * never be told about sugar again, and the panel would quietly become a list of
+     * the things nobody has got round to hiding yet. So a dismissal is a **snooze**,
+     * and it lapses on either of the two things that make the alert news again:
+     *
+     *  * **the count moves.** Restocked, or sold down further - either way what the
+     *    operator dismissed is not what the shelf says now, so the alert returns.
+     *  * **the day turns.** Whatever was known yesterday is worth being told again
+     *    at the start of a shift, which is when there is still time to act on it.
+     *
+     * Stored on the device rather than in the database: it is one operator's view of
+     * one tablet's dashboard, not a fact about the shop, and it has no business in a
+     * backup or on another till.
+     */
+    fun dismiss(context: Context, item: Item) {
+        prefs(context).edit().putString(key(item.id), stamp(item.quantity)).apply()
+    }
+
+    /** Whether [item] has been put away, and is still the item that was put away. */
+    fun isDismissed(context: Context, item: Item): Boolean =
+        prefs(context).getString(key(item.id), null) == stamp(item.quantity)
+
+    /**
+     * [summary] with the dismissed items taken out - what the dashboard panel shows.
+     *
+     * A view for one screen rather than a filter on [find], deliberately. The Low
+     * Stock Report and the inventory panel's counts go on reporting everything: a
+     * report that quietly left out what somebody had waved away on the dashboard
+     * would be a report that could not be trusted to be complete, which is a worse
+     * problem than a panel that shows too much.
+     */
+    fun undismissed(context: Context, summary: Summary): Summary = Summary(
+        out = summary.out.filterNot { isDismissed(context, it) },
+        low = summary.low.filterNot { isDismissed(context, it) }
+    )
+
+    /** "2026-08-18|4" - the day it was dismissed on and the count it was dismissed at. */
+    private fun stamp(quantity: Double): String =
+        java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date()) +
+            "|" + StockDao.trim(quantity)
+
+    private fun key(productId: Long) = "dismissed_$productId"
+
+    private fun prefs(context: Context) =
+        context.applicationContext.getSharedPreferences(DISMISS_PREF, Context.MODE_PRIVATE)
+
+    private const val DISMISS_PREF = "stock_alert_dismissals"
 
     // ---- Showing it ---------------------------------------------------------
 
