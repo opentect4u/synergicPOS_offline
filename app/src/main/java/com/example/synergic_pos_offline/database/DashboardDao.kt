@@ -385,49 +385,32 @@ class DashboardDao(context: Context) {
      */
 
     /**
-     * What a shop selling off a shelf is judged on: what it earns, what it is holding,
-     * what is not moving, and what it has lost.
+     * The four a counter asks about: what is not selling, what came in last, what is
+     * in the drawer, and what has gone out on trust.
      *
-     * Nothing here needs stock to be switched on except by degree - margin comes off
-     * the bills, and the three stock figures come back as zero with the cards saying
-     * so in words.
+     * Only the first of them needs stock to be switched on, and only to price what is
+     * sitting there - the count itself comes off the bills.
      */
     private fun retail(): JSONObject {
         val from = dayOffset(-(MOVEMENT_DAYS - 1))
         val to = dayOffset(0)
         val today = dayOffset(0)
+        val sold =
+            "EXISTS(SELECT 1 FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i " +
+                "JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id " +
+                "WHERE i.product_id = p.id " +
+                "AND date(COALESCE(b.bill_date_time, b.bill_date)) BETWEEN '$from' AND '$to' " +
+                "AND ${BillDao.countableBillClause("b")})"
 
-        // Margin, over today's bills. Only lines whose product carries a cost price
-        // count towards it, and the share of the day's takings they represent is
-        // reported beside it - a margin worked out over a fifth of the sales is not a
-        // margin, and the card has to be able to say so.
-        var revenueWithCost = 0.0
-        var cost = 0.0
-        var revenueAll = 0.0
-        query(
-            """
-            SELECT COALESCE(i.item_subtotal, i.rate * i.quantity, 0), i.quantity,
-                   (SELECT r.purchase_price FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r
-                    WHERE r.product_id = i.product_id AND r.purchase_price > 0
-                    ORDER BY r.id ASC LIMIT 1)
-            FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
-            JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id
-            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$today'
-              AND ${BillDao.countableBillClause("b")}
-            """.trimIndent()
-        ) { c ->
-            val line = c.getDouble(0)
-            revenueAll += line
-            if (!c.isNull(2)) {
-                revenueWithCost += line
-                cost += c.getDouble(1) * c.getDouble(2)
-            }
-        }
-        val margin = if (revenueWithCost > 0.0) (revenueWithCost - cost) / revenueWithCost * 100 else 0.0
-        val costCoverage = if (revenueAll > 0.0) revenueWithCost / revenueAll * 100 else 0.0
+        // Products nobody has bought in a month. Counted over the whole catalogue, not
+        // only over what is in stock: an item that has neither sold nor been reordered
+        // is exactly the one worth knowing about, and it holds no stock by definition.
+        val unsold = query1(
+            "SELECT COUNT(*) FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p WHERE NOT $sold"
+        ).toInt()
+        val products = query1("SELECT COUNT(*) FROM ${DatabaseHelper.Tables.MD_PRODUCTS}").toInt()
 
-        // What is on the shelf, and what has not left it. Both read the same pass over
-        // the products, so the two cards are one reading of the stock rather than two.
+        // How much of that is money on a shelf rather than a line in a list.
         val onHandOf =
             "COALESCE((SELECT SUM(s.current_quantity) FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} s " +
                 "WHERE s.product_id = p.id), 0)"
@@ -437,87 +420,112 @@ class DashboardDao(context: Context) {
             "COALESCE((SELECT COALESCE(r.sell_price, r.sale_price, r.rate, 0) " +
                 "FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r WHERE r.product_id = p.id " +
                 "ORDER BY r.id ASC LIMIT 1), 0)"
-
-        val soldByProduct = mutableMapOf<Long, Double>()
+        var unsoldStocked = 0
+        var unsoldValue = 0.0
         query(
-            """
-            SELECT i.product_id, COALESCE(SUM(i.quantity), 0)
-            FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
-            JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id
-            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) BETWEEN '$from' AND '$to'
-              AND ${BillDao.countableBillClause("b")}
-            GROUP BY i.product_id
-            """.trimIndent()
-        ) { c -> soldByProduct[c.getLong(0)] = c.getDouble(1) }
-
-        var stocked = 0
-        var stockValue = 0.0
-        var dead = 0
-        var deadValue = 0.0
-        query("SELECT p.id, $onHandOf, $rateOf FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p") { c ->
-            val stock = c.getDouble(1)
-            if (stock <= 0.0) return@query
-            val value = stock * c.getDouble(2)
-            stocked++
-            stockValue += value
-            // Held, and nobody has bought one in a month.
-            if ((soldByProduct[c.getLong(0)] ?: 0.0) <= 0.0) {
-                dead++
-                deadValue += value
-            }
+            "SELECT $onHandOf, $rateOf FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p " +
+                "WHERE NOT $sold AND $onHandOf > 0"
+        ) { c ->
+            unsoldStocked++
+            unsoldValue += c.getDouble(0) * c.getDouble(1)
         }
 
-        // Deliveries in, and stock taken off the shelf for a reason that was not a
-        // sale. Both come out of the movement ledger StockDao writes, which is the
-        // one place in this app that records why a count changed.
-        val received = movementUnits("PURCHASE", "IN", from, to)
-        val writtenOff = movementUnits("DAMAGE_WRITEOFF", "OUT", from, to)
-        val returnedOut = movementUnits("RETURN", "OUT", from, to)
-        val writeOffValue = movementValue(listOf("DAMAGE_WRITEOFF", "RETURN"), "OUT", from, to)
+        // The last bill off this till, whenever it was. Not restricted to today: on a
+        // quiet morning "nothing yet" is the answer, and yesterday evening's last sale
+        // is the more useful thing to show while waiting for the first.
+        var lastAmount = 0.0
+        var lastNumber = ""
+        var lastMinutes = 0.0
+        var hasLast = false
+        var lastToday = false
+        query(
+            """
+            SELECT COALESCE(b.net_amount, 0), COALESCE(b.bill_number, ''),
+                   (julianday('now','localtime')
+                    - julianday(COALESCE(b.bill_date_time, b.bill_date))) * 1440,
+                   date(COALESCE(b.bill_date_time, b.bill_date))
+            FROM ${DatabaseHelper.Tables.TD_BILLS} b
+            WHERE ${BillDao.countableBillClause("b")}
+            ORDER BY COALESCE(b.bill_date_time, b.bill_date) DESC, b.receipt_no DESC
+            LIMIT 1
+            """.trimIndent()
+        ) { c ->
+            hasLast = true
+            lastAmount = c.getDouble(0)
+            lastNumber = c.getString(1).orEmpty()
+            lastMinutes = c.getDouble(2)
+            lastToday = c.getString(3) == today
+        }
+
+        // Cash taken today, net of the change handed back - what the drawer is up by,
+        // which is the question "cash in hand" asks. There is no opening float and no
+        // record of money taken out, so this is takings and not a reconciled drawer.
+        val cash = query1(
+            """
+            SELECT COALESCE(SUM(COALESCE(p.amount_paid, 0) - COALESCE(p.change_amount, 0)), 0)
+            FROM ${DatabaseHelper.Tables.TD_PAYMENTS} p
+            JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = p.bill_id
+            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$today'
+              AND UPPER(COALESCE(p.payment_mode, b.bill_type, '')) = 'CASH'
+              AND ${BillDao.countableBillClause("b")}
+            """.trimIndent()
+        )
+        val takings = query1(
+            "SELECT COALESCE(SUM(b.net_amount), 0) FROM ${DatabaseHelper.Tables.TD_BILLS} b " +
+                "WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$today' " +
+                "AND ${BillDao.countableBillClause("b")}"
+        )
+
+        // Sales that went out on trust today. One mode per bill - the first payment row
+        // written against it - so a bill settled in two goes is still one sale and not
+        // two, which counting the payment rows would make it.
+        val modeOf =
+            "UPPER(COALESCE((SELECT p.payment_mode FROM ${DatabaseHelper.Tables.TD_PAYMENTS} p " +
+                "WHERE p.bill_id = b.receipt_no ORDER BY p.id ASC LIMIT 1), b.bill_type, ''))"
+        var creditCount = 0
+        var creditValue = 0.0
+        query(
+            """
+            SELECT COUNT(*), COALESCE(SUM(b.net_amount), 0)
+            FROM ${DatabaseHelper.Tables.TD_BILLS} b
+            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$today'
+              AND $modeOf = 'CREDIT'
+              AND ${BillDao.countableBillClause("b")}
+            """.trimIndent()
+        ) { c ->
+            creditCount = c.getInt(0)
+            creditValue = c.getDouble(1)
+        }
+        // What is owed altogether, from the master record rather than from the bills:
+        // md_customers.balance_amount is the figure a collection writes back down, so
+        // it is the only one that falls when a customer pays.
+        val owed = query1(
+            "SELECT COALESCE(SUM(balance_amount), 0) FROM ${DatabaseHelper.Tables.MD_CUSTOMERS} " +
+                "WHERE COALESCE(balance_amount, 0) > 0"
+        )
 
         return JSONObject()
             .put("days", MOVEMENT_DAYS)
-            .put("margin", margin)
-            .put("marginProfit", revenueWithCost - cost)
-            .put("marginRevenue", revenueWithCost)
-            .put("costCoverage", costCoverage)
             .put("stockTracked", GeneralSettingsDao.isStockEnabled(appContext))
-            .put("stocked", stocked)
-            .put("stockValue", stockValue)
-            .put("received", received)
-            .put("dead", dead)
-            .put("deadValue", deadValue)
-            .put("writtenOff", writtenOff + returnedOut)
-            .put("writeOffValue", writeOffValue)
-    }
-
-    /**
-     * Units that moved one way for one reason.
-     *
-     * Both halves matter: a shop return leaves the shelf as RETURN/OUT and comes back
-     * to it as RETURN/IN, so a query on the type alone would net them against each
-     * other and report nothing had happened.
-     */
-    private fun movementUnits(type: String, flow: String, from: String, to: String): Double = query1(
-        "SELECT COALESCE(SUM(quantity), 0) FROM ${DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS} " +
-            "WHERE transaction_type = '$type' AND stock_flow = '$flow' " +
-            "AND date(transaction_date) BETWEEN '$from' AND '$to'"
-    )
-
-    /** The same movements priced at what the shop would have sold them for. */
-    private fun movementValue(types: List<String>, flow: String, from: String, to: String): Double {
-        val list = types.joinToString(",") { "'$it'" }
-        return query1(
-            """
-            SELECT COALESCE(SUM(t.quantity *
-                COALESCE((SELECT COALESCE(r.sell_price, r.sale_price, r.rate, 0)
-                          FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r
-                          WHERE r.product_id = t.product_id ORDER BY r.id ASC LIMIT 1), 0)), 0)
-            FROM ${DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS} t
-            WHERE t.transaction_type IN ($list) AND t.stock_flow = '$flow'
-              AND date(t.transaction_date) BETWEEN '$from' AND '$to'
-            """.trimIndent()
-        )
+            .put("unsold", unsold)
+            .put("products", products)
+            .put("unsoldStocked", unsoldStocked)
+            .put("unsoldValue", unsoldValue)
+            .put("hasLast", hasLast)
+            .put("lastAmount", lastAmount)
+            .put("lastNumber", lastNumber)
+            .put("lastMinutes", lastMinutes)
+            .put("lastToday", lastToday)
+            .put("cash", cash)
+            .put("takings", takings)
+            .put("creditCount", creditCount)
+            .put("creditValue", creditValue)
+            .put("bills", query1(
+                "SELECT COUNT(*) FROM ${DatabaseHelper.Tables.TD_BILLS} b " +
+                    "WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$today' " +
+                    "AND ${BillDao.countableBillClause("b")}"
+            ).toInt())
+            .put("owed", owed)
     }
 
     // ---- The restaurant band -----------------------------------------------------

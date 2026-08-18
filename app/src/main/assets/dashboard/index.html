@@ -448,55 +448,65 @@
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
 
-  /* Four figures a shop selling off a shelf is judged on: what it earned, what it is
-     holding, what is not moving, and what it lost. Each reads a column this app's own
+  /* How long ago, as a person would say it rather than as a number of minutes. */
+  function ago(minutes) {
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return Math.round(minutes) + ' min ago';
+    if (minutes < 1440) {
+      var hours = minutes / 60;
+      return (hours < 2 ? '1 hour' : Math.round(hours) + ' hours') + ' ago';
+    }
+    var days = Math.round(minutes / 1440);
+    return days === 1 ? 'yesterday' : days + ' days ago';
+  }
+
+  /* The four a counter asks about: what is not selling, what came in last, what is in
+     the drawer, and what has gone out on trust. Each reads a column this app's own
      screens write - see the note above DashboardDao.retail for the ones that do not
      exist and are therefore not here. */
   function retailBand(g) {
     var danger = cssVar('--danger'), warning = cssVar('--warning');
-    var noStock = !g.stockTracked ? 'Stock tracking is off' : 'No stock recorded yet';
     return band('grocery-label', '📦 Retail Metrics', [
       specialtyCard({
-        label: 'Gross margin', value: g.marginRevenue ? g.margin.toFixed(1) + '%' : '—',
-        sub: g.marginRevenue ? money(g.marginProfit) + ' on ' + money(g.marginRevenue) + ' sold'
-                             : 'No cost prices entered',
-        pct: g.marginRevenue ? g.margin : 0,
-        badge: !g.marginRevenue ? null
-             : g.margin >= 25 ? { kind: 'good', text: 'Healthy' }
-             : g.margin >= 10 ? { kind: 'warning', text: 'Thin' }
-             : { kind: 'critical', text: 'Below cost' },
-        /* A margin worked out over a fifth of the day's takings is not the day's
-           margin, and the card has to be able to say so. */
-        foot: !g.marginRevenue ? 'Add purchase prices to products'
-            : g.costCoverage < 99 ? 'Costed on ' + Math.round(g.costCoverage) + '% of sales'
-            : 'Costed on every line sold'
+        label: 'Unsold products', value: g.unsold,
+        sub: g.products ? 'of ' + g.products + ', no sale in ' + g.days + ' days'
+                        : 'No products yet',
+        pct: g.products ? g.unsold / g.products * 100 : 0, color: warning,
+        badge: !g.products ? null
+             : g.unsold === 0 ? { kind: 'good', text: 'All moving' }
+             : g.unsold / g.products >= 0.4 ? { kind: 'critical', text: 'Long tail' }
+             : { kind: 'warning', text: 'Worth a look' },
+        /* Only the ones actually holding something cost anything to keep, so that is
+           the half worth pricing. */
+        foot: g.stockTracked && g.unsoldStocked
+            ? g.unsoldStocked + ' of them holding ' + money(g.unsoldValue) + ' of stock' : ''
       }),
       specialtyCard({
-        label: 'Stock on hand', value: g.stocked ? shortMoney(g.stockValue) : '—',
-        sub: g.stocked ? g.stocked + ' products stocked' : noStock,
-        foot: !g.stockTracked ? ''
-            : g.received ? qty(g.received) + ' units received in ' + g.days + ' days'
-            : 'Nothing received in ' + g.days + ' days'
+        label: 'Last bill', value: g.hasLast ? money(g.lastAmount) : '—',
+        sub: g.hasLast ? (g.lastNumber ? 'Bill ' + esc(g.lastNumber) : 'Most recent sale')
+                       : 'Nothing billed yet',
+        badge: !g.hasLast ? null
+             : g.lastToday ? { kind: 'good', text: 'Today' }
+             : { kind: 'warning', text: 'Nothing today yet' },
+        foot: g.hasLast ? ago(g.lastMinutes) : ''
       }),
       specialtyCard({
-        label: 'Dead stock', value: g.stocked ? g.dead : '—',
-        sub: g.stocked ? 'Held, unsold in ' + g.days + ' days' : noStock,
-        pct: g.stocked ? g.dead / g.stocked * 100 : 0, color: warning,
-        badge: !g.stocked ? null
-             : g.dead === 0 ? { kind: 'good', text: 'All moving' }
-             : g.dead / g.stocked >= 0.3 ? { kind: 'critical', text: 'Money tied up' }
-             : { kind: 'warning', text: 'Watch these' },
-        foot: g.dead ? money(g.deadValue) + ' tied up' : ''
+        label: 'Cash in hand', value: money(g.cash),
+        sub: 'Taken today, net of change',
+        pct: g.takings ? g.cash / g.takings * 100 : 0,
+        /* Takings, not a reconciled drawer: this app records no opening float and no
+           money taken out, so it can only speak for what came over the counter. */
+        foot: g.takings ? Math.round(g.cash / g.takings * 100) + '% of ' + money(g.takings) + ' taken today'
+                        : 'Nothing taken yet today'
       }),
       specialtyCard({
-        label: 'Written off', value: g.stockTracked ? qty(g.writtenOff) : '—',
-        sub: g.stockTracked ? 'Units off the shelf, ' + g.days + ' days' : noStock,
-        /* Against what is on the shelf, so a write-off reads as a share of the stock
-           it came out of rather than as a bare number. */
-        pct: g.stockValue ? g.writeOffValue / g.stockValue * 100 : 0, color: danger,
-        foot: !g.stockTracked ? ''
-            : g.writtenOff ? money(g.writeOffValue) + ' at selling price'
-            : 'Nothing damaged or returned'
+        label: 'Credit sales', value: g.creditCount,
+        sub: g.creditCount ? money(g.creditValue) + ' out on trust today'
+                           : 'Nothing on credit today',
+        pct: g.bills ? g.creditCount / g.bills * 100 : 0, color: danger,
+        badge: !g.owed ? { kind: 'good', text: 'Nothing outstanding' }
+             : { kind: 'warning', text: money(g.owed) + ' owed' },
+        foot: g.bills ? 'of ' + g.bills + ' bills today' : ''
       })
     ]);
   }
