@@ -131,7 +131,13 @@ class GeneralSettingsDao(context: Context) {
          */
         val accessMaster: Boolean = false,
         val accessSettings: Boolean = false,
-        val accessReports: Boolean = false
+        val accessReports: Boolean = false,
+        /**
+         * About App specifically - it sits inside Settings but carries the irreversible
+         * actions (erase bills, restore, restore defaults), so it is granted separately
+         * from the rest of Settings rather than coming along with it.
+         */
+        val accessAboutApp: Boolean = false
     )
 
     /** Reads every general setting for the current store, applying defaults. */
@@ -153,7 +159,8 @@ class GeneralSettingsDao(context: Context) {
             stockAlertQty = m[KEY_STOCK_ALERT_QTY]?.toIntOrNull() ?: d.stockAlertQty,
             accessMaster = m[KEY_ACCESS_MASTER]?.toBool() ?: d.accessMaster,
             accessSettings = m[KEY_ACCESS_SETTINGS]?.toBool() ?: d.accessSettings,
-            accessReports = m[KEY_ACCESS_REPORTS]?.toBool() ?: d.accessReports
+            accessReports = m[KEY_ACCESS_REPORTS]?.toBool() ?: d.accessReports,
+            accessAboutApp = m[KEY_ACCESS_ABOUT_APP]?.toBool() ?: d.accessAboutApp
         )
     }
 
@@ -181,6 +188,7 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_ACCESS_MASTER, s.accessMaster.b())
         put(KEY_ACCESS_SETTINGS, s.accessSettings.b())
         put(KEY_ACCESS_REPORTS, s.accessReports.b())
+        put(KEY_ACCESS_ABOUT_APP, s.accessAboutApp.b())
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "General settings save (type G)")
     }
@@ -292,6 +300,7 @@ class GeneralSettingsDao(context: Context) {
         const val KEY_ACCESS_MASTER = "Access Master"
         const val KEY_ACCESS_SETTINGS = "Access Settings"
         const val KEY_ACCESS_REPORTS = "Access Reports"
+        const val KEY_ACCESS_ABOUT_APP = "Access About App"
 
         /**
          * Whether the signed-in user may open [key] (one of the KEY_ACCESS_* keys).

@@ -131,6 +131,7 @@ class DatabaseHelper private constructor(context: Context) :
         // KOT lifecycle: link a KOT to its running order, and allow the CLOSED /
         // COMPLETE statuses the restaurant flow sets (see [ensureKotStatusSchema]).
         ensureKotStatusSchema(db)
+        ensureTableStatusSchema(db)
         // Items already sent under the old flag must not be re-sent: mark their full
         // quantity as already gone to the kitchen.
         runCatching {
@@ -309,6 +310,71 @@ class DatabaseHelper private constructor(context: Context) :
             }
             db.setForeignKeyConstraintsEnabled(true)
         }.onFailure { android.util.Log.e("DBMigrate", "Failed to rebuild KOT tables", it) }
+    }
+
+    /**
+     * Brings md_table, md_table_unit and md_subtable up to the restaurant status
+     * lifecycle by adding 'KOT Printed' to their table_status CHECK. Since SQLite
+     * cannot widen a CHECK without rebuilding, this re-creates the tables (preserving
+     * data) if they are found to be missing the new status.
+     */
+    private fun ensureTableStatusSchema(db: SQLiteDatabase) {
+        val tableSql = tableSql(db, Tables.MD_TABLE)
+        val unitSql = tableSql(db, Tables.MD_TABLE_UNIT)
+        val subSql = tableSql(db, Tables.MD_SUBTABLE)
+
+        val tableOld = tableSql != null && !tableSql.contains("KOT Printed")
+        val unitOld = unitSql != null && !unitSql.contains("KOT Printed")
+        val subOld = subSql != null && !subSql.contains("KOT Printed")
+
+        if (!tableOld && !unitOld && !subOld) return
+
+        runCatching {
+            db.setForeignKeyConstraintsEnabled(false)
+            db.beginTransaction()
+            try {
+                if (tableOld) {
+                    db.execSQL("ALTER TABLE ${Tables.MD_TABLE} RENAME TO md_table_old")
+                    db.execSQL(SQL_CREATE_MD_TABLE)
+                    db.execSQL(
+                        """
+                        INSERT INTO ${Tables.MD_TABLE} (id, store_id, outlet_id, section_id, no_of_tables, from_table_no, to_table_no, table_code, floor_no, seating_capacity, table_status, waiter_id, remarks, created_at, modified_at, created_by, modified_by)
+                        SELECT id, store_id, outlet_id, section_id, no_of_tables, from_table_no, to_table_no, table_code, floor_no, seating_capacity, table_status, waiter_id, remarks, created_at, modified_at, created_by, modified_by
+                        FROM md_table_old
+                        """.trimIndent()
+                    )
+                    db.execSQL("DROP TABLE md_table_old")
+                }
+                if (unitOld) {
+                    db.execSQL("ALTER TABLE ${Tables.MD_TABLE_UNIT} RENAME TO md_table_unit_old")
+                    db.execSQL(SQL_CREATE_MD_TABLE_UNIT)
+                    db.execSQL(
+                        """
+                        INSERT INTO ${Tables.MD_TABLE_UNIT} (id, store_id, table_id, section_id, table_code, floor_no, seating_capacity, table_status, created_at, modified_at, created_by, modified_by)
+                        SELECT id, store_id, table_id, section_id, table_code, floor_no, seating_capacity, table_status, created_at, modified_at, created_by, modified_by
+                        FROM md_table_unit_old
+                        """.trimIndent()
+                    )
+                    db.execSQL("DROP TABLE md_table_unit_old")
+                }
+                if (subOld) {
+                    db.execSQL("ALTER TABLE ${Tables.MD_SUBTABLE} RENAME TO md_subtable_old")
+                    db.execSQL(SQL_CREATE_MD_SUBTABLE)
+                    db.execSQL(
+                        """
+                        INSERT INTO ${Tables.MD_SUBTABLE} (id, store_id, table_id, parent_code, sub_code, suffix, table_status, created_at, modified_at, created_by, modified_by)
+                        SELECT id, store_id, table_id, parent_code, sub_code, suffix, table_status, created_at, modified_at, created_by, modified_by
+                        FROM md_subtable_old
+                        """.trimIndent()
+                    )
+                    db.execSQL("DROP TABLE md_subtable_old")
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            db.setForeignKeyConstraintsEnabled(true)
+        }.onFailure { android.util.Log.e("DBMigrate", "Failed to rebuild table status tables", it) }
     }
 
     /** The stored CREATE statement for [table], or null if it doesn't exist. */
@@ -1494,7 +1560,7 @@ class DatabaseHelper private constructor(context: Context) :
                 floor_no TEXT,
                 seating_capacity INTEGER DEFAULT 0,
                 table_status TEXT CHECK(table_status IN
-                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked')) DEFAULT 'Available',
+                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked','KOT Printed')) DEFAULT 'Available',
                 waiter_id INTEGER,
                 remarks TEXT,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
@@ -1573,7 +1639,7 @@ class DatabaseHelper private constructor(context: Context) :
                 floor_no TEXT,
                 seating_capacity INTEGER DEFAULT 0,
                 table_status TEXT CHECK(table_status IN
-                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked')) DEFAULT 'Available',
+                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked','KOT Printed')) DEFAULT 'Available',
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,
@@ -1593,7 +1659,7 @@ class DatabaseHelper private constructor(context: Context) :
                 sub_code TEXT,
                 suffix TEXT,
                 table_status TEXT CHECK(table_status IN
-                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked')) DEFAULT 'Occupied',
+                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked','KOT Printed')) DEFAULT 'Occupied',
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,

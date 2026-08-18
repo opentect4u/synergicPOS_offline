@@ -61,6 +61,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swAccessMaster: SwitchMaterial
     private lateinit var swAccessSettings: SwitchMaterial
     private lateinit var swAccessReports: SwitchMaterial
+    private lateinit var swAccessAboutApp: SwitchMaterial
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -91,6 +92,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         swAccessMaster = view.findViewById(R.id.swAccessMaster)
         swAccessSettings = view.findViewById(R.id.swAccessSettings)
         swAccessReports = view.findViewById(R.id.swAccessReports)
+        swAccessAboutApp = view.findViewById(R.id.swAccessAboutApp)
 
         val s = dao.load()
         // Section access is an admin-only control: only an admin sees or sets it.
@@ -98,6 +100,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         swAccessMaster.isChecked = s.accessMaster
         swAccessSettings.isChecked = s.accessSettings
         swAccessReports.isChecked = s.accessReports
+        swAccessAboutApp.isChecked = s.accessAboutApp
         swLastBillStatus.isChecked = s.lastBillStatus
         swQuantityStatus.isChecked = s.quantityStatus
         swCustomerInfo.isChecked = s.customerInfo
@@ -199,7 +202,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 // non-admin save can never silently change who can see what.
                 accessMaster = if (SessionManager.isAdmin()) swAccessMaster.isChecked else s.accessMaster,
                 accessSettings = if (SessionManager.isAdmin()) swAccessSettings.isChecked else s.accessSettings,
-                accessReports = if (SessionManager.isAdmin()) swAccessReports.isChecked else s.accessReports
+                accessReports = if (SessionManager.isAdmin()) swAccessReports.isChecked else s.accessReports,
+                accessAboutApp = if (SessionManager.isAdmin()) swAccessAboutApp.isChecked else s.accessAboutApp
             )
 
             // Switching mode wipes the mode-specific business data. Because it is

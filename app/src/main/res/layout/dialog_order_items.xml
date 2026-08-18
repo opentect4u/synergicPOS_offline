@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The selected table's order, opened from "More" beside ORDER ITEMS.
+
+  The panel on the sale page is ~350dp, which fits a name and a figure and little
+  else. This is the same order given room: a proper table, and the quantity steppers
+  the panel has, so a long order can be read and corrected in one place.
+-->
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_margin="24dp"
+    app:cardCornerRadius="24dp"
+    app:cardElevation="16dp"
+    app:cardBackgroundColor="@color/white">
+
+    <LinearLayout
+        android:id="@+id/llDialogContent"
+        android:layout_width="720dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <!-- Title + close -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/tvOrderItemsTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Order Items"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_main" />
+
+            <TextView
+                android:id="@+id/tvOrderItemsCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:text="0 item(s)"
+                android:textSize="13sp"
+                android:textColor="@color/text_secondary" />
+
+            <ImageButton
+                android:id="@+id/btnOrderItemsClose"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                app:tint="@color/text_secondary"
+                android:contentDescription="Close" />
+        </LinearLayout>
+
+        <!-- Column header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="10dp"
+            android:paddingBottom="8dp">
+
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="ITEM"
+                android:textSize="11sp" android:textColor="@color/text_secondary" />
+            <TextView android:layout_width="112dp" android:layout_height="wrap_content"
+                android:gravity="center" android:text="QTY"
+                android:textSize="11sp" android:textColor="@color/text_secondary" />
+            <TextView android:layout_width="80dp" android:layout_height="wrap_content"
+                android:gravity="end" android:text="RATE"
+                android:textSize="11sp" android:textColor="@color/text_secondary" />
+            <TextView android:layout_width="96dp" android:layout_height="wrap_content"
+                android:gravity="end" android:text="AMOUNT"
+                android:textSize="11sp" android:textColor="@color/text_secondary" />
+            <TextView android:layout_width="72dp" android:layout_height="wrap_content"
+                android:paddingStart="10dp" android:text="KOT"
+                android:textSize="11sp" android:textColor="@color/text_secondary" />
+            <TextView android:layout_width="40dp" android:layout_height="wrap_content"
+                android:text="" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E4E7EB" />
+
+        <!-- Rows, filled in code from the same order the page shows -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:minHeight="120dp"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/llDialogOrderItems"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+
+        <TextView
+            android:id="@+id/tvOrderItemsEmpty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingVertical="26dp"
+            android:gravity="center"
+            android:text="Nothing on this order yet."
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:visibility="gone" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E4E7EB" />
+
+        <!-- Total -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingTop="14dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Total"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_main" />
+
+            <TextView
+                android:id="@+id/tvOrderItemsTotal"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="₹ 0.00"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="@color/primary_blue" />
+        </LinearLayout>
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

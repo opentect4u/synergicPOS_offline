@@ -53,19 +53,66 @@
                 android:text="Take Away"
                 app:cornerRadius="10dp" />
         </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <!-- Slides the active-order list in over the menu (and out again). -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnToggleOrders"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="42dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:maxLines="1"
+            android:textSize="13sp"
+            android:letterSpacing="0"
+            android:text="Active Orders"
+            app:icon="@android:drawable/ic_menu_sort_by_size"
+            app:iconSize="16dp"
+            app:iconPadding="6dp"
+            app:iconGravity="textStart"
+            app:cornerRadius="10dp" />
+
+        <!-- Choose Table → the table-picker grid (sections as tabs, tables as cards). -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnChooseTable"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="42dp"
+            android:layout_marginStart="10dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:maxLines="1"
+            android:textSize="13sp"
+            android:letterSpacing="0"
+            android:text="Choose Table"
+            app:icon="@android:drawable/ic_menu_mylocation"
+            app:iconSize="16dp"
+            app:iconPadding="6dp"
+            app:iconGravity="textStart"
+            app:cornerRadius="10dp" />
     </LinearLayout>
 
-    <!-- Main content: order list | detail -->
-    <LinearLayout
+    <!-- Main content. A frame rather than a row: the order list slides in OVER the
+         menu instead of holding a column of the page open, so with the list closed the
+         item grid has the whole width. Elevation puts the list above the page for both
+         drawing and touch. -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:orientation="horizontal">
+        android:layout_weight="1">
 
-        <!-- ===== Left: order list ===== -->
+        <!-- ===== Slide-over: order list ===== -->
         <LinearLayout
+            android:id="@+id/panelOrders"
             android:layout_width="320dp"
             android:layout_height="match_parent"
+            android:layout_gravity="start"
+            android:elevation="12dp"
             android:orientation="vertical"
             android:background="@color/white">
 
@@ -76,7 +123,7 @@
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
                 android:paddingStart="14dp"
-                android:paddingEnd="8dp"
+                android:paddingEnd="12dp"
                 android:paddingTop="14dp"
                 android:paddingBottom="12dp">
 
@@ -105,6 +152,14 @@
                     android:textStyle="bold"
                     android:textColor="@color/white" />
 
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <!-- Choose Table lives in the top bar beside Active Orders, not here:
+                     picking a table is how you get INTO an order, so it must be
+                     reachable with this list slid off. -->
             </LinearLayout>
 
             <View
@@ -191,17 +246,31 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Dimmed backdrop while the list is open; tapping it closes the list.
+             Above the page, below the list itself. -->
         <View
-            android:layout_width="1dp"
+            android:id="@+id/vOrdersScrim"
+            android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="#E4E7EB" />
+            android:elevation="6dp"
+            android:background="#59000000"
+            android:visibility="gone" />
 
-        <!-- ===== Right: order detail ===== -->
+        <!-- ===== The page: the order's own column on the left, the order itself
+             down the right. The order panel runs the full height rather than starting
+             below the header, so the space beside the header and the action buttons is
+             the order rather than empty page. ===== -->
         <LinearLayout
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical">
+            android:orientation="horizontal">
+
+            <!-- Left: order header, its actions, and the menu beneath them -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:orientation="vertical">
 
             <!-- Detail header -->
             <LinearLayout
@@ -251,15 +320,20 @@
                     android:textSize="13sp"
                     android:textColor="@color/text_secondary" />
 
+                <!-- Reads beside the order type rather than out at the far edge. -->
                 <TextView
                     android:id="@+id/tvDetailOrderTime"
-                    android:layout_width="0dp"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:gravity="end"
+                    android:layout_marginStart="14dp"
                     android:text="Order Time: —"
                     android:textSize="13sp"
                     android:textColor="@color/text_secondary" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
             </LinearLayout>
 
             <!-- Action buttons -->
@@ -271,24 +345,12 @@
                 android:paddingHorizontal="22dp"
                 android:paddingBottom="14dp">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnAddItem"
-                    android:layout_width="wrap_content"
-                    android:layout_height="44dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:text="Add Item"
-                    android:textColor="@color/white"
-                    app:icon="@drawable/ic_plus"
-                    app:iconGravity="textStart"
-                    app:cornerRadius="10dp" />
-
+                <!-- No Add Item button: the product grid below this adds items directly. -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnPrintKot"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="wrap_content"
                     android:layout_height="44dp"
-                    android:layout_marginStart="10dp"
                     android:insetTop="0dp"
                     android:insetBottom="0dp"
                     android:text="Print KOT"
@@ -327,12 +389,8 @@
                     android:text="Split"
                     app:cornerRadius="10dp" />
 
-                <!-- pushes Cancel Order to the far right -->
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
+                <!-- Cancel Order sits with the table actions it belongs to, not out
+                     on its own at the right-hand edge. -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnCancelOrder"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
@@ -345,48 +403,120 @@
                     app:icon="@drawable/ic_delete"
                     app:iconGravity="textStart"
                     app:cornerRadius="10dp" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
             </LinearLayout>
 
-            <!-- Items + summary -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:orientation="horizontal">
-
-                <!-- Items list -->
+                <!-- Products: the menu, browsed in place. Tapping a tile puts the item
+                     on the selected table's order - there is no Add Item popup. Takes
+                     whatever height the header and actions above it leave. -->
                 <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
                     android:layout_weight="1"
                     android:orientation="vertical"
-                    android:paddingHorizontal="22dp">
+                    android:paddingHorizontal="18dp">
 
-                    <!-- Column header -->
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="Scan barcode or search name / SKU"
+                        app:startIconDrawable="@android:drawable/ic_menu_search"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etProductSearch"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="text"
+                            android:maxLines="1"
+                            android:textSize="15sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <!-- Section/category tabs -->
+                    <HorizontalScrollView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:scrollbars="none">
+
+                        <LinearLayout
+                            android:id="@+id/llProductCategories"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal" />
+                    </HorizontalScrollView>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="#E4E7EB" />
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/rvProductGrid"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:layout_weight="1"
+                        android:paddingVertical="10dp"
+                        android:clipToPadding="false"
+                        android:scrollbars="none" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="match_parent"
+                android:background="#E4E7EB" />
+
+                <!-- Cart + summary: the selected table's order, full height down the
+                     right - this is what fills the space beside the header/actions. -->
+                <LinearLayout
+                    android:layout_width="352dp"
+                    android:layout_height="match_parent"
+                    android:orientation="vertical"
+                    android:background="@color/white">
+
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
                         android:gravity="center_vertical"
-                        android:paddingVertical="10dp">
+                        android:paddingStart="18dp"
+                        android:paddingEnd="10dp"
+                        android:paddingTop="10dp"
+                        android:paddingBottom="6dp">
 
-                        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1" android:text="ITEM"
-                            android:textSize="11sp" android:textColor="@color/text_secondary" />
-                        <TextView android:layout_width="112dp" android:layout_height="wrap_content"
-                            android:gravity="center" android:text="QTY"
-                            android:textSize="11sp" android:textColor="@color/text_secondary" />
-                        <TextView android:layout_width="80dp" android:layout_height="wrap_content"
-                            android:gravity="end" android:text="RATE"
-                            android:textSize="11sp" android:textColor="@color/text_secondary" />
-                        <TextView android:layout_width="96dp" android:layout_height="wrap_content"
-                            android:gravity="end" android:text="AMOUNT"
-                            android:textSize="11sp" android:textColor="@color/text_secondary" />
-                        <TextView android:layout_width="72dp" android:layout_height="wrap_content"
-                            android:paddingStart="10dp" android:text="NOTE"
-                            android:textSize="11sp" android:textColor="@color/text_secondary" />
-                        <TextView android:layout_width="40dp" android:layout_height="wrap_content"
-                            android:text="" />
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="ORDER ITEMS"
+                            android:textSize="11sp"
+                            android:letterSpacing="0.08"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_secondary" />
+
+                        <!-- Opens the whole order in a roomy popup - this panel is
+                             narrow, so a long order is easier read there. -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnMoreItems"
+                            style="@style/Widget.MaterialComponents.Button.TextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="32dp"
+                            android:paddingHorizontal="8dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:text="More"
+                            android:textSize="12sp"
+                            android:textAllCaps="false"
+                            app:cornerRadius="6dp" />
                     </LinearLayout>
 
                     <View
@@ -394,10 +524,13 @@
                         android:layout_height="1dp"
                         android:background="#E4E7EB" />
 
+                    <!-- The one part that flexes; everything under it keeps its height. -->
                     <ScrollView
                         android:layout_width="match_parent"
                         android:layout_height="0dp"
                         android:layout_weight="1"
+                        android:paddingHorizontal="18dp"
+                        android:clipToPadding="false"
                         android:scrollbars="none">
 
                         <LinearLayout
@@ -406,25 +539,18 @@
                             android:layout_height="wrap_content"
                             android:orientation="vertical" />
                     </ScrollView>
-                </LinearLayout>
 
-                <View
-                    android:layout_width="1dp"
-                    android:layout_height="match_parent"
-                    android:background="#E4E7EB" />
-
-                <!-- Summary -->
-                <LinearLayout
-                    android:layout_width="300dp"
-                    android:layout_height="match_parent"
-                    android:orientation="vertical"
-                    android:background="@color/white">
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="#E4E7EB" />
 
                     <com.google.android.material.textfield.TextInputLayout
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_margin="18dp"
+                        android:layout_marginHorizontal="18dp"
+                        android:layout_marginTop="12dp"
                         android:hint="Add Order Note"
                         app:counterEnabled="true"
                         app:counterMaxLength="200"
@@ -435,19 +561,20 @@
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/etOrderNote"
                             android:layout_width="match_parent"
-                            android:layout_height="80dp"
+                            android:layout_height="56dp"
                             android:gravity="top"
                             android:inputType="textMultiLine|textCapSentences"
                             android:maxLength="200"
                             android:textSize="14sp" />
                     </com.google.android.material.textfield.TextInputLayout>
 
+                    <!-- Totals keep their own height; the items list above takes the slack. -->
                     <LinearLayout
                         android:layout_width="match_parent"
-                        android:layout_height="0dp"
-                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
                         android:orientation="vertical"
-                        android:paddingHorizontal="20dp">
+                        android:paddingHorizontal="20dp"
+                        android:paddingTop="6dp">
 
                         <LinearLayout style="@style/OrderSummaryRow">
                             <TextView style="@style/OrderSummaryLabel" android:text="Subtotal" />
@@ -531,7 +658,6 @@
                             app:cornerRadius="12dp" />
                     </LinearLayout>
                 </LinearLayout>
-            </LinearLayout>
         </LinearLayout>
-    </LinearLayout>
+    </FrameLayout>
 </LinearLayout>
