@@ -37,7 +37,7 @@ class TransliteratorTest {
     @Test
     fun `common English product names`() {
         assertEquals("टूथ्पेस्ट", hi("TOOTHPASTE"))
-        assertEquals("कोलगेट", hi("COLGATE"))
+        assertEquals("कॉलगेट", hi("COLGATE"))
         assertEquals("पेप्सी", hi("PEPSI"))
         assertEquals("सोप", hi("SOAP"))
         assertEquals("बुटर", hi("BUTTER"))
@@ -52,7 +52,7 @@ class TransliteratorTest {
         assertEquals("चावल", hi("CHAWAL"))
         assertEquals("टाटा", hi("TATA"))
         // Longer than the word wants - मसाला is what a person would write - but
-        // "maasaalaa" is still read back as masala. See [Transliterator.lengthenOpenA].
+        // "maasaalaa" is still read back as masala. See [Transliterator.lengthenOpenVowels].
         assertEquals("मासाला", hi("MASALA"))
     }
 
@@ -73,8 +73,8 @@ class TransliteratorTest {
 
     @Test
     fun `a nasal before a stop rides on the vowel`() {
-        assertEquals("कंडी", hi("CANDY"))
-        assertEquals("संड्विच", hi("SANDWICH"))
+        assertEquals("कैंडी", hi("CANDY"))
+        assertEquals("सैंड्विच", hi("SANDWICH"))
     }
 
     @Test
@@ -84,7 +84,50 @@ class TransliteratorTest {
         assertEquals("फ्राइ", hi("FRY"))
         assertEquals("ड्राइ", hi("DRY"))
         // …while a y beside another vowel is still the short ending of CANDY.
-        assertEquals("कंडी", hi("CANDY"))
+        assertEquals("कैंडी", hi("CANDY"))
+    }
+
+    @Test
+    fun `the short o of HOT is not the long one of SOAP`() {
+        // Devanagari marks it; Bengali and Odia leave it to the inherent vowel their
+        // consonants already carry, which is why one has a sign here and the other
+        // has none.
+        assertEquals("हॉट", hi("HOT"))
+        assertEquals("হট", Transliterator.to(Language.BENGALI, "HOT"))
+        assertEquals("सोप", hi("SOAP"))
+        assertEquals("सोडा", hi("SODA"))
+    }
+
+    @Test
+    fun `the flat a of AND has a vowel of its own`() {
+        // Read as a plain "a" this was अंड and অংড - not the word, in either script.
+        assertEquals("ऐंड", hi("AND"))
+        assertEquals("অ্যান্ড", Transliterator.to(Language.BENGALI, "AND"))
+        // …but an open syllable is still long, and -al is still faint.
+        assertEquals("मासाला", hi("MASALA"))
+        assertEquals("चावल", hi("CHAWAL"))
+        assertEquals("सॉल्ट", hi("SALT"))
+    }
+
+    @Test
+    fun `a restaurant dish reads as the dish`() {
+        assertEquals("হট অ্যান্ড সৌর সূপ", Transliterator.to(Language.BENGALI, "HOT AND SOUR SOUP"))
+        assertEquals("हॉट ऐंड सौर सूप", hi("HOT AND SOUR SOUP"))
+    }
+
+    @Test
+    fun `each script writes the nasal its own way`() {
+        // Devanagari puts a mark over the vowel; Bengali joins a letter to what
+        // follows; Tamil picks the nasal that matches the consonant after it.
+        assertTrue(hi("AND").contains("ं"))
+        assertTrue(Transliterator.to(Language.BENGALI, "AND").contains("ন্"))
+        assertTrue(Transliterator.to(Language.TAMIL, "AND").contains("ண்"))
+        // And no script leaves a virama sitting on nothing - SPRING once did.
+        Language.values().filter { it != Language.ENGLISH }.forEach { language ->
+            val out = Transliterator.to(language, "SPRING")
+            assertTrue("$language left a mark on nothing in $out", !out.contains(" ்"))
+            assertTrue("$language dropped SPRING", out.isNotBlank())
+        }
     }
 
     @Test
@@ -97,7 +140,7 @@ class TransliteratorTest {
     fun `an acronym is read out letter by letter`() {
         // The G of PARLE-G is "jee", not a consonant with no vowel after it - and not
         // grams either, which is what it would be after a figure.
-        assertEquals("परले-जी", hi("PARLE-G"))
+        assertEquals("पारले-जी", hi("PARLE-G"))
         assertEquals("टीवी", hi("TV"))
         assertEquals("जी", hi("G"))
     }

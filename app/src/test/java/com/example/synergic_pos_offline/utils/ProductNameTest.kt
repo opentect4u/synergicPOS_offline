@@ -62,7 +62,7 @@ class ProductNameTest {
         assertEquals("टाटा नमक", hi("TATA SALT"))
         assertEquals("டாடா உப்பு", ta("TATA SALT"))
         assertEquals("आमुल मक्खन", hi("AMUL BUTTER"))
-        assertEquals("कोलगेट टूथपेस्ट", hi("COLGATE TOOTHPASTE"))
+        assertEquals("कॉलगेट टूथपेस्ट", hi("COLGATE TOOTHPASTE"))
     }
 
     @Test
@@ -94,7 +94,7 @@ class ProductNameTest {
 
     @Test
     fun `spacing and punctuation are where they were`() {
-        assertEquals("परले-जी बिस्कुट", hi("PARLE-G BISCUIT"))
+        assertEquals("पारले-जी बिस्कुट", hi("PARLE-G BISCUIT"))
         assertTrue(hi("LAYS (MAGIC MASALA)").contains("("))
     }
 

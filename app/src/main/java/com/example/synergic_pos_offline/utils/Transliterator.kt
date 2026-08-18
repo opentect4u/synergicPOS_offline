@@ -188,7 +188,7 @@ object Transliterator {
         var word = collapseDoubles(raw)
         word = dropSilentStart(word)
         word = applyFinalE(word)
-        word = lengthenOpenA(word)
+        word = lengthenOpenVowels(word)
         word = applyWordEndings(word)
 
         val out = mutableListOf<Sound>()
@@ -290,7 +290,7 @@ object Transliterator {
     }
 
     /**
-     * The "a" of an open syllable, which these languages hear long.
+     * The vowel of an open syllable, which these languages hear long.
      *
      * A romanised Indian name spells with one letter what Devanagari writes with a
      * sign: TATA, ATTA and CHAWAL are टाटा, आटा and चावल, and read short they come out
@@ -303,15 +303,18 @@ object Transliterator {
      * is the cost of not knowing which language a name was borrowed from. The Print
      * Language screen shows the shop what its own catalogue does.
      */
-    private fun lengthenOpenA(word: String): String {
+    private fun lengthenOpenVowels(word: String): String {
         val out = StringBuilder()
         for (i in word.indices) {
-            val open = word[i] == 'a' &&
+            val letter = word[i]
+            val open = (letter == 'a' || letter == 'o') &&
                 i + 2 < word.length &&
                 !isVowelLetter(word[i + 1]) && word[i + 1] != 'h' &&
                 isVowelLetter(word[i + 2]) &&
                 (i == 0 || !isVowelLetter(word[i - 1]))
-            out.append(if (open) "aa" else word[i])
+            // "oa" is this file's spelling of the long o, so SODA and HOTEL keep the
+            // sound SOAP has rather than the clipped one of SHOP.
+            out.append(if (!open) letter else if (letter == 'a') "aa" else "oa")
         }
         return out.toString()
     }
@@ -344,6 +347,35 @@ object Transliterator {
         }
     }
 
+    /**
+     * Which "a" this is - the three English gets out of one letter in a closed
+     * syllable, which is most of them once [lengthenOpenVowels] has taken the open
+     * ones.
+     *
+     *  * before "l" plus a consonant it is the aw of SALT and MALT - सॉल्ट, সল্ট;
+     *  * before "r" it is the long one of CAR and CARD;
+     *  * otherwise it is the flat a of AND, HAND and CANDY, which every one of these
+     *    scripts spells with a sign of its own.
+     */
+    private fun shortA(word: String, i: Int): String {
+        val next = word.getOrNull(i + 1) ?: return "a"
+        if (isVowelLetter(next)) return "a"
+        val after = word.getOrNull(i + 2)
+        return when {
+            // A word *ending* in -al is a faint one - TOTAL, METAL, CHAWAL - while an
+            // "al" with a consonant behind it is the aw of SALT and MALT. Treating
+            // the two alike turned चावल into चावॉल.
+            next == 'l' && after == null -> "a"
+            next == 'l' && after != null && !isVowelLetter(after) -> "oshort"
+            // Long in CAR and BAR, where it is the only vowel; the faint one of
+            // BUTTER, SUGAR and DOCTOR where it closes a word that already has one.
+            // [applyWordEndings] has turned those endings into "ar" by this point.
+            next == 'r' ->
+                if (i + 2 >= word.length && word.take(i).any { isVowelLetter(it) }) "a" else "aa"
+            else -> "ae"
+        }
+    }
+
     private fun isVowelLetter(c: Char) = c in "aeiou"
 
     /** The spellings worth more than one letter, longest first. */
@@ -357,6 +389,9 @@ object Transliterator {
         // Vowels
         // English "ai" is the vowel of PLAIN, TRAIN and MAIN, which these scripts
         // write with the "e" sign - प्लेन, not प्लैन.
+        // Before "ou" in the list, so it wins: the ou of SOUP and GROUP is a long u,
+        // while the bare one of SOUR and ROUND is the diphthong below.
+        "oup" to { _, _ -> listOf(Vowel("uu"), Cons("p")) },
         "aa" to v("aa"), "ee" to v("ii"), "oo" to v("uu"), "ai" to v("e"),
         "ea" to v("ii"), "ie" to v("ii"), "ei" to v("e"),
         "oa" to v("o"), "oe" to v("o"), "ou" to v("au"), "au" to v("au"),
@@ -388,10 +423,12 @@ object Transliterator {
 
     /** One letter, where nothing longer matched. */
     private fun single(word: String, i: Int): List<Sound> = when (val c = word[i]) {
-        'a' -> listOf(Vowel("a"))
+        'a' -> listOf(Vowel(shortA(word, i)))
         'e' -> listOf(Vowel("e"))
         'i' -> listOf(Vowel("i"))
-        'o' -> listOf(Vowel("o"))
+        // The o of HOT and SHOP, not the one of SOAP - an open o was already
+        // lengthened by [lengthenOpenVowels], so anything still bare here is closed.
+        'o' -> listOf(Vowel(if (i + 1 < word.length && isVowelLetter(word[i + 1])) "o" else "oshort"))
         'u' -> listOf(Vowel("u"))
         // A consonant only when it has a vowel to carry - YES and PAYAL open a
         // syllable with it. Everywhere else it is the vowel itself, which is what
@@ -427,7 +464,7 @@ object Transliterator {
         var i = 0
         while (i < sounds.size) {
             when (val sound = sounds[i]) {
-                is Nasal -> out.append(script.anusvara)
+                is Nasal -> out.append(nasalFor(script, sounds.getOrNull(i + 1)))
                 // Reached on its own, so it opens the word or follows another vowel:
                 // either way it is written in full rather than as a sign.
                 is Vowel -> out.append(script.independent[sound.key].orEmpty())
@@ -445,6 +482,33 @@ object Transliterator {
             i++
         }
         return out.toString()
+    }
+
+    /**
+     * The nasal before another consonant, written the way this script writes it.
+     *
+     * See [NasalStyle]. The homorganic case picks the nasal that matches what
+     * follows - Tamil writes ண் before a retroflex and ந் before a dental, and using
+     * one for the other is the sort of thing a reader notices immediately.
+     */
+    private fun nasalFor(script: Script, next: Sound?): String {
+        val following = (next as? Cons)?.key
+        return when (script.nasal) {
+            NasalStyle.ANUSVARA -> script.anusvara
+            NasalStyle.DENTAL -> script.consonant["n"].orEmpty() + script.virama
+            NasalStyle.HOMORGANIC -> {
+                // Only keys [CONSONANTS] actually holds. It carries no velar or
+                // palatal nasal, and naming one produced an empty string followed by
+                // a virama - SPRING came out of Tamil as "ஸ்ப்ரி்க்", a mark sitting
+                // on nothing. Those fall back to the dental, which is legible.
+                val key = when (following) {
+                    "T", "Th", "D", "Dh" -> "N"
+                    "p", "ph", "b", "bh", "m" -> "m"
+                    else -> "n"
+                }
+                script.consonant[key].orEmpty() + script.virama
+            }
+        }
     }
 
     /**
@@ -515,10 +579,35 @@ object Transliterator {
         val consonant: Map<String, String>,
         val virama: String,
         val anusvara: String,
-        val viramaAtWordEnd: Boolean
+        val viramaAtWordEnd: Boolean,
+        val nasal: NasalStyle
     )
 
-    private val VOWELS = listOf("a", "aa", "i", "ii", "u", "uu", "e", "ai", "o", "au")
+    /**
+     * How a script writes the n or m that sits before another consonant.
+     *
+     * The three are not preferences; each is what its own readers expect, and picking
+     * one for all of them gets two of the three wrong. AND is ऐंड in Hindi and ন্ড in
+     * Bengali - the first writes the nasal as a mark over the vowel, the second as a
+     * letter joined to what follows - and Tamil goes further and picks the nasal that
+     * matches the consonant after it, ண் before a retroflex and ந் before a dental.
+     */
+    private enum class NasalStyle { ANUSVARA, DENTAL, HOMORGANIC }
+
+    /**
+     * The vowels a script has to spell, including two English needs and Sanskrit
+     * does not:
+     *
+     *  * **ae** - the a of AND, HAND and CANDY. Devanagari writes it ऐ, Bengali
+     *    অ্যা. Read as a plain "a" it turns অ্যান্ড into অংড, which is not the word.
+     *  * **oshort** - the o of HOT, SHOP and BOX, as against the long one of SOAP.
+     *    Devanagari marks it ॉ; Bengali and Odia leave it to the inherent vowel their
+     *    consonants already carry, which is why those two have no sign for it and
+     *    HOT comes out হট rather than হোট.
+     */
+    private val VOWELS = listOf(
+        "a", "aa", "i", "ii", "u", "uu", "e", "ai", "o", "au", "ae", "oshort"
+    )
 
     private val CONSONANTS = listOf(
         "k", "kh", "g", "gh", "ch", "chh", "j", "jh", "T", "Th", "D", "Dh", "N",
@@ -528,7 +617,8 @@ object Transliterator {
 
     private fun script(
         independent: String, matra: String, consonants: String,
-        virama: String, anusvara: String, viramaAtWordEnd: Boolean
+        virama: String, anusvara: String, viramaAtWordEnd: Boolean,
+        nasal: NasalStyle = NasalStyle.ANUSVARA
     ): Script {
         // Space-separated so an empty cell (the inherent "a" has no sign) can be
         // written down as one rather than being a gap nobody notices.
@@ -544,14 +634,15 @@ object Transliterator {
             consonant = CONSONANTS.zip(consonantForms).toMap(),
             virama = virama,
             anusvara = anusvara,
-            viramaAtWordEnd = viramaAtWordEnd
+            viramaAtWordEnd = viramaAtWordEnd,
+            nasal = nasal
         )
     }
 
     private val DEVANAGARI by lazy {
         script(
-            independent = "अ आ इ ई उ ऊ ए ऐ ओ औ",
-            matra = "|ा|ि|ी|ु|ू|े|ै|ो|ौ",
+            independent = "अ आ इ ई उ ऊ ए ऐ ओ औ ऐ ऑ",
+            matra = "|ा|ि|ी|ु|ू|े|ै|ो|ौ|ै|ॉ",
             consonants = "क ख ग घ च छ ज झ ट ठ ड ढ ण त थ द ध न प फ ब भ म य र ल व श स ह",
             virama = "्", anusvara = "ं", viramaAtWordEnd = false
         )
@@ -559,27 +650,27 @@ object Transliterator {
 
     private val BENGALI by lazy {
         script(
-            independent = "অ আ ই ঈ উ ঊ এ ঐ ও ঔ",
-            matra = "|া|ি|ী|ু|ূ|ে|ৈ|ো|ৌ",
+            independent = "অ আ ই ঈ উ ঊ এ ঐ ও ঔ অ্যা অ",
+            matra = "|া|ি|ী|ু|ূ|ে|ৈ|ো|ৌ|্যা|",
             consonants = "ক খ গ ঘ চ ছ জ ঝ ট ঠ ড ঢ ণ ত থ দ ধ ন প ফ ব ভ ম য র ল ব শ স হ",
-            virama = "্", anusvara = "ং", viramaAtWordEnd = false
+            virama = "্", anusvara = "ং", nasal = NasalStyle.DENTAL, viramaAtWordEnd = false
         )
     }
 
     /** Bengali's script, with the two letters Assamese writes differently - ৰ and ৱ. */
     private val ASSAMESE by lazy {
         script(
-            independent = "অ আ ই ঈ উ ঊ এ ঐ ও ঔ",
-            matra = "|া|ি|ী|ু|ূ|ে|ৈ|ো|ৌ",
+            independent = "অ আ ই ঈ উ ঊ এ ঐ ও ঔ অ্যা অ",
+            matra = "|া|ি|ী|ু|ূ|ে|ৈ|ো|ৌ|্যা|",
             consonants = "ক খ গ ঘ চ ছ জ ঝ ট ঠ ড ঢ ণ ত থ দ ধ ন প ফ ব ভ ম য ৰ ল ৱ শ স হ",
-            virama = "্", anusvara = "ং", viramaAtWordEnd = false
+            virama = "্", anusvara = "ং", nasal = NasalStyle.DENTAL, viramaAtWordEnd = false
         )
     }
 
     private val GUJARATI by lazy {
         script(
-            independent = "અ આ ઇ ઈ ઉ ઊ એ ઐ ઓ ઔ",
-            matra = "|ા|િ|ી|ુ|ૂ|ે|ૈ|ો|ૌ",
+            independent = "અ આ ઇ ઈ ઉ ઊ એ ઐ ઓ ઔ ઍ ઑ",
+            matra = "|ા|િ|ી|ુ|ૂ|ે|ૈ|ો|ૌ|ૅ|ૉ",
             consonants = "ક ખ ગ ઘ ચ છ જ ઝ ટ ઠ ડ ઢ ણ ત થ દ ધ ન પ ફ બ ભ મ ય ર લ વ શ સ હ",
             virama = "્", anusvara = "ં", viramaAtWordEnd = false
         )
@@ -587,8 +678,8 @@ object Transliterator {
 
     private val ODIA by lazy {
         script(
-            independent = "ଅ ଆ ଇ ଈ ଉ ଊ ଏ ଐ ଓ ଔ",
-            matra = "|ା|ି|ୀ|ୁ|ୂ|େ|ୈ|ୋ|ୌ",
+            independent = "ଅ ଆ ଇ ଈ ଉ ଊ ଏ ଐ ଓ ଔ ଆ ଅ",
+            matra = "|ା|ି|ୀ|ୁ|ୂ|େ|ୈ|ୋ|ୌ|ା|",
             consonants = "କ ଖ ଗ ଘ ଚ ଛ ଜ ଝ ଟ ଠ ଡ ଢ ଣ ତ ଥ ଦ ଧ ନ ପ ଫ ବ ଭ ମ ଯ ର ଲ ୱ ଶ ସ ହ",
             virama = "୍", anusvara = "ଂ", viramaAtWordEnd = false
         )
@@ -596,8 +687,8 @@ object Transliterator {
 
     private val GURMUKHI by lazy {
         script(
-            independent = "ਅ ਆ ਇ ਈ ਉ ਊ ਏ ਐ ਓ ਔ",
-            matra = "|ਾ|ਿ|ੀ|ੁ|ੂ|ੇ|ੈ|ੋ|ੌ",
+            independent = "ਅ ਆ ਇ ਈ ਉ ਊ ਏ ਐ ਓ ਔ ਐ ਔ",
+            matra = "|ਾ|ਿ|ੀ|ੁ|ੂ|ੇ|ੈ|ੋ|ੌ|ੈ|ੌ",
             consonants = "ਕ ਖ ਗ ਘ ਚ ਛ ਜ ਝ ਟ ਠ ਡ ਢ ਣ ਤ ਥ ਦ ਧ ਨ ਪ ਫ ਬ ਭ ਮ ਯ ਰ ਲ ਵ ਸ਼ ਸ ਹ",
             virama = "੍", anusvara = "ਂ", viramaAtWordEnd = false
         )
@@ -605,8 +696,8 @@ object Transliterator {
 
     private val TELUGU by lazy {
         script(
-            independent = "అ ఆ ఇ ఈ ఉ ఊ ఏ ఐ ఓ ఔ",
-            matra = "|ా|ి|ీ|ు|ూ|ే|ై|ో|ౌ",
+            independent = "అ ఆ ఇ ఈ ఉ ఊ ఏ ఐ ఓ ఔ ఆ ఒ",
+            matra = "|ా|ి|ీ|ు|ూ|ే|ై|ో|ౌ|ా|ొ",
             consonants = "క ఖ గ ఘ చ ఛ జ ఝ ట ఠ డ ఢ ణ త థ ద ధ న ప ఫ బ భ మ య ర ల వ శ స హ",
             virama = "్", anusvara = "ం", viramaAtWordEnd = true
         )
@@ -614,8 +705,8 @@ object Transliterator {
 
     private val KANNADA by lazy {
         script(
-            independent = "ಅ ಆ ಇ ಈ ಉ ಊ ಏ ಐ ಓ ಔ",
-            matra = "|ಾ|ಿ|ೀ|ು|ೂ|ೇ|ೈ|ೋ|ೌ",
+            independent = "ಅ ಆ ಇ ಈ ಉ ಊ ಏ ಐ ಓ ಔ ಆ ಒ",
+            matra = "|ಾ|ಿ|ೀ|ು|ೂ|ೇ|ೈ|ೋ|ೌ|ಾ|ೊ",
             consonants = "ಕ ಖ ಗ ಘ ಚ ಛ ಜ ಝ ಟ ಠ ಡ ಢ ಣ ತ ಥ ದ ಧ ನ ಪ ಫ ಬ ಭ ಮ ಯ ರ ಲ ವ ಶ ಸ ಹ",
             virama = "್", anusvara = "ಂ", viramaAtWordEnd = true
         )
@@ -632,10 +723,10 @@ object Transliterator {
      */
     private val TAMIL by lazy {
         script(
-            independent = "அ ஆ இ ஈ உ ஊ ஏ ஐ ஓ ஔ",
-            matra = "|ா|ி|ீ|ு|ூ|ே|ை|ோ|ௌ",
+            independent = "அ ஆ இ ஈ உ ஊ ஏ ஐ ஓ ஔ ஆ ஒ",
+            matra = "|ா|ி|ீ|ు|ூ|ே|ை|ோ|ௌ|ா|ொ",
             consonants = "க க க க ச ச ஜ ஜ ட ட ட ட ண த த த த ந ப ப ப ப ம ய ர ல வ ஷ ஸ ஹ",
-            virama = "்", anusvara = "ம்", viramaAtWordEnd = true
+            virama = "்", anusvara = "ம்", nasal = NasalStyle.HOMORGANIC, viramaAtWordEnd = true
         )
     }
 
