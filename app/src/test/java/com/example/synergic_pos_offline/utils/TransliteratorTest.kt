@@ -45,9 +45,11 @@ class TransliteratorTest {
 
     @Test
     fun `romanised names come back close to how they are written`() {
-        // ATTA and AATA are the same word spelled two ways, and land in one place.
         assertEquals("आटा", hi("AATA"))
-        assertEquals("आटा", hi("ATTA"))
+        // ATTA's doubled t closes its first syllable, so the bare transliterator
+        // reads it ऐटा. The word is in the lexicon, so a bill still prints आटा -
+        // see ProductNameTest.
+        assertEquals("ऐटा", hi("ATTA"))
         assertEquals("घी", hi("GHEE"))
         assertEquals("चावल", hi("CHAWAL"))
         assertEquals("टाटा", hi("TATA"))
@@ -66,9 +68,14 @@ class TransliteratorTest {
     }
 
     @Test
-    fun `a doubled consonant is one sound`() {
+    fun `a doubled consonant is one letter, and closes the syllable before it`() {
+        // One letter: BUTTER and BUTER land in the same place.
         assertEquals(hi("BUTTER"), hi("BUTER"))
-        assertEquals(hi("JALLEBI"), hi("JALEBI"))
+        // But not the same word as the single: in English a doubled consonant is what
+        // keeps the vowel before it short, which is the whole reason MAGGI is मैगी and
+        // not मागी. JALLEBI and JALEBI are therefore allowed to differ.
+        assertEquals("मैगी", hi("MAGGI"))
+        assertEquals("मागी", hi("MAGI"))
     }
 
     @Test
@@ -107,6 +114,18 @@ class TransliteratorTest {
         assertEquals("मासाला", hi("MASALA"))
         assertEquals("चावल", hi("CHAWAL"))
         assertEquals("सॉल्ट", hi("SALT"))
+    }
+
+    @Test
+    fun `the names a shop actually types`() {
+        // The six brought back from a real catalogue, pinned as they were asked for.
+        val bn = { n: String -> Transliterator.to(Language.BENGALI, n) }
+        assertEquals("জনসন'স বেবি ক্রিম", bn("JOHNSON'S BABY CREAM"))
+        assertEquals("ম্যাগি", bn("MAGGI"))
+        assertEquals("ভেজ ফ্রাইড রাইস", bn("VEG FRIED RICE"))
+        assertEquals("वेज फ्राइड राइस", hi("VEG FRIED RICE"))
+        // The possessive hisses; it is not read out as the letter "ess".
+        assertTrue(bn("JOHNSON'S").endsWith("স"))
     }
 
     @Test

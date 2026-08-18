@@ -77,6 +77,8 @@ object ProductName {
         val segments = segment(name)
         val out = StringBuilder()
         var i = 0
+        // All of it or none of it - see [translatesWhole] for why.
+        if (!translatesWhole(language, segments)) return name
         while (i < segments.size) {
             val segment = segments[i]
             if (!segment.isWord) {
@@ -101,6 +103,73 @@ object ProductName {
         }
         return out.toString()
     }
+
+    /**
+     * Whether every word of the name is one this file knows - the condition for
+     * translating any of it.
+     *
+     * All or nothing, and this is the rule the whole file turns on.
+     *
+     * A name made entirely of trade words is a commodity, and a shop wants the word:
+     * BUTTER is মাখন, SALT is লবণ, MUSTARD OIL is সরিষার তেল. A name with anything
+     * else in it is somebody's name for something - a brand, a dish, a variant - and
+     * the whole of it should be spelled rather than half-answered. VEG FRIED RICE is
+     * ভেজ ফ্রাইড রাইস, because it is the name of a dish and not an instruction to buy
+     * rice; JOHNSON'S BABY CREAM is জনসন'স বেবি ক্রিম all the way through.
+     *
+     * Translating word by word produced the worst of both: টাটা নুন and বেগ ফ্রীড চাল,
+     * where half the name is the shop's and half is this file's, and a reader can
+     * tell. Whichever way this rule falls for a given name, at least the name is one
+     * thing.
+     *
+     * A unit after a figure counts as known, since it passes through either way.
+     */
+    private fun translatesWhole(
+        language: PrintLanguage.Language,
+        segments: List<Segment>
+    ): Boolean {
+        var i = 0
+        var sawWord = false
+        while (i < segments.size) {
+            if (!segments[i].isWord) {
+                i++
+                continue
+            }
+            sawWord = true
+            var matched = 0
+            for (span in MAX_PHRASE_WORDS downTo 2) {
+                val phrase = phraseAt(segments, i, span) ?: continue
+                if (lookup(language, PHRASES, phrase.first) == null) continue
+                matched = phrase.second - i
+                break
+            }
+            if (matched > 0) {
+                i += matched
+                continue
+            }
+            val word = segments[i].text
+            val known = lookup(language, WORDS, word) != null ||
+                singular(language, word) != null ||
+                isUnitAfterFigure(segments, i)
+            if (!known) return false
+            i++
+        }
+        return sawWord
+    }
+
+    /** "500 ML" - a unit is carried through untranslated, so it never blocks a name. */
+    private fun isUnitAfterFigure(segments: List<Segment>, i: Int): Boolean {
+        if (segments[i].text.lowercase(Locale.ROOT) !in UNITS) return false
+        // Something before it has to be a figure, or "G" in "PARLE-G" would qualify.
+        val before = segments.take(i).lastOrNull { it.text.any(Char::isDigit) }
+        return before != null
+    }
+
+    /** The unit words, as [Transliterator] knows them - kept in step by hand. */
+    private val UNITS = setOf(
+        "kg", "kgs", "g", "gm", "gms", "mg", "ml", "l", "ltr", "ltrs",
+        "pc", "pcs", "pkt", "pkts", "box", "nos", "dz", "mm", "cm"
+    )
 
     /** Splits [name] into its words and the gaps between them, losing nothing. */
     private fun segment(name: String): List<Segment> {
@@ -241,7 +310,7 @@ object ProductName {
         w("RAVA", "सूजी", "रवा", "ரவை", "সুজি", "రవ్వ", "ರವೆ", "સોજી", "ସୁଜି", "ਸੂਜੀ", "সুজি")
         w("SUGAR", "चीनी", "साखर", "சர்க்கரை", "চিনি", "చక్కెర", "ಸಕ್ಕರೆ", "ખાંડ", "ଚିନି", "ਖੰਡ", "চেনি")
         w("JAGGERY", "गुड़", "गूळ", "வெல்லம்", "গুড়", "బెల్లం", "ಬೆಲ್ಲ", "ગોળ", "ଗୁଡ଼", "ਗੁੜ", "গুৰ")
-        w("SALT", "नमक", "मीठ", "உப்பு", "নুন", "ఉప్పు", "ಉಪ್ಪು", "મીઠું", "ଲୁଣ", "ਲੂਣ", "নিমখ")
+        w("SALT", "नमक", "मीठ", "உப்பு", "লবণ", "ఉప్పు", "ಉಪ್ಪು", "મીઠું", "ଲୁଣ", "ਲੂਣ", "নিমখ")
         w("OIL", "तेल", "तेल", "எண்ணெய்", "তেল", "నూనె", "ಎಣ್ಣೆ", "તેલ", "ତେଲ", "ਤੇਲ", "তেল")
         w("GHEE", "घी", "तूप", "நெய்", "ঘি", "నెయ్యి", "ತುಪ್ಪ", "ઘી", "ଘିଅ", "ਘਿਓ", "ঘিউ")
         w("BUTTER", "मक्खन", "लोणी", "வெண்ணெய்", "মাখন", "వెన్న", "ಬೆಣ್ಣೆ", "માખણ", "ଲହୁଣୀ", "ਮੱਖਣ", "মাখন")

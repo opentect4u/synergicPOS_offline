@@ -77,7 +77,9 @@ object Transliterator {
             }
             var j = i
             while (j < text.length && text[j].isLetter()) j++
-            out.append(token(script, text.substring(i, j), countedBefore(text, i)))
+            out.append(
+                token(script, text.substring(i, j), countedBefore(text, i), possessive(text, i, j))
+            )
             i = j
         }
         return out.toString()
@@ -96,8 +98,26 @@ object Transliterator {
         return k >= 0 && text[k].isDigit()
     }
 
+    /**
+     * Whether this token is the s of a possessive - the one in JOHNSON'S.
+     *
+     * A lone s is otherwise read as its letter name, which is right for the S of an
+     * initialism and wrong here: JOHNSON'S came out as জনসন'এস, saying "ess" where
+     * the name simply hisses.
+     */
+    private fun possessive(text: String, start: Int, end: Int): Boolean =
+        end - start == 1 && text[start].lowercaseChar() == 's' &&
+            // Both apostrophes: a shop types the straight one, a paste from a
+            // supplier's list carries the curly one.
+            start > 0 && (text[start - 1] == '\'' || text[start - 1] == '’')
+
     /** One run of letters, respelled - or kept, where respelling it would lose it. */
-    private fun token(script: Script, word: String, countedBefore: Boolean): String {
+    private fun token(
+        script: Script,
+        word: String,
+        countedBefore: Boolean,
+        possessive: Boolean = false
+    ): String {
         // A word already in a script of its own is one somebody has settled - either
         // the shop typed it that way, or [ProductName] has just translated it. Either
         // way there is nothing here that could improve on it. Asked per word rather
@@ -115,6 +135,12 @@ object Transliterator {
         // "y" counts as a vowel for this one question. It is the only vowel FRY, DRY
         // and TRY have, and read as a consonant they would be spelled out letter by
         // letter - FISH FRY came out as "मछली एफआरवै".
+        if (possessive) {
+            // Closed the way any word-final consonant is in this script - bare in
+            // Devanagari and Bengali, cancelled in the southern three.
+            return script.consonant["s"].orEmpty() +
+                (if (script.viramaAtWordEnd) script.virama else "")
+        }
         if (word.length <= 4 && lower.none { it in "aeiouy" }) {
             return word.map { letter ->
                 LETTER_NAMES[letter.lowercaseChar()]?.let { render(script, sounds(it)) } ?: letter.toString()
@@ -185,10 +211,20 @@ object Transliterator {
      *    word.
      */
     private fun sounds(raw: String): List<Sound> {
-        var word = collapseDoubles(raw)
+        // Order matters, and each of these has a reason to sit where it does.
+        // A respelling comes first, since the rest of the passes read it as though
+        // the shop had typed it. The silent h goes next, so JOHNSON is JONSON before
+        // anything looks at its vowels. The final e does its job before the open
+        // syllables are measured, or COLGATE would be lengthened to कॉलगाट. And the
+        // doubles are collapsed *after* that measuring, because a doubled consonant
+        // is what closes the syllable in MAGGI - collapse first and মাগী is the
+        // result instead of ম্যাগী.
+        var word = EXCEPTIONS[raw] ?: raw
+        word = dropSilentH(word)
         word = dropSilentStart(word)
         word = applyFinalE(word)
         word = lengthenOpenVowels(word)
+        word = collapseDoubles(word)
         word = applyWordEndings(word)
 
         val out = mutableListOf<Sound>()
@@ -198,8 +234,11 @@ object Transliterator {
             // before it rather than as a letter of its own - CANDY is कंडि. Not at the
             // end of a word, where the nasal is the last thing said.
             val c = word[i]
-            if ((c == 'n' || c == 'm') && i + 1 < word.length && !isVowelLetter(word[i + 1]) &&
-                word[i + 1] != 'h' && out.isNotEmpty()
+            // Before a *stop* only. AND, CANDY and SANDWICH carry the nasal on the
+            // vowel; JOHNSON and CONSUMER do not - "n" before s, l or r is an
+            // ordinary consonant, and writing it as a nasal gave জন্সন for জনসন.
+            if ((c == 'n' || c == 'm') && i + 1 < word.length && out.isNotEmpty() &&
+                word[i + 1] in STOPS
             ) {
                 out.add(Nasal)
                 i++
@@ -220,6 +259,9 @@ object Transliterator {
         return out
     }
 
+    /** The consonants a nasal leans on - see where it is used. */
+    private const val STOPS = "kgcjtdpbq"
+
     /** BUTTER, not BUTTTER: an English double is one sound, and so is a Hindi one. */
     private fun collapseDoubles(word: String): String {
         val out = StringBuilder()
@@ -231,6 +273,46 @@ object Transliterator {
         }
         return out.toString()
     }
+
+    /**
+     * The h English writes and does not say: JOHNSON, RHUBARB, KHAKI's second one.
+     *
+     * Only between a vowel and a consonant, which is where it is reliably silent.
+     * An h before a vowel is said (MAHARAJA, GHEE's is already a digraph by now), and
+     * one at the end of a word is left alone. Without this JOHNSON came out as
+     * জহন্সন - a syllable the name does not have.
+     */
+    private fun dropSilentH(word: String): String {
+        if (word.length < 3) return word
+        val out = StringBuilder()
+        for (i in word.indices) {
+            val silent = word[i] == 'h' &&
+                i > 0 && isVowelLetter(word[i - 1]) &&
+                i + 1 < word.length && !isVowelLetter(word[i + 1])
+            if (!silent) out.append(word[i])
+        }
+        return out.toString()
+    }
+
+    /**
+     * English words this file's rules read wrongly, respelled the way it reads them.
+     *
+     * The escape hatch, and it is meant to stay small. English spelling defeats any
+     * rule set often enough that trying to legislate for VEG (said "vej") or FRIED
+     * (said "fraid") would mean rules that then mis-read GET and CHIEF. A handful of
+     * respellings is honest about which of the two is happening.
+     *
+     * Keyed on the lower-case word as typed; the value is ordinary Latin, read by
+     * every pass below exactly as though the shop had typed it that way.
+     */
+    private val EXCEPTIONS = mapOf(
+        "veg" to "vej", "nonveg" to "nonvej", "vej" to "vej",
+        "fried" to "fraaid", "dried" to "draaid", "tried" to "traaid",
+        "cream" to "krim", "creme" to "krim",
+        "juice" to "jus", "sauce" to "sos", "cheese" to "chiz",
+        "pizza" to "pitza", "burger" to "bargar", "coffee" to "kofi",
+        "chocolate" to "choklet", "biscuit" to "biskut", "vegetable" to "vejtebal"
+    )
 
     private fun dropSilentStart(word: String): String = when {
         word.length > 2 && (word.startsWith("kn") || word.startsWith("gn")) -> word.substring(1)
@@ -307,14 +389,27 @@ object Transliterator {
         val out = StringBuilder()
         for (i in word.indices) {
             val letter = word[i]
+            // "y" counts as the vowel it is here, so BABY and LADY are seen as the
+            // two-syllable words they are rather than as closed ones.
             val open = (letter == 'a' || letter == 'o') &&
                 i + 2 < word.length &&
                 !isVowelLetter(word[i + 1]) && word[i + 1] != 'h' &&
-                isVowelLetter(word[i + 2]) &&
+                (isVowelLetter(word[i + 2]) || word[i + 2] == 'y') &&
                 (i == 0 || !isVowelLetter(word[i - 1]))
             // "oa" is this file's spelling of the long o, so SODA and HOTEL keep the
             // sound SOAP has rather than the clipped one of SHOP.
-            out.append(if (!open) letter else if (letter == 'a') "aa" else "oa")
+            // BABY, LADY, GRAVY: an open "a" closed off by a final y is the vowel of
+            // बेबी, not the long one of मसाला. Narrow on purpose - it is the one
+            // shape where the two reliably part company.
+            val finalY = letter == 'a' && i + 2 == word.length - 1 && word[i + 2] == 'y'
+            out.append(
+                when {
+                    !open -> letter.toString()
+                    letter == 'o' -> "oa"
+                    finalY -> "ei"
+                    else -> "aa"
+                }
+            )
         }
         return out.toString()
     }
@@ -428,7 +523,18 @@ object Transliterator {
         'i' -> listOf(Vowel("i"))
         // The o of HOT and SHOP, not the one of SOAP - an open o was already
         // lengthened by [lengthenOpenVowels], so anything still bare here is closed.
-        'o' -> listOf(Vowel(if (i + 1 < word.length && isVowelLetter(word[i + 1])) "o" else "oshort"))
+        // JOHNSON, LEMON, COTTON: the second o is a schwa, not the one of HOT. Told
+        // apart by whether the word already had a vowel before it - HOT and SHOP have
+        // none, so theirs is the full short o.
+        'o' -> listOf(
+            Vowel(
+                when {
+                    i + 1 < word.length && isVowelLetter(word[i + 1]) -> "o"
+                    i + 2 == word.length && word.take(i).any { isVowelLetter(it) } -> "a"
+                    else -> "oshort"
+                }
+            )
+        )
         'u' -> listOf(Vowel("u"))
         // A consonant only when it has a vowel to carry - YES and PAYAL open a
         // syllable with it. Everywhere else it is the vowel itself, which is what
@@ -472,7 +578,13 @@ object Transliterator {
                     out.append(script.consonant[sound.key].orEmpty())
                     val next = sounds.getOrNull(i + 1)
                     if (next is Vowel) {
-                        out.append(script.matra[next.key].orEmpty())
+                        // MAGGI and BABY end long in Devanagari and short in Bengali -
+                        // see [Script.finalILong]. Asked only of the last sound, so a
+                        // long i inside a word is untouched.
+                        val key =
+                            if (next.key == "ii" && i + 1 == sounds.lastIndex && !script.finalILong)
+                                "i" else next.key
+                        out.append(script.matra[key].orEmpty())
                         i++
                     } else if (virama[i]) {
                         out.append(script.virama)
@@ -580,7 +692,14 @@ object Transliterator {
         val virama: String,
         val anusvara: String,
         val viramaAtWordEnd: Boolean,
-        val nasal: NasalStyle
+        val nasal: NasalStyle,
+        /**
+         * Whether a word ending in "i" or "y" takes the long sign.
+         *
+         * Devanagari and the southern scripts write MAGGI and BABY long - मैगी, बेबी.
+         * Bengali and Assamese write an English loan's final i short: ম্যাগি, বেবি.
+         */
+        val finalILong: Boolean
     )
 
     /**
@@ -618,7 +737,8 @@ object Transliterator {
     private fun script(
         independent: String, matra: String, consonants: String,
         virama: String, anusvara: String, viramaAtWordEnd: Boolean,
-        nasal: NasalStyle = NasalStyle.ANUSVARA
+        nasal: NasalStyle = NasalStyle.ANUSVARA,
+        finalILong: Boolean = true
     ): Script {
         // Space-separated so an empty cell (the inherent "a" has no sign) can be
         // written down as one rather than being a gap nobody notices.
@@ -635,7 +755,8 @@ object Transliterator {
             virama = virama,
             anusvara = anusvara,
             viramaAtWordEnd = viramaAtWordEnd,
-            nasal = nasal
+            nasal = nasal,
+            finalILong = finalILong
         )
     }
 
@@ -652,8 +773,8 @@ object Transliterator {
         script(
             independent = "অ আ ই ঈ উ ঊ এ ঐ ও ঔ অ্যা অ",
             matra = "|া|ি|ী|ু|ূ|ে|ৈ|ো|ৌ|্যা|",
-            consonants = "ক খ গ ঘ চ ছ জ ঝ ট ঠ ড ঢ ণ ত থ দ ধ ন প ফ ব ভ ম য র ল ব শ স হ",
-            virama = "্", anusvara = "ং", nasal = NasalStyle.DENTAL, viramaAtWordEnd = false
+            consonants = "ক খ গ ঘ চ ছ জ ঝ ট ঠ ড ঢ ণ ত থ দ ধ ন প ফ ব ভ ম য র ল ভ শ স হ",
+            virama = "্", anusvara = "ং", nasal = NasalStyle.DENTAL, finalILong = false, viramaAtWordEnd = false
         )
     }
 
@@ -663,7 +784,7 @@ object Transliterator {
             independent = "অ আ ই ঈ উ ঊ এ ঐ ও ঔ অ্যা অ",
             matra = "|া|ি|ী|ু|ূ|ে|ৈ|ো|ৌ|্যা|",
             consonants = "ক খ গ ঘ চ ছ জ ঝ ট ঠ ড ঢ ণ ত থ দ ধ ন প ফ ব ভ ম য ৰ ল ৱ শ স হ",
-            virama = "্", anusvara = "ং", nasal = NasalStyle.DENTAL, viramaAtWordEnd = false
+            virama = "্", anusvara = "ং", nasal = NasalStyle.DENTAL, finalILong = false, viramaAtWordEnd = false
         )
     }
 

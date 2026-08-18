@@ -33,7 +33,7 @@ class ProductNameTest {
     fun `an everyday retail word is translated, not spelled out`() {
         assertEquals("नमक", hi("SALT"))
         assertEquals("உப்பு", ta("SALT"))
-        assertEquals("নুন", bn("SALT"))
+        assertEquals("লবণ", bn("SALT"))
         assertEquals("चावल", hi("RICE"))
         assertEquals("साबुन", hi("SOAP"))
         assertEquals("दूध", hi("MILK"))
@@ -58,11 +58,25 @@ class ProductNameTest {
 
     @Test
     fun `a brand is spelled, never translated`() {
-        // The whole point of the split. TATA is the company; SALT is the thing.
-        assertEquals("टाटा नमक", hi("TATA SALT"))
-        assertEquals("டாடா உப்பு", ta("TATA SALT"))
-        assertEquals("आमुल मक्खन", hi("AMUL BUTTER"))
-        assertEquals("कॉलगेट टूथपेस्ट", hi("COLGATE TOOTHPASTE"))
+        // A name with a brand in it is spelled all the way through - see
+        // `a name is translated only when every word of it is known`.
+        assertEquals("टाटा सॉल्ट", hi("TATA SALT"))
+        assertEquals("आमुल बुटर", hi("AMUL BUTTER"))
+        // Spelled, not translated - COLGATE is a brand, so the whole name is spelled.
+        assertEquals("कॉलगेट टूथ्पेस्ट", hi("COLGATE TOOTHPASTE"))
+    }
+
+    @Test
+    fun `a name is translated only when every word of it is known`() {
+        // All of it: both words are trade words.
+        assertEquals("सरसों तेल", hi("MUSTARD OIL"))
+        assertEquals("मक्खन", hi("BUTTER"))
+        // None of it: FRIED is nobody's commodity, so the dish keeps its own name
+        // rather than being half-answered as "वेग फ्रीड चावल".
+        assertEquals("वेज फ्राइड राइस", hi("VEG FRIED RICE"))
+        assertEquals("ভেজ ফ্রাইড রাইস", bn("VEG FRIED RICE"))
+        // …and RICE on its own is still the commodity it is.
+        assertEquals("चावल", hi("RICE"))
     }
 
     @Test
@@ -101,8 +115,9 @@ class ProductNameTest {
     @Test
     fun `a name already in another script is left alone`() {
         assertEquals("बासमती चावल", hi("बासमती चावल"))
-        // …and a half-typed one gets only the half that is still English.
-        assertEquals("बासमती चावल", hi("बासमती RICE"))
+        // …and a half-typed one has its English half spelled, since बासमती is not a
+        // word this file knows and the name is therefore not translated at all.
+        assertEquals("बासमती राइस", hi("बासमती RICE"))
     }
 
     // ---- The safety property -----------------------------------------------------
