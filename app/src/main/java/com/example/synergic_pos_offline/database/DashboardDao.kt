@@ -111,12 +111,11 @@ class DashboardDao(context: Context) {
             put("movement", movement())
             put("daily", lastSevenDays())
             put("alerts", alerts())
-            // Both specialty bands, always - the eight tiles are the dashboard as it
-            // was designed, and a till in one trade still shows the other's figures
-            // rather than a gap where four cards were. A shop with no tables reads
-            // zeroes there, which is the truth about its floor.
-            put("grocery", grocery())
-            put("restaurant", restaurant())
+            // One band or the other, never both: the trade this till is in decides
+            // which four figures mean anything. A grocery has no tables to fill and a
+            // restaurant does not sell off the shelf, so the other four would be a row
+            // of zeroes dressed up as a measurement.
+            if (isRestaurant()) put("restaurant", restaurant()) else put("grocery", grocery())
         }
     }
 
@@ -528,6 +527,10 @@ class DashboardDao(context: Context) {
             .put("kotMinutes", kotMinutes)
             .put("activeKots", activeKots)
     }
+
+    /** Which of the two bands this till gets. Read the same way the rest of the app reads it. */
+    private fun isRestaurant(): Boolean =
+        com.example.synergic_pos_offline.utils.SettingsCache.value(appContext, "G", "Mode") == "R"
 
     private fun query1(sql: String): Double = runCatching {
         helper.readableDatabase.rawQuery(sql, null).use { c ->
