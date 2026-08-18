@@ -31,6 +31,16 @@ class AppSettingsDao(context: Context) {
          * rather than find it already on. See `BiometricLogin` for what the trade is.
          */
         val biometricLogin: Boolean = false,
+        /**
+         * Whether this shop runs shifts.
+         *
+         * On, a Shifts master appears, every user is put on one, and the shift-wise
+         * billing report becomes available. Off, none of the three exists - a shop
+         * with one person behind the counter has no shifts to divide anything by, and
+         * a mandatory field asking which one they are on would be a question with no
+         * answer.
+         */
+        val shift: Boolean = false,
         // Restaurant-only toggles.
         val couponMode: Boolean = false,
         val kot: Boolean = false,
@@ -48,6 +58,7 @@ class AppSettingsDao(context: Context) {
             otherCharges = m[KEY_OTHER_CHARGES]?.toBool() ?: false,
             directAddToCart = m[KEY_DIRECT_ADD_TO_CART]?.toBool() ?: false,
             biometricLogin = m[KEY_BIOMETRIC_LOGIN]?.toBool() ?: false,
+            shift = m[KEY_SHIFT]?.toBool() ?: false,
             couponMode = m[KEY_COUPON_MODE]?.toBool() ?: false,
             kot = m[KEY_KOT]?.toBool() ?: false,
             tableMerge = m[KEY_TABLE_MERGE]?.toBool() ?: false,
@@ -63,6 +74,7 @@ class AppSettingsDao(context: Context) {
         upsertAppSetting(KEY_OTHER_CHARGES, s.otherCharges.b())
         upsertAppSetting(KEY_DIRECT_ADD_TO_CART, s.directAddToCart.b())
         upsertAppSetting(KEY_BIOMETRIC_LOGIN, s.biometricLogin.b())
+        upsertAppSetting(KEY_SHIFT, s.shift.b())
         upsertAppSetting(KEY_COUPON_MODE, s.couponMode.b())
         upsertAppSetting(KEY_KOT, s.kot.b())
         upsertAppSetting(KEY_TABLE_MERGE, s.tableMerge.b())
@@ -178,6 +190,7 @@ class AppSettingsDao(context: Context) {
         const val KEY_OTHER_CHARGES = "Other Charges"
         const val KEY_DIRECT_ADD_TO_CART = "Direct Add to Cart"
         const val KEY_BIOMETRIC_LOGIN = "Biometric Login"
+        const val KEY_SHIFT = "Shift"
         const val KEY_COUPON_MODE = "Coupon Mode"
         const val KEY_KOT = "KOT"
         const val KEY_TABLE_MERGE = "Table Merge"

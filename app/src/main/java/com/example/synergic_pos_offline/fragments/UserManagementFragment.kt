@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.ShiftDao
 import com.example.synergic_pos_offline.database.UserDao
 import com.example.synergic_pos_offline.database.UserDao.Role
 import com.example.synergic_pos_offline.utils.DialogUtils
@@ -91,6 +92,8 @@ class UserManagementFragment : DataTableFragment() {
         val tilPassword = view.findViewById<TextInputLayout>(R.id.tilPassword)
         val etPassword = view.findViewById<TextInputEditText>(R.id.etPassword)
         val btnResetPassword = view.findViewById<MaterialButton>(R.id.btnResetPassword)
+        val tilShift = view.findViewById<TextInputLayout>(R.id.tilShift)
+        val actShift = view.findViewById<android.widget.AutoCompleteTextView>(R.id.actShift)
         val swBlock = view.findViewById<SwitchMaterial>(R.id.swBlock)
         val tvBlockState = view.findViewById<TextView>(R.id.tvBlockState)
         val btnSave = view.findViewById<MaterialButton>(R.id.btnFormPositive)
@@ -103,6 +106,27 @@ class UserManagementFragment : DataTableFragment() {
         etPhone.setText(existing?.phone.orEmpty())
         etUserName.setText(existing?.userName.orEmpty())
         btnSave.text = if (existing == null) "Add" else "Update"
+
+        // The shift, where the shop runs shifts. Hidden outright when it does not -
+        // a field asking which of nothing somebody is on would be unanswerable - and
+        // required when it does, on an edit as much as on an add, since people move
+        // between shifts more often than they change anything else on this form.
+        val shiftsOn = ShiftDao.isEnabled(requireContext())
+        val shifts = if (shiftsOn) ShiftDao(requireContext()).getAll() else emptyList()
+        tilShift.visibility = if (shiftsOn) View.VISIBLE else View.GONE
+        if (shiftsOn) {
+            actShift.setAdapter(
+                android.widget.ArrayAdapter(ctx, android.R.layout.simple_list_item_1, shifts.map { it.label })
+            )
+            shifts.firstOrNull { it.id == existing?.shiftId }?.let { actShift.setText(it.label, false) }
+            actShift.setOnClickListener { actShift.showDropDown() }
+            actShift.setOnItemClickListener { _, _, _, _ -> tilShift.error = null }
+            // Nothing to choose from yet. Said on the field, where the operator is
+            // stuck, rather than left to be inferred from an empty dropdown.
+            if (shifts.isEmpty()) {
+                tilShift.error = "Add a shift first, in Master › Shifts"
+            }
+        }
 
         // Password is set inline on add; changed via a separate dialog on edit.
         if (existing == null) {
@@ -194,23 +218,36 @@ class UserManagementFragment : DataTableFragment() {
             if (userId.isEmpty()) { etUserId.error = "User ID is required"; return@setOnClickListener }
             if (userName.isEmpty()) { etUserName.error = "Name is required"; return@setOnClickListener }
 
+            // Mandatory while the shop runs shifts: a report that divides the day's
+            // takings by shift cannot account for a user who is on none.
+            val shiftId = if (!shiftsOn) null else {
+                val picked = shifts.firstOrNull { it.label == actShift.text?.toString()?.trim() }
+                if (picked == null) {
+                    tilShift.error = if (shifts.isEmpty())
+                        "Add a shift first, in Master › Shifts" else "Shift is required"
+                    return@setOnClickListener
+                }
+                tilShift.error = null
+                picked.id
+            }
+
             if (existing == null) {
                 val password = etPassword.text?.toString().orEmpty()
                 if (password.isEmpty()) { etPassword.error = "Password is required"; return@setOnClickListener }
                 if (dao.userIdExists(userId)) { etUserId.error = "User ID already exists"; return@setOnClickListener }
                 // Managed users are always created as General User.
-                val id = dao.insert(userId, password, userName, phone, Role.GENERAL, blocked)
+                val id = dao.insert(userId, password, userName, phone, Role.GENERAL, blocked, shiftId)
                 if (id == -1L) { toast("Save failed"); return@setOnClickListener }
                 dialog.dismiss()
-                val created = UserDao.AppUser(id, userId, userName, phone, Role.GENERAL, blocked)
+                val created = UserDao.AppUser(id, userId, userName, phone, Role.GENERAL, blocked, shiftId)
                 cache[id.toString()] = created
                 addRow(created.toRow())
                 toast("User added (${created.operatorId})")
             } else {
                 // Keep the existing role; managed edits don't change it.
-                dao.update(existing.id, userName, phone, existing.role, blocked)
+                dao.update(existing.id, userName, phone, existing.role, blocked, shiftId)
                 dialog.dismiss()
-                val updated = existing.copy(userName = userName, phone = phone, blocked = blocked)
+                val updated = existing.copy(userName = userName, phone = phone, blocked = blocked, shiftId = shiftId)
                 cache[existing.id.toString()] = updated
                 updateRow(existing.id.toString(), updated.toRow().cells)
                 toast("User updated")

@@ -192,15 +192,6 @@ class BillWiseReportDao(context: Context) {
      * booked as VAT means it was a VAT bill, tax booked as CGST/SGST/IGST means GST,
      * and no tax at all means neither applied.
      */
-    private fun regimeOf(snapshotJson: String?, gstAmount: Double, vatAmount: Double):
-        GstCalculator.TaxRegime {
-        BillSettingsSnapshot.parse(snapshotJson)?.let { return it.taxRegime }
-        return when {
-            vatAmount > 0.0 -> GstCalculator.TaxRegime.VAT
-            gstAmount > 0.0 -> GstCalculator.TaxRegime.GST
-            else -> GstCalculator.TaxRegime.NONE
-        }
-    }
 
     /** The signed-in user's store; the registration row is the fallback. */
     private fun currentStoreId(): Long? {
@@ -212,5 +203,26 @@ class BillWiseReportDao(context: Context) {
             if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0)
         }
         return null
+    }
+
+    companion object {
+        /**
+         * Which regime a bill was raised under - see the note above [between].
+         *
+         * On the companion rather than the instance because it reads nothing but its
+         * arguments, and because a second sales report now needs the same answer:
+         * [ShiftWiseReportDao] lists the same bills narrowed to one shift, and two
+         * copies of this rule would be two reports that could come to disagree about
+         * which column a bill's tax belongs in.
+         */
+        fun regimeOf(snapshotJson: String?, gstAmount: Double, vatAmount: Double):
+            GstCalculator.TaxRegime {
+            BillSettingsSnapshot.parse(snapshotJson)?.let { return it.taxRegime }
+            return when {
+                vatAmount > 0.0 -> GstCalculator.TaxRegime.VAT
+                gstAmount > 0.0 -> GstCalculator.TaxRegime.GST
+                else -> GstCalculator.TaxRegime.NONE
+            }
+        }
     }
 }

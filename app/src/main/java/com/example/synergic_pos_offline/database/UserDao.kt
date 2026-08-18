@@ -38,7 +38,9 @@ class UserDao(context: Context) {
         val userName: String,
         val phone: String,
         val role: Role,
-        val blocked: Boolean
+        val blocked: Boolean,
+        /** Which shift they work, or null where the shop does not run shifts. */
+        val shiftId: Long? = null
     ) {
         val operatorId: String get() = formatOperatorId(id)
     }
@@ -47,7 +49,7 @@ class UserDao(context: Context) {
     fun getAll(): List<AppUser> {
         val list = mutableListOf<AppUser>()
         helper.readableDatabase.query(
-            table, arrayOf("id", "user_id", "user_name", "phone_no", "role", "is_blocked"),
+            table, arrayOf("id", "user_id", "user_name", "phone_no", "role", "is_blocked", "shift_id"),
             null, null, null, null, "id ASC"
         ).use { c ->
             while (c.moveToNext()) {
@@ -58,7 +60,8 @@ class UserDao(context: Context) {
                         userName = c.getString(2).orEmpty(),
                         phone = c.getString(3).orEmpty(),
                         role = Role.fromStored(c.getString(4)),
-                        blocked = c.getInt(5) == 1
+                        blocked = c.getInt(5) == 1,
+                        shiftId = if (c.isNull(6)) null else c.getLong(6)
                     )
                 )
             }
@@ -78,7 +81,7 @@ class UserDao(context: Context) {
     /** Inserts a new user and returns its new row id (or -1 on failure). */
     fun insert(
         userId: String, password: String, userName: String,
-        phone: String, role: Role, blocked: Boolean
+        phone: String, role: Role, blocked: Boolean, shiftId: Long? = null
     ): Long {
         val values = ContentValues().apply {
             put("store_id", currentStoreId())
@@ -88,6 +91,7 @@ class UserDao(context: Context) {
             put("phone_no", phone)
             put("role", role.stored)
             put("is_blocked", if (blocked) 1 else 0)
+            put("shift_id", shiftId)
             put("created_by", currentUser())
         }
         return helper.writableDatabase.insert(table, null, values)
@@ -95,13 +99,15 @@ class UserDao(context: Context) {
 
     /** Updates profile fields (not the password) for [id]. */
     fun update(
-        id: Long, userName: String, phone: String, role: Role, blocked: Boolean
+        id: Long, userName: String, phone: String, role: Role, blocked: Boolean,
+        shiftId: Long? = null
     ): Int {
         val values = ContentValues().apply {
             put("user_name", userName)
             put("phone_no", phone)
             put("role", role.stored)
             put("is_blocked", if (blocked) 1 else 0)
+            put("shift_id", shiftId)
             put("modified_at", now())
             put("modified_by", currentUser())
         }

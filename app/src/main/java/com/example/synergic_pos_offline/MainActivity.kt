@@ -488,6 +488,7 @@ class MainActivity : AppCompatActivity() {
             "Calculator Report" -> navigateTo(CalculatorReportFragment())
             "Stock Report" -> navigateTo(StockReportFragment())
             "Low Stock Report" -> navigateTo(LowStockReportFragment())
+            "Shift Wise Report" -> navigateTo(ShiftWiseReportFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")
                     com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment()
@@ -506,6 +507,7 @@ class MainActivity : AppCompatActivity() {
             "Header & Footer" -> navigateTo(HeaderFooterFragment())
             "Captions" -> navigateTo(CaptionFragment())
             "User Management" -> navigateTo(UserManagementFragment())
+            "Shifts" -> navigateTo(ShiftFragment())
             "Bill Header & Footer" -> navigateTo(BillHeaderFooterFragment())
             "Bill Header Footer Logo" -> navigateTo(BillLogoFragment())
             "Database Settings" -> navigateTo(DatabaseSettingsFragment())
@@ -557,9 +559,9 @@ class MainActivity : AppCompatActivity() {
         // see [ReportsFragment.isVisible].
         val reportTitles = listOf(
             "Bill Wise Report", "Item Wise Report", "Operator Wise Report", "Void Bill Report",
-            "Tax Report", "Duplicate Bill Report", "Stock Report", "Item Bill Report",
+            "Tax Report", "Duplicate Bill Report", "Stock Report", "Low Stock Report", "Item Bill Report",
             "Returned Bill Report", "UDF-Wise Report", "Payment-Wise Report", "Unsold Product Report",
-            "Opr Bill Report", "Category/Dept Wise Bill Report", "Payment & Receipt", "Customer Payment",
+            "Opr Bill Report", "Shift Wise Report", "Category/Dept Wise Bill Report", "Payment & Receipt", "Customer Payment",
             "Customer Ledger", "Profit & Loss Report", "KOT Cancel Report", "Day-Wise Report",
             "Month Wise Report", "Year Wise Report", "UDF Wise Item Report", "Customer Item Wise RPT",
             "Time Wise Item Report"
@@ -598,6 +600,10 @@ class MainActivity : AppCompatActivity() {
                     if (isRestaurant) add(TreeNode("KOT Header Footer Logo"))
                 }),
                 TreeNode("User Management"),
+                // Only where the shop runs shifts - the same question the Master
+                // tile grid asks before it shows the tile.
+                *(if (com.example.synergic_pos_offline.database.ShiftDao.isEnabled(this@MainActivity))
+                    arrayOf(TreeNode("Shifts")) else emptyArray()),
                 TreeNode("Database Settings", databaseSettingsNodes)
             )))
             if (canSettings) add(TreeNode("Settings", listOf(

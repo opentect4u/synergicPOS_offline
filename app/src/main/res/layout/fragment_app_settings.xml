@@ -55,6 +55,19 @@
 
                 <View style="@style/BillSettingDivider" />
 
+                <!-- Shift -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Shift" />
+                        <TextView style="@style/BillSettingSub"
+                            android:text="Run shifts: adds the Shifts master, puts every user on one, and enables the shift-wise report" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swShift" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
                 <!-- Cash Reception -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">

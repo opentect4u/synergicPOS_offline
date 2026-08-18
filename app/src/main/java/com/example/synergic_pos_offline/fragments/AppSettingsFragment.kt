@@ -32,6 +32,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swOtherCharges: SwitchMaterial
     private lateinit var swDirectAddToCart: SwitchMaterial
     private lateinit var swBiometricLogin: SwitchMaterial
+    private lateinit var swShift: SwitchMaterial
     private lateinit var cardRestaurantSettings: View
     private lateinit var swCouponMode: SwitchMaterial
     private lateinit var swKot: SwitchMaterial
@@ -53,6 +54,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         swOtherCharges = view.findViewById(R.id.swOtherCharges)
         swDirectAddToCart = view.findViewById(R.id.swDirectAddToCart)
         swBiometricLogin = view.findViewById(R.id.swBiometricLogin)
+        swShift = view.findViewById(R.id.swShift)
         bindBiometric(view)
         cardRestaurantSettings = view.findViewById(R.id.cardRestaurantSettings)
         swCouponMode = view.findViewById(R.id.swCouponMode)
@@ -83,6 +85,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         swOtherCharges.isChecked = s.otherCharges
         swDirectAddToCart.isChecked = s.directAddToCart
         swBiometricLogin.isChecked = s.biometricLogin
+        swShift.isChecked = s.shift
         swCouponMode.isChecked = s.couponMode
         swKot.isChecked = s.kot
         swTableMerge.isChecked = s.tableMerge
@@ -97,6 +100,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         otherCharges = swOtherCharges.isChecked,
         directAddToCart = swDirectAddToCart.isChecked,
         biometricLogin = swBiometricLogin.isChecked,
+        shift = swShift.isChecked,
         couponMode = swCouponMode.isChecked,
         kot = swKot.isChecked,
         tableMerge = swTableMerge.isChecked,

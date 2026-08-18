@@ -129,6 +129,7 @@ object DefaultSettings {
         otherCharges = false,
         directAddToCart = false,
         biometricLogin = false,
+        shift = false,
         couponMode = false,
         kot = false,
         tableMerge = false,
