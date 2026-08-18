@@ -577,6 +577,11 @@ class MainActivity : AppCompatActivity() {
         if (!isGrocery) {
             databaseSettingsNodes.add(TreeNode("Waiter"))
         }
+        // Only where the shop runs shifts - the same question the Database Settings
+        // tile grid asks before it shows the tile.
+        if (com.example.synergic_pos_offline.database.ShiftDao.isEnabled(context)) {
+            databaseSettingsNodes.add(TreeNode("Shifts"))
+        }
 
         // Stock & Inventory only exists while stock tracking is on - the drawer has
         // to agree with the menu grid, or the tile is "hidden" in one place only.
@@ -600,10 +605,6 @@ class MainActivity : AppCompatActivity() {
                     if (isRestaurant) add(TreeNode("KOT Header Footer Logo"))
                 }),
                 TreeNode("User Management"),
-                // Only where the shop runs shifts - the same question the Master
-                // tile grid asks before it shows the tile.
-                *(if (com.example.synergic_pos_offline.database.ShiftDao.isEnabled(this@MainActivity))
-                    arrayOf(TreeNode("Shifts")) else emptyArray()),
                 TreeNode("Database Settings", databaseSettingsNodes)
             )))
             if (canSettings) add(TreeNode("Settings", listOf(

@@ -47,6 +47,11 @@ class DatabaseSettingsFragment : Fragment() {
             DatabaseItem("Units", android.R.drawable.ic_menu_crop, R.color.menu_settings, R.color.menu_settings_icon),
             DatabaseItem("Rate Name", android.R.drawable.ic_menu_sort_by_size, R.color.menu_inventory, R.color.menu_inventory_icon)
         )
+        // Only where the shop runs shifts. Off, there is nothing to put in the master
+        // and nothing that reads it - see App Settings' Shift toggle.
+        if (com.example.synergic_pos_offline.database.ShiftDao.isEnabled(requireContext())) {
+            items.add(DatabaseItem("Shifts", R.drawable.ic_clock, R.color.menu_inventory, R.color.menu_inventory_icon))
+        }
         // Restaurant-only masters.
         if (!isGrocery) {
             items.add(DatabaseItem("Waiter", android.R.drawable.ic_menu_manage, R.color.menu_delete, R.color.menu_delete_icon))
@@ -59,6 +64,7 @@ class DatabaseSettingsFragment : Fragment() {
                 "Category/Department" -> openFragment(CategoryDepartmentFragment())
                 "Units" -> openFragment(UnitFragment())
                 "Rate Name" -> openFragment(RateNameFragment())
+                "Shifts" -> openFragment(ShiftFragment())
                 "Waiter" -> openFragment(WaiterFragment())
                 "Customers" -> openFragment(CustomerFragment())
                 "Description/Ledger" -> openFragment(DescriptionLedgerFragment())

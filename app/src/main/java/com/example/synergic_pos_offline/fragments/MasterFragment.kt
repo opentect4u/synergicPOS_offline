@@ -40,11 +40,6 @@ class MasterFragment : Fragment() {
             add(MasterItem("Header & Footer", android.R.drawable.ic_menu_crop, R.color.menu_master, R.color.menu_master_icon))
             add(MasterItem("Captions", android.R.drawable.ic_menu_sort_by_size, R.color.menu_report, R.color.menu_report_icon))
             add(MasterItem("User Management", android.R.drawable.ic_menu_manage, R.color.menu_sale, R.color.menu_sale_icon))
-            // Only where the shop runs shifts. Off, there is nothing to put in the
-            // master and nothing that reads it - see App Settings' Shift toggle.
-            if (com.example.synergic_pos_offline.database.ShiftDao.isEnabled(requireContext())) {
-                add(MasterItem("Shifts", R.drawable.ic_clock, R.color.menu_inventory, R.color.menu_inventory_icon))
-            }
             add(MasterItem("Database Settings", android.R.drawable.ic_menu_save, R.color.menu_settings, R.color.menu_settings_icon))
         }
 
@@ -60,7 +55,6 @@ class MasterFragment : Fragment() {
             "Header & Footer" -> openFragment(HeaderFooterFragment())
             "Captions" -> openFragment(CaptionFragment())
             "User Management" -> openFragment(UserManagementFragment())
-            "Shifts" -> openFragment(ShiftFragment())
             "Database Settings" -> openFragment(DatabaseSettingsFragment())
             else -> Toast.makeText(requireContext(), "Opening $title...", Toast.LENGTH_SHORT).show()
         }
