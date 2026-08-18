@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<!--
+  The dashboard.
+
+  Held as a page rather than as Android views on purpose: the design came in as HTML
+  and is meant to be fine-tuned, and a stylesheet is a far shorter way to move a card
+  than a rebuild. Nothing here reaches the network - Chart.js sits beside this file and
+  is loaded from the APK's own assets - so it draws with the aeroplane mode on, which a
+  till has to.
+
+  It is given its figures by DashboardHomeFragment, which calls render(data) once the
+  page has loaded. See DashboardDao for where each number comes from. Taps go back the
+  other way through the POS bridge; the page never navigates itself.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="chart.umd.js"></script>
+  <style>
+    :root {
+      /* Overwritten at load with the till's own accent - see applyAccent(). */
+      --teal: #008B8B;
+      --teal-bg: #E8F5F5;
+      --success: #0ca30c;
+      --danger: #e34948;
+      --gray-light: #f5f5f5;
+      --gray-dark: #333;
+      --border-color: #ddd;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--gray-light);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .dashboard { padding: 1.25rem; }
+    .header { background: var(--teal); color: #fff; padding: 1rem 1.5rem; margin: -1.25rem -1.25rem 1.25rem; text-align: center; }
+    .header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+    .header p { margin: 4px 0 0; font-size: 13px; opacity: .9; }
+
+    .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 1.25rem; }
+    .metric-card { background: #fff; border: .5px solid var(--border-color); border-radius: 8px; padding: 1rem; }
+    .metric-card[data-nav] { cursor: pointer; }
+    .metric-card[data-nav]:active { background: var(--teal-bg); }
+    .metric-label { font-size: 12px; color: #888; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .04em; }
+    .metric-value { font-size: 28px; font-weight: 600; color: var(--gray-dark); margin: 0; }
+    .metric-change { font-size: 12px; margin-top: 6px; font-weight: 500; color: #999; }
+    .metric-change.positive { color: var(--success); }
+    .metric-change.negative { color: var(--danger); }
+    .metric-sub { font-size: 12px; color: #999; margin-top: 8px; }
+
+    .charts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .chart-card { background: #fff; border: .5px solid var(--border-color); border-radius: 8px; padding: 1rem; }
+    .chart-title { font-size: 14px; font-weight: 600; color: var(--gray-dark); margin: 0 0 1rem; }
+    .chart-container { position: relative; width: 100%; height: 260px; }
+    .full-width { grid-column: 1 / -1; }
+
+    /* Nothing sold yet, or nothing to chart - said in the card rather than left as an
+       empty white rectangle, which reads as a chart that failed to load. */
+    .empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #aaa; font-size: 13px; text-align: center; padding: 0 1rem; }
+
+    /* What is out or running low, across the head of the page. */
+    .alerts { margin-bottom: 1.25rem; }
+    .alerts-head { font-size: 12px; font-weight: 700; color: var(--danger); letter-spacing: .05em; margin-bottom: 8px; }
+    .alert-box { display: flex; align-items: center; gap: 12px; background: rgba(227,73,72,.10); border: 1px solid rgba(227,73,72,.4); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer; }
+    .alert-name { flex: 1; font-size: 15px; font-weight: 600; color: var(--gray-dark); }
+    .alert-state { font-size: 12px; color: var(--danger); margin-top: 2px; font-weight: 500; }
+    .alert-qty { font-size: 20px; font-weight: 700; color: var(--danger); }
+    .alert-x { font-size: 15px; color: rgba(227,73,72,.7); padding: 4px 2px 4px 12px; }
+    .alert-more { text-align: center; font-size: 13px; font-weight: 700; color: var(--danger); border: 1px solid rgba(227,73,72,.4); border-radius: 10px; padding: 10px; cursor: pointer; }
+
+    /* A tablet held upright, or a phone: one column reads better than four squeezed. */
+    @media (max-width: 700px) {
+      .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+      .charts-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="dashboard">
+  <div class="header">
+    <h1>Retail POS Analytics</h1>
+    <p id="subtitle">Live dashboard</p>
+  </div>
+
+  <div class="alerts" id="alerts"></div>
+
+  <div class="metrics-grid" id="metrics"></div>
+
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3 class="chart-title">Hourly sales trend</h3>
+      <div class="chart-container" id="wrap-hourly"><canvas id="hourlyChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3 class="chart-title">Payment method breakdown</h3>
+      <div class="chart-container" id="wrap-payment"><canvas id="paymentChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3 class="chart-title">Top product categories</h3>
+      <div class="chart-container" id="wrap-category"><canvas id="categoryChart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3 class="chart-title">Staff performance (sales)</h3>
+      <div class="chart-container" id="wrap-staff"><canvas id="staffChart"></canvas></div>
+    </div>
+    <div class="chart-card full-width">
+      <h3 class="chart-title">7-day sales performance</h3>
+      <div class="chart-container" id="wrap-daily" style="height:280px"><canvas id="dailyChart"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var charts = {};
+  var CUR = '₹';
+
+  /* ---- Formatting ------------------------------------------------------- */
+
+  /* Indian grouping: 12,34,567 rather than 1,234,567, since that is how the figure
+     is read back to a shopkeeper and how every printed slip already shows it. */
+  function money(v) { return CUR + Math.round(v).toLocaleString('en-IN'); }
+  function shortMoney(v) {
+    if (Math.abs(v) >= 100000) return CUR + (v / 100000).toFixed(1) + 'L';
+    if (Math.abs(v) >= 1000) return CUR + (v / 1000).toFixed(1) + 'k';
+    return CUR + Math.round(v);
+  }
+  function pct(v) { return (v >= 0 ? '↑ ' : '↓ ') + Math.abs(v).toFixed(1) + '%'; }
+  function accent() {
+    return getComputedStyle(document.documentElement).getPropertyValue('--teal').trim();
+  }
+
+  /* ---- The cards -------------------------------------------------------- */
+
+  function metricCard(o) {
+    var change = o.change === null || o.change === undefined
+      ? '<div class="metric-change">' + (o.changeText || '') + '</div>'
+      : '<div class="metric-change ' + (o.change >= 0 ? 'positive' : 'negative') + '">'
+        + pct(o.change) + ' ' + (o.changeText || '') + '</div>';
+    return '<div class="metric-card"' + (o.nav ? ' data-nav="' + o.nav + '"' : '') + '>'
+      + '<div class="metric-label">' + o.label + '</div>'
+      + '<p class="metric-value">' + o.value + '</p>'
+      + change
+      + '<div class="metric-sub">' + o.sub + '</div>'
+      + '</div>';
+  }
+
+  function renderMetrics(d) {
+    document.getElementById('metrics').innerHTML = [
+      metricCard({
+        label: 'Total Sales', value: money(d.salesToday),
+        change: d.salesChange, changeText: 'vs yesterday',
+        sub: d.bills + ' bills • Avg ' + money(d.avgBill), nav: 'bills'
+      }),
+      metricCard({
+        label: 'Transactions', value: d.bills,
+        change: d.billsChange, changeText: 'vs daily avg',
+        sub: money(d.avgBill) + ' avg per transaction', nav: 'bills'
+      }),
+      metricCard({
+        label: 'Payments Collected', value: money(d.collected),
+        change: null, changeText: d.collectedPct.toFixed(0) + '% collected',
+        sub: d.pending > 0 ? money(d.pending) + ' pending' : 'Nothing pending', nav: 'reports'
+      }),
+      metricCard({
+        label: 'Customers', value: d.customers,
+        change: null, changeText: d.newMembers + ' new members',
+        sub: d.repeat + ' repeat customers', nav: 'customers'
+      })
+    ].join('');
+    document.querySelectorAll('.metric-card[data-nav]').forEach(function (el) {
+      el.addEventListener('click', function () { POS.open(el.getAttribute('data-nav')); });
+    });
+  }
+
+  /* ---- The alert band --------------------------------------------------- */
+
+  function renderAlerts(a) {
+    var host = document.getElementById('alerts');
+    if (!a || !a.enabled || !a.shown.length) { host.innerHTML = ''; return; }
+    var html = '<div class="alerts-head">STOCK ALERTS</div>';
+    a.shown.forEach(function (it) {
+      html += '<div class="alert-box" data-id="' + it.id + '">'
+        + '<div style="flex:1"><div class="alert-name">' + esc(it.name) + '</div>'
+        + '<div class="alert-state">' + (it.out ? 'Out of stock' : 'Running low') + '</div></div>'
+        + '<div class="alert-qty">' + it.quantity + '</div>'
+        + '<div class="alert-x" data-x="' + it.id + '">✕</div>'
+        + '</div>';
+    });
+    var more = a.total - a.shown.length;
+    if (more > 0) html += '<div class="alert-more" id="alertMore">+' + more + ' more  →</div>';
+    host.innerHTML = html;
+
+    host.querySelectorAll('.alert-box').forEach(function (el) {
+      el.addEventListener('click', function () { POS.open('lowstock'); });
+    });
+    host.querySelectorAll('.alert-x').forEach(function (el) {
+      el.addEventListener('click', function (e) {
+        e.stopPropagation();
+        POS.dismissAlert(parseInt(el.getAttribute('data-x'), 10));
+      });
+    });
+    var m = document.getElementById('alertMore');
+    if (m) m.addEventListener('click', function () { POS.open('lowstock'); });
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  /* ---- The charts ------------------------------------------------------- */
+
+  var gray = '#999', gridColor = '#f0f0f0';
+
+  function base() {
+    return {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 300 },
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: gray }, grid: { color: gridColor } },
+        y: { ticks: { color: gray }, grid: { color: gridColor } }
+      }
+    };
+  }
+
+  /* A card with nothing to draw says so. Returns false when there is data, so each
+     chart reads "if (!ready(...)) return;" and gets out of its own way. */
+  function ready(wrapId, canvasId, rows, message) {
+    var wrap = document.getElementById(wrapId);
+    if (charts[canvasId]) { charts[canvasId].destroy(); delete charts[canvasId]; }
+    if (rows && rows.length) {
+      wrap.innerHTML = '<canvas id="' + canvasId + '"></canvas>';
+      return true;
+    }
+    wrap.innerHTML = '<div class="empty">' + message + '</div>';
+    return false;
+  }
+
+  function ctx(id) { return document.getElementById(id).getContext('2d'); }
+
+  function renderHourly(rows) {
+    if (!ready('wrap-hourly', 'hourlyChart', rows, 'No sales yet today')) return;
+    var o = base();
+    o.scales.y.ticks.callback = shortMoney;
+    charts.hourlyChart = new Chart(ctx('hourlyChart'), {
+      type: 'line',
+      data: {
+        labels: rows.map(function (r) { return r.label; }),
+        datasets: [{
+          data: rows.map(function (r) { return r.value; }),
+          borderColor: accent(), backgroundColor: accent() + '20',
+          borderWidth: 2.5, fill: true, tension: 0.4,
+          pointRadius: 4, pointBackgroundColor: accent(),
+          pointBorderColor: '#fff', pointBorderWidth: 2
+        }]
+      },
+      options: o
+    });
+  }
+
+  function renderPayment(rows) {
+    if (!ready('wrap-payment', 'paymentChart', rows, 'Nothing collected yet today')) return;
+    var total = rows.reduce(function (s, r) { return s + r.value; }, 0);
+    charts.paymentChart = new Chart(ctx('paymentChart'), {
+      type: 'doughnut',
+      data: {
+        labels: rows.map(function (r) { return r.label; }),
+        datasets: [{
+          data: rows.map(function (r) { return r.value; }),
+          backgroundColor: [accent(), '#EB6834', '#1baf7a', '#7a6ff0', '#f0b429'],
+          borderColor: '#fff', borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 300 },
+        plugins: {
+          legend: { display: true, position: 'right', labels: { color: '#666', boxWidth: 12, font: { size: 12 } } },
+          tooltip: {
+            callbacks: {
+              label: function (c) {
+                var share = total ? (c.parsed / total * 100).toFixed(0) : 0;
+                return c.label + ': ' + money(c.parsed) + ' (' + share + '%)';
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  function horizontalBars(wrapId, canvasId, rows, message) {
+    if (!ready(wrapId, canvasId, rows, message)) return;
+    var o = base();
+    o.indexAxis = 'y';
+    o.scales.x.ticks.callback = shortMoney;
+    charts[canvasId] = new Chart(ctx(canvasId), {
+      type: 'bar',
+      data: {
+        labels: rows.map(function (r) { return r.label; }),
+        datasets: [{
+          data: rows.map(function (r) { return r.value; }),
+          backgroundColor: accent(), borderRadius: 4, borderSkipped: false
+        }]
+      },
+      options: o
+    });
+  }
+
+  function renderDaily(rows) {
+    if (!ready('wrap-daily', 'dailyChart', rows, 'No sales in the last seven days')) return;
+    var o = base();
+    o.scales.y.beginAtZero = true;
+    o.scales.y.ticks.callback = shortMoney;
+    charts.dailyChart = new Chart(ctx('dailyChart'), {
+      type: 'bar',
+      data: {
+        labels: rows.map(function (r) { return r.label; }),
+        datasets: [{
+          data: rows.map(function (r) { return r.value; }),
+          backgroundColor: accent(), borderRadius: 4, borderSkipped: false
+        }]
+      },
+      options: o
+    });
+  }
+
+  /* ---- The one entry point --------------------------------------------- */
+
+  function applyAccent(hex) {
+    if (!hex) return;
+    document.documentElement.style.setProperty('--teal', hex);
+    document.documentElement.style.setProperty('--teal-bg', hex + '1A');
+  }
+
+  /* Called by the fragment, with everything DashboardDao read. */
+  function render(json) {
+    var d = typeof json === 'string' ? JSON.parse(json) : json;
+    CUR = d.currency || '₹';
+    applyAccent(d.accent);
+    document.getElementById('subtitle').textContent = 'Today, ' + d.date + ' • Live dashboard';
+    renderAlerts(d.alerts);
+    renderMetrics(d);
+    renderHourly(d.hourly);
+    renderPayment(d.payments);
+    horizontalBars('wrap-category', 'categoryChart', d.categories, 'Nothing sold yet today');
+    horizontalBars('wrap-staff', 'staffChart', d.staff, 'Nobody has billed yet today');
+    renderDaily(d.daily);
+  }
+</script>
+</body>
+</html>
