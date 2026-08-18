@@ -108,7 +108,7 @@ class DashboardDao(context: Context) {
             put("hourly", hourly(today))
             put("payments", payments(today))
             put("categories", topCategories(today))
-            put("staff", staff(today))
+            put("movement", movement())
             put("daily", lastSevenDays())
             put("alerts", alerts())
         }
@@ -196,17 +196,98 @@ class DashboardDao(context: Context) {
         """.trimIndent()
     )
 
-    /** Today's takings by whoever rang them up. */
-    private fun staff(day: String): JSONArray = topOf(
-        """
-        SELECT COALESCE(NULLIF(TRIM(u.user_name), ''), u.user_id, 'Unknown'),
-               COALESCE(SUM(b.net_amount), 0)
-        FROM ${DatabaseHelper.Tables.TD_BILLS} b
-        LEFT JOIN ${DatabaseHelper.Tables.MD_USERS} u ON u.id = b.operator_id
-        WHERE ${dayIs(day, "b")} AND ${BillDao.countableBillClause("b")}
-        GROUP BY 1 ORDER BY 2 DESC
-        """.trimIndent()
-    )
+    /**
+     * What is selling and what is sitting - the fastest and slowest movers.
+     *
+     * ## Over a month, not over today
+     *
+     * A day cannot tell you what is slow. Half a shop's catalogue sells nothing on any
+     * given Tuesday, and calling all of it slow-moving would be reporting the weather.
+     * [MOVEMENT_DAYS] is long enough that an item which has genuinely stopped moving
+     * stands apart from one that simply had a quiet morning, and short enough that it
+     * is still news.
+     *
+     * ## Which items can be slow
+     *
+     * Only ones the shop is still holding. An item with nothing on the shelf has not
+     * stopped selling - it has stopped being stocked, which is a different problem and
+     * is what the stock alerts above are for. So where stock is tracked the slow list
+     * is drawn from what is actually on hand; where it is not, every product is a
+     * candidate, since there is no count to filter on.
+     *
+     * A product that sold nothing at all belongs at the top of the slow list rather
+     * than being left out, which is why the sales are joined onto the master and not
+     * the other way round.
+     */
+    private fun movement(): JSONObject {
+        val from = dayOffset(-(MOVEMENT_DAYS - 1))
+        val to = dayOffset(0)
+
+        // Two reads rather than a correlated subquery per product: a catalogue runs to
+        // thousands of rows and this is a dashboard, not a report.
+        val soldByProduct = mutableMapOf<Long, Double>()
+        query(
+            """
+            SELECT i.product_id, COALESCE(SUM(i.quantity), 0)
+            FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
+            JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id
+            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) BETWEEN '$from' AND '$to'
+              AND ${BillDao.countableBillClause("b")}
+            GROUP BY i.product_id
+            """.trimIndent()
+        ) { c -> soldByProduct[c.getLong(0)] = c.getDouble(1) }
+
+        val onHand =
+            "COALESCE((SELECT SUM(s.current_quantity) FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} s " +
+                "WHERE s.product_id = p.id), 0)"
+        data class Item(val id: Long, val name: String, val sold: Double, val stock: Double)
+        val products = mutableListOf<Item>()
+        query(
+            """
+            SELECT p.id, p.product_name, $onHand
+            FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
+            WHERE p.product_name IS NOT NULL AND TRIM(p.product_name) <> ''
+            """.trimIndent()
+        ) { c ->
+            products.add(
+                Item(
+                    id = c.getLong(0),
+                    name = c.getString(1).orEmpty(),
+                    sold = soldByProduct[c.getLong(0)] ?: 0.0,
+                    stock = c.getDouble(2)
+                )
+            )
+        }
+
+        val stockTracked = GeneralSettingsDao.isStockEnabled(appContext)
+        val fast = products.filter { it.sold > 0.0 }
+            .sortedWith(compareByDescending<Item> { it.sold }.thenBy { it.name })
+            .take(MOVEMENT_ROWS)
+        // Slowest last in the array, so the chart reads worst-at-the-bottom the way
+        // the fast half reads best-at-the-top.
+        val slowPool = if (stockTracked) products.filter { it.stock > 0.0 } else products
+        val slow = slowPool
+            .filterNot { p -> fast.any { it.id == p.id } }
+            .sortedWith(compareBy<Item> { it.sold }.thenBy { it.name })
+            .take(MOVEMENT_ROWS)
+            .reversed()
+
+        fun rows(items: List<Item>) = JSONArray().apply {
+            items.forEach {
+                put(
+                    JSONObject()
+                        .put("label", it.name)
+                        .put("value", it.sold)
+                        .put("stock", StockDao.trim(it.stock))
+                )
+            }
+        }
+        return JSONObject()
+            .put("days", MOVEMENT_DAYS)
+            .put("fast", rows(fast))
+            .put("slow", rows(slow))
+            .put("stockTracked", stockTracked)
+    }
 
     /**
      * The top [TOP_ROWS] of a label/value query, with everything below them added up
@@ -332,10 +413,16 @@ class DashboardDao(context: Context) {
     }
 
     private companion object {
-        /** Bars on a category or staff chart before the rest become "Other". */
+        /** Bars on the category chart before the rest become "Other". */
         const val TOP_ROWS = 6
 
         /** Products named in the alert band; the count above it reports them all. */
         const val ALERT_ROWS = 3
+
+        /** How far back "moving" is measured - see [movement]. */
+        const val MOVEMENT_DAYS = 30
+
+        /** How many items each half of the fast/slow chart names. */
+        const val MOVEMENT_ROWS = 5
     }
 }

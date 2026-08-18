@@ -54,6 +54,7 @@
     .charts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
     .chart-card { background: #fff; border: .5px solid var(--border-color); border-radius: 8px; padding: 1rem; }
     .chart-title { font-size: 14px; font-weight: 600; color: var(--gray-dark); margin: 0 0 1rem; }
+    .chart-note { font-weight: 400; color: #999; font-size: 12px; margin-left: 6px; }
     .chart-container { position: relative; width: 100%; height: 260px; }
     .full-width { grid-column: 1 / -1; }
 
@@ -103,8 +104,8 @@
       <div class="chart-container" id="wrap-category"><canvas id="categoryChart"></canvas></div>
     </div>
     <div class="chart-card">
-      <h3 class="chart-title">Staff performance (sales)</h3>
-      <div class="chart-container" id="wrap-staff"><canvas id="staffChart"></canvas></div>
+      <h3 class="chart-title">Fast &amp; slow moving items<span class="chart-note" id="movementNote"></span></h3>
+      <div class="chart-container" id="wrap-movement"><canvas id="movementChart"></canvas></div>
     </div>
     <div class="chart-card full-width">
       <h3 class="chart-title">7-day sales performance</h3>
@@ -312,6 +313,63 @@
     });
   }
 
+  /* Fast movers and slow movers in one chart, and they are two groups rather than
+     one ranking: the point is not that this item outsold that one, it is which end of
+     the shelf each is at. So they are two datasets with two colours and a legend, and
+     the slow half keeps its labels even when its bars are nothing - an item that sold
+     zero is exactly the one being looked for, and a missing bar is the finding. */
+  function renderMovement(m) {
+    var note = document.getElementById('movementNote');
+    if (note) note.textContent = m ? '· last ' + m.days + ' days' : '';
+    var rows = m ? m.fast.concat(m.slow) : [];
+    if (!ready('wrap-movement', 'movementChart', rows, 'Nothing has sold in the last 30 days')) return;
+
+    var labels = rows.map(function (r) { return r.label; });
+    var fastN = m.fast.length;
+    var o = base();
+    o.indexAxis = 'y';
+    o.scales.x.beginAtZero = true;
+    o.scales.x.ticks.precision = 0;
+    o.plugins.legend = {
+      display: true, position: 'bottom',
+      labels: { color: '#666', boxWidth: 12, font: { size: 12 } }
+    };
+    o.plugins.tooltip = {
+      callbacks: {
+        label: function (c) {
+          var r = rows[c.dataIndex];
+          var line = qty(r.value) + ' sold';
+          return m.stockTracked ? line + ' · ' + r.stock + ' in stock' : line;
+        }
+      }
+    };
+    charts.movementChart = new Chart(ctx('movementChart'), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'Fast moving',
+            /* One bar per row across both datasets, with the other half left null,
+               so the two colours sit in one column of labels rather than in two. */
+            data: rows.map(function (r, i) { return i < fastN ? r.value : null; }),
+            backgroundColor: accent(), borderRadius: 4, borderSkipped: false
+          },
+          {
+            label: 'Slow moving',
+            data: rows.map(function (r, i) { return i >= fastN ? r.value : null; }),
+            backgroundColor: '#EB6834', borderRadius: 4, borderSkipped: false
+          }
+        ]
+      },
+      options: o
+    });
+  }
+
+  /* Whole counts stay whole - "3 sold", not "3.00 sold" - but a shop selling by
+     weight gets its decimals. */
+  function qty(v) { return v % 1 === 0 ? String(v) : v.toFixed(2); }
+
   function renderDaily(rows) {
     if (!ready('wrap-daily', 'dailyChart', rows, 'No sales in the last seven days')) return;
     var o = base();
@@ -349,7 +407,6 @@
     renderHourly(d.hourly);
     renderPayment(d.payments);
     horizontalBars('wrap-category', 'categoryChart', d.categories, 'Nothing sold yet today');
-    horizontalBars('wrap-staff', 'staffChart', d.staff, 'Nobody has billed yet today');
     renderDaily(d.daily);
   }
 </script>
