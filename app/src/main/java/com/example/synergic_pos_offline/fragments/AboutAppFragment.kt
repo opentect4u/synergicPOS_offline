@@ -27,6 +27,8 @@ import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.DatabaseBackup
 import com.example.synergic_pos_offline.utils.DefaultSettings
 import com.example.synergic_pos_offline.utils.DialogUtils
+import com.example.synergic_pos_offline.utils.LegalDialog
+import com.example.synergic_pos_offline.utils.LegalDocuments
 import com.example.synergic_pos_offline.utils.Downloads
 import com.example.synergic_pos_offline.utils.MasterData
 import com.example.synergic_pos_offline.utils.SessionManager
@@ -226,6 +228,7 @@ class AboutAppFragment : Fragment(), TitledScreen {
 
         container.addView(section("DATA", dataRows()))
         container.addView(section("THIS INSTALLATION", installationRows()))
+        container.addView(legalSection())
     }
 
     /** What the database holds, and how big it has grown. */
@@ -259,7 +262,10 @@ class AboutAppFragment : Fragment(), TitledScreen {
         runCatching {
             DatabaseHelper.getInstance(requireContext()).readableDatabase.query(
                 DatabaseHelper.Tables.MD_REGISTRATION,
-                arrayOf("store_name", "store_id", "outlet_id", "store_gstin", "device_id"),
+                arrayOf(
+                    "store_name", "store_id", "outlet_id", "store_gstin", "device_id",
+                    "registration_dt", "registration_upto"
+                ),
                 null, null, null, null, "store_id ASC", "1"
             ).use { c ->
                 if (c.moveToFirst()) {
@@ -268,6 +274,17 @@ class AboutAppFragment : Fragment(), TitledScreen {
                     if (!c.isNull(2)) rows.add("Outlet ID" to c.getString(2))
                     c.getString(3)?.takeIf { it.isNotBlank() }?.let { rows.add("GSTIN" to it) }
                     c.getString(4)?.takeIf { it.isNotBlank() }?.let { rows.add("Device ID" to it) }
+                    c.getString(5)?.takeIf { it.isNotBlank() }
+                        ?.let { rows.add("Registered on" to prettyDate(it)) }
+                    // The one date on this screen somebody comes looking for, so it
+                    // says how long is left as well as when: a date on its own has to
+                    // be worked out against today before it means anything, and the
+                    // person checking it is usually asking "have I still got time?".
+                    rows.add(
+                        "Renewal date" to
+                            (c.getString(6)?.takeIf { it.isNotBlank() }?.let { renewalText(it) }
+                                ?: "not set")
+                    )
                 }
             }
         }
@@ -284,6 +301,121 @@ class AboutAppFragment : Fragment(), TitledScreen {
         rows.add("Signed in as" to (SessionManager.currentUser?.userId ?: "nobody"))
         return rows
     }
+
+    /**
+     * The Terms & Conditions, Privacy Policy and Copyright notice, each openable.
+     *
+     * Rows that do something rather than rows that state something, which is why this
+     * section is built rather than passed through [section]: a legal document is read,
+     * not glanced at, and there is nothing to put in a value column that would not be
+     * a summary of a document somebody is entitled to see in full.
+     *
+     * The line under them says when the terms were agreed to. An agreement nobody can
+     * point at afterwards is not much of an agreement, and this is the screen somebody
+     * would come to to check.
+     */
+    private fun legalSection(): View {
+        val card = MaterialCardView(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(12) }
+            radius = dp(16).toFloat()
+            cardElevation = dp(2).toFloat()
+            setCardBackgroundColor(Color.WHITE)
+        }
+        val body = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            addView(TextView(context).apply {
+                text = "LEGAL"
+                textSize = 13f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(resources.getColor(R.color.text_secondary, null))
+            })
+            LegalDocuments.ALL.forEach { (title, text) ->
+                addView(documentRow(title) { LegalDialog.read(requireContext(), title, text) })
+            }
+            // What was accepted, and when - blank on a device registered before this
+            // was asked for, which is the honest thing to show rather than a date
+            // invented for it.
+            LegalDialog.acceptance(requireContext())?.let { (at, version) ->
+                addView(infoRow("Terms accepted", "$at  ·  v$version"))
+            }
+        }
+        card.addView(body)
+        return card
+    }
+
+    /** One tappable document row: its name, and a chevron saying it opens. */
+    private fun documentRow(title: String, onClick: () -> Unit): View =
+        LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, dp(12))
+            isClickable = true
+            addView(TextView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                text = title
+                textSize = 14f
+                setTextColor(ThemeManager.getThemeColor(context))
+                setTypeface(typeface, Typeface.BOLD)
+            })
+            addView(TextView(context).apply {
+                text = "›"
+                textSize = 18f
+                setTextColor(ThemeManager.getThemeColor(context))
+            })
+            setOnClickListener { onClick() }
+        }
+
+    /**
+     * A stored date as a person reads it, whatever shape it arrived in.
+     *
+     * The server sends "yyyy-MM-dd" or "yyyy-MM-dd HH:mm:ss" depending on the field,
+     * and anything it does not recognise is shown as it stands rather than blanked -
+     * a date this screen cannot parse is still the answer somebody came for.
+     */
+    private fun prettyDate(stored: String): String = parseDate(stored)
+        ?.let { SimpleDateFormat("dd-MM-yyyy", Locale.US).format(it) }
+        ?: stored
+
+    /**
+     * The renewal date, with how long is left beside it.
+     *
+     * "31-03-2027  ·  in 225 days" answers the question actually being asked, which is
+     * rarely "what is the date" and nearly always "have I still got time". An expired
+     * registration says so outright rather than leaving the arithmetic to the reader.
+     */
+    private fun renewalText(stored: String): String {
+        val date = parseDate(stored) ?: return stored
+        val pretty = SimpleDateFormat("dd-MM-yyyy", Locale.US).format(date)
+        // Compared by day rather than by instant, so a renewal later today reads as
+        // "today" and not as "expired" because the stored time was this morning.
+        val days = ((startOfDay(date) - startOfDay(Date())) / 86_400_000L).toInt()
+        return when {
+            days < 0 -> "$pretty  ·  expired ${-days} day${plural(-days)} ago"
+            days == 0 -> "$pretty  ·  expires today"
+            days == 1 -> "$pretty  ·  tomorrow"
+            else -> "$pretty  ·  in $days days"
+        }
+    }
+
+    private fun plural(n: Int) = if (n == 1) "" else "s"
+
+    private fun startOfDay(date: Date): Long = java.util.Calendar.getInstance().run {
+        time = date
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+        timeInMillis
+    }
+
+    /** Both shapes the server sends, longest first so a time is not thrown away. */
+    private fun parseDate(stored: String): Date? =
+        listOf("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd").firstNotNullOfOrNull { pattern ->
+            runCatching { SimpleDateFormat(pattern, Locale.US).parse(stored.trim()) }.getOrNull()
+        }
 
     // ---- Row and section builders --------------------------------------------
 

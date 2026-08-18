@@ -16,6 +16,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.utils.ApiClient
+import com.example.synergic_pos_offline.utils.LegalDialog
 import com.example.synergic_pos_offline.utils.NetworkBadge
 import com.example.synergic_pos_offline.utils.NetworkMonitor
 import com.example.synergic_pos_offline.utils.ThemeManager
@@ -82,7 +83,13 @@ class RegistrationFragment : Fragment() {
         setupTextWatchers()
 
         btnRegister.setOnClickListener {
-            if (validateInputs()) {
+            // The form is checked first, so an operator is not made to read the terms
+            // only to be sent back for a missing phone number.
+            if (!validateInputs()) return@setOnClickListener
+            LegalDialog.agree(requireContext()) {
+                // Recorded before the request goes out: the agreement is to the terms
+                // as read, and it stands whether or not the server happens to answer.
+                LegalDialog.recordAcceptance(requireContext())
                 submitRegistration()
             }
         }
