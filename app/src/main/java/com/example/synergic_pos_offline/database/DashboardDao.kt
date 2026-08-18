@@ -111,6 +111,12 @@ class DashboardDao(context: Context) {
             put("movement", movement())
             put("daily", lastSevenDays())
             put("alerts", alerts())
+            // The two specialty bands. Each is present only where it means something -
+            // a grocery till has no tables, and a shop that does not count its stock
+            // has no turnover to report. An absent section draws nothing at all,
+            // rather than four cards of zeroes.
+            if (GeneralSettingsDao.isStockEnabled(appContext)) put("grocery", grocery())
+            if (isRestaurant()) put("restaurant", restaurant())
         }
     }
 
@@ -362,6 +368,175 @@ class DashboardDao(context: Context) {
             .put("enabled", StockAlerts.enabled(appContext))
     }
 
+    // ---- The grocery band ------------------------------------------------------
+
+    /**
+     * The four figures a shop that holds stock is judged on.
+     *
+     * Only drawn where stock is tracked, since every one of them is a fact about a
+     * count this till may not be keeping.
+     */
+    private fun grocery(): JSONObject {
+        val from = dayOffset(-(MOVEMENT_DAYS - 1))
+        val to = dayOffset(0)
+        val onHandOf =
+            "COALESCE((SELECT SUM(s.current_quantity) FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} s " +
+                "WHERE s.product_id = p.id), 0)"
+        // The selling price, from whichever of the two columns this till filled in -
+        // see the note in DatabaseHelper.onOpen about the duplicate pair.
+        val rateOf =
+            "COALESCE((SELECT COALESCE(r.sell_price, r.sale_price, r.rate, 0) " +
+                "FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r WHERE r.product_id = p.id " +
+                "ORDER BY r.id ASC LIMIT 1), 0)"
+
+        var stocked = 0
+        var stockValue = 0.0
+        var stockUnits = 0.0
+        var dead = 0
+        var deadValue = 0.0
+        val soldByProduct = mutableMapOf<Long, Double>()
+        query(
+            """
+            SELECT i.product_id, COALESCE(SUM(i.quantity), 0)
+            FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
+            JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id
+            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) BETWEEN '$from' AND '$to'
+              AND ${BillDao.countableBillClause("b")}
+            GROUP BY i.product_id
+            """.trimIndent()
+        ) { c -> soldByProduct[c.getLong(0)] = c.getDouble(1) }
+
+        var soldUnits = 0.0
+        query("SELECT p.id, $onHandOf, $rateOf FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p") { c ->
+            val id = c.getLong(0)
+            val stock = c.getDouble(1)
+            val rate = c.getDouble(2)
+            val sold = soldByProduct[id] ?: 0.0
+            soldUnits += sold
+            if (stock > 0.0) {
+                stocked++
+                stockUnits += stock
+                stockValue += stock * rate
+                // Holding it, and nobody has bought one in a month.
+                if (sold <= 0.0) {
+                    dead++
+                    deadValue += stock * rate
+                }
+            }
+        }
+
+        // Units sold against units held. A true turnover works on average inventory
+        // over the period, and this till keeps no history of what it held - only what
+        // it holds - so this is the closest honest reading of it. Labelled "approx" on
+        // the card for that reason rather than presented as an audited figure.
+        val turnover = if (stockUnits > 0.0) soldUnits / stockUnits else 0.0
+
+        val alerts = StockAlerts.find(appContext)
+        val expiring = expiring(rateOf, onHandOf)
+
+        return JSONObject()
+            .put("days", MOVEMENT_DAYS)
+            .put("turnover", turnover)
+            .put("outOfStock", alerts.out.size)
+            .put("lowStock", alerts.low.size)
+            .put("stocked", stocked)
+            .put("stockValue", stockValue)
+            .put("expiryDays", EXPIRY_DAYS)
+            .put("expiring", expiring.first)
+            .put("expiringValue", expiring.second)
+            .put("dead", dead)
+            .put("deadValue", deadValue)
+    }
+
+    /**
+     * Batches going out of date inside [EXPIRY_DAYS], and what they are worth.
+     *
+     * Only batches still holding something: an expired batch of nothing has already
+     * been sold, and counting it would report a loss the shop did not take. Batches
+     * that expired *before* today are counted too - stock that went out of date
+     * yesterday is more urgent than stock going out of date on Friday, not less.
+     */
+    private fun expiring(rateOf: String, onHandOf: String): Pair<Int, Double> {
+        var count = 0
+        var value = 0.0
+        query(
+            """
+            SELECT s.current_quantity,
+                   COALESCE((SELECT COALESCE(r.sell_price, r.sale_price, r.rate, 0)
+                             FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r
+                             WHERE r.product_id = s.product_id ORDER BY r.id ASC LIMIT 1), 0)
+            FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} s
+            WHERE s.current_quantity > 0
+              AND s.expiry_date IS NOT NULL AND TRIM(s.expiry_date) <> ''
+              AND date(s.expiry_date) <= '${dayOffset(EXPIRY_DAYS)}'
+            """.trimIndent()
+        ) { c ->
+            count++
+            value += c.getDouble(0) * c.getDouble(1)
+        }
+        return count to value
+    }
+
+    // ---- The restaurant band -----------------------------------------------------
+
+    /**
+     * What a restaurant floor looks like right now.
+     *
+     * Every figure here is a *present tense* one - tables sitting, orders open - which
+     * is what a manager glancing at a dashboard mid-service wants. Yesterday's service
+     * is what the reports are for.
+     */
+    private fun restaurant(): JSONObject {
+        // A row of md_table describes a run of tables rather than one table, so the
+        // total is the sum of the runs and not the count of the rows.
+        val tables = query1(
+            "SELECT COALESCE(SUM(CASE WHEN no_of_tables > 0 THEN no_of_tables ELSE 1 END), 0) " +
+                "FROM ${DatabaseHelper.Tables.MD_TABLE}"
+        ).toInt()
+        val occupied = query1(
+            "SELECT COUNT(DISTINCT table_code) FROM ${DatabaseHelper.Tables.TD_RUNNING_ORDER} " +
+                "WHERE status = 'RUNNING' AND table_code IS NOT NULL AND TRIM(table_code) <> ''"
+        ).toInt()
+
+        // How long the tables sitting now have been sitting. Not how long a finished
+        // meal took: settling an order does not stamp a time on it, so that figure
+        // does not exist to be read.
+        val tableMinutes = query1(
+            "SELECT COALESCE(AVG((julianday('now','localtime') - julianday(created_at)) * 1440), 0) " +
+                "FROM ${DatabaseHelper.Tables.TD_RUNNING_ORDER} WHERE status = 'RUNNING'"
+        )
+
+        val activeKots = query1(
+            "SELECT COUNT(*) FROM ${DatabaseHelper.Tables.TD_KOT} " +
+                "WHERE COALESCE(status, 'OPEN') NOT IN ('CLOSED', 'CANCELLED')"
+        ).toInt()
+        // Age of the open tickets. The kitchen never marks a ticket prepared - nothing
+        // in the app records that - so this is time since it was raised, which is the
+        // question a backed-up kitchen actually poses.
+        val kotMinutes = query1(
+            "SELECT COALESCE(AVG((julianday('now','localtime') - julianday(created_at)) * 1440), 0) " +
+                "FROM ${DatabaseHelper.Tables.TD_KOT} " +
+                "WHERE COALESCE(status, 'OPEN') NOT IN ('CLOSED', 'CANCELLED')"
+        )
+
+        return JSONObject()
+            .put("tables", tables)
+            .put("occupied", occupied.coerceAtMost(if (tables > 0) tables else occupied))
+            .put("tableMinutes", tableMinutes)
+            .put("tableTarget", TABLE_TARGET_MINUTES)
+            .put("kotMinutes", kotMinutes)
+            .put("activeKots", activeKots)
+    }
+
+    private fun isRestaurant(): Boolean =
+        com.example.synergic_pos_offline.utils.SettingsCache.value(appContext, "G", "Mode") == "R"
+
+    private fun query1(sql: String): Double = runCatching {
+        helper.readableDatabase.rawQuery(sql, null).use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getDouble(0) else 0.0
+        }
+    }.getOrDefault(0.0)
+
     // ---- Plumbing --------------------------------------------------------------
 
     private fun query(sql: String, read: (android.database.Cursor) -> Unit) {
@@ -424,5 +599,17 @@ class DashboardDao(context: Context) {
 
         /** How many items each half of the fast/slow chart names. */
         const val MOVEMENT_ROWS = 5
+
+        /**
+         * How far ahead the expiry card looks.
+         *
+         * Seven rather than the three the design asked for: three days' warning on a
+         * batch is barely time to mark it down, and a week is still near enough to act
+         * on. One number, and the card's own label reads from it.
+         */
+        const val EXPIRY_DAYS = 7
+
+        /** What a table is meant to turn in, for the avg-table-time bar to sit against. */
+        const val TABLE_TARGET_MINUTES = 40
     }
 }

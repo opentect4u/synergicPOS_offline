@@ -24,6 +24,7 @@
       --teal-bg: #E8F5F5;
       --success: #0ca30c;
       --danger: #e34948;
+      --warning: #fab219;
       --gray-light: #f5f5f5;
       --gray-dark: #333;
       --border-color: #ddd;
@@ -72,10 +73,30 @@
     .alert-x { font-size: 15px; color: rgba(227,73,72,.7); padding: 4px 2px 4px 12px; }
     .alert-more { text-align: center; font-size: 13px; font-weight: 700; color: var(--danger); border: 1px solid rgba(227,73,72,.4); border-radius: 10px; padding: 10px; cursor: pointer; }
 
+    /* The two trade bands under the charts, shown only to the trade they belong to. */
+    .specialty-section { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 2px solid var(--border-color); }
+    .specialty-row { margin-bottom: 1.25rem; }
+    .specialty-label { font-size: 12px; font-weight: 700; color: #fff; padding: .5rem 1rem; margin: 0 0 .75rem; border-radius: 4px; text-transform: uppercase; letter-spacing: .05em; }
+    .grocery-label { background: var(--success); }
+    .restaurant-label { background: var(--warning); }
+    .specialty-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .specialty-card { background: #fff; border: .5px solid var(--border-color); border-radius: 8px; padding: 1rem; }
+    .specialty-card-label { font-size: 11px; color: #888; font-weight: 700; margin-bottom: 10px; text-transform: uppercase; letter-spacing: .05em; }
+    .specialty-value { font-size: 32px; font-weight: 700; color: var(--gray-dark); margin: 0 0 6px; }
+    .specialty-metric { font-size: 13px; color: #666; font-weight: 500; margin: 4px 0; }
+    .specialty-foot { font-size: 11px; color: #999; margin-top: 8px; }
+    .progress-bar { width: 100%; height: 6px; background: #eee; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--teal); border-radius: 3px; }
+    .status-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 4px; margin-top: 8px; }
+    .status-good { background: #E8F5E9; color: var(--success); }
+    .status-warning { background: #FFF3E0; color: #b57a00; }
+    .status-critical { background: #FFEBEE; color: var(--danger); }
+
     /* A tablet held upright, or a phone: one column reads better than four squeezed. */
     @media (max-width: 700px) {
       .metrics-grid { grid-template-columns: repeat(2, 1fr); }
       .charts-grid { grid-template-columns: 1fr; }
+      .specialty-grid { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
 </head>
@@ -112,6 +133,8 @@
       <div class="chart-container" id="wrap-daily" style="height:280px"><canvas id="dailyChart"></canvas></div>
     </div>
   </div>
+
+  <div class="specialty-section" id="specialty"></div>
 </div>
 
 <script>
@@ -388,6 +411,126 @@
     });
   }
 
+  /* ---- The trade bands -------------------------------------------------- */
+
+  /* One card. Everything under the big figure is optional, so a card with nothing
+     sensible to put in a bar or nothing to conclude simply leaves them out rather
+     than drawing an empty track or an unearned verdict. */
+  function specialtyCard(o) {
+    var html = '<div class="specialty-card">'
+      + '<div class="specialty-card-label">' + o.label + '</div>'
+      + '<p class="specialty-value">' + o.value + '</p>'
+      + '<div class="specialty-metric">' + o.sub + '</div>';
+    if (o.pct !== undefined && o.pct !== null) {
+      html += '<div class="progress-bar"><div class="progress-fill" style="width:'
+        + Math.max(0, Math.min(100, o.pct)) + '%'
+        + (o.color ? ';background:' + o.color : '') + '"></div></div>';
+    }
+    if (o.badge) html += '<div class="status-badge status-' + o.badge.kind + '">' + o.badge.text + '</div>';
+    if (o.foot) html += '<div class="specialty-foot">' + o.foot + '</div>';
+    return html + '</div>';
+  }
+
+  function band(labelClass, title, cards) {
+    return '<div class="specialty-row">'
+      + '<div class="specialty-label ' + labelClass + '">' + title + '</div>'
+      + '<div class="specialty-grid">' + cards.join('') + '</div>'
+      + '</div>';
+  }
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function groceryBand(g) {
+    var danger = cssVar('--danger'), warning = cssVar('--warning');
+    return band('grocery-label', '📦 Grocery Metrics', [
+      specialtyCard({
+        label: 'Stock turnover', value: g.turnover.toFixed(1) + 'x',
+        sub: 'Approx, last ' + g.days + ' days',
+        /* Six turns in a month is a fast-moving kirana, so the bar is a fraction of
+           that rather than of a ratio with no ceiling. */
+        pct: g.turnover / 6 * 100,
+        /* No stock at all is a till that has not started, not a shop with a problem,
+           so it gets no verdict rather than a bad one. */
+        badge: !g.stocked ? null
+             : g.turnover >= 2 ? { kind: 'good', text: 'Healthy' }
+             : g.turnover >= 1 ? { kind: 'warning', text: 'Slowing' }
+             : { kind: 'critical', text: 'Sluggish' },
+        foot: g.stocked ? money(g.stockValue) + ' on the shelf' : 'No stock recorded yet'
+      }),
+      specialtyCard({
+        label: 'Items out of stock', value: g.outOfStock,
+        sub: g.lowStock + ' more running low',
+        /* Share of the products this shop carries, so the empty shelves are measured
+           against the full ones and not against themselves. */
+        pct: (g.stocked + g.outOfStock) ? g.outOfStock / (g.stocked + g.outOfStock) * 100 : 0,
+        color: danger,
+        badge: g.outOfStock === 0 ? { kind: 'good', text: 'All stocked' }
+             : { kind: 'critical', text: 'Restock needed' }
+      }),
+      specialtyCard({
+        label: 'Expiry items', value: g.expiring,
+        sub: 'Expiring within ' + g.expiryDays + ' days',
+        pct: g.stocked ? g.expiring / g.stocked * 100 : 0, color: warning,
+        foot: g.expiring ? money(g.expiringValue) + ' at risk' : 'Nothing going out of date'
+      }),
+      specialtyCard({
+        label: 'Dead stock', value: g.dead,
+        sub: 'Held, unsold in ' + g.days + ' days',
+        pct: g.stocked ? g.dead / g.stocked * 100 : 0, color: warning,
+        foot: g.dead ? money(g.deadValue) + ' tied up' : 'Everything is moving'
+      })
+    ]);
+  }
+
+  function restaurantBand(r) {
+    var occupancy = r.tables ? r.occupied / r.tables * 100 : 0;
+    var warning = cssVar('--warning');
+    return band('restaurant-label', '🍽️ Restaurant Metrics', [
+      specialtyCard({
+        label: 'Table occupancy', value: r.tables ? Math.round(occupancy) + '%' : '—',
+        sub: r.tables ? r.occupied + ' of ' + r.tables + ' tables' : 'No tables set up',
+        pct: occupancy,
+        badge: !r.tables ? null
+             : occupancy >= 70 ? { kind: 'critical', text: 'Nearly full' }
+             : occupancy >= 30 ? { kind: 'good', text: 'Busy' }
+             : { kind: 'warning', text: 'Quiet' }
+      }),
+      specialtyCard({
+        label: 'Avg table time', value: Math.round(r.tableMinutes),
+        sub: 'Minutes seated, tables open now',
+        pct: r.tableMinutes / r.tableTarget * 100,
+        foot: 'Target ' + r.tableTarget + ' min'
+      }),
+      specialtyCard({
+        label: 'Avg KOT age', value: r.kotMinutes.toFixed(1),
+        sub: 'Minutes since raised',
+        pct: r.kotMinutes / 15 * 100,
+        /* Not time to prepare: nothing records when the kitchen finished a ticket,
+           so this is how long the open ones have been waiting. */
+        foot: r.activeKots ? 'Tickets still open' : 'Kitchen is clear'
+      }),
+      specialtyCard({
+        label: 'Active KOTs', value: r.activeKots,
+        sub: 'Orders with the kitchen',
+        pct: r.tables ? r.activeKots / r.tables * 100 : 0, color: warning
+      })
+    ]);
+  }
+
+  /* Each band belongs to a trade, and DashboardDao only sends the one whose trade
+     this till is in - a grocery has no tables and a restaurant has no expiry dates -
+     so an absent key here means "not this shop", not "no data". */
+  function renderSpecialty(d) {
+    var html = '';
+    if (d.grocery) html += groceryBand(d.grocery);
+    if (d.restaurant) html += restaurantBand(d.restaurant);
+    var host = document.getElementById('specialty');
+    host.innerHTML = html;
+    host.style.display = html ? '' : 'none';
+  }
+
   /* ---- The one entry point --------------------------------------------- */
 
   function applyAccent(hex) {
@@ -407,7 +550,9 @@
     renderHourly(d.hourly);
     renderPayment(d.payments);
     horizontalBars('wrap-category', 'categoryChart', d.categories, 'Nothing sold yet today');
+    renderMovement(d.movement);
     renderDaily(d.daily);
+    renderSpecialty(d);
   }
 </script>
 </body>
