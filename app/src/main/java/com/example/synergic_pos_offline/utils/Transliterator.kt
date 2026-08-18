@@ -219,12 +219,15 @@ object Transliterator {
         // doubles are collapsed *after* that measuring, because a doubled consonant
         // is what closes the syllable in MAGGI - collapse first and মাগী is the
         // result instead of ম্যাগী.
-        var word = EXCEPTIONS[raw] ?: raw
+        val respelled = EXCEPTIONS[raw]
+        var word = respelled ?: raw
         word = dropSilentH(word)
         word = dropSilentStart(word)
         word = applyFinalE(word)
         word = lengthenOpenVowels(word)
-        word = collapseDoubles(word)
+        // A respelling's doubles are deliberate - TIKKA is टिक्का, with the conjunct
+        // said - while a shop's are English orthography, where BUTTER has one t.
+        if (respelled == null) word = collapseDoubles(word)
         word = applyWordEndings(word)
 
         val out = mutableListOf<Sound>()
@@ -306,12 +309,28 @@ object Transliterator {
      * every pass below exactly as though the shop had typed it that way.
      */
     private val EXCEPTIONS = mapOf(
+        // English spellings the rules read wrongly
         "veg" to "vej", "nonveg" to "nonvej", "vej" to "vej",
         "fried" to "fraaid", "dried" to "draaid", "tried" to "traaid",
         "cream" to "krim", "creme" to "krim",
         "juice" to "jus", "sauce" to "sos", "cheese" to "chiz",
-        "pizza" to "pitza", "burger" to "bargar", "coffee" to "kofi",
-        "chocolate" to "choklet", "biscuit" to "biskut", "vegetable" to "vejtebal"
+        "pizza" to "pitzA", "burger" to "bərgər", "coffee" to "kofi",
+        "chocolate" to "choklet", "vegetable" to "vejtebəl",
+        "biscuit" to "biskut", "biscuits" to "biskut",
+        "patties" to "pEteez", "patty" to "pEtee",
+        "sandwich" to "sEndvich", "noodles" to "noodəls", "roll" to "rol",
+        // Romanised Indian words, where a doubled consonant is gemination and a bare
+        // "a" is usually the inherent vowel rather than any of the sounds English
+        // gets out of that letter.
+        "paneer" to "pəneer", "panir" to "pəneer",
+        "masala" to "məsaalaa", "masaala" to "məsaalaa",
+        "manchurian" to "mənchooriyən",
+        "tikka" to "tikkA", "chicken" to "chikən", "mutton" to "mətən",
+        "biryani" to "biryaanee", "biriyani" to "biryaanee",
+        "tandoori" to "təndooree", "kabab" to "kəbaab", "kebab" to "kəbaab",
+        "jalebi" to "jəlebee", "samosa" to "səmosaa", "pakoda" to "pəkodaa",
+        "chutney" to "chətnee", "achar" to "əchaar", "dahi" to "dəhee",
+        "britannia" to "britAniyA", "amul" to "Amul", "nestle" to "nesle"
     )
 
     private fun dropSilentStart(word: String): String = when {
@@ -471,7 +490,8 @@ object Transliterator {
         }
     }
 
-    private fun isVowelLetter(c: Char) = c in "aeiou"
+    /** The markers count as the vowels they stand for - see [single]. */
+    private fun isVowelLetter(c: Char) = c in "aeiouəAEO"
 
     /** The spellings worth more than one letter, longest first. */
     private val MULTI: List<Pair<String, (String, Int) -> List<Sound>>> = listOf(
@@ -519,6 +539,13 @@ object Transliterator {
     /** One letter, where nothing longer matched. */
     private fun single(word: String, i: Int): List<Sound> = when (val c = word[i]) {
         'a' -> listOf(Vowel(shortA(word, i)))
+        // The four a respelling may name outright, where the rules cannot work the
+        // vowel out from English spelling. Lower case is what a shop types; these are
+        // only ever produced by [EXCEPTIONS].
+        'ə' -> listOf(Vowel("a"))      // the inherent one: पनीर, मसाला, चिकन
+        'A' -> listOf(Vowel("aa"))     // long: ब्रिटानिया
+        'E' -> listOf(Vowel("ae"))     // flat: पैटीज
+        'O' -> listOf(Vowel("oshort")) // short o
         'e' -> listOf(Vowel("e"))
         'i' -> listOf(Vowel("i"))
         // The o of HOT and SHOP, not the one of SOAP - an open o was already
@@ -551,7 +578,7 @@ object Transliterator {
         't' -> listOf(Cons("T"))
         'd' -> listOf(Cons("D"))
         'f' -> listOf(Cons("ph"))
-        'z' -> listOf(Cons("j"))
+        'z' -> listOf(Cons("z"))
         else -> if (CONSONANTS.contains(c.toString())) listOf(Cons(c.toString())) else emptyList()
     }
 
@@ -731,7 +758,11 @@ object Transliterator {
     private val CONSONANTS = listOf(
         "k", "kh", "g", "gh", "ch", "chh", "j", "jh", "T", "Th", "D", "Dh", "N",
         "t", "th", "d", "dh", "n", "p", "ph", "b", "bh", "m", "y", "r", "l", "v",
-        "sh", "s", "h"
+        "sh", "s", "h",
+        // Its own letter where a script has one - Devanagari and Gurmukhi mark it
+        // with a nukta - and the plain j elsewhere, which is how those scripts write
+        // a borrowed z anyway.
+        "z"
     )
 
     private fun script(
@@ -764,7 +795,7 @@ object Transliterator {
         script(
             independent = "अ आ इ ई उ ऊ ए ऐ ओ औ ऐ ऑ",
             matra = "|ा|ि|ी|ु|ू|े|ै|ो|ौ|ै|ॉ",
-            consonants = "क ख ग घ च छ ज झ ट ठ ड ढ ण त थ द ध न प फ ब भ म य र ल व श स ह",
+            consonants = "क ख ग घ च छ ज झ ट ठ ड ढ ण त थ द ध न प फ ब भ म य र ल व श स ह ज़",
             virama = "्", anusvara = "ं", viramaAtWordEnd = false
         )
     }
@@ -773,7 +804,7 @@ object Transliterator {
         script(
             independent = "অ আ ই ঈ উ ঊ এ ঐ ও ঔ অ্যা অ",
             matra = "|া|ি|ী|ু|ূ|ে|ৈ|ো|ৌ|্যা|",
-            consonants = "ক খ গ ঘ চ ছ জ ঝ ট ঠ ড ঢ ণ ত থ দ ধ ন প ফ ব ভ ম য র ল ভ শ স হ",
+            consonants = "ক খ গ ঘ চ ছ জ ঝ ট ঠ ড ঢ ণ ত থ দ ধ ন প ফ ব ভ ম য় র ল ভ শ স হ জ",
             virama = "্", anusvara = "ং", nasal = NasalStyle.DENTAL, finalILong = false, viramaAtWordEnd = false
         )
     }
@@ -783,7 +814,7 @@ object Transliterator {
         script(
             independent = "অ আ ই ঈ উ ঊ এ ঐ ও ঔ অ্যা অ",
             matra = "|া|ি|ী|ু|ূ|ে|ৈ|ো|ৌ|্যা|",
-            consonants = "ক খ গ ঘ চ ছ জ ঝ ট ঠ ড ঢ ণ ত থ দ ধ ন প ফ ব ভ ম য ৰ ল ৱ শ স হ",
+            consonants = "ক খ গ ঘ চ ছ জ ঝ ট ঠ ড ঢ ণ ত থ দ ধ ন প ফ ব ভ ম য় ৰ ল ৱ শ স হ জ",
             virama = "্", anusvara = "ং", nasal = NasalStyle.DENTAL, finalILong = false, viramaAtWordEnd = false
         )
     }
@@ -792,7 +823,7 @@ object Transliterator {
         script(
             independent = "અ આ ઇ ઈ ઉ ઊ એ ઐ ઓ ઔ ઍ ઑ",
             matra = "|ા|િ|ી|ુ|ૂ|ે|ૈ|ો|ૌ|ૅ|ૉ",
-            consonants = "ક ખ ગ ઘ ચ છ જ ઝ ટ ઠ ડ ઢ ણ ત થ દ ધ ન પ ફ બ ભ મ ય ર લ વ શ સ હ",
+            consonants = "ક ખ ગ ઘ ચ છ જ ઝ ટ ઠ ડ ઢ ણ ત થ દ ધ ન પ ફ બ ભ મ ય ર લ વ શ સ હ ઝ",
             virama = "્", anusvara = "ં", viramaAtWordEnd = false
         )
     }
@@ -801,7 +832,7 @@ object Transliterator {
         script(
             independent = "ଅ ଆ ଇ ଈ ଉ ଊ ଏ ଐ ଓ ଔ ଆ ଅ",
             matra = "|ା|ି|ୀ|ୁ|ୂ|େ|ୈ|ୋ|ୌ|ା|",
-            consonants = "କ ଖ ଗ ଘ ଚ ଛ ଜ ଝ ଟ ଠ ଡ ଢ ଣ ତ ଥ ଦ ଧ ନ ପ ଫ ବ ଭ ମ ଯ ର ଲ ୱ ଶ ସ ହ",
+            consonants = "କ ଖ ଗ ଘ ଚ ଛ ଜ ଝ ଟ ଠ ଡ ଢ ଣ ତ ଥ ଦ ଧ ନ ପ ଫ ବ ଭ ମ ଯ ର ଲ ୱ ଶ ସ ହ ଜ",
             virama = "୍", anusvara = "ଂ", viramaAtWordEnd = false
         )
     }
@@ -810,7 +841,7 @@ object Transliterator {
         script(
             independent = "ਅ ਆ ਇ ਈ ਉ ਊ ਏ ਐ ਓ ਔ ਐ ਔ",
             matra = "|ਾ|ਿ|ੀ|ੁ|ੂ|ੇ|ੈ|ੋ|ੌ|ੈ|ੌ",
-            consonants = "ਕ ਖ ਗ ਘ ਚ ਛ ਜ ਝ ਟ ਠ ਡ ਢ ਣ ਤ ਥ ਦ ਧ ਨ ਪ ਫ ਬ ਭ ਮ ਯ ਰ ਲ ਵ ਸ਼ ਸ ਹ",
+            consonants = "ਕ ਖ ਗ ਘ ਚ ਛ ਜ ਝ ਟ ਠ ਡ ਢ ਣ ਤ ਥ ਦ ਧ ਨ ਪ ਫ ਬ ਭ ਮ ਯ ਰ ਲ ਵ ਸ਼ ਸ ਹ ਜ਼",
             virama = "੍", anusvara = "ਂ", viramaAtWordEnd = false
         )
     }
@@ -819,7 +850,7 @@ object Transliterator {
         script(
             independent = "అ ఆ ఇ ఈ ఉ ఊ ఏ ఐ ఓ ఔ ఆ ఒ",
             matra = "|ా|ి|ీ|ు|ూ|ే|ై|ో|ౌ|ా|ొ",
-            consonants = "క ఖ గ ఘ చ ఛ జ ఝ ట ఠ డ ఢ ణ త థ ద ధ న ప ఫ బ భ మ య ర ల వ శ స హ",
+            consonants = "క ఖ గ ఘ చ ఛ జ ఝ ట ఠ డ ఢ ణ త థ ద ధ న ప ఫ బ భ మ య ర ల వ శ స హ జ",
             virama = "్", anusvara = "ం", viramaAtWordEnd = true
         )
     }
@@ -828,7 +859,7 @@ object Transliterator {
         script(
             independent = "ಅ ಆ ಇ ಈ ಉ ಊ ಏ ಐ ಓ ಔ ಆ ಒ",
             matra = "|ಾ|ಿ|ೀ|ು|ೂ|ೇ|ೈ|ೋ|ೌ|ಾ|ೊ",
-            consonants = "ಕ ಖ ಗ ಘ ಚ ಛ ಜ ಝ ಟ ಠ ಡ ಢ ಣ ತ ಥ ದ ಧ ನ ಪ ಫ ಬ ಭ ಮ ಯ ರ ಲ ವ ಶ ಸ ಹ",
+            consonants = "ಕ ಖ ಗ ಘ ಚ ಛ ಜ ಝ ಟ ಠ ಡ ಢ ಣ ತ ಥ ದ ಧ ನ ಪ ಫ ಬ ಭ ಮ ಯ ರ ಲ ವ ಶ ಸ ಹ ಜ",
             virama = "್", anusvara = "ಂ", viramaAtWordEnd = true
         )
     }
@@ -846,7 +877,7 @@ object Transliterator {
         script(
             independent = "அ ஆ இ ஈ உ ஊ ஏ ஐ ஓ ஔ ஆ ஒ",
             matra = "|ா|ி|ீ|ు|ூ|ே|ை|ோ|ௌ|ா|ொ",
-            consonants = "க க க க ச ச ஜ ஜ ட ட ட ட ண த த த த ந ப ப ப ப ம ய ர ல வ ஷ ஸ ஹ",
+            consonants = "க க க க ச ச ஜ ஜ ட ட ட ட ண த த த த ந ப ப ப ப ம ய ர ல வ ஷ ஸ ஹ ஸ",
             virama = "்", anusvara = "ம்", nasal = NasalStyle.HOMORGANIC, viramaAtWordEnd = true
         )
     }

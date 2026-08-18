@@ -53,9 +53,9 @@ class TransliteratorTest {
         assertEquals("घी", hi("GHEE"))
         assertEquals("चावल", hi("CHAWAL"))
         assertEquals("टाटा", hi("TATA"))
-        // Longer than the word wants - मसाला is what a person would write - but
-        // "maasaalaa" is still read back as masala. See [Transliterator.lengthenOpenVowels].
-        assertEquals("मासाला", hi("MASALA"))
+        // Respelled outright: a romanised "a" is the inherent vowel here, which no
+        // rule reading English spelling would guess. See [Transliterator.EXCEPTIONS].
+        assertEquals("मसाला", hi("MASALA"))
     }
 
     @Test
@@ -110,8 +110,8 @@ class TransliteratorTest {
         // Read as a plain "a" this was अंड and অংড - not the word, in either script.
         assertEquals("ऐंड", hi("AND"))
         assertEquals("অ্যান্ড", Transliterator.to(Language.BENGALI, "AND"))
-        // …but an open syllable is still long, and -al is still faint.
-        assertEquals("मासाला", hi("MASALA"))
+        // …but -al is still faint, and SALT still has its aw.
+        assertEquals("मसाला", hi("MASALA"))
         assertEquals("चावल", hi("CHAWAL"))
         assertEquals("सॉल्ट", hi("SALT"))
     }
@@ -126,6 +126,30 @@ class TransliteratorTest {
         assertEquals("वेज फ्राइड राइस", hi("VEG FRIED RICE"))
         // The possessive hisses; it is not read out as the letter "ess".
         assertTrue(bn("JOHNSON'S").endsWith("স"))
+    }
+
+    @Test
+    fun `the romanised words a menu is full of`() {
+        // Respelled outright in [Transliterator.EXCEPTIONS]: English spelling gives a
+        // rule no way to know that the "a" of PANEER is the inherent vowel while the
+        // one of MASALA's second syllable is long, or that TIKKA's doubled k is a
+        // conjunct that is actually said while BUTTER's doubled t is not.
+        assertEquals("पनीर", hi("PANEER"))
+        assertEquals("टिक्का", hi("TIKKA"))
+        assertEquals("मसाला", hi("MASALA"))
+        assertEquals("चिकन", hi("CHICKEN"))
+        assertEquals("मंचूरियन", hi("MANCHURIAN"))
+        assertEquals("ब्रिटानिया", hi("BRITANNIA"))
+        assertEquals("बिस्कुट", hi("BISCUITS"))
+        assertEquals("पैटीज़", hi("PATTIES"))
+    }
+
+    @Test
+    fun `the y-glide and the z each have their own letter`() {
+        // Bengali writes the English y with য় - ব্রিটানিয়া, not ব্রিটানিযা - and
+        // Devanagari marks a borrowed z with a nukta.
+        assertEquals("ব্রিটানিয়া", Transliterator.to(Language.BENGALI, "BRITANNIA"))
+        assertTrue(hi("PATTIES").contains("ज़"))
     }
 
     @Test
