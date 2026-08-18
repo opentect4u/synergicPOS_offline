@@ -151,6 +151,8 @@ class KotCancelReportFragment : Fragment(), TitledScreen {
             subtitle = "${r.rows.size} KOT(s)",
             style = PeriodReportRenderer.Style.CLASSIC,
             range = "F.DT:${shortDate(r.fromDate)}" to "TO.DT:${shortDate(r.toDate)}",
+            // The item only - the KOT number and the table are the till's own labels.
+            nameColumns = setOf(0),
             columns = listOf("ITEM", "KOT", "TABLE", "QTY"),
             rows = r.rows.map { listOf(it.item, it.kotNumber, it.table, qtyFmt(it.qty)) },
             summary = emptyList(),

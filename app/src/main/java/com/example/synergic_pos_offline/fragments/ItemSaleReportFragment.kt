@@ -87,6 +87,8 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
             subtitle = "${report.itemCount} item(s)",
             style = PeriodReportRenderer.Style.CLASSIC,
             range = "F.DT:${shortDate(report.fromDate)}" to "TO.DT:${shortDate(report.toDate)}",
+            // The item name, put into the print language as it is on a bill.
+            nameColumns = setOf(0),
             columns = listOf("ITEM NAME", "QUANTITY"),
             rows = report.lines.map { listOf(it.name, StockDao.trim(it.quantity)) },
             // The leading blank is what holds the money under the name above it

@@ -26,7 +26,7 @@ object KotPrinter {
             report("KOT printer '${printer.printerName}' is not fully configured")
             return
         }
-        val bitmap = render(batch, config.paperDots)
+        val bitmap = render(batch, config.paperDots, PrintLanguage.of(context))
         ThermalPrinter.print(context, bitmap, config) { result ->
             when (result) {
                 is ThermalPrinter.Result.Success -> report("${batch.kotNumber} printed at ${printer.printerName}")
@@ -70,8 +70,29 @@ object KotPrinter {
         return out.ifEmpty { listOf(text) }
     }
 
-    /** Draws the ticket at [width] dots (the printer's printable width) and returns it. */
-    fun render(batch: RunningOrderDao.KotBatch, width: Int): Bitmap {
+    /**
+     * Draws the ticket at [width] dots (the printer's printable width) and returns it.
+     *
+     * [language] puts the whole ticket into the till's print language - the dish
+     * names the way the bill does them, and its own labels beside them. The kitchen
+     * reads this ticket, and it is the one document in the shop whose reader is most
+     * likely to want it in their own language rather than the owner's.
+     *
+     * Three things stay as they are, and each for the same reason: they are matched
+     * against something else rather than read.
+     *
+     *  * **KOT**, because that is what the trade calls this document - the floor asks
+     *    for a KOT and the kitchen hands one back;
+     *  * the **KOT number**, the **table code** and the **time**, which are
+     *    identifiers - the staff match them against a table and a screen that both
+     *    say "T1", so translating them would break the match;
+     *  * the **note**, which the floor typed for the kitchen in their own words.
+     */
+    fun render(
+        batch: RunningOrderDao.KotBatch,
+        width: Int,
+        language: PrintLanguage.Language = PrintLanguage.Language.ENGLISH
+    ): Bitmap {
         // Set from [PrintType], so the ticket carries the same face and the same
         // sizes as the bill. These used to be fractions of the paper width, which
         // made a KOT off a 58mm roll a visibly smaller document than one off an 80mm
@@ -90,23 +111,51 @@ object KotPrinter {
         // Build the line list top-to-bottom; ruleBefore holds indices to draw a rule above.
         val lines = mutableListOf<Line>()
         val ruleBefore = mutableSetOf<Int>()
+        /** This ticket's own labels, in the till's print language. */
+        fun t(text: String) = PrintLanguage.tr(language, text)
+
+        // KOT stays KOT in every language. It is what the trade calls this document -
+        // the kitchen, the floor and the till all say it - and spelling out "kitchen
+        // order ticket" in another language would name it something nobody asks for.
         lines += Line("KOT", title, center = true)
+        // The KOT number, the table code and the time are identifiers, not words: the
+        // staff match them against a physical table and a screen that both say "T1",
+        // so they print as they are, the way a bill number does.
         lines += Line(batch.kotNumber, sub, center = true)
-        if (batch.section.isNotBlank()) lines += Line("Section: ${batch.section}", sub, center = true)
-        lines += Line("Table: ${batch.tableCode}    ${batch.time}", sub, center = true)
+        if (batch.section.isNotBlank()) {
+            lines += Line("${t("SECTION")}: ${batch.section}", sub, center = true)
+        }
+        lines += Line("${t("TABLE")}: ${batch.tableCode}    ${batch.time}", sub, center = true)
+        /**
+         * One dish: how many, and what - in the print language, and wrapped.
+         *
+         * Wrapped because it has to be. A dish line is the one thing on this ticket
+         * that cannot be allowed to run off the edge, and a name in another script is
+         * not the width the English one was. The note below it has always been
+         * wrapped for the same reason; this simply stops the item lines being the
+         * exception.
+         */
+        fun dish(name: String, qty: Double): List<Line> =
+            wrapToWidth(
+                "${qty.toInt()} x  ${ProductName.inPrintLanguage(language, name)}",
+                item, width - padX * 2
+            ).map { Line(it, item, center = false) }
+
         if (batch.lines.isNotEmpty()) ruleBefore += lines.size
-        batch.lines.forEach { (name, qty) -> lines += Line("${qty.toInt()} x  $name", item, center = false) }
+        batch.lines.forEach { (name, qty) -> lines += dish(name, qty) }
         // Cancelled items — a clearly separated section.
         if (batch.cancelLines.isNotEmpty()) {
             ruleBefore += lines.size
-            lines += Line("** CANCELLED **", cancelHdr, center = true)
-            batch.cancelLines.forEach { (name, qty) -> lines += Line("${qty.toInt()} x  $name", item, center = false) }
+            lines += Line("** ${t("CANCELLED")} **", cancelHdr, center = true)
+            batch.cancelLines.forEach { (name, qty) -> lines += dish(name, qty) }
         }
         if (batch.note.isNotBlank()) {
             ruleBefore += lines.size
             // Wrap the note to the paper width so a long note prints in full instead
             // of running off the edge and being cut.
-            wrapToWidth("Note: ${batch.note}", note, width - padX * 2).forEach {
+            // The note itself is what the floor typed for the kitchen - their words,
+            // in whatever language they wrote them, so only the label is translated.
+            wrapToWidth("${t("NOTE")}: ${batch.note}", note, width - padX * 2).forEach {
                 lines += Line(it, note, center = false)
             }
         }

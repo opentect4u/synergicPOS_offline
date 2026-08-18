@@ -59,6 +59,23 @@ class LedgerReceiptRenderer(context: Context) {
     /** Pinned to a standard font scale - see [ReceiptContext]. */
     private val ctx: Context = ReceiptContext.standardFontScale(context)
 
+    /** The language this till labels its slips in - see [PrintLanguage]. */
+    private val lang: PrintLanguage.Language = PrintLanguage.of(context)
+
+    /** [text] in the till's print language, or as it is where there is no translation. */
+    private fun t(text: String): String = PrintLanguage.tr(lang, text)
+
+    /**
+     * One line of the customer block: "MOBILE : 9800000000".
+     *
+     * [padded] is the English label with the spaces that line the colons up in a
+     * monospace face, used as it is so an English statement prints exactly as it
+     * always has. A translated label is set from [key] and left unpadded - its script
+     * is not monospace, so counting characters would line nothing up.
+     */
+    private fun custLine(padded: String, key: String, value: String): String =
+        (if (lang == PrintLanguage.Language.ENGLISH) padded else t(key)) + ": $value"
+
     /**
      * Renders the ledger to a bitmap without it ever being shown, laid out for a
      * printer whose head is [paperDots] wide (defaults to 80mm).
@@ -127,17 +144,19 @@ class LedgerReceiptRenderer(context: Context) {
             )
             renderLogos(view)
 
+            view.findViewById<TextView>(R.id.tvLedgerTitle)?.text = t("CUSTOMER LEDGER")
             view.findViewById<TextView>(R.id.tvLedgerPeriod).text =
-                "${pretty(ledger.fromDate)}  to  ${pretty(ledger.toDate)}"
-            view.findViewById<TextView>(R.id.tvLedgerPrintedBy).text = "Printed by: $printedBy"
+                t("${pretty(ledger.fromDate)}  to  ${pretty(ledger.toDate)}")
+            view.findViewById<TextView>(R.id.tvLedgerPrintedBy).text =
+                "${t("Printed by")}: $printedBy"
 
             val customer = ledger.customer
             setIfPresent(view, R.id.tvLedgerCustName, customer.name.takeIf { it.isNotBlank() }
-                ?.let { "NAME   : ${it.uppercase()}" })
+                ?.let { custLine("NAME   ", "NAME", it.uppercase()) })
             setIfPresent(view, R.id.tvLedgerCustMobile, customer.phone.takeIf { it.isNotBlank() }
-                ?.let { "MOBILE : $it" })
+                ?.let { custLine("MOBILE ", "MOBILE", it) })
             setIfPresent(view, R.id.tvLedgerCustGstin, customer.gstin.takeIf { it.isNotBlank() }
-                ?.let { "GSTIN  : $it" })
+                ?.let { custLine("GSTIN  ", "GSTIN", it) })
 
             val rows = view.findViewById<LinearLayout>(R.id.llLedgerRows)
             rows.removeAllViews()
@@ -145,11 +164,11 @@ class LedgerReceiptRenderer(context: Context) {
 
             // The BALANCE column is a running figure, so the statement has to say
             // what it starts from or the first row's balance comes out of nowhere.
-            rows.addView(amountRow("OPENING BALANCE", money(ledger.opening), bold = true))
+            rows.addView(amountRow(t("OPENING BALANCE"), money(ledger.opening), bold = true))
             rows.addView(divider())
 
             if (ledger.entries.isEmpty()) {
-                rows.addView(note("No transactions in this period."))
+                rows.addView(note(t("No transactions in this period.")))
             } else {
                 // PAID is money the customer handed over, DUE is what a credit sale
                 // added to their account - the two directions the account can move,
@@ -162,7 +181,7 @@ class LedgerReceiptRenderer(context: Context) {
                         balance = money(entry.balance)
                     )
                 }
-                val header = TableLine("DATE", "PAID", "DUE", "BALANCE")
+                val header = TableLine(t("DATE"), t("PAID"), t("DUE"), t("BALANCE"))
                 val metrics = measureTable(listOf(header) + lines, paperDots)
 
                 rows.addView(tableRow(header, metrics, bold = true))
@@ -170,7 +189,7 @@ class LedgerReceiptRenderer(context: Context) {
             }
 
             rows.addView(divider())
-            rows.addView(amountRow("TOTAL DUE", money(ledger.closing), bold = true, valueSize = PrintType.TOTAL_SP))
+            rows.addView(amountRow(t("TOTAL DUE"), money(ledger.closing), bold = true, valueSize = PrintType.TOTAL_SP))
 
             // A negative closing balance is the customer sitting in credit, which is
             // not what "rupees owed" in words would say, so the line is left off.

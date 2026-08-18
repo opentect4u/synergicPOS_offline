@@ -32,6 +32,12 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "brand", "TEXT")
         // Rate-name master + the rate's link to it (non-destructive).
         runCatching { db.execSQL(SQL_CREATE_MD_RATE_NAME) }
+        // The shift master, and the user's place on it. Added here rather than
+        // through a version bump for the same reason the rate-name master was: it
+        // takes nothing away, so an existing till gains it on the next open without
+        // a migration that could fail half-done.
+        runCatching { db.execSQL(SQL_CREATE_MD_SHIFTS) }
+        addColumnIfMissing(db, Tables.MD_USERS, "shift_id", "INTEGER")
         // Older installs created md_rate_name before it was store-scoped and audited;
         // add the missing columns and attach any pre-existing rows to the registered
         // store, so the list, add/edit/delete and store filtering all work on them.
@@ -482,6 +488,7 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_MD_USERS)
         db.execSQL(SQL_CREATE_MD_CATEGORY)
         db.execSQL(SQL_CREATE_MD_UNITS)
+        db.execSQL(SQL_CREATE_MD_SHIFTS)
         db.execSQL(SQL_CREATE_MD_RATE_NAME)
         db.execSQL(SQL_CREATE_MD_PRODUCTS)
         db.execSQL(SQL_CREATE_MD_PRODUCT_RATES)
@@ -1055,6 +1062,7 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_USERS = "md_users"
         const val MD_CATEGORY = "md_category"
         const val MD_UNITS = "md_units"
+        const val MD_SHIFTS = "md_shifts"
         const val MD_RATE_NAME = "md_rate_name"
         const val MD_PRODUCTS = "md_products"
         const val MD_PRODUCT_RATES = "md_product_rates"
@@ -1191,6 +1199,30 @@ class DatabaseHelper private constructor(context: Context) :
                 store_id INTEGER,
                 category_name TEXT,
                 category_image BLOB,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
+        /**
+         * The shifts a shop runs, and who is on them.
+         *
+         * from_time / to_time are stored as "HH:mm" - the clock face rather than a
+         * timestamp, because a shift is a shape of the day that repeats rather than
+         * an event that happened once. A night shift whose to_time is earlier than
+         * its from_time is one that crosses midnight, which the master accepts and
+         * nothing here has to resolve: the shift is attached to a user, and it is the
+         * user that a bill is counted under.
+         */
+        private const val SQL_CREATE_MD_SHIFTS = """
+            CREATE TABLE IF NOT EXISTS md_shifts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                shift_name TEXT,
+                from_time TEXT,
+                to_time TEXT,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,

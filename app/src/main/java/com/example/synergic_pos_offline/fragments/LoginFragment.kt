@@ -26,6 +26,7 @@ import com.example.synergic_pos_offline.utils.ApiClient
 import com.example.synergic_pos_offline.utils.BackupFiles
 import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.DatabaseBackup
+import com.example.synergic_pos_offline.utils.BiometricLogin
 import com.example.synergic_pos_offline.utils.DeviceIdentity
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.NetworkBadge
@@ -34,6 +35,7 @@ import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import at.favre.lib.crypto.bcrypt.BCrypt
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import org.json.JSONObject
@@ -101,6 +103,10 @@ class LoginFragment : Fragment() {
                 performLogin()
             }
         }
+
+        // The fingerprint shortcut, where this till offers one. Beside the password
+        // form and never instead of it - see [showBiometricOffer].
+        showBiometricOffer(view)
 
         tvRegister.setOnClickListener {
             requireActivity().supportFragmentManager.beginTransaction()
@@ -585,6 +591,24 @@ class LoginFragment : Fragment() {
             return
         }
 
+        // A password login is what tells the fingerprint who to sign in next time -
+        // the reader can only say "somebody this tablet trusts", never which operator,
+        // so the name has to come from here. See [BiometricLogin].
+        if (BiometricLogin.enabledInSettings(requireContext())) {
+            BiometricLogin.remember(requireContext(), user.userId)
+        }
+        signIn(user)
+    }
+
+    /**
+     * Everything a successful login does, once the operator is known.
+     *
+     * Split out because there are now two ways to become known - a password, and a
+     * fingerprint over a remembered name - and the till has to do exactly the same
+     * things afterwards either way. A second copy of this would be a second place for
+     * the store alignment or the settings cache to be forgotten.
+     */
+    private fun signIn(user: User) {
         SessionManager.currentUser = user
         // Put all local master data under the store this user just logged in to — every
         // md_ table's store_id is set to the logged-in store id (not device-based).
@@ -615,6 +639,7 @@ class LoginFragment : Fragment() {
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_container, landing)
             .commit()
+
     }
 
     /**
@@ -623,6 +648,103 @@ class LoginFragment : Fragment() {
      * entered password is verified against it. Returns null when the user_id is unknown
      * or the password does not match.
      */
+    // ---- Fingerprint --------------------------------------------------------
+
+    /**
+     * Shows the fingerprint shortcut, or leaves the form exactly as it was.
+     *
+     * Re-asked every time this screen appears rather than once, because all three of
+     * the conditions behind it can change while the app is open: the setting is on the
+     * App Settings screen, a fingerprint can be enrolled from the device's settings,
+     * and the remembered operator arrives with the first password login.
+     */
+    private fun showBiometricOffer(view: View) {
+        // Looked up leniently, and this is not belt-and-braces: this screen has a
+        // portrait layout and a landscape one, and a shortcut that is only worth
+        // having on one of them is not worth crashing the other over. The login
+        // screen is the one screen a till cannot get past.
+        val button = view.findViewById<MaterialButton>(R.id.btnBiometricLogin) ?: return
+        val divider = view.findViewById<View>(R.id.tvBiometricOr)
+
+        val offered = BiometricLogin.offeredUser(requireContext())
+        if (offered == null) {
+            button.visibility = View.GONE
+            divider?.visibility = View.GONE
+            return
+        }
+        button.visibility = View.VISIBLE
+        divider?.visibility = View.VISIBLE
+        // Named on the button as well as on the system sheet. An operator has to know
+        // whose session this opens *before* deciding to press it.
+        button.text = "Use fingerprint  ·  $offered"
+        button.setOnClickListener { loginWithFingerprint(offered) }
+    }
+
+    /**
+     * Takes a fingerprint, then signs in the operator it stands for.
+     *
+     * The operator is looked up again here rather than trusted from what was
+     * remembered: somebody removed from the till, blocked since, or whose store has
+     * been un-verified does not get in on a fingerprint. It is the same check a typed
+     * password goes through, minus the password - which the reader has just stood in
+     * for.
+     */
+    private fun loginWithFingerprint(userId: String) {
+        BiometricLogin.prompt(
+            fragment = this,
+            userId = userId,
+            onSucceeded = {
+                val user = loadUser(userId)
+                when {
+                    user == null -> {
+                        // The account has gone since it was remembered. Forget it, so
+                        // the button stops offering somebody who cannot sign in.
+                        BiometricLogin.forget(requireContext())
+                        view?.let { showBiometricOffer(it) }
+                        toast("That account no longer exists. Sign in with a password.")
+                    }
+                    user.isBlocked -> {
+                        toast("User is blocked. Contact Admin.")
+                    }
+                    else -> signIn(user)
+                }
+            },
+            onFailed = { message -> message?.let { toast(it) } }
+        )
+    }
+
+    /**
+     * One operator by login id, without a password.
+     *
+     * The same query [authenticateLocal] makes - the verified-store join included, so
+     * a fingerprint cannot get into a store whose registration is not verified - with
+     * the password comparison left out, because the fingerprint replaced it.
+     */
+    private fun loadUser(userId: String): User? {
+        val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+        val sql = """
+            SELECT u.role, u.is_blocked, u.store_id, u.id
+            FROM ${DatabaseHelper.Tables.MD_USERS} u
+            JOIN ${DatabaseHelper.Tables.MD_REGISTRATION} r ON r.store_id = u.store_id
+            WHERE u.user_id = ? AND r.verify_flag = 1
+            LIMIT 1
+        """.trimIndent()
+        db.rawQuery(sql, arrayOf(userId)).use { c ->
+            if (!c.moveToFirst()) return null
+            return User(
+                userId = userId,
+                // Nothing here has the password and nothing downstream reads it: the
+                // session carries the operator, not their credentials.
+                password = "",
+                role = if (c.getString(c.getColumnIndexOrThrow("role")) == "G")
+                    UserRole.GENERAL_USER else UserRole.ADMIN,
+                isBlocked = c.getInt(c.getColumnIndexOrThrow("is_blocked")) == 1,
+                storeId = c.getInt(c.getColumnIndexOrThrow("store_id")),
+                serialNo = c.getLong(c.getColumnIndexOrThrow("id"))
+            )
+        }
+    }
+
     private fun authenticateLocal(userId: String, password: String): User? {
         if (userId.isEmpty() || password.isEmpty()) return null
 

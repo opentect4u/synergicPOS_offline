@@ -95,7 +95,10 @@
 
                 <TextView style="@style/BillDashLine" />
 
+                <!-- Given an id so the renderer can set it in the till's print
+                     language; the text here is the English it falls back to. -->
                 <TextView
+                    android:id="@+id/tvReturnTitle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"

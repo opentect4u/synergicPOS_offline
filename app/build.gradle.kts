@@ -94,6 +94,7 @@ dependencies {
     // matching .so files live in src/main/jniLibs.
     implementation(files("libs/ESC_SDK_V1.24.04.jar"))
     implementation(libs.androidx.swiperefreshlayout)
+    implementation(libs.androidx.biometric)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
