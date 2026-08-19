@@ -1,17 +1,21 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   One table on the Choose Table grid.
 
-  The status is the card: its tint, its border, its icon and its label all come from
-  the one colour, so a floor can be read at a glance - green free, red occupied,
-  amber reserved, blue waiting on its bill. Filled in TableAdapter.
+  A floor plan is read by number first - "who is on 7?" - so the number is the card,
+  set large and in the status colour, with the seats under it and the status spelled
+  out on a pill at the foot. The status also tints the card and its border, so a
+  section can be taken in at a glance without reading a word of it.
+
+  Sized for six to a row: a whole section fits on screen and the grid reads as the
+  room rather than as a list. Filled in TableAdapter.
 -->
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/cardTableTile"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="7dp"
+    android:layout_margin="5dp"
     app:cardCornerRadius="14dp"
     app:cardElevation="0dp"
     app:cardBackgroundColor="#E7F8EE"
@@ -26,55 +30,78 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center"
-        android:paddingHorizontal="10dp"
-        android:paddingVertical="16dp">
+        android:paddingHorizontal="6dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="10dp">
 
         <ImageView
             android:id="@+id/ivTableIcon"
-            android:layout_width="30dp"
-            android:layout_height="30dp"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginBottom="2dp"
             android:src="@drawable/ic_table"
             app:tint="#16A34A"
             android:contentDescription="Table" />
 
+        <!-- The table's number, the thing the card is actually for -->
         <TextView
             android:id="@+id/tvTableCode"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
             android:gravity="center"
             android:maxLines="1"
             android:ellipsize="end"
-            android:text="Table 1"
-            android:textSize="15sp"
+            android:text="5"
+            android:textSize="28sp"
             android:textStyle="bold"
-            android:textColor="@color/text_main" />
+            android:textColor="#16A34A" />
+
+        <!-- Seats, when the table master says how many. Muted: it settles a choice
+             between two free tables, it is not what the card is read for. -->
+        <TextView
+            android:id="@+id/tvTableSeats"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="4 seats"
+            android:textSize="12sp"
+            android:textColor="@color/text_secondary"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/tvTableStatus"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:gravity="center"
+            android:layout_marginTop="9dp"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="3dp"
+            android:background="@drawable/bg_status_tag"
             android:maxLines="1"
             android:ellipsize="end"
             android:text="Available"
-            android:textSize="12sp"
-            android:textColor="#16A34A" />
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:textAllCaps="true"
+            android:letterSpacing="0.04"
+            android:textColor="@color/white" />
 
-        <!-- Where the table's order stands with the kitchen. Hidden for a table with
-             no order on it, which has nothing to have sent. -->
+        <!-- Where this table's order stands with the kitchen. Gone for a table with no
+             order on it, which has nothing to have sent. -->
         <TextView
             android:id="@+id/tvTableKot"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="7dp"
+            android:layout_marginTop="6dp"
             android:paddingHorizontal="8dp"
-            android:paddingVertical="2dp"
+            android:paddingVertical="3dp"
             android:background="@drawable/bg_status_tag"
+            android:gravity="center"
             android:maxLines="1"
+            android:ellipsize="end"
             android:text="KOT Pending"
-            android:textSize="9sp"
+            android:textSize="11.5sp"
             android:textStyle="bold"
             android:textAllCaps="true"
             android:letterSpacing="0.04"

@@ -111,6 +111,7 @@ class DashboardDao(context: Context) {
             put("movement", movement())
             put("daily", lastSevenDays())
             put("alerts", alerts())
+            put("renewal", renewal())
             // One band or the other, never both: the trade this till is in decides
             // which four figures mean anything. A grocery has no tables to fill and a
             // restaurant does not sell off the shelf, so the other four would be a row
@@ -349,6 +350,26 @@ class DashboardDao(context: Context) {
      * Low Stock Report and the sale screen's badges cannot come to disagree about what
      * "low" means - there is one rule and it lives there.
      */
+    /**
+     * Whether the registration is close enough to running out to say so, and how to
+     * word it - see [com.example.synergic_pos_offline.utils.RenewalStatus].
+     *
+     * `show` is false almost every day of the year: the band only appears inside the
+     * last month, and stays once the date has passed. Sent as an object either way so
+     * the page has one shape to render rather than a key that may not be there.
+     */
+    private fun renewal(): JSONObject {
+        val status = com.example.synergic_pos_offline.utils.RenewalStatus.of(appContext)
+        if (status == null || !status.needsAttention) return JSONObject().put("show", false)
+        return JSONObject()
+            .put("show", true)
+            // Red once it has expired or is inside the last week; amber before that, so
+            // "there is time" and "this is about to stop" do not look the same.
+            .put("urgent", status.expired || status.daysLeft <= 7)
+            .put("headline", com.example.synergic_pos_offline.utils.RenewalStatus.headline(status))
+            .put("detail", com.example.synergic_pos_offline.utils.RenewalStatus.detail(status))
+    }
+
     private fun alerts(): JSONObject {
         val summary = StockAlerts.undismissed(appContext, StockAlerts.find(appContext))
         val items = JSONArray()

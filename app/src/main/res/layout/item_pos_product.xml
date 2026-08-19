@@ -55,6 +55,46 @@
                 android:textColor="@color/text_main"
                 android:background="@color/white"
                 android:visibility="gone" />
+
+            <!-- Restaurant-only markers. Laid on the photo the way the stock badge is,
+                 so the tile is one design in both trades: a grocery never sets them and
+                 they stay gone, a restaurant turns on whichever the dish has. -->
+            <ImageView
+                android:id="@+id/ivFoodType"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="top|end"
+                android:layout_margin="8dp"
+                android:src="@drawable/ic_food_veg"
+                android:contentDescription="Food type"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/tvPrepBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|start"
+                android:layout_margin="8dp"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="2dp"
+                android:text="15 min"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_main"
+                android:background="@color/white"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/llSpice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="8dp"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="2dp"
+                android:background="@color/white"
+                android:orientation="horizontal"
+                android:visibility="gone" />
         </FrameLayout>
 
         <LinearLayout

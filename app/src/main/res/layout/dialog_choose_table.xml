@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   Choose Table: the floor plan as cards, its sections as the categories across the
   top, and a legend along the foot keying each colour to a status.
@@ -32,7 +32,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginEnd="16dp"
                 android:text="Choose Table"
-                android:textSize="20sp"
+                android:textSize="22sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_main" />
 
@@ -53,7 +53,7 @@
                     android:layout_height="wrap_content"
                     android:inputType="text"
                     android:maxLines="1"
-                    android:textSize="15sp" />
+                    android:textSize="17sp" />
             </com.google.android.material.textfield.TextInputLayout>
 
             <ImageButton
@@ -66,6 +66,17 @@
                 app:tint="@color/text_secondary"
                 android:contentDescription="Close" />
         </LinearLayout>
+
+        <!-- What the floor adds up to, for whatever section is being shown. Answers
+             "is there anything free?" without counting green cards by eye. -->
+        <LinearLayout
+            android:id="@+id/llTableCounts"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:baselineAligned="false"
+            android:paddingHorizontal="20dp"
+            android:paddingTop="14dp" />
 
         <!-- Sections, as the categories of this grid -->
         <HorizontalScrollView
@@ -105,8 +116,8 @@
             android:layout_height="wrap_content"
             android:paddingVertical="28dp"
             android:gravity="center"
-            android:text="No tables set up yet.\nAdd them in Master ▸ Table."
-            android:textSize="14sp"
+            android:text="No tables set up yet.\nAdd them in Master â–¸ Table."
+            android:textSize="16sp"
             android:textColor="@color/text_secondary"
             android:visibility="gone" />
 
@@ -142,8 +153,8 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="7dp"
                     android:layout_marginEnd="18dp"
-                    android:text="Available"
-                    android:textSize="12sp"
+                    android:text="Available Table"
+                    android:textSize="14sp"
                     android:textColor="@color/text_secondary" />
 
                 <View
@@ -156,8 +167,8 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="7dp"
                     android:layout_marginEnd="18dp"
-                    android:text="Occupied"
-                    android:textSize="12sp"
+                    android:text="Occupied Table"
+                    android:textSize="14sp"
                     android:textColor="@color/text_secondary" />
 
                 <View
@@ -170,8 +181,8 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="7dp"
                     android:layout_marginEnd="18dp"
-                    android:text="Reserved"
-                    android:textSize="12sp"
+                    android:text="Reserved Table"
+                    android:textSize="14sp"
                     android:textColor="@color/text_secondary" />
 
                 <View
@@ -185,10 +196,10 @@
                     android:layout_marginStart="7dp"
                     android:layout_marginEnd="22dp"
                     android:text="Bill Pending"
-                    android:textSize="12sp"
+                    android:textSize="14sp"
                     android:textColor="@color/text_secondary" />
 
-                <!-- KOT keys: the badge on a card, not the card's own colour -->
+                <!-- KOT keys: the line on a card, not the card's own colour -->
                 <View
                     android:layout_width="12dp"
                     android:layout_height="12dp"
@@ -200,7 +211,7 @@
                     android:layout_marginStart="7dp"
                     android:layout_marginEnd="18dp"
                     android:text="KOT Pending"
-                    android:textSize="12sp"
+                    android:textSize="14sp"
                     android:textColor="@color/text_secondary" />
 
                 <View
@@ -213,7 +224,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="7dp"
                     android:text="KOT Sent"
-                    android:textSize="12sp"
+                    android:textSize="14sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
         </HorizontalScrollView>

@@ -64,6 +64,17 @@
     .empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #aaa; font-size: 13px; text-align: center; padding: 0 1rem; }
 
     /* What is out or running low, across the head of the page. */
+    /* Renewal band. Amber while there is still time, red once there is not. */
+    .renewal { display: flex; align-items: flex-start; gap: 12px; border-radius: 10px;
+               padding: 14px 16px; margin-bottom: 1.25rem; border: 1px solid; }
+    .renewal-soon { background: rgba(250,178,25,.12); border-color: rgba(250,178,25,.55); }
+    .renewal-urgent { background: rgba(227,73,72,.10); border-color: rgba(227,73,72,.45); }
+    .renewal-icon { font-size: 20px; line-height: 1.1; }
+    .renewal-soon .renewal-icon, .renewal-soon .renewal-title { color: #b07807; }
+    .renewal-urgent .renewal-icon, .renewal-urgent .renewal-title { color: var(--danger); }
+    .renewal-title { font-size: 15px; font-weight: 700; }
+    .renewal-detail { font-size: 13px; color: var(--gray-dark); opacity: .85; margin-top: 2px; }
+
     .alerts { margin-bottom: 1.25rem; }
     .alerts-head { font-size: 12px; font-weight: 700; color: var(--danger); letter-spacing: .05em; margin-bottom: 8px; }
     .alert-box { display: flex; align-items: center; gap: 12px; background: rgba(227,73,72,.10); border: 1px solid rgba(227,73,72,.4); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer; }
@@ -107,6 +118,11 @@
     <h1>Retail POS Analytics</h1>
     <p id="subtitle">Live dashboard</p>
   </div>
+
+  <!-- Above the stock alerts: a registration about to lapse stops the whole till,
+       not one line of one order, and it is the one thing here nobody at the counter
+       can put right. Empty, and taking no height, until it has something to say. -->
+  <div id="renewal"></div>
 
   <div class="alerts" id="alerts"></div>
 
@@ -203,6 +219,23 @@
     document.querySelectorAll('.metric-card[data-nav]').forEach(function (el) {
       el.addEventListener('click', function () { POS.open(el.getAttribute('data-nav')); });
     });
+  }
+
+  /* ---- The renewal band -------------------------------------------------- */
+
+  /* Nothing at all until the registration is inside its last month; see
+     DashboardDao.renewal(), which decides both whether and how urgently. */
+  function renderRenewal(r) {
+    var host = document.getElementById('renewal');
+    if (!host) return;
+    if (!r || !r.show) { host.innerHTML = ''; return; }
+    host.innerHTML =
+      '<div class="renewal ' + (r.urgent ? 'renewal-urgent' : 'renewal-soon') + '">'
+      + '<div class="renewal-icon">⚠</div>'
+      + '<div style="flex:1">'
+      + '<div class="renewal-title">' + esc(r.headline) + '</div>'
+      + '<div class="renewal-detail">' + esc(r.detail) + '</div>'
+      + '</div></div>';
   }
 
   /* ---- The alert band --------------------------------------------------- */
@@ -582,6 +615,7 @@
     CUR = d.currency || '₹';
     applyAccent(d.accent);
     document.getElementById('subtitle').textContent = 'Today, ' + d.date + ' • Live dashboard';
+    renderRenewal(d.renewal);
     renderAlerts(d.alerts);
     renderMetrics(d);
     renderHourly(d.hourly);
