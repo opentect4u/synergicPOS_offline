@@ -1,4 +1,4 @@
-﻿package com.example.synergic_pos_offline.utils
+package com.example.synergic_pos_offline.utils
 
 import android.content.ContentValues
 import android.content.Context
@@ -400,7 +400,7 @@ class BillReceiptRenderer(context: Context) {
 
     /**
      * Renders an in-memory [draft] to a bitmap through exactly the same layout, font
-     * sizes and settings the saved bill uses â€” so a restaurant bill printed from a
+     * sizes and settings the saved bill uses — so a restaurant bill printed from a
      * draft is byte-for-byte the grocery bill's format. The service charge should be
      * folded into the draft's items so it is part of the printed total.
      */
@@ -431,7 +431,7 @@ class BillReceiptRenderer(context: Context) {
 
         val captured = ReceiptPrinter.capture(card) ?: return null
         // The card is captured to its exact height, so a big header/footer font sits
-        // flush against the top/bottom edge â€” with no clearance the footer runs into
+        // flush against the top/bottom edge — with no clearance the footer runs into
         // the tear line and the next receipt. Add white top/bottom margins that scale
         // with the paper so header/footer always have breathing room in print.
         withVerticalMargins(captured, top = paperDots / 16, bottom = paperDots / 9)
@@ -473,9 +473,9 @@ class BillReceiptRenderer(context: Context) {
         val roundOff: Double,
         val netAmount: Double,
         val paymentModes: List<String>,
-        /** Restaurant service charge â€” shown as its own totals line, added to the net. */
+        /** Restaurant service charge — shown as its own totals line, added to the net. */
         val serviceCharge: Double = 0.0,
-        /** Cash returned when the customer tenders more than the payable â€” printed only when > 0. */
+        /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
         val returnAmount: Double = 0.0
     ) {
         /** As captured on the sale; each field printed only where the settings ask. */

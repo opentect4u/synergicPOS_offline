@@ -1,4 +1,4 @@
-﻿package com.example.synergic_pos_offline.fragments
+package com.example.synergic_pos_offline.fragments
 
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -23,7 +23,7 @@ import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 
 /**
- * Restaurant "Sale" screen â€” an Orders workspace (order list + live order detail
+ * Restaurant "Sale" screen — an Orders workspace (order list + live order detail
  * + summary). Opened in place of the grocery POS billing when Mode = Restaurant.
  *
  * This is the design pass: the layout is populated with representative
@@ -53,7 +53,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val completed: Boolean get() = status.equals("COMPLETED", ignoreCase = true)
     }
 
-    // Running orders â€” loaded from / persisted to the database (survive restarts).
+    // Running orders — loaded from / persisted to the database (survive restarts).
     private val orders = mutableListOf<OrderCard>()
     private val roDao by lazy { com.example.synergic_pos_offline.database.RunningOrderDao(requireContext()) }
     private val stockDao by lazy { com.example.synergic_pos_offline.database.StockDao(requireContext()) }
@@ -80,14 +80,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         roDao.allRunning().forEach { ro ->
             val card = OrderCard(
                 dbId = ro.id, id = ro.tableCode, type = ro.orderType, section = ro.section,
-                phone = ro.phone, time = ro.time, amount = "â‚¹ ${money(0.0)}",
+                phone = ro.phone, time = ro.time, amount = "₹ ${money(0.0)}",
                 cashier = ro.cashier, status = ro.status, selected = false, note = ro.note
             )
-            // qty 0 lines are removed items awaiting a cancellation KOT â€” hide from the cart.
+            // qty 0 lines are removed items awaiting a cancellation KOT — hide from the cart.
             roDao.itemsFor(ro.id).filter { it.qty > 0.0 }.forEach { ri ->
                 card.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate))
             }
-            card.amount = "â‚¹ ${money(computeBill(card.items, serviceRateFor(card.section)).total)}"
+            card.amount = "₹ ${money(computeBill(card.items, serviceRateFor(card.section)).total)}"
             orders.add(card)
         }
     }
@@ -107,13 +107,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val subtotal: Double, val service: Double, val cgst: Double, val sgst: Double, val total: Double
     )
 
-    /** Flat service-charge amount (â‚¹) for a section, from the Section master. */
+    /** Flat service-charge amount (₹) for a section, from the Section master. */
     private fun serviceRateFor(sectionName: String): Double = sectionDao.serviceChargeForName(sectionName)
 
     /**
-     * Bills each line by its own CGST/SGST rate â€” honouring the store Tax Settings
+     * Bills each line by its own CGST/SGST rate — honouring the store Tax Settings
      * (GST on/off, inclusive vs exclusive) via the same [BillPricing] the saved bill
-     * uses â€” and adds the section's service charge as a flat rupee amount. For an
+     * uses — and adds the section's service charge as a flat rupee amount. For an
      * inclusive regime the tax is already within the rate, so it isn't added again.
      */
     private fun computeBill(items: List<CartItem>, serviceChargeAmt: Double): BillBreakdown {
@@ -124,7 +124,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 cgstRate = it.cgstRate, sgstRate = it.sgstRate, vatRate = 0.0,
                 discountAmount = 0.0, regime = taxRegime, inclusive = taxInclusive, discountPreTax = discountPreTax
             )
-            subtotal += it.qty * it.rate     // gross (as listed) â€” what the Subtotal line shows
+            subtotal += it.qty * it.rate     // gross (as listed) — what the Subtotal line shows
             cgst += p.cgst
             sgst += p.sgst
         }
@@ -171,7 +171,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
             .check(R.id.btnDineIn)
 
-        // Take Away needs no table â€” tapping it opens a take-away order: if one is
+        // Take Away needs no table — tapping it opens a take-away order: if one is
         // already active, just select it (no duplicate token); otherwise start a new one.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnTakeAway).setOnClickListener {
             view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
@@ -181,7 +181,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 selectOrder(existing)
             } else {
                 openNewOrder(nextTakeAwayCode(), section = "", phone = "", type = "Take Away")
-                toast("Take-away order started â€” add items, then Bill & Pay")
+                toast("Take-away order started — add items, then Bill & Pay")
             }
         }
         // Dine In switches the segment and selects a dine-in table if one is active.
@@ -203,19 +203,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 roDao.setNote(o.dbId, o.note)
             }
 
-        // New Order â†’ dine-in table/customer modal (select the Dine In segment).
+        // New Order → dine-in table/customer modal (select the Dine In segment).
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnNewOrder).setOnClickListener {
             view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
                 .check(R.id.btnDineIn)
             showNewOrderDialog()
         }
 
-        // Choose Table â†’ table-picker grid (sections as tabs, tables as cards).
+        // Choose Table → table-picker grid (sections as tabs, tables as cards).
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnChooseTable).setOnClickListener {
             showChooseTableDialog()
         }
 
-        // More â†’ the whole order in a roomy popup, since this panel is narrow.
+        // More → the whole order in a roomy popup, since this panel is narrow.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnMoreItems)
             .setOnClickListener { showOrderItemsDialog() }
 
@@ -233,11 +233,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Add Item button to open a grid in a popup.
         setupProductSection(view)
 
-        // Print KOT â†’ resolve the kitchen printer, then cut a ticket for the new items.
+        // Print KOT → resolve the kitchen printer, then cut a ticket for the new items.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnPrintKot).setOnClickListener {
             val order = currentOrder() ?: return@setOnClickListener toast("Select a table order first")
             if (order.type.equals("Take Away", ignoreCase = true))
-                return@setOnClickListener toast("Not available for Take Away â€” KOT prints on payment")
+                return@setOnClickListener toast("Not available for Take Away — KOT prints on payment")
             if (order.completed) return@setOnClickListener toast("Table already billed")
             if (!roDao.hasPendingKot(order.dbId)) {
                 toast("No new or cancelled items to send to kitchen"); return@setOnClickListener
@@ -245,36 +245,36 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             resolveKotPrinterThenPrint(order)
         }
 
-        // Transfer â†’ move this order to another available table in the same section.
+        // Transfer → move this order to another available table in the same section.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnTransfer).setOnClickListener {
             val order = currentOrder() ?: return@setOnClickListener toast("Select a table order first")
             if (order.type.equals("Take Away", ignoreCase = true))
                 return@setOnClickListener toast("Not available for Take Away")
-            if (order.completed) return@setOnClickListener toast("Table already billed â€” cannot transfer")
+            if (order.completed) return@setOnClickListener toast("Table already billed — cannot transfer")
             showTransferDialog(order)
         }
 
-        // Merge â†’ open the popup and add the active tables (same section) to combine.
+        // Merge → open the popup and add the active tables (same section) to combine.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnMerge).setOnClickListener {
             showMergeDialog()
         }
 
-        // Split â†’ break the selected table into sub-tables (101 A, 101 B, â€¦).
+        // Split → break the selected table into sub-tables (101 A, 101 B, …).
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnSplit).setOnClickListener {
             val order = currentOrder() ?: return@setOnClickListener toast("Select a table order first")
             if (order.type.equals("Take Away", ignoreCase = true))
                 return@setOnClickListener toast("Not available for Take Away")
-            if (order.completed) return@setOnClickListener toast("Table already billed â€” cannot split")
+            if (order.completed) return@setOnClickListener toast("Table already billed — cannot split")
             if (order.id.contains(" ")) return@setOnClickListener toast("This is already a split sub-table")
             showSplitDialog(order)
         }
 
-        // Cancel Order â†’ clear the selected active table (removes the order + items).
+        // Cancel Order → clear the selected active table (removes the order + items).
         // Only allowed before any KOT is sent, or once all sent items are cancelled.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnCancelOrder).setOnClickListener {
             val order = currentOrder() ?: return@setOnClickListener toast("Select an order first")
             if (roDao.hasSentActiveItems(order.dbId)) {
-                return@setOnClickListener toast("Can't cancel â€” items already sent to kitchen. Remove them (and Print KOT to cancel) first.")
+                return@setOnClickListener toast("Can't cancel — items already sent to kitchen. Remove them (and Print KOT to cancel) first.")
             }
             val label = if (order.type.equals("Take Away", ignoreCase = true))
                 order.id.replace("TA-", "Take Away Token #") else "Table ${order.id}"
@@ -287,7 +287,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             ) { clearActiveOrder(order) }
         }
 
-        // Bill & Print â†’ print the bill on the default BILL printer (or choose one), then lock the table.
+        // Bill & Print → print the bill on the default BILL printer (or choose one), then lock the table.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPrint).setOnClickListener {
             val order = currentOrder() ?: return@setOnClickListener toast("Select a table order first")
             when {
@@ -298,12 +298,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
 
         // When checkout confirms payment, settle the table: close it (in DB too),
-        // then print the receipt with a preview â€” the same as the grocery bill flow.
+        // then print the receipt with a preview — the same as the grocery bill flow.
         parentFragmentManager.setFragmentResultListener(
             RestaurantCheckoutFragment.RESULT_PAID, viewLifecycleOwner
         ) { _, bundle ->
             val paidTable = bundle.getString(RestaurantCheckoutFragment.ARG_TABLE)
-            // Resolve the order first â€” settlePaidOrder removes it from the list, so a
+            // Resolve the order first — settlePaidOrder removes it from the list, so a
             // second lookup afterwards would find nothing and the bill would never save
             // or print.
             val order = orders.firstOrNull { it.id == paidTable } ?: return@setFragmentResultListener
@@ -329,7 +329,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             loadProductsFromDb()
         }
 
-        // Bill & Pay â†’ restaurant checkout with the selected order's items.
+        // Bill & Pay → restaurant checkout with the selected order's items.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).setOnClickListener {
             val order = orders.firstOrNull { it.selected }
             when {
@@ -357,7 +357,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
 
         // MainActivity re-themes the whole tree on resume (by button name), which
-        // would clobber our button styling â€” re-apply ours after that pass.
+        // would clobber our button styling — re-apply ours after that pass.
         view.post { restyle(view, accent) }
 
         // Opening the sale screen asks which table first: that is the decision every
@@ -376,7 +376,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         reloadProductsAndRefresh()
     }
 
-    /** Called by MainActivity when the palette colour changes â€” recolour instantly. */
+    /** Called by MainActivity when the palette colour changes — recolour instantly. */
     fun onThemeChanged() {
         val v = view ?: return
         val accent = ThemeManager.getThemeColor(requireContext())
@@ -442,14 +442,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
             card.findViewById<TextView>(R.id.tvOrderType).text = o.type
             card.findViewById<TextView>(R.id.tvOrderGuests).text =
-                if (takeAway) "â€”" else o.section.ifBlank { "â€”" }
+                if (takeAway) "—" else o.section.ifBlank { "—" }
             card.findViewById<TextView>(R.id.tvOrderTime).apply { text = o.time; setTextColor(accent) }
             card.findViewById<TextView>(R.id.tvOrderCashier).text = o.cashier
             card.findViewById<TextView>(R.id.tvOrderAmount).text = o.amount
             card.findViewById<TextView>(R.id.tvOrderStatus).apply {
                 // An empty split sub-table reads as Available until it gets items.
                 text = when {
-                    o.completed -> "Completed â€¢ Billed"
+                    o.completed -> "Completed • Billed"
                     o.id.contains(" ") && o.items.isEmpty() -> "Available"
                     else -> "In Progress"
                 }
@@ -491,7 +491,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val root = view ?: return
         val accent = ThemeManager.getThemeColor(requireContext())
         val takeAway = order.type.equals("Take Away", ignoreCase = true)
-        // Take Away has no table â€” show it as a take-away token, not "Table: â€¦".
+        // Take Away has no table — show it as a take-away token, not "Table: …".
         root.findViewById<TextView>(R.id.tvDetailTableLabel).visibility = if (takeAway) View.GONE else View.VISIBLE
         root.findViewById<TextView>(R.id.tvDetailTable).apply {
             text = if (takeAway) "Take Away" else order.id; setTextColor(accent)
@@ -499,9 +499,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvDetailCustomer).text = order.phone.ifBlank { "Walk-in" }
         root.findViewById<TextView>(R.id.tvDetailGuests).text =
             if (takeAway) order.id.replace("TA-", "Token #")
-            else if (order.section.isNotBlank()) "${order.section}  Â·  ${order.type}" else order.type
+            else if (order.section.isNotBlank()) "${order.section}  ·  ${order.type}" else order.type
         root.findViewById<TextView>(R.id.tvDetailOrderTime).text =
-            "Order Time: ${order.time.ifBlank { "â€”" }}"
+            "Order Time: ${order.time.ifBlank { "—" }}"
         setNoteField(root, order.note)
         // Take Away has no table to KOT/transfer/merge; disable those actions.
         setDineInActionsEnabled(root, !order.type.equals("Take Away", ignoreCase = true))
@@ -526,14 +526,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /** Neutral detail panel when no order is selected: empty cart + zeroed totals. */
     private fun clearDetail(root: View) {
         root.findViewById<TextView>(R.id.tvDetailTableLabel).visibility = View.VISIBLE
-        root.findViewById<TextView>(R.id.tvDetailTable).text = "â€”"
+        root.findViewById<TextView>(R.id.tvDetailTable).text = "—"
         root.findViewById<TextView>(R.id.tvDetailCustomer).text = "Walk-in"
-        root.findViewById<TextView>(R.id.tvDetailGuests).text = "â€”"
-        root.findViewById<TextView>(R.id.tvDetailOrderTime).text = "Order Time: â€”"
+        root.findViewById<TextView>(R.id.tvDetailGuests).text = "—"
+        root.findViewById<TextView>(R.id.tvDetailOrderTime).text = "Order Time: —"
         setDineInActionsEnabled(root, true)   // neutral state: actions available again
         setNoteField(root, "")
         root.findViewById<LinearLayout>(R.id.llOrderItems).removeAllViews()
-        val zero = "â‚¹ ${money(0.0)}"
+        val zero = "₹ ${money(0.0)}"
         root.findViewById<TextView>(R.id.tvSubtotal).text = zero
         root.findViewById<TextView>(R.id.tvService).text = zero
         root.findViewById<TextView>(R.id.tvCgst).text = zero
@@ -552,7 +552,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             iconTint = ColorStateList.valueOf(white); strokeWidth = 0
         }
         fun outlined(id: Int) = root.findViewById<com.google.android.material.button.MaterialButton>(id).apply {
-            // Reset the background too â€” ThemeManager may have filled it green already.
+            // Reset the background too — ThemeManager may have filled it green already.
             backgroundTintList = ColorStateList.valueOf(white); setTextColor(accent)
             strokeColor = ColorStateList.valueOf(accent); strokeWidth = strokePx
             iconTint = ColorStateList.valueOf(accent)
@@ -602,7 +602,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val code = it?.toString()?.trim().orEmpty()
             val info = if (code.isEmpty()) null else TableDao(ctx).lookupByCode(code)
             etSection.setText(info?.sectionName.orEmpty())
-            etWaiter.setText(info?.waiterName ?: if (info != null) "â€”" else "")
+            etWaiter.setText(info?.waiterName ?: if (info != null) "—" else "")
         }
 
         ThemeManager.applyTheme(v)
@@ -631,7 +631,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // matches no table in the master, so the order is not created for it.
             val section = etSection.text?.toString()?.trim().orEmpty()
             if (section.isEmpty()) {
-                etTable.error = "No such table â€” pick a table that has a section"
+                etTable.error = "No such table — pick a table that has a section"
                 return@setOnClickListener
             }
             dialog.dismiss()
@@ -642,7 +642,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         dialog.show()
     }
 
-    /** Next unused take-away token (TA-1, TA-2, â€¦) among the active orders. */
+    /** Next unused take-away token (TA-1, TA-2, …) among the active orders. */
     private fun nextTakeAwayCode(): String {
         val active = orders.map { it.id }.toSet()
         var n = 1
@@ -654,7 +654,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun openNewOrder(table: String, section: String, phone: String, type: String) {
         val root = view ?: return
         val now = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
-        val cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "â€”"
+        val cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—"
 
         val dbId = roDao.createOrder(table, section, null, type, phone, cashier)
         if (dbId == -1L) { toast("Could not create order"); return }
@@ -664,7 +664,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         orders.forEach { it.selected = false }
         val order = OrderCard(
             dbId = dbId, id = table, type = type, section = section, phone = phone, time = now,
-            amount = "â‚¹ ${money(0.0)}", cashier = cashier, status = "RUNNING", selected = true
+            amount = "₹ ${money(0.0)}", cashier = cashier, status = "RUNNING", selected = true
         )
         orders.add(0, order)                                  // newest on top
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -703,7 +703,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val btnCancel = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormNegative)
 
         etFrom.setText(order.id)
-        etSection.setText(order.section.ifBlank { "â€”" })
+        etSection.setText(order.section.ifBlank { "—" })
         actTo.setAdapter(android.widget.ArrayAdapter(ctx, android.R.layout.simple_list_item_1, targets))
         actTo.setOnClickListener { actTo.showDropDown() }
 
@@ -740,7 +740,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     // ---- Table Merge -------------------------------------------------------
 
     /**
-     * Merge popup â€” opens without any table pre-selected. You add active (running,
+     * Merge popup — opens without any table pre-selected. You add active (running,
      * not billed) tables from a dropdown; the FIRST one added is kept and the rest
      * merge into it. Once a table is added, the section locks and the dropdown only
      * offers same-section tables. Needs at least two tables.
@@ -769,7 +769,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val added = mutableListOf<String>()   // tables queued to merge (first = kept)
         fun sectionOf(code: String) = orders.firstOrNull { it.id == code }?.section.orEmpty()
 
-        // Candidates: before any add â€” all active tables; after â€” same section as the first.
+        // Candidates: before any add — all active tables; after — same section as the first.
         fun candidates(): List<String> {
             val base = if (added.isEmpty()) activeTables
             else activeTables.filter { it.section.equals(sectionOf(added.first()), ignoreCase = true) }
@@ -782,7 +782,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         fun renderAdded() {
             llTables.removeAllViews()
             tvEmpty.visibility = if (added.isEmpty()) View.VISIBLE else View.GONE
-            etSection.setText(if (added.isEmpty()) "" else sectionOf(added.first()).ifBlank { "â€”" })
+            etSection.setText(if (added.isEmpty()) "" else sectionOf(added.first()).ifBlank { "—" })
             added.forEachIndexed { index, code ->
                 val row = LayoutInflater.from(ctx).inflate(R.layout.item_merge_table, llTables, false)
                 row.findViewById<TextView>(R.id.tvMergeTableName).text =
@@ -845,7 +845,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     // ---- Table Split -------------------------------------------------------
 
     /**
-     * Split popup: choose how many parts (2â€“4); shows the sub-tables that will be
+     * Split popup: choose how many parts (2–4); shows the sub-tables that will be
      * created (e.g. 101 A, 101 B). On Split the first part keeps this order's items;
      * the rest start empty. All parts share the parent table until each is settled.
      */
@@ -891,12 +891,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun performSplit(order: OrderCard, count: Int) {
         val parent = order.id
         val waiterId = roDao.findByTable(parent)?.waiterId
-        val cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "â€”"
+        val cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—"
 
-        // Part A keeps the existing order (and its items) â€” occupied.
+        // Part A keeps the existing order (and its items) — occupied.
         val firstCode = subTableDao.create(parent, "A", status = "Occupied")
         roDao.transferTable(order.dbId, firstCode)
-        // Parts B, C, D start empty â†’ Available until items are added.
+        // Parts B, C, D start empty → Available until items are added.
         for (i in 1 until count) {
             val code = subTableDao.create(parent, ('A' + i).toString(), status = "Available")
             roDao.createOrder(code, order.section, waiterId, order.type, order.phone, cashier)
@@ -1198,7 +1198,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val order = currentOrder()
         when {
             order == null -> { toast("Create or select a table order first"); return }
-            order.completed -> { toast("Table already billed â€” cannot add items"); return }
+            order.completed -> { toast("Table already billed — cannot add items"); return }
         }
         val directAdd = com.example.synergic_pos_offline.utils.SettingsCache
             .value(requireContext(), "A", "Direct Add to Cart") == "1"
@@ -1588,7 +1588,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val gp = items[position]
             val p = gp.product
             holder.itemView.findViewById<TextView>(R.id.tvName).text = p.name
-            holder.itemView.findViewById<TextView>(R.id.tvPrice).text = "â‚¹ ${money(p.price)}"
+            holder.itemView.findViewById<TextView>(R.id.tvPrice).text = "₹ ${money(p.price)}"
             holder.itemView.findViewById<TextView>(R.id.tvSku).text = p.sku
 
             // Recycled tiles: a dish with no photo has to clear the one before it rather
@@ -1635,7 +1635,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         else { iv.visibility = View.VISIBLE; iv.setImageResource(res) }
     }
 
-    /** Spice level as 1â€“3 chili icons (Mild / Medium / Hot). */
+    /** Spice level as 1–3 chili icons (Mild / Medium / Hot). */
     private fun bindSpice(container: LinearLayout, spice: String) {
         container.removeAllViews()
         val count = when (spice.lowercase()) { "mild" -> 1; "medium" -> 2; "hot" -> 3; else -> 0 }
@@ -1745,7 +1745,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         container.removeAllViews()
         val accent = ThemeManager.getThemeColor(requireContext())
         val order = currentOrder()
-        val locked = order?.completed == true      // billed â†’ read-only
+        val locked = order?.completed == true      // billed → read-only
         val cart = order?.items ?: emptyList<CartItem>()
         cart.forEach { item ->
             container.addView(
@@ -1779,16 +1779,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         row.findViewById<TextView>(R.id.tvLineQty).text = qtyText(item.qty)
         row.findViewById<TextView>(R.id.tvLineRate).text = money(item.rate)
         row.findViewById<TextView>(R.id.tvLineAmount).text = money(item.qty * item.rate)
-        // KOT status: any quantity not yet sent shows NEW Ã—n (accent); else âœ“ Sent.
+        // KOT status: any quantity not yet sent shows NEW ×n (accent); else ✓ Sent.
         row.findViewById<TextView>(R.id.tvLineNote).apply {
-            if (item.pending > 0.0) { text = "NEW Ã—${qtyText(item.pending)}"; setTextColor(accent) }
-            else { text = "âœ“ Sent"; setTextColor(0xFF9AA0A6.toInt()) }
+            if (item.pending > 0.0) { text = "NEW ×${qtyText(item.pending)}"; setTextColor(accent) }
+            else { text = "✓ Sent"; setTextColor(0xFF9AA0A6.toInt()) }
         }
         val btnPlus = row.findViewById<ImageButton>(R.id.btnPlus)
         val btnMinus = row.findViewById<ImageButton>(R.id.btnMinus)
         val btnRemove = row.findViewById<ImageButton>(R.id.btnRemoveLine)
         if (locked) {
-            // Billed order â€” hide the editing controls entirely.
+            // Billed order — hide the editing controls entirely.
             btnPlus.visibility = View.GONE
             btnMinus.visibility = View.GONE
             btnRemove.visibility = View.GONE
@@ -1830,7 +1830,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         val label = if (order.type.equals("Take Away", ignoreCase = true))
             "Take Away ${order.id}" else "Table ${order.id}"
-        v.findViewById<TextView>(R.id.tvOrderItemsTitle).text = "Order Items â€” $label"
+        v.findViewById<TextView>(R.id.tvOrderItemsTitle).text = "Order Items — $label"
 
         fun fill() {
             val current = currentOrder()
@@ -1849,9 +1849,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
             empty.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
             v.findViewById<TextView>(R.id.tvOrderItemsCount).text =
-                "${items.size} item(s)  Â·  ${qtyText(items.sumOf { it.qty })} qty"
+                "${items.size} item(s)  ·  ${qtyText(items.sumOf { it.qty })} qty"
             v.findViewById<TextView>(R.id.tvOrderItemsTotal).text =
-                "â‚¹ ${money(items.sumOf { it.qty * it.rate })}"
+                "₹ ${money(items.sumOf { it.qty * it.rate })}"
         }
         // Held so a row's callback can call back into the fill above it.
         refillOrderItemsDialog = { fill() }
@@ -1877,7 +1877,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val default = kotPrinters.firstOrNull { it.isDefault }
         when {
             kotPrinters.isEmpty() ->
-                toast("No KOT printer set up â€” add one in Settings â–¸ Operating Printer")
+                toast("No KOT printer set up — add one in Settings ▸ Operating Printer")
             default != null -> doPrintKot(order, default)
             else -> showPrinterChooser(kotPrinters, "Select kitchen counter") { doPrintKot(order, it) }
         }
@@ -1893,7 +1893,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val default = billPrinters.firstOrNull { it.isDefault }
         when {
             billPrinters.isEmpty() ->
-                toast("No bill printer set up â€” add one in Settings â–¸ Operating Printer")
+                toast("No bill printer set up — add one in Settings ▸ Operating Printer")
             default != null -> doPrintBill(order, default)
             else -> showPrinterChooser(billPrinters, "Select bill printer") { doPrintBill(order, it) }
         }
@@ -1981,12 +1981,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // payment mode. The mode is only known and printed on the paid receipt, after
         // Checkout -> Confirm (see settlePaidOrder -> printGroceryStyleBill with payMethod).
         printGroceryStyleBill(order, printer, billNumber = nextNo, payment = "")
-        completeTable(order)   // billed â†’ locked (stays until paid)
+        completeTable(order)   // billed → locked (stays until paid)
     }
 
     /**
      * Persists a paid restaurant order as a completed sale across td_bills /
-     * td_bill_items / td_payments â€” the same store the grocery bill writes to, plus
+     * td_bill_items / td_payments — the same store the grocery bill writes to, plus
      * the restaurant columns (table_number, order_type, service_charge_amount). Each
      * line carries its OWN CGST/SGST rate so tax is charged per product; the section's
      * service charge is booked as an "other charge" so the net reconciles.
@@ -2000,7 +2000,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val billType = when (payMethod.lowercase(java.util.Locale.US)) {
             "card" -> "CARD"; "online" -> "ONLINE"; else -> "CASH"
         }
-        // Cash handed over more than the bill â†’ book the change and record what was
+        // Cash handed over more than the bill → book the change and record what was
         // actually tendered; otherwise the payment settles exactly the total.
         val change = (tendered - b.total).coerceAtLeast(0.0)
         val amountPaid = if (tendered > b.total) tendered else b.total
@@ -2057,10 +2057,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             order.items.clear()
             updateTableStatus(order.id, "Available")
             freeParentIfSplitDone(order.id)              // if every part is now empty, tear the split down
-            if (orders.any { it.id == order.id }) {      // still there â†’ kept as an available part
+            if (orders.any { it.id == order.id }) {      // still there → kept as an available part
                 populateOrders(root, ThemeManager.getThemeColor(requireContext()))
                 renderCart()
-                toast("Sub-table ${order.id} cleared â€” available to re-order")
+                toast("Sub-table ${order.id} cleared — available to re-order")
             } else {                                     // whole split collapsed
                 populateOrders(root, ThemeManager.getThemeColor(requireContext()))
                 clearDetail(root)
@@ -2082,30 +2082,30 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /**
      * Cuts and prints the KOT for a take-away order at payment time (its items never
      * went to the kitchen during the order). Uses the default KOT printer (or the
-     * first one) â€” no chooser, so payment fires both prints back-to-back.
+     * first one) — no chooser, so payment fires both prints back-to-back.
      */
     private fun printTakeAwayKot(order: OrderCard) {
         val batch = roDao.printKot(order.dbId, order.id, null, order.section, order.note) ?: return
         val kotPrinters = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
             .getAll().filter { it.printFlag.equals("K", ignoreCase = true) }
         val printer = kotPrinters.firstOrNull { it.isDefault } ?: kotPrinters.firstOrNull()
-        if (printer == null) { toast("Paid â€” no KOT printer set up to send the kitchen ticket"); return }
+        if (printer == null) { toast("Paid — no KOT printer set up to send the kitchen ticket"); return }
         com.example.synergic_pos_offline.utils.KotPrinter.print(requireContext(), batch, printer) { msg -> toast(msg) }
     }
 
     /**
-     * Payment confirmed (Bill & Pay â–¸ Confirm): settle the order â€” save the bill,
+     * Payment confirmed (Bill & Pay ▸ Confirm): settle the order — save the bill,
      * close & remove it, then print the paid receipt. For TAKE AWAY only, the KOT is
      * also cut and printed here, so Confirm fires two prints (KOT + paid bill).
      * Dine-in prints only the receipt (its KOT was sent during the order).
      */
     private fun settlePaidOrder(order: OrderCard, payMethod: String, tendered: Double = 0.0) {
-        // Take Away sends no KOT during the order â€” cut & print it now, before the
+        // Take Away sends no KOT during the order — cut & print it now, before the
         // order is closed, so payment prints both the KOT and the paid bill together.
         if (order.type.equals("Take Away", ignoreCase = true)) printTakeAwayKot(order)
         val saved = persistBill(order, payMethod, tendered)  // save to td_bills / td_bill_items / td_payments
         val mergedTables = roDao.mergedTablesOf(order.dbId)
-        roDao.close(order.dbId)                          // payment done â†’ remove from temp table
+        roDao.close(order.dbId)                          // payment done → remove from temp table
         updateTableStatus(order.id, "Available")  // table freed for the next guest
         mergedTables.forEach { updateTableStatus(it, "Available") }   // merged tables freed too
         orders.removeAll { it.id == order.id }
@@ -2125,7 +2125,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val default = billPrinters.firstOrNull { it.isDefault }
             when {
                 billPrinters.isEmpty() ->
-                    toast("Paid â€” no bill printer set up to print the receipt")
+                    toast("Paid — no bill printer set up to print the receipt")
                 default != null -> printGroceryStyleBill(order, default, billNo, payMethod, tendered)
                 else -> showPrinterChooser(billPrinters, "Select bill printer") {
                     printGroceryStyleBill(order, it, billNo, payMethod, tendered)
@@ -2135,24 +2135,24 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         printPaidReceipt()
         // No completion popup: the order is already settled and the Orders (sale) screen
         // was refreshed above, so just confirm with a toast.
-        toast(if (billNo.isNotBlank()) "Bill No: $billNo â€” payment complete" else "Payment complete")
+        toast(if (billNo.isNotBlank()) "Bill No: $billNo — payment complete" else "Payment complete")
     }
 
     /**
      * Bill & Print result: mark the table COMPLETED (billed). It stays in the
-     * temporary running table (so it can still be paid), but is locked â€” no more
+     * temporary running table (so it can still be paid), but is locked — no more
      * items / qty / KOT changes. It's only removed after payment (Bill & Pay).
      */
     private fun completeTable(order: OrderCard) {
         val mergedBefore = roDao.mergedTablesOf(order.dbId)
         roDao.markCompleted(order.dbId)
-        updateTableStatus(order.id, "Billing")   // billed â†’ awaiting payment
+        updateTableStatus(order.id, "Billing")   // billed → awaiting payment
         mergedBefore.forEach { updateTableStatus(it, "Billing") }   // merged tables too
         order.status = "COMPLETED"
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         renderCart()   // re-render locked (steppers hidden)
-        toast("Table ${order.id} billed â€” locked. Use Bill & Pay to settle.")
+        toast("Table ${order.id} billed — locked. Use Bill & Pay to settle.")
     }
 
     /** A picker of printers when no default is set for the flag (KOT counters / bill printers). */
@@ -2206,15 +2206,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val root = view ?: return
         val order = currentOrder()
         val b = computeBill(order?.items ?: emptyList(), serviceRateFor(order?.section.orEmpty()))
-        root.findViewById<TextView>(R.id.tvSubtotal).text = "â‚¹ ${money(b.subtotal)}"
-        root.findViewById<TextView>(R.id.tvService).text = "â‚¹ ${money(b.service)}"
-        root.findViewById<TextView>(R.id.tvCgst).text = "â‚¹ ${money(b.cgst)}"
-        root.findViewById<TextView>(R.id.tvSgst).text = "â‚¹ ${money(b.sgst)}"
-        root.findViewById<TextView>(R.id.tvOrderTotal).text = "â‚¹ ${money(b.total)}"
+        root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(b.subtotal)}"
+        root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(b.service)}"
+        root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(b.cgst)}"
+        root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(b.sgst)}"
+        root.findViewById<TextView>(R.id.tvOrderTotal).text = "₹ ${money(b.total)}"
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).text =
-            "Checkout  ( â‚¹ ${money(b.total)} )"
+            "Checkout  ( ₹ ${money(b.total)} )"
         // Reflect the running total on the active order card.
-        order?.let { it.amount = "â‚¹ ${money(b.total)}" }
+        order?.let { it.amount = "₹ ${money(b.total)}" }
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
     }
 
