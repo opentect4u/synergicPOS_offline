@@ -215,8 +215,11 @@ class RunningOrderDao(context: Context) {
         )
     }
 
-    fun findByTable(tableCode: String): RunningOrder? =
-        allRunning().firstOrNull { it.tableCode.equals(tableCode, ignoreCase = true) }
+    fun findByTable(tableCode: String, section: String): RunningOrder? =
+        allRunning().firstOrNull {
+            it.tableCode.equals(tableCode, ignoreCase = true) &&
+                (section.isBlank() || it.section.equals(section, ignoreCase = true))
+        }
 
     /** Empties an order (deletes its items, closes its KOT) but keeps the order row —
      *  used to reset a split sub-table so it stays available to re-order. */

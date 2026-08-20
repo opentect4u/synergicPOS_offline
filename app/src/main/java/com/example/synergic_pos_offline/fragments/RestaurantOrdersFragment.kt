@@ -74,6 +74,22 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun currentOrder(): OrderCard? = orders.firstOrNull { it.selected }
     private fun currentCart(): MutableList<CartItem>? = currentOrder()?.items
 
+    /**
+     * Whether [order] is the order on THIS table. Table codes restart at 1 in every
+     * section, so a code on its own names one table per room - matching an order by
+     * code alone picks up the AC room's table 1 while the operator is looking at the
+     * non-AC room's. Section is part of a table's name everywhere it is compared.
+     *
+     * A blank [section] matches on code alone, for a store with no sections set up.
+     */
+    private fun sameTable(order: OrderCard, code: String, section: String): Boolean =
+        order.id.equals(code, ignoreCase = true) &&
+            (section.isBlank() || order.section.equals(section, ignoreCase = true))
+
+    /** The active order on one table, or null when it is free. */
+    private fun orderFor(code: String, section: String): OrderCard? =
+        orders.firstOrNull { sameTable(it, code, section) }
+
     /** Reloads the running orders (and their items) from the database into [orders]. */
     private fun loadRunningOrders() {
         orders.clear()
@@ -168,8 +184,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         clearDetail(view)
 
         // The order-type segment fills the selected side (handled by a state list).
-        view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
-            .check(R.id.btnDineIn)
+        val segOrderType =
+            view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
+        // Choose Table is a dine-in action: a take-away order has no table to pick, so
+        // the button stays disabled for as long as the segment sits on Take Away. Hung
+        // off the segment rather than off the order, so it holds however the type was
+        // set - the Take Away button, a take-away order selected from the list, or a
+        // restored one.
+        segOrderType.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (isChecked) setChooseTableEnabled(view, checkedId != R.id.btnTakeAway)
+        }
+        segOrderType.check(R.id.btnDineIn)
 
         // Take Away needs no table — tapping it opens a take-away order: if one is
         // already active, just select it (no duplicate token); otherwise start a new one.
@@ -214,6 +239,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnChooseTable).setOnClickListener {
             showChooseTableDialog()
         }
+        setChooseTableEnabled(view, segOrderType.checkedButtonId != R.id.btnTakeAway)
 
         // More → the whole order in a roomy popup, since this panel is narrow.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnMoreItems)
@@ -302,17 +328,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         parentFragmentManager.setFragmentResultListener(
             RestaurantCheckoutFragment.RESULT_PAID, viewLifecycleOwner
         ) { _, bundle ->
-            val paidTable = bundle.getString(RestaurantCheckoutFragment.ARG_TABLE)
+            // The running order's own id, not its table code: two sections can both
+            // have a table 1, and settling one must not settle the other's bill.
+            val paidId = bundle.getLong(RestaurantCheckoutFragment.ARG_ORDER_ID, -1L)
             // Resolve the order first — settlePaidOrder removes it from the list, so a
             // second lookup afterwards would find nothing and the bill would never save
             // or print.
-            val order = orders.firstOrNull { it.id == paidTable } ?: return@setFragmentResultListener
+            val order = orders.firstOrNull { it.dbId == paidId } ?: return@setFragmentResultListener
             // What was served has left the shelf. Done here rather than at bill save
             // because Restaurant checkout does not write a bill - settling the order is
             // the only moment the sale is known to be complete.
             if (stockTrackingOn) {
                 stockDao.recordSale(
-                    reference = "Table ${order.id}",
+                    reference = tableLabel(order),
                     lines = order.items.map {
                         com.example.synergic_pos_offline.database.StockDao.SaleLine(
                             it.productId.toInt(), it.qty.toDouble()
@@ -345,7 +373,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                         .replace(
                             R.id.fragment_container,
                             RestaurantCheckoutFragment.newInstance(
-                                order.id, order.phone.ifBlank { "Walk-in" }, names, qtys, rates,
+                                order.dbId, order.id, order.section,
+                                order.phone.ifBlank { "Walk-in" }, names, qtys, rates,
                                 cgsts, sgsts, serviceRateFor(order.section),
                                 gstEnabled = taxSettings.gstEnabled, inclusive = taxInclusive
                             )
@@ -507,6 +536,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         setDineInActionsEnabled(root, !order.type.equals("Take Away", ignoreCase = true))
     }
 
+    /** Choose Table, greyed out the same way the other dine-in-only actions are. */
+    private fun setChooseTableEnabled(root: View, enabled: Boolean) {
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnChooseTable).apply {
+            isEnabled = enabled; alpha = if (enabled) 1f else 0.4f
+        }
+    }
+
     /** Enables/disables the dine-in-only actions (Print KOT, Transfer, Merge, Split). */
     private fun setDineInActionsEnabled(root: View, enabled: Boolean) {
         listOf(R.id.btnPrintKot, R.id.btnTransfer, R.id.btnMerge, R.id.btnSplit).forEach { id ->
@@ -597,12 +633,31 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val btnSave = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormPositive)
         val btnCancel = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormNegative)
 
-        // Entering a table code auto-fills its section + assigned waiter.
+        // Entering a table code fills in its section and assigned waiter. A code the
+        // master holds in more than one section cannot be resolved from the number
+        // alone, so the section is left for the operator to say which room they mean -
+        // by tapping the field, or when they Save.
+        var sectionChoices = emptyList<String>()
+        fun applySection(section: String) {
+            etSection.setText(section)
+            val info = if (section.isBlank()) null
+            else TableDao(ctx).lookupByCode(etTable.text?.toString()?.trim().orEmpty(), section)
+            etWaiter.setText(info?.waiterName ?: if (info != null) "—" else "")
+        }
+        fun chooseSection(onPicked: (String) -> Unit) {
+            AlertDialog.Builder(ctx)
+                .setTitle("Which section?")
+                .setItems(sectionChoices.toTypedArray()) { _, which ->
+                    applySection(sectionChoices[which]); onPicked(sectionChoices[which])
+                }
+                .show()
+        }
+        etSection.setOnClickListener { if (sectionChoices.size > 1) chooseSection {} }
         etTable.addTextChangedListener {
             val code = it?.toString()?.trim().orEmpty()
-            val info = if (code.isEmpty()) null else TableDao(ctx).lookupByCode(code)
-            etSection.setText(info?.sectionName.orEmpty())
-            etWaiter.setText(info?.waiterName ?: if (info != null) "—" else "")
+            sectionChoices = if (code.isEmpty()) emptyList() else TableDao(ctx).sectionsForCode(code)
+            // One section - filled in for them; several - blank until one is picked.
+            applySection(sectionChoices.singleOrNull().orEmpty())
         }
 
         ThemeManager.applyTheme(v)
@@ -612,31 +667,37 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         btnCancel.strokeColor = ColorStateList.valueOf(accent)
 
         btnCancel.setOnClickListener { dialog.dismiss() }
-        btnSave.setOnClickListener {
+
+        // Save, once the room is known. Split out so an ambiguous code can ask which
+        // section first and come back here with the answer.
+        fun save(table: String, section: String) {
             val phone = etPhone.text?.toString()?.trim().orEmpty()
-            val table = etTable.text?.toString()?.trim().orEmpty()
-            if (table.isEmpty()) { etTable.error = "Enter a table no"; return@setOnClickListener }
             // Don't open a second order for a table that already has an active one.
-            if (orders.any { it.id.equals(table, ignoreCase = true) }) {
-                etTable.error = "Table $table already has an active order"
-                return@setOnClickListener
+            if (orderFor(table, section) != null) {
+                etTable.error = "Table $table in $section already has an active order"
+                return
             }
             // Nor for a table that isn't free (occupied/billing/merged into another order).
-            val status = TableDao(ctx).statusOf(table)
+            val status = TableDao(ctx).statusOf(table, section)
             if (status != null && !status.equals("Available", ignoreCase = true)) {
-                etTable.error = "Table $table is $status"
-                return@setOnClickListener
-            }
-            // A valid table auto-fills its section; a blank section means the code
-            // matches no table in the master, so the order is not created for it.
-            val section = etSection.text?.toString()?.trim().orEmpty()
-            if (section.isEmpty()) {
-                etTable.error = "No such table — pick a table that has a section"
-                return@setOnClickListener
+                etTable.error = "Table $table in $section is $status"
+                return
             }
             dialog.dismiss()
             openNewOrder(table, section, phone, type = "Dine In")
-            toast("Order created for table $table")
+            toast("Order created for table $table in $section")
+        }
+
+        btnSave.setOnClickListener {
+            val table = etTable.text?.toString()?.trim().orEmpty()
+            if (table.isEmpty()) { etTable.error = "Enter a table no"; return@setOnClickListener }
+            val section = etSection.text?.toString()?.trim().orEmpty()
+            when {
+                section.isNotEmpty() -> save(table, section)
+                // The code names a table in several rooms: ask which, then carry on.
+                sectionChoices.size > 1 -> chooseSection { picked -> save(table, picked) }
+                else -> etTable.error = "No such table — pick a table that has a section"
+            }
         }
 
         dialog.show()
@@ -659,7 +720,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val dbId = roDao.createOrder(table, section, null, type, phone, cashier)
         if (dbId == -1L) { toast("Could not create order"); return }
         if (!type.equals("Take Away", ignoreCase = true))
-            updateTableStatus(table, "Occupied")   // dine-in table now has a live order
+            updateTableStatus(table, section, "Occupied")   // dine-in table now has a live order
 
         orders.forEach { it.selected = false }
         val order = OrderCard(
@@ -685,7 +746,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         // Valid targets: available tables in the same section, minus any that already
         // hold an active order in memory (defensive, in case a status drifted).
-        val activeCodes = orders.map { it.id.lowercase() }.toSet()
+        val activeCodes = orders.filter { it.section.equals(order.section, ignoreCase = true) }
+            .map { it.id.lowercase() }.toSet()
         val targets = tableDao.availableTablesSameSection(order.section, order.id)
             .filter { it.lowercase() !in activeCodes }
         if (targets.isEmpty()) {
@@ -728,8 +790,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun performTransfer(order: OrderCard, to: String) {
         val from = order.id
         roDao.transferTable(order.dbId, to)
-        updateTableStatus(from, "Available")   // old table freed
-        updateTableStatus(to, "Occupied")      // new table taken
+        // Both tables are in the order's own section — a transfer only ever offers
+        // same-section targets.
+        updateTableStatus(from, order.section, "Available")   // old table freed
+        updateTableStatus(to, order.section, "Occupied")      // new table taken
         order.id = to
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -766,31 +830,41 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val btnSave = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormPositive)
         val btnCancel = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormNegative)
 
-        val added = mutableListOf<String>()   // tables queued to merge (first = kept)
-        fun sectionOf(code: String) = orders.firstOrNull { it.id == code }?.section.orEmpty()
+        // Queued orders, not queued table codes: two sections can both have a table 1
+        // and the dropdown may well offer both, so each entry has to say which order
+        // it stands for.
+        val added = mutableListOf<OrderCard>()   // first = kept
+
+        // A table reads as "1 (AC)" here, since the number alone no longer identifies
+        // it once a second section has the same number.
+        fun label(o: OrderCard) = if (o.section.isBlank()) o.id else "${o.id} (${o.section})"
 
         // Candidates: before any add — all active tables; after — same section as the first.
-        fun candidates(): List<String> {
+        fun candidates(): List<OrderCard> {
             val base = if (added.isEmpty()) activeTables
-            else activeTables.filter { it.section.equals(sectionOf(added.first()), ignoreCase = true) }
-            return base.map { it.id }.filter { it !in added }
+            else activeTables.filter { it.section.equals(added.first().section, ignoreCase = true) }
+            return base.filter { cand -> added.none { it.dbId == cand.dbId } }
         }
         fun refreshDropdown() {
-            actWith.setAdapter(android.widget.ArrayAdapter(ctx, android.R.layout.simple_list_item_1, candidates()))
+            actWith.setAdapter(
+                android.widget.ArrayAdapter(
+                    ctx, android.R.layout.simple_list_item_1, candidates().map { label(it) }
+                )
+            )
             actWith.setText("", false)
         }
         fun renderAdded() {
             llTables.removeAllViews()
             tvEmpty.visibility = if (added.isEmpty()) View.VISIBLE else View.GONE
-            etSection.setText(if (added.isEmpty()) "" else sectionOf(added.first()).ifBlank { "—" })
-            added.forEachIndexed { index, code ->
+            etSection.setText(if (added.isEmpty()) "" else added.first().section.ifBlank { "—" })
+            added.forEachIndexed { index, o ->
                 val row = LayoutInflater.from(ctx).inflate(R.layout.item_merge_table, llTables, false)
                 row.findViewById<TextView>(R.id.tvMergeTableName).text =
-                    if (index == 0) "Table $code  (Kept)" else "Table $code"
-                val count = orders.firstOrNull { it.id == code }?.items?.size ?: 0
+                    if (index == 0) "Table ${label(o)}  (Kept)" else "Table ${label(o)}"
+                val count = o.items.size
                 row.findViewById<TextView>(R.id.tvMergeTableInfo).text = "$count item${if (count == 1) "" else "s"}"
                 row.findViewById<android.widget.ImageView>(R.id.btnRemoveMergeTable).setOnClickListener {
-                    added.remove(code); renderAdded(); refreshDropdown()
+                    added.removeAll { it.dbId == o.dbId }; renderAdded(); refreshDropdown()
                 }
                 llTables.addView(row)
             }
@@ -799,10 +873,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         actWith.setOnClickListener { actWith.showDropDown() }
         btnAdd.setOnClickListener {
             val pick = actWith.text?.toString()?.trim().orEmpty()
+            val picked = candidates().firstOrNull { label(it) == pick }
             when {
                 pick.isEmpty() -> actWith.error = "Select a table"
-                pick !in candidates() -> actWith.error = "Not an active table in this section"
-                else -> { added.add(pick); renderAdded(); refreshDropdown() }
+                picked == null -> actWith.error = "Not an active table in this section"
+                else -> { added.add(picked); renderAdded(); refreshDropdown() }
             }
         }
 
@@ -826,20 +901,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /** Applies the merge: fold each source table's items into the kept table. The
      *  merged tables stay Occupied (part of the merge) and are freed only when the
      *  kept order is settled. */
-    private fun performMerge(keepCode: String, sourceCodes: List<String>) {
-        val target = orders.firstOrNull { it.id == keepCode } ?: return
-        sourceCodes.forEach { code ->
-            val source = orders.firstOrNull { it.id == code } ?: return@forEach
+    private fun performMerge(target: OrderCard, sources: List<OrderCard>) {
+        sources.forEach { source ->
             roDao.mergeOrders(target.dbId, source.dbId)   // records the merged table + keeps it Occupied
-            orders.removeAll { it.id == source.id }        // its own order card is gone (shares the kept bill)
+            orders.removeAll { it.dbId == source.dbId }   // its own order card is gone (shares the kept bill)
         }
-        reloadItems(target)                                    // pull the combined items
-        orders.forEach { it.selected = it.id == target.id }    // focus the kept table
+        reloadItems(target)                                       // pull the combined items
+        orders.forEach { it.selected = it.dbId == target.dbId }   // focus the kept table
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         showOrderDetail(target)
         renderCart()                                           // combined items + totals
-        toast("${sourceCodes.size} table${if (sourceCodes.size == 1) "" else "s"} merged into ${target.id}")
+        toast("${sources.size} table${if (sources.size == 1) "" else "s"} merged into ${target.id}")
     }
 
     // ---- Table Split -------------------------------------------------------
@@ -890,23 +963,24 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /** Applies the split: first part keeps the order/items, the rest are new empties. */
     private fun performSplit(order: OrderCard, count: Int) {
         val parent = order.id
-        val waiterId = roDao.findByTable(parent)?.waiterId
+        val section = order.section
+        val waiterId = roDao.findByTable(parent, section)?.waiterId
         val cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—"
 
         // Part A keeps the existing order (and its items) — occupied.
-        val firstCode = subTableDao.create(parent, "A", status = "Occupied")
+        val firstCode = subTableDao.create(parent, section, "A", status = "Occupied")
         roDao.transferTable(order.dbId, firstCode)
         // Parts B, C, D start empty → Available until items are added.
         for (i in 1 until count) {
-            val code = subTableDao.create(parent, ('A' + i).toString(), status = "Available")
-            roDao.createOrder(code, order.section, waiterId, order.type, order.phone, cashier)
+            val code = subTableDao.create(parent, section, ('A' + i).toString(), status = "Available")
+            roDao.createOrder(code, section, waiterId, order.type, order.phone, cashier)
         }
-        updateTableStatus(parent, "Occupied")   // parent stays occupied by its parts
+        updateTableStatus(parent, section, "Occupied")   // parent stays occupied by its parts
 
         loadRunningOrders()
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
-        orders.firstOrNull { it.id == firstCode }?.let { selectOrder(it) } ?: clearDetail(root)
+        orderFor(firstCode, section)?.let { selectOrder(it) } ?: clearDetail(root)
         toast("Table $parent split into $count")
     }
 
@@ -916,15 +990,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * While at least one part still has items, the split stays and empty parts remain
      * as Available slots to re-order.
      */
-    private fun freeParentIfSplitDone(code: String) {
+    private fun freeParentIfSplitDone(code: String, section: String) {
         if (!code.contains(" ")) return
         val parent = code.substringBeforeLast(" ").trim()
-        val parts = orders.filter { it.id.startsWith("$parent ") }
+        // Only this section's parts: another section's table 1 can be split too, and
+        // its parts carry the very same sub-codes.
+        val parts = orders.filter {
+            it.id.startsWith("$parent ") &&
+                (section.isBlank() || it.section.equals(section, ignoreCase = true))
+        }
         if (parts.all { it.items.isEmpty() }) {
+            val partIds = parts.map { it.dbId }.toSet()
             parts.forEach { roDao.close(it.dbId) }
-            orders.removeAll { it.id.startsWith("$parent ") }
-            updateTableStatus(parent, "Available")
-            subTableDao.clearForParent(parent)
+            orders.removeAll { it.dbId in partIds }
+            updateTableStatus(parent, section, "Available")
+            subTableDao.clearForParent(parent, section)
         }
     }
 
@@ -1136,17 +1216,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         var query = ""
 
         val adapter = ProductAdapter(accent) { picked -> onProductPicked(picked) { etSearch.setText("") } }
-        // Sized the way the grocery sale screen sizes its shelf - a tile every ~168dp of
-        // whatever width this column has - so the same card comes out the same size in
-        // both trades rather than being squeezed into a fixed column count here.
-        val glm = androidx.recyclerview.widget.GridLayoutManager(ctx, 3)
-        rv.layoutManager = glm
+        // Seven to a row, the same as the grocery sale screen's shelf, so the menu shows
+        // as much of itself as it can at once and the same card comes out the same size
+        // in both trades.
+        rv.layoutManager = androidx.recyclerview.widget.GridLayoutManager(ctx, 7)
         rv.adapter = adapter
-        rv.post {
-            if (!isAdded) return@post
-            val span = (rv.width / (168 * resources.displayMetrics.density)).toInt().coerceAtLeast(1)
-            if (span != glm.spanCount) glm.spanCount = span
-        }
 
         // Category tabs, rebuilt whenever the catalogue is re-read so a newly added
         // category cannot be missing from the tabs until the screen is reopened.
@@ -1240,7 +1314,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val accent = ThemeManager.getThemeColor(ctx)
         val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_choose_table, null)
         val dialog = AlertDialog.Builder(ctx).setView(v).create()
-        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
+        // Full screen, always: the floor plan is the whole screen for as long as it is
+        // open, whatever the device's size and however few tables are on it.
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            setGravity(android.view.Gravity.CENTER)
+        }
 
         val etSearch = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etTableSearch)
         val llCats = v.findViewById<LinearLayout>(R.id.llTableSections)
@@ -1254,26 +1334,29 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         val adapter = TableAdapter(accent) { t ->
             dialog.dismiss()
-            val existing = orders.firstOrNull { it.id.equals(t.code, ignoreCase = true) }
+            val existing = orderFor(t.code, t.section)
+            // Named with its room in every message: the number on its own belongs to
+            // one table per section.
+            val named = if (t.section.isBlank()) t.code else "${t.code} (${t.section})"
             if (existing != null) {
                 selectOrder(existing)
-                toast("Table ${t.code} selected")
+                toast("Table $named selected")
             } else {
                 // Only a free table can start a new order; an occupied/billing one is
                 // busy on an order this table picker cannot reach.
-                val status = TableDao(requireContext()).statusOf(t.code)
+                val status = TableDao(requireContext()).statusOf(t.code, t.section)
                 if (!status.isNullOrBlank() && !status.equals("Available", ignoreCase = true)) {
-                    toast("Table ${t.code} is $status")
+                    toast("Table $named is $status")
                 } else {
                     openNewOrder(t.code, t.section, "", "Dine In")
-                    toast("Order created for table ${t.code}")
+                    toast("Order created for table $named")
                 }
             }
         }
-        // Six across: a floor is read as a plan, and six to a row fits a whole section
-        // on screen without scrolling - which is what makes it look like the room
-        // rather than a list of tables.
-        rv.layoutManager = androidx.recyclerview.widget.GridLayoutManager(ctx, 6)
+        // Eight across: a floor is read as a plan, and eight to a row fits a whole
+        // section on screen without scrolling - which is what makes it look like the
+        // room rather than a list of tables.
+        rv.layoutManager = androidx.recyclerview.widget.GridLayoutManager(ctx, 8)
         rv.adapter = adapter
 
         val counts = v.findViewById<LinearLayout>(R.id.llTableCounts)
@@ -1284,7 +1367,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 (selectedCat == "All" || it.section == selectedCat) &&
                     (q.isEmpty() || it.code.lowercase().contains(q) || it.section.lowercase().contains(q))
             }
-            adapter.submit(shown)
+            adapter.submit(shown, showSection = selectedCat == "All")
             emptyNote.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
             rv.visibility = if (shown.isEmpty()) View.GONE else View.VISIBLE
             fillTableCounts(counts, shown)
@@ -1319,10 +1402,33 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         styleSectionChips(tabViews, selectedCat, accent)
         refresh()
         dialog.show()
+        // Re-applied after show, which is where the window would otherwise fall back to
+        // the theme's own sizing.
         dialog.window?.setLayout(
-            (resources.displayMetrics.widthPixels * 0.94f).toInt(),
-            ViewGroup.LayoutParams.WRAP_CONTENT
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
         )
+        stretchToWindow(v)
+    }
+
+    /**
+     * A full-screen window is not enough on its own: AlertDialog drops the root's own
+     * height when it takes the view, and nests it in panels that are each only as tall
+     * as what they hold - which is why the card stopped halfway down the screen. Walks
+     * the chain from the card up to the window's content frame making every step as
+     * tall as it can be, so the dialog fills the display however little is on it.
+     */
+    private fun stretchToWindow(root: View) {
+        var view: View? = root
+        while (view != null) {
+            view.layoutParams?.let { lp ->
+                lp.height = ViewGroup.LayoutParams.MATCH_PARENT
+                if (lp is LinearLayout.LayoutParams) lp.weight = 1f
+                view!!.layoutParams = lp
+            }
+            if (view.id == android.R.id.content) return
+            view = view.parent as? View
+        }
     }
 
     /**
@@ -1361,8 +1467,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * `pending` is the quantity on a line that has not gone to the kitchen yet, which
      * is the same figure Print KOT acts on, so the card and that button agree.
      */
-    private fun kotLookOf(tableCode: String): StatusLook? {
-        val order = orders.firstOrNull { it.id.equals(tableCode, ignoreCase = true) } ?: return null
+    private fun kotLookOf(tableCode: String, section: String): StatusLook? {
+        val order = orderFor(tableCode, section) ?: return null
         if (order.items.isEmpty()) return null
         return if (order.items.any { it.pending > 0.0 })
             StatusLook("KOT Pending", 0xFF7C3AED.toInt(), 0xFFF3E8FF.toInt())
@@ -1491,7 +1597,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         private val onPick: (TableTile) -> Unit
     ) : androidx.recyclerview.widget.RecyclerView.Adapter<TableAdapter.VH>() {
         private val items = mutableListOf<TableTile>()
-        fun submit(list: List<TableTile>) { items.clear(); items.addAll(list); notifyDataSetChanged() }
+        /** Set while the grid is showing more than one room, so a repeated table
+         *  number can still be told apart. */
+        private var showSection = false
+        fun submit(list: List<TableTile>, showSection: Boolean) {
+            items.clear(); items.addAll(list)
+            this.showSection = showSection
+            notifyDataSetChanged()
+        }
         inner class VH(v: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(v)
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
             VH(LayoutInflater.from(parent.context).inflate(R.layout.item_table_tile, parent, false))
@@ -1511,12 +1624,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             holder.itemView.findViewById<TextView>(R.id.tvTableCode).apply {
                 val numbered = t.code.all { it.isDigit() }
                 text = t.code
-                textSize = if (numbered) 28f else 20f
+                textSize = if (numbered) 23f else 17f
                 setTextColor(look.color)
             }
+            // Which room, and how many seats. The room shows while the grid is on All:
+            // table numbers restart in every section, so two cards can both say "1" and
+            // the line under the number is what tells them apart.
             holder.itemView.findViewById<TextView>(R.id.tvTableSeats).apply {
-                text = "${t.capacity} seats"
-                visibility = if (t.capacity > 0) View.VISIBLE else View.GONE
+                val bits = mutableListOf<String>()
+                if (showSection && t.section.isNotBlank()) bits.add(t.section)
+                if (t.capacity > 0) bits.add("${t.capacity} seats")
+                text = bits.joinToString("  ·  ")
+                visibility = if (bits.isEmpty()) View.GONE else View.VISIBLE
             }
             holder.itemView.findViewById<android.widget.ImageView>(R.id.ivTableIcon)
                 .imageTintList = ColorStateList.valueOf(look.color)
@@ -1528,7 +1647,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // like the status pill rather than coloured text - small coloured type on a
             // tinted card washes out, and this is the line a waiter checks at a glance.
             holder.itemView.findViewById<TextView>(R.id.tvTableKot).apply {
-                val kot = kotLookOf(t.code)
+                val kot = kotLookOf(t.code, t.section)
                 if (kot == null) visibility = View.GONE
                 else {
                     text = kot.label
@@ -1642,7 +1761,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // The badge is a chip on the photo now, so an unspiced dish has to take it off
         // the tile rather than leave an empty white square sitting there.
         container.visibility = if (count > 0) View.VISIBLE else View.GONE
-        val size = dp(13)
+        // Sized for the seven-across tile - three of these and their chip have to sit
+        // in a corner of a photo barely 100dp wide.
+        val size = dp(9)
         repeat(count) { i ->
             val iv = android.widget.ImageView(requireContext()).apply {
                 layoutParams = LinearLayout.LayoutParams(size, size).also { it.marginStart = if (i == 0) 0 else dp(1) }
@@ -1724,7 +1845,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate, p.cgst, p.sgst)
         // A split sub-table with its first item is now Occupied.
         if (!order.type.equals("Take Away", ignoreCase = true)) {
-            updateTableStatus(order.id, "Occupied")
+            updateTableStatus(order.id, order.section, "Occupied")
         }
         reloadItems(order)
         renderCart()
@@ -2005,7 +2126,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val change = (tendered - b.total).coerceAtLeast(0.0)
         val amountPaid = if (tendered > b.total) tendered else b.total
         val custId = billDao.findCustomerIdByPhone(order.phone.takeIf { it.isNotBlank() })
-        val waiterId = roDao.findByTable(order.id)?.waiterId
+        val waiterId = roDao.findByTable(order.id, order.section)?.waiterId
 
         val result = runCatching {
             billDao.createBill(
@@ -2055,9 +2176,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (order.id.contains(" ")) {
             roDao.clearItems(order.dbId)
             order.items.clear()
-            updateTableStatus(order.id, "Available")
-            freeParentIfSplitDone(order.id)              // if every part is now empty, tear the split down
-            if (orders.any { it.id == order.id }) {      // still there → kept as an available part
+            updateTableStatus(order.id, order.section, "Available")
+            // if every part is now empty, tear the split down
+            freeParentIfSplitDone(order.id, order.section)
+            if (orders.any { it.dbId == order.dbId }) {  // still there → kept as an available part
                 populateOrders(root, ThemeManager.getThemeColor(requireContext()))
                 renderCart()
                 toast("Sub-table ${order.id} cleared — available to re-order")
@@ -2071,9 +2193,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val mergedTables = roDao.mergedTablesOf(order.dbId)
         roDao.close(order.dbId)                          // delete order + items, close KOT
         if (!order.type.equals("Take Away", ignoreCase = true))
-            updateTableStatus(order.id, "Available")   // free the dine-in table
-        mergedTables.forEach { updateTableStatus(it, "Available") }
-        orders.removeAll { it.id == order.id }
+            updateTableStatus(order.id, order.section, "Available")   // free the dine-in table
+        // Merged tables are same-section by construction, so they free with it.
+        mergedTables.forEach { updateTableStatus(it, order.section, "Available") }
+        orders.removeAll { it.dbId == order.dbId }
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         clearDetail(root)
         toast("Order cleared")
@@ -2106,10 +2229,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val saved = persistBill(order, payMethod, tendered)  // save to td_bills / td_bill_items / td_payments
         val mergedTables = roDao.mergedTablesOf(order.dbId)
         roDao.close(order.dbId)                          // payment done → remove from temp table
-        updateTableStatus(order.id, "Available")  // table freed for the next guest
-        mergedTables.forEach { updateTableStatus(it, "Available") }   // merged tables freed too
-        orders.removeAll { it.id == order.id }
-        freeParentIfSplitDone(order.id)                  // free the parent once all parts are done
+        updateTableStatus(order.id, order.section, "Available")  // table freed for the next guest
+        // merged tables freed too (same section as the kept one)
+        mergedTables.forEach { updateTableStatus(it, order.section, "Available") }
+        orders.removeAll { it.dbId == order.dbId }
+        // free the parent once all parts are done
+        freeParentIfSplitDone(order.id, order.section)
         view?.let { root ->
             populateOrders(root, ThemeManager.getThemeColor(requireContext()))
             clearDetail(root)
@@ -2146,8 +2271,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun completeTable(order: OrderCard) {
         val mergedBefore = roDao.mergedTablesOf(order.dbId)
         roDao.markCompleted(order.dbId)
-        updateTableStatus(order.id, "Billing")   // billed → awaiting payment
-        mergedBefore.forEach { updateTableStatus(it, "Billing") }   // merged tables too
+        updateTableStatus(order.id, order.section, "Billing")   // billed → awaiting payment
+        // merged tables too (same section as the kept one)
+        mergedBefore.forEach { updateTableStatus(it, order.section, "Billing") }
         order.status = "COMPLETED"
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -2193,8 +2319,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // stands with the kitchen is carried by the KOT badge instead, off the items'
         // own pending quantity.
         if (!order.type.equals("Take Away", ignoreCase = true)) {
-            updateTableStatus(order.id, "Occupied")
-            roDao.mergedTablesOf(order.dbId).forEach { updateTableStatus(it, "Occupied") }
+            updateTableStatus(order.id, order.section, "Occupied")
+            roDao.mergedTablesOf(order.dbId)
+                .forEach { updateTableStatus(it, order.section, "Occupied") }
         }
 
         reloadItems(order)
@@ -2218,9 +2345,26 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
     }
 
-    private fun updateTableStatus(code: String, status: String) {
-        if (code.contains(" ")) subTableDao.setStatus(code, status)
-        else tableDao.setStatusByCode(code, status)
+    /**
+     * Sets a table's live status. Sub-tables ("1 A") live in their own master, and a
+     * plain table in the table master; both are addressed by code AND section, since
+     * the code alone repeats in every section.
+     */
+    private fun updateTableStatus(code: String, section: String, status: String) {
+        if (code.contains(" ")) subTableDao.setStatus(code, section, status)
+        else tableDao.setStatusByCode(code, section, status)
+    }
+
+    /**
+     * How a table is named outside this screen - on a stock movement, a bill, a
+     * receipt. Carries the section, because "Table 1" alone does not say which one
+     * of them it was once a second section has a table 1 too.
+     */
+    private fun tableLabel(order: OrderCard): String = when {
+        order.type.equals("Take Away", ignoreCase = true) ->
+            order.id.replace("TA-", "Take Away Token #")
+        order.section.isBlank() -> "Table ${order.id}"
+        else -> "Table ${order.id} (${order.section})"
     }
 
     private fun toast(msg: String) =

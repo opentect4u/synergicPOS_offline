@@ -41,14 +41,39 @@ class TableDao(context: Context) {
     data class TableLookup(val sectionName: String, val waiterName: String?)
 
     /**
-     * Sets a table's live [table_status] by its code (current store) — e.g.
-     * Occupied when an order opens, Billing when it's billed, Available when
-     * settled. No-op when the code isn't a known table.
+     * One table, addressed the only way a table can be addressed unambiguously: by
+     * its code AND its section. Table codes restart at 1 in every section, so "1"
+     * on its own names the AC room's first table and the non-AC room's first table
+     * alike - and a status written against that would move both.
+     *
+     * A blank [section] falls back to code-only, for the tables of a store that has
+     * no sections set up at all.
      */
-    fun setStatusByCode(code: String, status: String) {
+    private fun tableWhere(code: String, section: String, alias: String = ""): Pair<String, Array<String>> {
         val store = currentStoreId()
-        val where = if (store != null) "table_code = ? AND store_id = ?" else "table_code = ?"
-        val args = if (store != null) arrayOf(code, store.toString()) else arrayOf(code)
+        val col = if (alias.isBlank()) "" else "$alias."
+        val where = StringBuilder("${col}table_code = ?")
+        val args = mutableListOf(code)
+        if (section.isNotBlank()) {
+            where.append(
+                " AND ${col}section_id IN (SELECT id FROM ${DatabaseHelper.Tables.MD_SECTION} " +
+                    "WHERE section_name = ? COLLATE NOCASE"
+            )
+            args.add(section)
+            if (store != null) { where.append(" AND store_id = ?"); args.add(store.toString()) }
+            where.append(")")
+        }
+        if (store != null) { where.append(" AND ${col}store_id = ?"); args.add(store.toString()) }
+        return where.toString() to args.toTypedArray()
+    }
+
+    /**
+     * Sets a table's live [table_status] by its code within its section (current
+     * store) — e.g. Occupied when an order opens, Billing when it's billed,
+     * Available when settled. No-op when the code isn't a known table.
+     */
+    fun setStatusByCode(code: String, section: String, status: String) {
+        val (where, args) = tableWhere(code, section)
         helper.writableDatabase.update(
             table,
             ContentValues().apply {
@@ -59,15 +84,35 @@ class TableDao(context: Context) {
         )
     }
 
-    /** The live table_status for a table code (current store), or null if unknown. */
-    fun statusOf(code: String): String? {
-        val store = currentStoreId()
-        val where = if (store != null) "table_code = ? AND store_id = ?" else "table_code = ?"
-        val args = if (store != null) arrayOf(code, store.toString()) else arrayOf(code)
+    /** The live table_status for a table code in [section] (current store), or null. */
+    fun statusOf(code: String, section: String): String? {
+        val (where, args) = tableWhere(code, section)
         helper.readableDatabase.query(
             table, arrayOf("table_status"), where, args, null, null, null, "1"
         ).use { c -> if (c.moveToFirst()) return c.getString(0) }
         return null
+    }
+
+    /**
+     * Every section that has a table with this code (current store), in name order.
+     * A code shared by two sections comes back as two names - which is the New Order
+     * form's cue to make the operator say which room they mean.
+     */
+    fun sectionsForCode(code: String): List<String> {
+        val store = currentStoreId()
+        val storeClause = if (store != null) "AND t.store_id = ?" else ""
+        val args = mutableListOf(code)
+        if (store != null) args.add(store.toString())
+        val out = mutableListOf<String>()
+        helper.readableDatabase.rawQuery(
+            "SELECT DISTINCT COALESCE(s.section_name, '') FROM $table t " +
+                "LEFT JOIN ${DatabaseHelper.Tables.MD_SECTION} s ON s.id = t.section_id " +
+                "WHERE t.table_code = ? $storeClause ORDER BY s.section_name COLLATE NOCASE",
+            args.toTypedArray()
+        ).use { c ->
+            while (c.moveToNext()) c.getString(0)?.takeIf { it.isNotBlank() }?.let { out.add(it) }
+        }
+        return out
     }
 
     /**
@@ -95,13 +140,13 @@ class TableDao(context: Context) {
     }
 
     /**
-     * Finds a table by its code (current store) and returns its section name and
-     * assigned waiter name. Null when no such table exists.
+     * Finds a table by its code, within [section] when one is given, and returns its
+     * section name and assigned waiter name. Null when no such table exists. A code
+     * without a section resolves to whichever section's table matches first, so pass
+     * one wherever the answer has to be about a particular table.
      */
-    fun lookupByCode(code: String): TableLookup? {
-        val store = currentStoreId()
-        val where = if (store != null) "t.table_code = ? AND t.store_id = ?" else "t.table_code = ?"
-        val args = if (store != null) arrayOf(code, store.toString()) else arrayOf(code)
+    fun lookupByCode(code: String, section: String = ""): TableLookup? {
+        val (where, args) = tableWhere(code, section, alias = "t")
         helper.readableDatabase.rawQuery(
             "SELECT s.section_name, w.waiter_name FROM $table t " +
                 "LEFT JOIN ${DatabaseHelper.Tables.MD_SECTION} s ON s.id = t.section_id " +

@@ -569,8 +569,11 @@ class DashboardDao(context: Context) {
             "SELECT COALESCE(SUM(CASE WHEN no_of_tables > 0 THEN no_of_tables ELSE 1 END), 0) " +
                 "FROM ${DatabaseHelper.Tables.MD_TABLE}"
         ).toInt()
+        // Counted by section AND code: table codes restart in every section, so
+        // counting codes alone reads two rooms' table 1 as one occupied table.
         val occupied = query1(
-            "SELECT COUNT(DISTINCT table_code) FROM ${DatabaseHelper.Tables.TD_RUNNING_ORDER} " +
+            "SELECT COUNT(DISTINCT COALESCE(section, '') || '|' || table_code) " +
+                "FROM ${DatabaseHelper.Tables.TD_RUNNING_ORDER} " +
                 "WHERE status = 'RUNNING' AND table_code IS NOT NULL AND TRIM(table_code) <> ''"
         ).toInt()
         val seatedMinutes = query1(

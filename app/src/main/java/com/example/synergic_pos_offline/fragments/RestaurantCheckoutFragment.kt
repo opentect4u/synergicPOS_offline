@@ -37,7 +37,21 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         }
     }
 
+    private val orderId get() = arguments?.getLong(ARG_ORDER_ID) ?: -1L
     private val tableNo get() = arguments?.getString(ARG_TABLE).orEmpty()
+    private val section get() = arguments?.getString(ARG_SECTION).orEmpty()
+
+    /**
+     * How this order's table is written on screen and on the bill. Table codes repeat
+     * across sections, so "Table 1" on its own does not say which room was served -
+     * the section goes with the number wherever the table is named.
+     */
+    private val tableLabel: String
+        get() = when {
+            tableNo.startsWith("TA-", ignoreCase = true) -> tableNo.replace("TA-", "Token #")
+            section.isBlank() -> tableNo
+            else -> "$tableNo ($section)"
+        }
     private val customer get() = arguments?.getString(ARG_CUSTOMER)?.ifBlank { "Walk-in" } ?: "Walk-in"
     private val serviceRate get() = arguments?.getDouble(ARG_SERVICE_RATE) ?: 0.0
     private val gstEnabled get() = arguments?.getBoolean(ARG_GST_ON) ?: true
@@ -55,8 +69,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
         // Take-away carries a "TA-n" token, not a table — label it accordingly.
         val heading = if (tableNo.startsWith("TA-", ignoreCase = true))
-            "Take Away  •  ${tableNo.replace("TA-", "Token #")}"
-        else "Table: $tableNo"
+            "Take Away  •  $tableLabel"
+        else "Table: $tableLabel"
         view.findViewById<TextView>(R.id.tvCoTable).text = "$heading     Customer: $customer"
         populateItems(view)
 
@@ -85,7 +99,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             // receipt (with preview) and settles/removes the table — like the grocery flow.
             parentFragmentManager.setFragmentResult(
                 RESULT_PAID, android.os.Bundle().apply {
+                    // The order's own id: the table code alone would match the same
+                    // numbered table in another section.
+                    putLong(ARG_ORDER_ID, orderId)
                     putString(ARG_TABLE, tableNo)
+                    putString(ARG_SECTION, section)
                     putString(ARG_PAY_METHOD, payMethod)
                     // Cash tendered (0 when not entered) so the Orders screen can book
                     // the change and print the amount returned on the receipt.
@@ -125,14 +143,14 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         val service = if (subtotal > 0.0) serviceRate else 0.0
         val netTotal = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
 
-        val tableLabel = if (tableNo.startsWith("TA-", ignoreCase = true))
-            "Take Away ${tableNo.replace("TA-", "Token #")}" else "Table $tableNo"
+        val receiptTable = if (tableNo.startsWith("TA-", ignoreCase = true))
+            "Take Away $tableLabel" else "Table $tableLabel"
         val draft = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft(
             billNumber = com.example.synergic_pos_offline.database.BillDao(ctx).nextBillNumber(),
             dateTime = java.text.SimpleDateFormat("dd-MM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date()),
             cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—",
             customer = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Customer(
-                name = tableLabel, phone = customer.takeIf { it != "Walk-in" && it.isNotBlank() }
+                name = receiptTable, phone = customer.takeIf { it != "Walk-in" && it.isNotBlank() }
             ),
             items = lines.map {
                 com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
@@ -242,7 +260,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
     companion object {
         const val RESULT_PAID = "restaurant_checkout_paid"
+        const val ARG_ORDER_ID = "order_id"
         const val ARG_TABLE = "table"
+        const val ARG_SECTION = "section"
         const val ARG_PAY_METHOD = "pay_method"
         const val ARG_TENDERED = "tendered"
         private const val ARG_CUSTOMER = "customer"
@@ -255,15 +275,21 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_GST_ON = "gst_on"
         private const val ARG_INCLUSIVE = "inclusive"
 
-        /** Builds a checkout for [table]'s order, carrying its items and tax. */
+        /**
+         * Builds a checkout for the running order [orderId] on [table] in [section],
+         * carrying its items and tax. The order id travels with it so the paid result
+         * settles this order rather than the same-numbered table in another section.
+         */
         fun newInstance(
-            table: String, customer: String,
+            orderId: Long, table: String, section: String, customer: String,
             names: ArrayList<String>, qtys: DoubleArray, rates: DoubleArray,
             cgsts: DoubleArray, sgsts: DoubleArray, serviceRate: Double,
             gstEnabled: Boolean, inclusive: Boolean
         ): RestaurantCheckoutFragment = RestaurantCheckoutFragment().apply {
             arguments = android.os.Bundle().apply {
+                putLong(ARG_ORDER_ID, orderId)
                 putString(ARG_TABLE, table)
+                putString(ARG_SECTION, section)
                 putString(ARG_CUSTOMER, customer)
                 putStringArrayList(ARG_NAMES, names)
                 putDoubleArray(ARG_QTYS, qtys)

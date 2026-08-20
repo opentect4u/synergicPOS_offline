@@ -7,16 +7,18 @@
   out on a pill at the foot. The status also tints the card and its border, so a
   section can be taken in at a glance without reading a word of it.
 
-  Sized for six to a row: a whole section fits on screen and the grid reads as the
-  room rather than as a list. Filled in TableAdapter.
+  Sized for eight to a row on a full-screen picker: a whole section fits on screen and
+  the grid reads as the room rather than as a list. Eight across leaves each card about
+  100-150dp wide, so the number, the seats and the status pills are set to fit that
+  without wrapping. Filled in TableAdapter.
 -->
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/cardTableTile"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="5dp"
-    app:cardCornerRadius="14dp"
+    android:layout_margin="4dp"
+    app:cardCornerRadius="12dp"
     app:cardElevation="0dp"
     app:cardBackgroundColor="#E7F8EE"
     app:strokeWidth="1.5dp"
@@ -30,14 +32,14 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center"
-        android:paddingHorizontal="6dp"
-        android:paddingTop="12dp"
-        android:paddingBottom="10dp">
+        android:paddingHorizontal="4dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="9dp">
 
         <ImageView
             android:id="@+id/ivTableIcon"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
+            android:layout_width="17dp"
+            android:layout_height="17dp"
             android:layout_marginBottom="2dp"
             android:src="@drawable/ic_table"
             app:tint="#16A34A"
@@ -52,7 +54,7 @@
             android:maxLines="1"
             android:ellipsize="end"
             android:text="5"
-            android:textSize="28sp"
+            android:textSize="23sp"
             android:textStyle="bold"
             android:textColor="#16A34A" />
 
@@ -66,7 +68,7 @@
             android:gravity="center"
             android:maxLines="1"
             android:text="4 seats"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textColor="@color/text_secondary"
             android:visibility="gone" />
 
@@ -74,14 +76,14 @@
             android:id="@+id/tvTableStatus"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="9dp"
-            android:paddingHorizontal="8dp"
+            android:layout_marginTop="8dp"
+            android:paddingHorizontal="6dp"
             android:paddingVertical="3dp"
             android:background="@drawable/bg_status_tag"
             android:maxLines="1"
             android:ellipsize="end"
             android:text="Available"
-            android:textSize="11sp"
+            android:textSize="9.5sp"
             android:textStyle="bold"
             android:textAllCaps="true"
             android:letterSpacing="0.04"
@@ -93,15 +95,15 @@
             android:id="@+id/tvTableKot"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:paddingHorizontal="8dp"
+            android:layout_marginTop="5dp"
+            android:paddingHorizontal="6dp"
             android:paddingVertical="3dp"
             android:background="@drawable/bg_status_tag"
             android:gravity="center"
             android:maxLines="1"
             android:ellipsize="end"
             android:text="KOT Pending"
-            android:textSize="11.5sp"
+            android:textSize="9.5sp"
             android:textStyle="bold"
             android:textAllCaps="true"
             android:letterSpacing="0.04"

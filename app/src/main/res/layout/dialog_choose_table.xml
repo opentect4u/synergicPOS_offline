@@ -2,20 +2,22 @@
 <!--
   Choose Table: the floor plan as cards, its sections as the categories across the
   top, and a legend along the foot keying each colour to a status.
+
+  Full screen by design - the card fills the window edge to edge, so the floor gets
+  the whole display whatever its size and whether or not there is a table to show.
 -->
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:layout_margin="16dp"
-    app:cardCornerRadius="18dp"
-    app:cardElevation="18dp"
+    android:layout_height="match_parent"
+    app:cardCornerRadius="0dp"
+    app:cardElevation="0dp"
     app:cardBackgroundColor="@color/white">
 
     <LinearLayout
         android:id="@+id/llDialogContent"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
         android:orientation="vertical"
         android:paddingTop="18dp">
 
@@ -100,20 +102,24 @@
             android:layout_height="1dp"
             android:background="#E4E7EB" />
 
-        <!-- The floor -->
+        <!-- The floor. Takes every pixel between the sections and the legend, so the
+             grid is as tall as the screen allows. -->
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/rvTables"
             android:layout_width="match_parent"
-            android:layout_height="470dp"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:paddingHorizontal="13dp"
             android:paddingVertical="14dp"
             android:clipToPadding="false"
             android:scrollbars="none" />
 
+        <!-- Stands in for the grid, and holds the same space, when there is none -->
         <TextView
             android:id="@+id/tvNoTables"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:paddingVertical="28dp"
             android:gravity="center"
             android:text="No tables set up yet.\nAdd them in Master ▸ Table."

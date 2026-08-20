@@ -45,7 +45,6 @@ import com.google.android.material.textfield.TextInputEditText
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -308,16 +307,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
         categoryAdapter = CategoryAdapter()
         rvCategories.adapter = categoryAdapter
 
-        // Products (responsive grid)
+        // Products - seven to a row, so the shelf shows as much of the catalogue as it
+        // can at once instead of one screenful of oversized tiles.
         val rvProducts = view.findViewById<RecyclerView>(R.id.rvProducts)
-        val glm = GridLayoutManager(ctx, 2)
-        rvProducts.layoutManager = glm
+        rvProducts.layoutManager = GridLayoutManager(ctx, 7)
         productAdapter = ProductAdapter()
         rvProducts.adapter = productAdapter
-        rvProducts.post {
-            val span = max(1, (rvProducts.width / (168 * density)).toInt())
-            glm.spanCount = span
-        }
 
         // Cart
         val rvCart = view.findViewById<RecyclerView>(R.id.rvCart)
