@@ -463,6 +463,20 @@ class LoginFragment : Fragment() {
                     SQLiteDatabase.CONFLICT_REPLACE
                 )
             }
+            // The insert above is how the device came to hold two stores: the local
+            // registration created a placeholder id, the server issued a different
+            // one, the update matched nothing and a SECOND row appeared beside the
+            // first. store_id is md_registration's primary key, so nothing collided
+            // and both rows simply stayed - and from then on the app wrote its
+            // settings under the store the server named while every DAO read them
+            // back under the lower id, finding nothing and falling to the defaults.
+            // A saved mode read as Grocery for exactly that reason.
+            //
+            // So the store the server just named absorbs whatever else is here: the
+            // rows are carried onto it and the superseded registration goes. This is
+            // the only place a second store can be created, and it no longer leaves
+            // one behind.
+            DatabaseHelper.getInstance(context).consolidateStores(db, storeId.toLong())
 
             val userId = str(record, "user_id")
             val user = ContentValues().apply {
@@ -494,37 +508,25 @@ class LoginFragment : Fragment() {
      */
     private fun alignMasterDataToStore(storeId: Int) {
         if (storeId <= 0) return
-        val db = DatabaseHelper.getInstance(requireContext()).writableDatabase
+        val helper = DatabaseHelper.getInstance(requireContext())
+        val db = helper.writableDatabase
         db.beginTransaction()
         try {
-            for (t in mdTablesWithStoreId(db)) {
+            // md_registration is not in this list, and must not be: there store_id is
+            // the primary key naming the store, not a reference to it. Re-stamping it
+            // alongside everything else either collides with the row already holding
+            // that id or renames the store out from under its own users - which is
+            // why the two rows this used to leave behind never merged on their own.
+            for (t in helper.tablesWithStoreId(db)) {
                 runCatching { db.execSQL("UPDATE $t SET store_id = ?", arrayOf<Any>(storeId)) }
             }
+            // The signed-in user's store is the store: anything still registered
+            // beside it is a superseded placeholder, and goes.
+            helper.consolidateStores(db, storeId.toLong())
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
-    }
-
-    /** Every md_ table that has a store_id column — so the re-point covers them all. */
-    private fun mdTablesWithStoreId(db: SQLiteDatabase): List<String> {
-        val tables = mutableListOf<String>()
-        db.rawQuery(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'md\\_%' ESCAPE '\\'", null
-        ).use { c ->
-            while (c.moveToNext()) {
-                val name = c.getString(0) ?: continue
-                val hasStoreId = db.rawQuery("PRAGMA table_info($name)", null).use { info ->
-                    var found = false
-                    while (info.moveToNext()) {
-                        if (info.getString(1) == "store_id") { found = true; break }
-                    }
-                    found
-                }
-                if (hasStoreId) tables.add(name)
-            }
-        }
-        return tables
     }
 
     /** Returns a trimmed string field, or null when absent/blank/JSON null. */

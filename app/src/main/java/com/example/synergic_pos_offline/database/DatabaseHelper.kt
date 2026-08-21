@@ -223,6 +223,10 @@ class DatabaseHelper private constructor(context: Context) :
         runCatching {
             db.execSQL("DELETE FROM ${Tables.MD_APP_SETTINGS} WHERE setting_name = 'IGST'")
         }
+        // Last, and after every table it touches is known to exist: fold a device
+        // that is holding two stores back onto one, so the settings the DAOs read
+        // are the settings that were saved.
+        runCatching { repairDuplicateStores(db) }
     }
 
     /** Builds an AFTER INSERT trigger that fills a null store_id from md_registration. */
@@ -470,6 +474,128 @@ class DatabaseHelper private constructor(context: Context) :
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
+        }
+    }
+
+    // ---- One device, one store ---------------------------------------------
+    //
+    // A till serves a single shop, and md_registration is meant to hold a single row
+    // for it. Everything store-scoped depends on that: settings, masters and bills
+    // are all read back with "the registered store's id", which every DAO resolves
+    // the same way - the first row of md_registration.
+    //
+    // A second row breaks all of it at once. The server issues the real store_id at
+    // verification, which is rarely the placeholder the local registration created,
+    // so the device ends up holding both. The DAOs then read under one id while the
+    // data is written and re-pointed under the other, and every setting comes back
+    // as its default - a saved Restaurant mode reads as Grocery, the mode's own
+    // default. Nothing is lost; it is simply being looked for under the wrong store.
+    //
+    // So the rule is enforced rather than assumed: the verified store absorbs any
+    // other, and the rows that named the other are carried over to it.
+
+    /** The store ids md_registration currently holds, lowest first. */
+    fun registrationStoreIds(db: SQLiteDatabase): List<Long> {
+        val ids = mutableListOf<Long>()
+        runCatching {
+            db.query(
+                Tables.MD_REGISTRATION, arrayOf("store_id"),
+                null, null, null, null, "store_id ASC"
+            ).use { c -> while (c.moveToNext()) if (!c.isNull(0)) ids.add(c.getLong(0)) }
+        }
+        return ids
+    }
+
+    /**
+     * Makes [keep] the only store on the device: every store-scoped row is carried
+     * over to it and the other registration rows are dropped.
+     *
+     * Children are re-pointed before their parent goes, so nothing is orphaned and
+     * the foreign key on md_users.store_id holds throughout. Runs in the caller's
+     * transaction - [saveVerifiedStore] does this as part of recording the store.
+     */
+    fun consolidateStores(db: SQLiteDatabase, keep: Long) {
+        val others = registrationStoreIds(db).filter { it != keep }
+        if (others.isEmpty()) return
+        val orphaned = others.joinToString(",")
+        for (t in tablesWithStoreId(db)) {
+            runCatching {
+                db.execSQL(
+                    "UPDATE $t SET store_id = ? WHERE store_id IS NULL OR store_id IN ($orphaned)",
+                    arrayOf<Any>(keep)
+                )
+            }
+        }
+        runCatching {
+            db.execSQL("DELETE FROM ${Tables.MD_REGISTRATION} WHERE store_id IN ($orphaned)")
+        }
+        dedupeAppSettings(db)
+    }
+
+    /**
+     * Collapses a device that already holds two stores, on the next open.
+     *
+     * The verified row is the one to keep: it carries the store_id the server issued
+     * and the one the signed-in user belongs to. With no verified row, the newest is
+     * kept - a placeholder that was superseded is the older of the two.
+     */
+    private fun repairDuplicateStores(db: SQLiteDatabase) {
+        val ids = registrationStoreIds(db)
+        if (ids.size < 2) return
+        val keep = verifiedStoreId(db) ?: ids.max()
+        db.beginTransaction()
+        try {
+            consolidateStores(db, keep)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun verifiedStoreId(db: SQLiteDatabase): Long? {
+        runCatching {
+            db.query(
+                Tables.MD_REGISTRATION, arrayOf("store_id"),
+                "verify_flag = 1", null, null, null, "store_id DESC", "1"
+            ).use { c -> if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0) }
+        }
+        return null
+    }
+
+    /**
+     * Every table carrying a store_id, md_ and td_ alike, except md_registration -
+     * there store_id is the primary key that identifies the store rather than a
+     * reference to it, so it is moved by [consolidateStores] and never re-stamped.
+     */
+    fun tablesWithStoreId(db: SQLiteDatabase): List<String> {
+        val tables = mutableListOf<String>()
+        runCatching {
+            db.rawQuery(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", null
+            ).use { c ->
+                while (c.moveToNext()) {
+                    val name = c.getString(0) ?: continue
+                    if (name == Tables.MD_REGISTRATION) continue
+                    if (columnExists(db, name, "store_id")) tables.add(name)
+                }
+            }
+        }
+        return tables
+    }
+
+    /**
+     * Drops the copies a split store left behind.
+     *
+     * While the two ids were live, a save read nothing under the id it looked under
+     * and so inserted where it meant to update - once per save, per setting. The
+     * newest row is the one that was last written, and is the one kept.
+     */
+    private fun dedupeAppSettings(db: SQLiteDatabase) {
+        runCatching {
+            db.execSQL(
+                "DELETE FROM ${Tables.MD_APP_SETTINGS} WHERE id NOT IN " +
+                    "(SELECT MAX(id) FROM ${Tables.MD_APP_SETTINGS} GROUP BY setting_name)"
+            )
         }
     }
 

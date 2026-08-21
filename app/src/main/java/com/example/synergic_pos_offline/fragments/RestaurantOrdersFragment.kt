@@ -88,6 +88,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private var directAddToCart = false
 
+    /**
+     * App Settings' Table Shift / Table Merge / Table Split, read alongside
+     * [directAddToCart] at [onResume].
+     *
+     * A shop that has switched one of these off does not do it at all - one room, one
+     * bill per table - so the menu item stays greyed rather than working anyway. Read
+     * here for the same reason as above: the only way they change is a trip to App
+     * Settings, which comes back through onResume.
+     */
+    private var tableShiftOn = false
+    private var tableMergeOn = false
+    private var tableSplitOn = false
+
     private fun currentOrder(): OrderCard? = orders.firstOrNull { it.selected }
     private fun currentCart(): MutableList<CartItem>? = currentOrder()?.items
 
@@ -393,13 +406,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         super.onResume()
         // Re-read once here rather than on every tap: the only way this changes is a
         // trip to App Settings, which comes back through onResume.
-        directAddToCart = com.example.synergic_pos_offline.utils.SettingsCache
-            .value(requireContext(), "A", "Direct Add to Cart") == "1"
+        directAddToCart = appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_DIRECT_ADD_TO_CART)
+        tableShiftOn = appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_TABLE_SHIFT)
+        tableMergeOn = appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_TABLE_MERGE)
+        tableSplitOn = appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_TABLE_SPLIT)
         view?.let { v -> v.post { restyle(v, ThemeManager.getThemeColor(requireContext())) } }
         // The menu is on the page now, so it has to be current whenever the page is:
         // a product edited, or stock moved by a settled bill, shows on the way back.
         reloadProductsAndRefresh()
     }
+
+    /**
+     * One App Settings toggle ('A'), out of the login cache. Named by the DAO's own
+     * key so the toggle that writes it and the screen that obeys it cannot drift onto
+     * two spellings of the same setting.
+     */
+    private fun appSettingOn(key: String): Boolean =
+        SettingsCache.value(requireContext(), "A", key) == "1"
 
     /** Called by MainActivity when the palette colour changes — recolour instantly. */
     fun onThemeChanged() {
@@ -560,12 +583,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * The table's occasional actions, on one menu rather than four more buttons in a
      * row that already carries the order's own. Each item is greyed the same way its
      * button was, so what cannot be done still shows itself rather than disappearing.
+     *
+     * Two things can grey one: the order (Take Away has no table to do any of this
+     * to) and App Settings, where a shop switches off the ones it does not work by.
      */
     private fun showTableActionsMenu(anchor: View) {
         val menu = android.widget.PopupMenu(requireContext(), anchor)
-        menu.menu.add(0, MENU_TRANSFER, 0, "Transfer").isEnabled = dineInActionsEnabled
-        menu.menu.add(0, MENU_MERGE, 1, "Merge").isEnabled = dineInActionsEnabled
-        menu.menu.add(0, MENU_SPLIT, 2, "Split").isEnabled = dineInActionsEnabled
+        menu.menu.add(0, MENU_TRANSFER, 0, "Transfer").isEnabled = dineInActionsEnabled && tableShiftOn
+        menu.menu.add(0, MENU_MERGE, 1, "Merge").isEnabled = dineInActionsEnabled && tableMergeOn
+        menu.menu.add(0, MENU_SPLIT, 2, "Split").isEnabled = dineInActionsEnabled && tableSplitOn
         // Lettered in red: it throws the order away, and it is the one item on here
         // that cannot be undone.
         menu.menu.add(0, MENU_CANCEL, 3, android.text.SpannableString("Cancel Order").apply {
@@ -589,6 +615,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** Transfer: move this order to another available table in the same section. */
     private fun onTransfer() {
+        if (!tableShiftOn) return toast("Table Shift is switched off in App Settings")
         val order = currentOrder() ?: return toast("Select a table order first")
         if (order.type.equals("Take Away", ignoreCase = true))
             return toast("Not available for Take Away")
@@ -598,6 +625,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** Split: break the selected table into sub-tables (101 A, 101 B, …). */
     private fun onSplit() {
+        if (!tableSplitOn) return toast("Table Split is switched off in App Settings")
         val order = currentOrder() ?: return toast("Select a table order first")
         if (order.type.equals("Take Away", ignoreCase = true))
             return toast("Not available for Take Away")
@@ -911,6 +939,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * offers same-section tables. Needs at least two tables.
      */
     private fun showMergeDialog() {
+        if (!tableMergeOn) return toast("Table Merge is switched off in App Settings")
         val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
