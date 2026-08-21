@@ -80,6 +80,8 @@ class BillDao(context: Context) {
         val isReturnBill: Boolean = false,
         // Restaurant-mode fields (null/0 for grocery bills).
         val tableNumber: String? = null,
+        /** The table's section. Null for grocery, and for take-away. */
+        val tableSection: String? = null,
         val orderType: String? = null,
         val serviceChargeAmount: Double = 0.0
     )
@@ -150,6 +152,7 @@ class BillDao(context: Context) {
                 put("vat_flag", if (bill.vatAmount > 0) 1 else 0)
                 if (bill.waiterId != null) put("waiter_id", bill.waiterId)
                 bill.tableNumber?.takeIf { it.isNotBlank() }?.let { put("table_number", it) }
+                bill.tableSection?.takeIf { it.isNotBlank() }?.let { put("table_section", it) }
                 bill.orderType?.takeIf { it.isNotBlank() }?.let { put("order_type", it) }
                 put("service_charge_amount", bill.serviceChargeAmount)
                 put("is_mrp_billing", if (bill.isMrpBilling) 1 else 0)

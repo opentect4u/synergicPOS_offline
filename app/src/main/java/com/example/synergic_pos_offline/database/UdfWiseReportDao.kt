@@ -6,9 +6,13 @@ import com.example.synergic_pos_offline.utils.BillRounding
 /**
  * Groups the restaurant bills of a period by UDF - "<table>-<section id>" - for the
  * UDF-Wise Report. Each row is one table/section: how many bills it raised and their
- * tax, discount and bill totals. A bill's section is resolved from the table master
- * ([DatabaseHelper.Tables.MD_TABLE_UNIT] by table_code), since the bill itself only
- * records the table it was on.
+ * tax, discount and bill totals.
+ *
+ * The section comes off the bill itself, which records the one it was billed in. A
+ * bill raised before that was kept falls back to the old reading - the table master
+ * ([DatabaseHelper.Tables.MD_TABLE_UNIT] by table_code) - so historical rows come out
+ * exactly as they did before. That fallback can only guess when a table number is
+ * used in more than one section, which is why the bill now carries its own.
  */
 class UdfWiseReportDao(context: Context) {
 
@@ -42,8 +46,12 @@ class UdfWiseReportDao(context: Context) {
         helper.readableDatabase.rawQuery(
             """
             SELECT b.table_number,
-                   (SELECT tu.section_id FROM ${DatabaseHelper.Tables.MD_TABLE_UNIT} tu
-                    WHERE tu.table_code = b.table_number LIMIT 1) AS section_id,
+                   COALESCE(
+                     (SELECT s.id FROM ${DatabaseHelper.Tables.MD_SECTION} s
+                      WHERE s.section_name = b.table_section COLLATE NOCASE LIMIT 1),
+                     (SELECT tu.section_id FROM ${DatabaseHelper.Tables.MD_TABLE_UNIT} tu
+                      WHERE tu.table_code = b.table_number LIMIT 1)
+                   ) AS section_id,
                    COUNT(*) AS bills,
                    SUM(COALESCE(b.tot_cgst_amount,0) + COALESCE(b.tot_sgst_amount,0)
                        + COALESCE(b.tot_igst_amount,0) + COALESCE(b.tot_vat_amount,0)) AS tax,

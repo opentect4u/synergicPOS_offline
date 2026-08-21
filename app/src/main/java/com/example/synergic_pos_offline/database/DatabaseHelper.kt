@@ -81,8 +81,14 @@ class DatabaseHelper private constructor(context: Context) :
         // Restaurant-mode bill fields: which table/section it was, dine-in vs take-away,
         // and the service charge kept separate from generic other-charges.
         addColumnIfMissing(db, Tables.TD_BILLS, "table_number", "TEXT")
+        // Which section that table was in. Null on every grocery bill, and on the
+        // restaurant's take-away ones; a table number repeats in every section, so
+        // without it the history cannot say which of them was served.
+        addColumnIfMissing(db, Tables.TD_BILLS, "table_section", "TEXT")
         addColumnIfMissing(db, Tables.TD_BILLS, "order_type", "TEXT")
         addColumnIfMissing(db, Tables.TD_BILLS, "service_charge_amount", "REAL DEFAULT 0")
+        // The delete archive mirrors the live bill, column for column.
+        addColumnIfMissing(db, Tables.TD_BILLS_DELETE, "table_section", "TEXT")
         // Store-scope bill lines and payments directly (not only via their bill), then
         // backfill existing rows with the store of the bill they belong to.
         if (addColumnIfMissing(db, Tables.TD_BILL_ITEMS, "store_id", "INTEGER")) {
@@ -1748,6 +1754,7 @@ class DatabaseHelper private constructor(context: Context) :
                 operator_id INTEGER,
                 waiter_id INTEGER,
                 table_number TEXT,
+                table_section TEXT,
                 order_type TEXT,
                 service_charge_amount REAL DEFAULT 0,
                 bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','VOID')),
@@ -1838,6 +1845,7 @@ class DatabaseHelper private constructor(context: Context) :
                 operator_id INTEGER,
                 waiter_id INTEGER,
                 table_number TEXT,
+                table_section TEXT,
                 order_type TEXT,
                 service_charge_amount REAL DEFAULT 0,
                 bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','VOID')),

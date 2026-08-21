@@ -8,6 +8,11 @@ import com.example.synergic_pos_offline.utils.BillRounding
  * and, within a UDF, by product - each with its total quantity and amount. Powers the
  * UDF-Wise Item Report. The product name comes from the master (td_bill_items keeps
  * only the id); the amount is the line total the item was billed at.
+ *
+ * A table number repeats in every section, so the group is the table AND the section
+ * the bill records - two rooms' table 5 are two groups, not one heap. A bill with no
+ * section (grocery, take-away, or one raised before the bill carried it) groups by
+ * its number alone, as it always did.
  */
 class UdfWiseItemReportDao(context: Context) {
 
@@ -18,7 +23,7 @@ class UdfWiseItemReportDao(context: Context) {
 
     /** One UDF (table) and everything sold on it. */
     data class Group(
-        /** The UDF number - the table it was billed on, e.g. "5". */
+        /** The UDF - the table it was billed on and its section, e.g. "5 (AC)". */
         val udf: String,
         val items: List<Item>,
         val qty: Double,
@@ -43,6 +48,7 @@ class UdfWiseItemReportDao(context: Context) {
         helper.readableDatabase.rawQuery(
             """
             SELECT b.table_number,
+                   COALESCE(b.table_section, '') AS section,
                    COALESCE(p.product_name, 'Item #' || bi.product_id) AS name,
                    SUM(COALESCE(bi.quantity, 0)) AS qty,
                    SUM(COALESCE(bi.item_total, bi.item_subtotal, 0)) AS amount
@@ -52,18 +58,20 @@ class UdfWiseItemReportDao(context: Context) {
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
               AND b.table_number IS NOT NULL AND TRIM(b.table_number) <> ''
               AND COALESCE(b.bill_status, '') <> 'CANCELLED'
-            GROUP BY b.table_number, name
-            ORDER BY CAST(b.table_number AS INTEGER), b.table_number, name
+            GROUP BY b.table_number, section, name
+            ORDER BY CAST(b.table_number AS INTEGER), b.table_number, section, name
             """.trimIndent(),
             arrayOf(from, to)
         ).use { c ->
             while (c.moveToNext()) {
+                val table = c.getString(0).orEmpty()
+                val section = c.getString(1).orEmpty()
                 flat.add(
                     Flat(
-                        udf = c.getString(0).orEmpty(),
-                        name = c.getString(1).orEmpty().uppercase(),
-                        qty = c.getDouble(2),
-                        amount = BillRounding.toPaise(c.getDouble(3))
+                        udf = if (section.isBlank()) table else "$table ($section)",
+                        name = c.getString(2).orEmpty().uppercase(),
+                        qty = c.getDouble(3),
+                        amount = BillRounding.toPaise(c.getDouble(4))
                     )
                 )
             }
