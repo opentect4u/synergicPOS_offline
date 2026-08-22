@@ -95,6 +95,7 @@ dependencies {
     implementation(files("libs/ESC_SDK_V1.24.04.jar"))
     implementation(libs.androidx.swiperefreshlayout)
     implementation(libs.androidx.biometric)
+    implementation(libs.zxing.core)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

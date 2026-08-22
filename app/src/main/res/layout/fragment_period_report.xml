@@ -140,6 +140,49 @@
                         app:icon="@drawable/ic_print"
                         app:iconGravity="textStart"
                         app:cornerRadius="12dp" />
+
+                    <!-- Download the generated report. Off until there is one, like
+                         Print: a file of the last report, or of nothing, is worse than
+                         a button that says it is not ready. -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPeriodPdf"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="52dp"
+                        android:layout_marginStart="8dp"
+                        android:paddingHorizontal="12dp"
+                        android:text="PDF"
+                        android:textSize="12sp"
+                        android:enabled="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        app:icon="@drawable/ic_file_pdf"
+                        app:iconSize="20dp"
+                        app:iconPadding="5dp"
+                        app:iconTint="@null"
+                        app:iconGravity="textStart"
+                        app:cornerRadius="12dp"
+                        android:contentDescription="Download as PDF" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPeriodExcel"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="52dp"
+                        android:layout_marginStart="8dp"
+                        android:paddingHorizontal="12dp"
+                        android:text="Excel"
+                        android:textSize="12sp"
+                        android:enabled="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        app:icon="@drawable/ic_file_excel"
+                        app:iconSize="20dp"
+                        app:iconPadding="5dp"
+                        app:iconTint="@null"
+                        app:iconGravity="textStart"
+                        app:cornerRadius="12dp"
+                        android:contentDescription="Download as Excel" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

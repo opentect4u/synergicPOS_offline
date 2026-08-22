@@ -315,6 +315,8 @@
                             android:textStyle="bold"
                             android:textColor="@color/primary_blue" />
                     </LinearLayout>
+
+                    <include layout="@layout/view_checkout_upi_qr" />
                 </LinearLayout>
             </ScrollView>
 

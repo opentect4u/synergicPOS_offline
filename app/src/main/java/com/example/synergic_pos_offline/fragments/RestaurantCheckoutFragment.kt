@@ -77,7 +77,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         // Payment method selection — always re-read the current theme colour.
         mapOf(R.id.btnPayCash to "Cash", R.id.btnPayCard to "Card", R.id.btnPayOnline to "Online")
             .forEach { (id, name) ->
-                view.findViewById<MaterialButton>(id).setOnClickListener { payMethod = name; restyle(view) }
+                view.findViewById<MaterialButton>(id).setOnClickListener {
+                    payMethod = name
+                    restyle(view)
+                    showUpiQr(view)
+                }
             }
 
         // Amount tendered → change due.
@@ -114,17 +118,17 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         }
 
         // Re-apply our accents after MainActivity's global theme pass.
-        view.post { restyle(view) }
+        view.post { if (isAdded) restyle(view) }
     }
 
     override fun onResume() {
         super.onResume()
-        view?.let { v -> v.post { restyle(v) } }
+        view?.let { v -> v.post { if (isAdded) restyle(v) } }
     }
 
     /** Called by MainActivity when the palette colour changes — recolour instantly. */
     fun onThemeChanged() {
-        view?.let { v -> v.post { restyle(v) } }
+        view?.let { v -> v.post { if (isAdded) restyle(v) } }
     }
 
     /** Renders the bill in the grocery format and shows it in a scrollable dialog. */
@@ -143,15 +147,19 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         val service = if (subtotal > 0.0) serviceRate else 0.0
         val netTotal = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
 
+        // The table as the bill's own field - see Draft.table - rather than smuggled
+        // in as the customer's name, which the Customer Details setting could switch
+        // off and take the table number off the bill with it.
         val receiptTable = if (tableNo.startsWith("TA-", ignoreCase = true))
-            "Take Away $tableLabel" else "Table $tableLabel"
+            "Take Away $tableLabel" else tableLabel
         val draft = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft(
             billNumber = com.example.synergic_pos_offline.database.BillDao(ctx).nextBillNumber(),
             dateTime = java.text.SimpleDateFormat("dd-MM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date()),
             cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—",
             customer = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Customer(
-                name = receiptTable, phone = customer.takeIf { it != "Walk-in" && it.isNotBlank() }
+                phone = customer.takeIf { it != "Walk-in" && it.isNotBlank() }
             ),
+            table = receiptTable,
             items = lines.map {
                 com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
                     it.name, it.qty.toDouble(), it.rate, it.cgstRate, it.sgstRate
@@ -226,13 +234,22 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(sgst)}"
         root.findViewById<TextView>(R.id.tvTotalAmount).text = "₹ ${money(total)}"
         root.findViewById<MaterialButton>(R.id.btnConfirmPay).text = "Confirm Payment  ( ₹ ${money(total)} )"
+        // The code is drawn for the total, so it is redrawn wherever the total is.
+        showUpiQr(root)
+    }
+
+    /** Shows the scan-to-pay code while Online is the chosen mode. */
+    private fun showUpiQr(root: View) {
+        com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(
+            root, total, online = payMethod.equals("Online", ignoreCase = true)
+        )
     }
 
     /** Reads the CURRENT theme colour fresh (never captured), so it can't go stale. */
     private fun restyle(root: View) {
         val accent = ThemeManager.getThemeColor(requireContext())
         val white = android.graphics.Color.WHITE
-        val strokePx = (resources.displayMetrics.density * 1.5f).toInt()
+        val strokePx = (root.resources.displayMetrics.density * 1.5f).toInt()
         fun filled(id: Int) = root.findViewById<MaterialButton>(id).apply {
             backgroundTintList = ColorStateList.valueOf(accent); setTextColor(white)
             iconTint = ColorStateList.valueOf(white); strokeWidth = 0

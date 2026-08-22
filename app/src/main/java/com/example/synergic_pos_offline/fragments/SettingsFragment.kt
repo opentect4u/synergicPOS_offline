@@ -74,8 +74,13 @@ class SettingsFragment : Fragment() {
             e("Two Copy Bill", "Bill Settings", bill, match = "Two copy bill"),
             e("Round Off", "Bill Settings", bill),
             e("HSN Code", "Bill Settings", bill),
+            e("Product Serial Number", "Bill Settings", bill),
             e("Customer Address Printing", "Bill Settings", bill),
             e("Customer Details", "Bill Settings", bill),
+            e("UPI QR", "Bill Settings", bill, match = "UPI QR on bill"),
+            e("UPI ID", "Bill Settings", bill),
+            e("QR Code", "Bill Settings", bill, match = "UPI QR on bill"),
+            e("Scan to Pay", "Bill Settings", bill, match = "UPI QR on bill"),
             // Tax Settings
             e("Discount", "Tax Settings", tax),
             e("Discount Type", "Tax Settings", tax),

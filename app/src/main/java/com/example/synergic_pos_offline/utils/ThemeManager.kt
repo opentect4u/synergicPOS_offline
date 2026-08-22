@@ -96,7 +96,16 @@ object ThemeManager {
             is MaterialButton -> {
                 // Determine if this button should be Outlined (White bg, colored border) 
                 // or Filled (colored bg, white text).
-                if (isSecondary(name)) {
+                if (keepsOwnIcon(name)) {
+                    // The report download buttons. Outlined like any other secondary
+                    // action, but their icons are a red PDF page and a green
+                    // spreadsheet - the colour is how they are told apart, so the
+                    // accent is not allowed to paint over it.
+                    view.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+                    view.setTextColor(color)
+                    view.strokeColor = tint
+                    view.strokeWidth = (view.resources.displayMetrics.density * 1.5f).toInt()
+                } else if (isSecondary(name)) {
                     // Outlined style matching Dialog Cancel button
                     view.backgroundTintList = ColorStateList.valueOf(Color.WHITE)
                     view.setTextColor(color)
@@ -166,6 +175,16 @@ object ThemeManager {
         if (name == "sidebarHeader" || name == "barTotal" || name == "barLeftTotal" || name == "barAmountDue") {
             view.setBackgroundColor(color)
         }
+    }
+
+    /**
+     * Buttons whose icon carries meaning of its own and must not be re-tinted: the
+     * PDF and Excel downloads on every report screen, which are told apart by being
+     * red and green.
+     */
+    private fun keepsOwnIcon(name: String?): Boolean {
+        val low = name?.lowercase() ?: return false
+        return low.endsWith("pdf") || low.endsWith("excel")
     }
 
     private fun isSecondary(name: String?): Boolean {

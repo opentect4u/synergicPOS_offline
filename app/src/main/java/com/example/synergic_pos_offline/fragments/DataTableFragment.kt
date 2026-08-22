@@ -270,7 +270,15 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             isVisible = showsAddAction
             setOnClickListener { onAddRow() }
         }
-        view.findViewById<View>(R.id.llActionRow).isVisible = showsSelection
+        // The row carries the selection controls *and* the download action, and a
+        // screen can want the second without the first - Stock In moves nothing by
+        // selecting rows, but still hands over a sheet to fill in. So the row shows
+        // for either, and the selection-only controls inside it are hidden on their
+        // own.
+        view.findViewById<View>(R.id.llActionRow).isVisible = showsSelection || showDownloadTemplate()
+        view.findViewById<View>(R.id.tvSelectionCount).isVisible = showsSelection
+        view.findViewById<View>(R.id.btnGlobalPrint).isVisible = showsSelection
+        view.findViewById<View>(R.id.btnGlobalDelete).isVisible = showsSelection
 
         // A single FAB that opens a dedicated bulk-upload page (product screen).
         view.findViewById<View>(R.id.btnBulkPage).apply {

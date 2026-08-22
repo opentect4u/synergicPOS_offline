@@ -67,6 +67,18 @@
 
                 <View style="@style/BillSettingDivider" />
 
+                <!-- Product serial number -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Product Serial Number" />
+                        <TextView style="@style/BillSettingSub" android:text="Number each item line on the bill (SR.NO)" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swProductSerial" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
                 <!-- Two copy bill -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">
@@ -281,6 +293,141 @@
                     </LinearLayout>
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swCustomerAddress" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ============ UPI PAYMENT QR ============ -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView android:id="@+id/tvUpiHeader"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="UPI PAYMENT QR" android:textSize="12sp" android:letterSpacing="0.08"
+                    android:textStyle="bold" android:textColor="@color/primary_blue" />
+
+                <!-- Print UPI QR -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="UPI QR on bill" />
+                        <TextView style="@style/BillSettingSub" android:text="Print a scan-to-pay QR on every bill settled by UPI, carrying that bill&apos;s amount so the customer never types it in. A bill paid Online prints one either way." />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swUpiQr" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llUpiFields"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <View style="@style/BillSettingDivider" />
+
+                    <TextView style="@style/BillSettingTitle" android:text="UPI ID"
+                        android:layout_marginTop="14dp" />
+                    <TextView style="@style/BillSettingSub"
+                        android:text="The UPI address the money is paid into, e.g. shop@okaxis. Upload the QR you already have and it is filled in for you." />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilUpiId"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:hint="UPI ID"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etUpiId"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textEmailAddress"
+                            android:maxLength="120"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilUpiName"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:hint="Payee name (optional)"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etUpiName"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textCapWords"
+                            android:maxLength="50"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnUploadUpiQr"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:layout_marginTop="12dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minHeight="0dp"
+                        android:text="Upload QR image"
+                        android:textSize="14sp"
+                        app:cornerRadius="12dp" />
+
+                    <TextView style="@style/BillSettingSub"
+                        android:id="@+id/tvUpiUploadHint"
+                        android:layout_marginTop="6dp"
+                        android:text="The picture itself is never printed. A saved QR has no amount in it, so the bill carries a fresh code built for that bill&apos;s total." />
+
+                    <TextView
+                        android:id="@+id/tvUpiPreviewLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:text="PREVIEW"
+                        android:textSize="12sp"
+                        android:letterSpacing="0.08"
+                        android:textStyle="bold"
+                        android:gravity="center"
+                        android:textColor="@color/primary_blue" />
+
+                    <ImageView
+                        android:id="@+id/ivUpiQrPreview"
+                        android:layout_width="168dp"
+                        android:layout_height="168dp"
+                        android:layout_gravity="center_horizontal"
+                        android:layout_marginTop="8dp"
+                        android:scaleType="fitCenter"
+                        android:contentDescription="UPI payment QR preview" />
+
+                    <TextView
+                        android:id="@+id/tvUpiPreviewNote"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center"
+                        android:textSize="12sp"
+                        android:text="Enter a UPI ID to see the code" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

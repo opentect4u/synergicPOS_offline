@@ -392,7 +392,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         // MainActivity re-themes the whole tree on resume (by button name), which
         // would clobber our button styling — re-apply ours after that pass.
-        view.post { restyle(view, accent) }
+        view.post { if (isAdded) restyle(view, accent) }
 
         // Opening the sale screen asks which table first: that is the decision every
         // restaurant order starts with, so the picker comes up rather than waiting to
@@ -410,7 +410,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         tableShiftOn = appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_TABLE_SHIFT)
         tableMergeOn = appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_TABLE_MERGE)
         tableSplitOn = appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_TABLE_SPLIT)
-        view?.let { v -> v.post { restyle(v, ThemeManager.getThemeColor(requireContext())) } }
+        val accent = ThemeManager.getThemeColor(requireContext())
+        view?.let { v -> v.post { if (isAdded) restyle(v, accent) } }
         // The menu is on the page now, so it has to be current whenever the page is:
         // a product edited, or stock moved by a settled bill, shows on the way back.
         reloadProductsAndRefresh()
@@ -428,7 +429,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     fun onThemeChanged() {
         val v = view ?: return
         val accent = ThemeManager.getThemeColor(requireContext())
-        v.post { recolorAll(v, accent) }
+        v.post { if (isAdded) recolorAll(v, accent) }
     }
 
     /** Re-applies every accent that isn't handled by ThemeManager (cards, tabs, statuses). */
@@ -507,7 +508,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             if (o.selected) {
                 card.setCardBackgroundColor(soft)
                 card.strokeColor = accent
-                card.strokeWidth = (resources.displayMetrics.density * 1.5f).toInt()
+                card.strokeWidth = (card.resources.displayMetrics.density * 1.5f).toInt()
             } else {
                 card.setCardBackgroundColor(android.graphics.Color.WHITE)
                 card.strokeWidth = 0
@@ -703,7 +704,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /** Accent the filled buttons, headers and the active tab (avoids ThemeManager's name rules). */
     private fun applyAccents(root: View, accent: Int) {
         val white = android.graphics.Color.WHITE
-        val strokePx = (resources.displayMetrics.density * 1.5f).toInt()
+        val strokePx = (root.resources.displayMetrics.density * 1.5f).toInt()
         fun filled(id: Int) = root.findViewById<com.google.android.material.button.MaterialButton>(id).apply {
             backgroundTintList = ColorStateList.valueOf(accent); setTextColor(white)
             iconTint = ColorStateList.valueOf(white); strokeWidth = 0
@@ -2228,17 +2229,22 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 cgstRate = it.cgstRate, sgstRate = it.sgstRate
             )
         }
-        val tableLabel = if (order.type.equals("Take Away", ignoreCase = true))
-            "Take Away ${order.id.replace("TA-", "Token #")}" else "Table ${order.id}"
+        // The table as the bill's own field - see Draft.table. Carries its section,
+        // since a table number repeats in every section.
+        val billTable = if (order.type.equals("Take Away", ignoreCase = true))
+            "Take Away ${order.id.replace("TA-", "Token #")}"
+        else if (order.section.isBlank()) order.id
+        else "${order.id} (${order.section})"
         val now = java.text.SimpleDateFormat("dd-MM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
         return com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft(
             billNumber = billNumber,
             dateTime = now,
             cashier = order.cashier,
             customer = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Customer(
-                name = tableLabel, phone = order.phone.takeIf { it.isNotBlank() },
+                phone = order.phone.takeIf { it.isNotBlank() },
                 outstanding = customerOutstanding(order.phone)
             ),
+            table = billTable,
             items = items,
             discount = 0.0, roundOff = 0.0, netAmount = b.total,
             paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),

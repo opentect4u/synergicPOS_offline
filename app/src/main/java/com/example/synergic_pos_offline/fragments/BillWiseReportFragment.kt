@@ -19,6 +19,8 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillWiseReportDao
 import com.example.synergic_pos_offline.utils.PeriodReportPrinter
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
+import com.example.synergic_pos_offline.utils.ReportDownloads
+import com.example.synergic_pos_offline.utils.ReportExport
 import com.example.synergic_pos_offline.utils.ReportTable
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
@@ -68,6 +70,9 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
     private lateinit var etTo: TextInputEditText
     private lateinit var btnPrint: MaterialButton
 
+    /** The PDF and Excel buttons beside Print - see [ReportDownloads]. */
+    private lateinit var downloads: ReportDownloads
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
     ): View = inflater.inflate(R.layout.fragment_bill_wise_report, container, false)
@@ -107,6 +112,11 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
             setTextColor(accent)
             strokeColor = ColorStateList.valueOf(accent)
         }
+        // The same figures the screen is showing, as a file in Downloads. Built from
+        // the held report, so a download is what was generated.
+        downloads = ReportDownloads.wire(
+            view, requireContext(), accent, { if (isAdded) toast(it) }
+        ) { report?.let { sheetOf(it) } }
     }
 
     // ---- Generating ----------------------------------------------------------
@@ -141,6 +151,7 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         root.findViewById<View>(R.id.llReportEmpty).visibility = View.GONE
         root.findViewById<View>(R.id.llReportResult).visibility = View.VISIBLE
         btnPrint.isEnabled = true
+        downloads.setEnabled(true)
 
         root.findViewById<TextView>(R.id.tvReportPeriod).text =
             "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.billCount} bill(s)"
@@ -211,6 +222,18 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         add("Discount Amount" to money(r.totalDiscount))
     }
 
+    /** The screen as a downloadable table: the columns and rows it is drawing. */
+    private fun sheetOf(r: BillWiseReportDao.Report) = ReportExport.Sheet(
+        title = screenTitle,
+        subtitle = "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.billCount} bill(s)",
+        columns = columns.map { it.label },
+        alignEnd = columns.map { it.alignEnd },
+        rows = r.lines.map { cellsOf(it) },
+        summary = summaryLines(r) +
+            listOf("Round Off Amount" to money(r.totalRoundOff)) +
+            listOf("Total Amount" to money(r.totalAmount))
+    )
+
     /**
      * The printed slip, in the format these tills have always printed it: the machine
      * ID and clock at the head, the range under it, a line per bill, and the totals
@@ -264,6 +287,7 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvReportEmptyTitle).text = title
         root.findViewById<TextView>(R.id.tvReportEmptyHint).text = hint
         btnPrint.isEnabled = false
+        downloads.setEnabled(false)
     }
 
     // ---- Table ---------------------------------------------------------------

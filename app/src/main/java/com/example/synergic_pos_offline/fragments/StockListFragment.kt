@@ -11,12 +11,18 @@ import android.widget.Filter
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.core.widget.addTextChangedListener
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.StockDao
+import com.example.synergic_pos_offline.utils.CsvUtils
 import com.example.synergic_pos_offline.utils.DialogUtils
+import com.example.synergic_pos_offline.utils.Downloads
 import com.example.synergic_pos_offline.utils.SessionManager
+import com.example.synergic_pos_offline.utils.StockBulkImporter
+import com.example.synergic_pos_offline.utils.StockCsvTemplate
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -76,6 +82,108 @@ class StockListFragment : DataTableFragment() {
 
     /** The + button opens the entry modal; there is no per-row Add. */
     override fun onAddRow() = showEntryDialog()
+
+    // ---- Bulk stock in -------------------------------------------------------
+
+    /**
+     * Reads a filled-in sheet back. Registered as a field because a launcher has to
+     * exist before the fragment is STARTED.
+     */
+    private val uploadCsv: ActivityResultLauncher<String> =
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            uri?.let { onCsvPicked(it) }
+        }
+
+    // Both actions belong to receiving stock; writing it off is entered by hand, one
+    // line at a time, and a sheet of write-offs is not a thing a shop has.
+    override fun showDownloadTemplate(): Boolean = mode == Mode.IN
+
+    override fun bulkPageEnabled(): Boolean = mode == Mode.IN
+
+    override fun onDownloadTemplate() {
+        try {
+            val savedTo = Downloads.save(
+                requireContext(), StockCsvTemplate.FILE_NAME,
+                StockCsvTemplate.content(requireContext())
+            )
+            toast("Stock In template saved to $savedTo")
+        } catch (e: Exception) {
+            toast("Could not save the template: ${e.message}")
+        }
+    }
+
+    override fun onBulkPage() = uploadCsv.launch("*/*")
+
+    /**
+     * Reads the picked sheet, says what it will do, and books it in once confirmed.
+     *
+     * Confirmed rather than applied straight away because received stock cannot be
+     * taken back: the only way to undo it is a write-off, which lands in the history
+     * as a loss that never happened. The count, the total quantity and every row
+     * that could not be read are all on the dialog, so the decision is made knowing
+     * what the file actually held.
+     */
+    private fun onCsvPicked(uri: android.net.Uri) {
+        val ctx = requireContext()
+        val text = runCatching {
+            ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+        }.getOrNull()
+        if (text.isNullOrBlank()) {
+            toast("Could not read that file")
+            return
+        }
+
+        val rows = runCatching { CsvUtils.parse(text) }.getOrDefault(emptyList())
+        val preview = StockBulkImporter.preview(ctx, rows)
+        if (preview.received == 0) {
+            DialogUtils.showSuccess(
+                context = ctx,
+                title = "Nothing to receive",
+                message = problemText(preview)
+                    ?: "No quantities were filled in. Download the template, write the " +
+                    "quantity received beside the items that arrived, and upload it back.",
+                iconRes = android.R.drawable.ic_dialog_alert
+            )
+            return
+        }
+
+        DialogUtils.showConfirm(
+            context = ctx,
+            title = "Receive ${preview.received} item(s)?",
+            message = buildString {
+                append("Adds ${StockDao.trim(preview.totalQuantity)} in total to the stock ")
+                append("already on hand.")
+                problemText(preview)?.let { append("\n\n").append(it) }
+            },
+            positiveText = "Receive",
+            onConfirm = {
+                val result = StockBulkImporter.import(ctx, rows)
+                reload()
+                DialogUtils.showSuccess(
+                    context = ctx,
+                    title = "Stock received",
+                    message = "${result.received} item(s) received, " +
+                        "${StockDao.trim(result.totalQuantity)} in total."
+                )
+            }
+        )
+    }
+
+    /** The rows that will not import, named so they can be fixed in the sheet. */
+    private fun problemText(result: StockBulkImporter.Result): String? {
+        if (!result.hasProblems) return null
+        return buildString {
+            if (result.unknown.isNotEmpty()) {
+                append("Not on this till: ").append(result.unknown.take(5).joinToString(", "))
+                if (result.unknown.size > 5) append(" and ${result.unknown.size - 5} more")
+            }
+            if (result.invalid.isNotEmpty()) {
+                if (isNotEmpty()) append("\n")
+                append("Unreadable quantity: ").append(result.invalid.take(5).joinToString(", "))
+                if (result.invalid.size > 5) append(" and ${result.invalid.size - 5} more")
+            }
+        }
+    }
 
     // ---- Entry modal ---------------------------------------------------------
 

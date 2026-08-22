@@ -253,10 +253,12 @@ class ProductsFragment : DataTableFragment() {
 
         // The stock block shows whenever stock is tracked, but says different things
         // either side of an edit. Adding: the opening batch, which is what sets the
-        // count. Editing: what is on hand now, with the opening fields locked - the
-        // batch is already there with a stock history behind it, and re-opening it
-        // would silently rewrite a count that sales and deliveries have since moved.
-        // Stock is moved from the Stock In / Write Off screens instead.
+        // count. Editing: what is on hand now, an Add Stock box to receive more, and
+        // the opening figure locked - that batch is already there with a stock history
+        // behind it, and re-opening it would silently rewrite a count that sales and
+        // deliveries have since moved. Adding to the count is a different act, and it
+        // goes through the same receive() the Stock In screen uses, so it lands in the
+        // stock history as the delivery it is.
         val editing = productId != null
         val capturesOpeningStock = stockTracked && !editing
         view.findViewById<LinearLayout>(R.id.llStockDetails).visibility =
@@ -334,6 +336,24 @@ class ProductsFragment : DataTableFragment() {
                 tilOpening.error = null
             }
 
+            // Stock being received on this edit, checked before anything is written -
+            // the same rule the Stock In screen applies to a row: a quantity or
+            // nothing, and never a negative one.
+            val tilAdd = view.findViewById<TextInputLayout>(R.id.tilAddStock)
+            val addStockText = text(view, R.id.etAddStock)
+            val addStockQty = if (addStockText.isBlank()) 0.0 else addStockText.toDoubleOrNull()
+            if (editing && stockTracked) {
+                if (addStockQty == null) {
+                    tilAdd.error = "Enter a quantity, or leave it empty"
+                    return@setOnClickListener
+                }
+                if (addStockQty < 0.0) {
+                    tilAdd.error = "Stock can only be added here — use Write Off to take it off"
+                    return@setOnClickListener
+                }
+                tilAdd.error = null
+            }
+
             // Discount Type is required on any rate that carries a discount value.
             val ratesContainer = view.findViewById<LinearLayout>(R.id.llRates)
             for (i in 0 until ratesContainer.childCount) {
@@ -368,10 +388,26 @@ class ProductsFragment : DataTableFragment() {
                 rates = rateRows
             )
             saveProduct(productId, form, capturesOpeningStock)
+            // Received after the product is saved, and through the Stock In write
+            // itself: it joins the batch the product last moved in and leaves its own
+            // line in the stock history, exactly as a delivery booked from Stock In.
+            val received = addStockQty ?: 0.0
+            if (editing && stockTracked && received > 0.0) {
+                StockDao(context).receive(
+                    listOf(StockDao.Movement(productId!!.toInt(), received)),
+                    "Added from Edit Product"
+                )
+            }
             dialog.dismiss()
             dialogImageView = null
             refreshRows()
-            toast(if (productId == null) "Product added" else "Product updated")
+            toast(
+                when {
+                    productId == null -> "Product added"
+                    received > 0.0 -> "Product updated — ${StockDao.trim(received)} added to stock"
+                    else -> "Product updated"
+                }
+            )
         }
 
         // ----- Repeatable rate rows (Rate Name, Rate, Unit, CGST, IGST, VAT,

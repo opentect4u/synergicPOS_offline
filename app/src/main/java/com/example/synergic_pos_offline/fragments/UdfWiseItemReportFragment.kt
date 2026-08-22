@@ -16,6 +16,8 @@ import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.UdfWiseItemReportDao
 import com.example.synergic_pos_offline.utils.PrinterSetup
+import com.example.synergic_pos_offline.utils.ReportDownloads
+import com.example.synergic_pos_offline.utils.ReportExport
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.example.synergic_pos_offline.utils.UdfWiseItemReportRenderer
@@ -42,6 +44,9 @@ class UdfWiseItemReportFragment : Fragment(), TitledScreen {
     private lateinit var etFrom: TextInputEditText
     private lateinit var etTo: TextInputEditText
     private lateinit var btnPrint: MaterialButton
+
+    /** The PDF and Excel buttons beside Print - see [ReportDownloads]. */
+    private lateinit var downloads: ReportDownloads
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -71,6 +76,11 @@ class UdfWiseItemReportFragment : Fragment(), TitledScreen {
             setTextColor(accent)
             strokeColor = ColorStateList.valueOf(accent)
         }
+        // The same figures the screen is showing, as a file in Downloads. Built from
+        // the held report, so a download is what was generated.
+        downloads = ReportDownloads.wire(
+            view, requireContext(), accent, { if (isAdded) toast(it) }
+        ) { report?.let { sheetOf(it) } }
     }
 
     private fun generate() {
@@ -92,6 +102,7 @@ class UdfWiseItemReportFragment : Fragment(), TitledScreen {
         root.findViewById<View>(R.id.llReportEmpty).visibility = View.GONE
         root.findViewById<View>(R.id.llReportResult).visibility = View.VISIBLE
         btnPrint.isEnabled = true
+        downloads.setEnabled(true)
 
         root.findViewById<TextView>(R.id.tvReportPeriod).text =
             "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.groups.size} UDF(s)"
@@ -109,12 +120,35 @@ class UdfWiseItemReportFragment : Fragment(), TitledScreen {
         container.addView(spread("TOTAL QTY : ${qtyFmt(r.totalQty)}", "TOTAL AMT : ${money(r.totalAmount)}", bold = true))
     }
 
+    /**
+     * The screen as a downloadable table.
+     *
+     * On glass the items sit in bands under a UDF heading; in a file the heading
+     * becomes a column repeated down its rows. That is what makes the download useful
+     * - a spreadsheet can sort and total by a column, but not by a heading that only
+     * exists as a band of bold text.
+     */
+    private fun sheetOf(r: UdfWiseItemReportDao.Report) = ReportExport.Sheet(
+        title = screenTitle,
+        subtitle = "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.groups.size} UDF(s)",
+        columns = listOf("UDF NO", "NAME", "QTY", "AMOUNT"),
+        alignEnd = listOf(false, false, true, true),
+        rows = r.groups.flatMap { g ->
+            g.items.map { listOf(g.udf, it.name, qtyFmt(it.qty), money(it.amount)) }
+        },
+        summary = listOf(
+            "Total Qty" to qtyFmt(r.totalQty),
+            "Total Amount" to money(r.totalAmount)
+        )
+    )
+
     private fun showEmpty(title: String, hint: String) {
         root.findViewById<View>(R.id.llReportResult).visibility = View.GONE
         root.findViewById<View>(R.id.llReportEmpty).visibility = View.VISIBLE
         root.findViewById<TextView>(R.id.tvReportEmptyTitle).text = title
         root.findViewById<TextView>(R.id.tvReportEmptyHint).text = hint
         btnPrint.isEnabled = false
+        downloads.setEnabled(false)
     }
 
     private fun printReport(r: UdfWiseItemReportDao.Report) {

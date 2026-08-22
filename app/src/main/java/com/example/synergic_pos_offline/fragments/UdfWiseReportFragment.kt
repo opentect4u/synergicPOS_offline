@@ -19,6 +19,8 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.UdfWiseReportDao
 import com.example.synergic_pos_offline.utils.PeriodReportPrinter
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
+import com.example.synergic_pos_offline.utils.ReportDownloads
+import com.example.synergic_pos_offline.utils.ReportExport
 import com.example.synergic_pos_offline.utils.ReportTable
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
@@ -44,6 +46,9 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
     private lateinit var etFrom: TextInputEditText
     private lateinit var etTo: TextInputEditText
     private lateinit var btnPrint: MaterialButton
+
+    /** The PDF and Excel buttons beside Print - see [ReportDownloads]. */
+    private lateinit var downloads: ReportDownloads
 
     private var columnPx: IntArray = IntArray(0)
 
@@ -81,6 +86,11 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
             setTextColor(accent)
             strokeColor = ColorStateList.valueOf(accent)
         }
+        // The same figures the screen is showing, as a file in Downloads. Built from
+        // the held report, so a download is what was generated.
+        downloads = ReportDownloads.wire(
+            view, requireContext(), accent, { if (isAdded) toast(it) }
+        ) { report?.let { sheetOf(it) } }
     }
 
     // ---- Generating ----------------------------------------------------------
@@ -107,6 +117,7 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
         root.findViewById<View>(R.id.llReportEmpty).visibility = View.GONE
         root.findViewById<View>(R.id.llReportResult).visibility = View.VISIBLE
         btnPrint.isEnabled = true
+        downloads.setEnabled(true)
 
         root.findViewById<TextView>(R.id.tvReportPeriod).text =
             "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.rows.size} group(s)"
@@ -145,12 +156,31 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
         summary.addView(summaryRow("Bill Amount", money(r.totalBillAmount), emphasised = true))
     }
 
+    /** The screen as a downloadable table: the columns and rows it is drawing. */
+    private fun sheetOf(r: UdfWiseReportDao.Report) = ReportExport.Sheet(
+        title = screenTitle,
+        subtitle = "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.rows.size} group(s)",
+        columns = COLUMNS.map { it.label },
+        alignEnd = COLUMNS.map { it.alignEnd },
+        rows = r.rows.map {
+            listOf(it.udf, it.bills.toString(), money(it.taxAmount), money(it.discount), money(it.billAmount))
+        },
+        summary = listOf(
+            "Total Groups" to r.rows.size.toString(),
+            "Total Bills" to r.totalBills.toString(),
+            "Tax Amount" to money(r.totalTax),
+            "Discount Amount" to money(r.totalDiscount),
+            "Bill Amount" to money(r.totalBillAmount)
+        )
+    )
+
     private fun showEmpty(title: String, hint: String) {
         root.findViewById<View>(R.id.llReportResult).visibility = View.GONE
         root.findViewById<View>(R.id.llReportEmpty).visibility = View.VISIBLE
         root.findViewById<TextView>(R.id.tvReportEmptyTitle).text = title
         root.findViewById<TextView>(R.id.tvReportEmptyHint).text = hint
         btnPrint.isEnabled = false
+        downloads.setEnabled(false)
     }
 
     // ---- Print ---------------------------------------------------------------
