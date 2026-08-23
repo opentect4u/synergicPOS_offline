@@ -328,8 +328,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
         }
 
-        // When checkout confirms payment, settle the table: close it (in DB too),
-        // then print the receipt with a preview — the same as the grocery bill flow.
+        // When checkout confirms payment, settle the table: save the bill and close it
+        // (in the DB too). No receipt is printed here - see [settlePaidOrder].
         parentFragmentManager.setFragmentResultListener(
             RestaurantCheckoutFragment.RESULT_PAID, viewLifecycleOwner
         ) { _, bundle ->
@@ -355,8 +355,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
             val payMethod = bundle.getString(RestaurantCheckoutFragment.ARG_PAY_METHOD).orEmpty()
             val tendered = bundle.getDouble(RestaurantCheckoutFragment.ARG_TENDERED, 0.0)
-            // Persists the bill, closes & frees the table(s), refreshes the list, and
-            // prints the paid receipt (with the payment mode).
+            // Persists the bill (with the payment mode), closes & frees the table(s)
+            // and refreshes the list. Nothing is printed.
             settlePaidOrder(order, payMethod, tendered)
             // Grid product counts have moved after the sale.
             loadProductsFromDb()
@@ -577,6 +577,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             text = if (expanded) "Hide note & tax details" else "Note & tax details"
             setIconResource(if (expanded) R.drawable.ic_expand_more else R.drawable.ic_expand_less)
         }
+        // The handle carries the Total only while the fold is shut. Open, the full
+        // Total row is showing a few lines below it, and the same number twice - one
+        // above the other - reads as two figures to reconcile rather than one to read.
+        root.findViewById<TextView>(R.id.tvTotalBar).visibility =
+            if (expanded) View.GONE else View.VISIBLE
     }
 
     /**
@@ -696,6 +701,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvCgst).text = zero
         root.findViewById<TextView>(R.id.tvSgst).text = zero
         root.findViewById<TextView>(R.id.tvOrderTotal).text = zero
+        root.findViewById<TextView>(R.id.tvTotalBar).text = zero
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).text =
             "Checkout  ( $zero )"
     }
@@ -739,6 +745,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.badgeActive).backgroundTintList = ColorStateList.valueOf(accent)
         root.findViewById<TextView>(R.id.tvDetailTable).setTextColor(accent)
         root.findViewById<TextView>(R.id.tvOrderTotal).setTextColor(accent)
+        root.findViewById<TextView>(R.id.tvTotalBar).setTextColor(accent)
         root.findViewById<TextView>(R.id.tvDetailCustomer).apply {
             setTextColor(accent)
             backgroundTintList = ColorStateList.valueOf(ColorUtils.setAlphaComponent(accent, 0x14))
@@ -1456,8 +1463,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val emptyNote = v.findViewById<TextView>(R.id.tvNoTables)
 
         val tables = loadTables()
-        val catNames = listOf("All") + loadSectionNames()
-        var selectedCat = "All"
+        // The rooms themselves, and nothing else: AC, Non AC, Terrace. There is no
+        // All chip - a floor plan is read one room at a time, because that is how a
+        // room is stood in, and "every table in the building at once" is a view of
+        // the plan nobody serves from. It also cost the grid its shape: eight cards
+        // to a row lays out AS the room only while the row belongs to one.
+        val catNames = loadSectionNames().distinct()
+        var selectedCat = catNames.firstOrNull().orEmpty()
         var query = ""
 
         val adapter = TableAdapter(accent) { t ->
@@ -1491,19 +1503,30 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         fun refresh() {
             val q = query.trim().lowercase()
+            // A search reaches the whole floor, not the open room. With no All chip
+            // left to fall back to, a search bounded by one section would come back
+            // empty for a table the operator knows is there - just in the next room -
+            // and there would be no way to widen it. So typing lifts the section, and
+            // the cards name their room while it does; clearing it drops back to the
+            // room whose chip is lit.
+            val searching = q.isNotEmpty()
             val shown = tables.filter {
-                (selectedCat == "All" || it.section == selectedCat) &&
-                    (q.isEmpty() || it.code.lowercase().contains(q) || it.section.lowercase().contains(q))
+                (searching || catNames.isEmpty() || it.section == selectedCat) &&
+                    (!searching || it.code.lowercase().contains(q) || it.section.lowercase().contains(q))
             }
-            adapter.submit(shown, showSection = selectedCat == "All")
+            adapter.submit(shown, showSection = searching)
             emptyNote.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
             rv.visibility = if (shown.isEmpty()) View.GONE else View.VISIBLE
             fillTableCounts(counts, shown)
         }
 
-        // Sections read as chips across the top - the categories of this grid.
+        // Sections read as chips across the top - the categories of this grid. A store
+        // with none set up gets no strip at all, rather than an empty band of padding
+        // above the grid.
+        v.findViewById<View>(R.id.svTableSections).visibility =
+            if (catNames.isEmpty()) View.GONE else View.VISIBLE
         val tabViews = linkedMapOf<String, TextView>()
-        catNames.distinct().forEach { c ->
+        catNames.forEach { c ->
             val tv = TextView(ctx).apply {
                 text = c
                 textSize = 16f
@@ -1585,7 +1608,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * 'Billing' is the app's name for a table that has been billed and is waiting to
      * pay, which reads as Bill Pending on the floor plan.
      */
-    private data class StatusLook(val label: String, val color: Int, val fill: Int)
+    private data class StatusLook(val label: String, val color: Int)
 
     /**
      * Where [tableCode]'s order stands with the kitchen, or null when it has no order
@@ -1595,12 +1618,27 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * `pending` is the quantity on a line that has not gone to the kitchen yet, which
      * is the same figure Print KOT acts on, so the card and that button agree.
      */
+    /**
+     * How much of [tableCode]'s order has already gone to the kitchen - the quantity,
+     * summed across its lines, not the number of lines.
+     *
+     * Quantity is what a kitchen and a floor both count in: two of one dish is two
+     * plates to cook and two to carry, and a card reading "1" for them would be
+     * counting something nobody in the building counts.
+     *
+     * Read from `kotQty` - the part of a line that has been sent - which is the same
+     * figure [kotLookOf] reads `pending` against, so the count and the bar under it
+     * can never disagree about the same order.
+     */
+    private fun kotSentQty(tableCode: String, section: String): Double =
+        orderFor(tableCode, section)?.items?.sumOf { it.kotQty } ?: 0.0
+
     private fun kotLookOf(tableCode: String, section: String): StatusLook? {
         val order = orderFor(tableCode, section) ?: return null
         if (order.items.isEmpty()) return null
         return if (order.items.any { it.pending > 0.0 })
-            StatusLook("KOT Pending", 0xFF7C3AED.toInt(), 0xFFF3E8FF.toInt())
-        else StatusLook("KOT Sent", 0xFF0D9488.toInt(), 0xFFE6F6F4.toInt())
+            StatusLook("KOT Pending", 0xFF7C3AED.toInt())
+        else StatusLook("KOT Sent", 0xFF0D9488.toInt())
     }
 
     /**
@@ -1619,7 +1657,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val boxes = mutableListOf<Triple<String, Int, Int>>()   // label, count, colour
         boxes.add(Triple("Total Tables", shown.size, 0xFF334155.toInt()))
         // In the order the legend lists them, so the two read the same way round.
-        listOf("Available", "Occupied", "Reserved", "Bill Pending").forEach { label ->
+        // Reserved is not among them, and is not in the legend either: no table can
+        // be set to it any more (see TableFragment's status list).
+        listOf("Available", "Occupied", "Bill Pending").forEach { label ->
             val n = shown.count { lookOf(it.status).label == label }
             if (n > 0) boxes.add(Triple(label, n, lookOf(statusFor(label)).color))
         }
@@ -1654,23 +1694,40 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
     }
 
+    /**
+     * The same colour taken down towards black, for the border of a card filled with
+     * it. Blended rather than listed as a seventh palette entry per status: it is the
+     * one colour that is only ever an edge, and a table of hand-picked shades is a
+     * table to keep in step every time a status colour moves.
+     */
+    private fun darken(color: Int, factor: Float = 0.72f): Int =
+        ColorUtils.blendARGB(color, Color.BLACK, 1f - factor)
+
+    /** The same colour lifted towards white - the top of a card's gradient. */
+    private fun lighten(color: Int, amount: Float = 0.13f): Int =
+        ColorUtils.blendARGB(color, Color.WHITE, amount)
+
     /** The stored status behind a label the strip shows - the inverse of [lookOf]. */
     private fun statusFor(label: String): String =
         if (label == "Bill Pending") "Billing" else label
 
     private fun lookOf(status: String): StatusLook = when (status.trim().lowercase()) {
-        "", "available" -> StatusLook("Available", 0xFF16A34A.toInt(), 0xFFE7F8EE.toInt())
-        "occupied" -> StatusLook("Occupied", 0xFFDC2626.toInt(), 0xFFFDECEC.toInt())
+        "", "available" -> StatusLook("Available", 0xFF16A34A.toInt())
+        "occupied" -> StatusLook("Occupied", 0xFFDC2626.toInt())
         // Written by older builds when a KOT was sent. The table was in use then and is
         // in use now, so it reads as occupied rather than as anything of its own.
-        "kot printed" -> StatusLook("Occupied", 0xFFDC2626.toInt(), 0xFFFDECEC.toInt())
-        "reserved" -> StatusLook("Reserved", 0xFFF59E0B.toInt(), 0xFFFEF6E0.toInt())
-        "billing" -> StatusLook("Bill Pending", 0xFF2563EB.toInt(), 0xFFE7F0FE.toInt())
-        "cleaning" -> StatusLook("Cleaning", 0xFF0891B2.toInt(), 0xFFE6F6FA.toInt())
-        "blocked" -> StatusLook("Blocked", 0xFF6B7280.toInt(), 0xFFF1F3F5.toInt())
+        "kot printed" -> StatusLook("Occupied", 0xFFDC2626.toInt())
+        // Kept for a table an older build left Reserved, though nothing sets it now
+        // and neither the tally nor the legend carries it. Reading it back honestly
+        // is still better than showing a table that was held as one that is free;
+        // editing its section in the Table master settles it to Available.
+        "reserved" -> StatusLook("Reserved", 0xFFF59E0B.toInt())
+        "billing" -> StatusLook("Bill Pending", 0xFF2563EB.toInt())
+        "cleaning" -> StatusLook("Cleaning", 0xFF0891B2.toInt())
+        "blocked" -> StatusLook("Blocked", 0xFF6B7280.toInt())
         // Never fall back to Available: a status this does not know is still not proof
         // the table is free, and showing a taken table as free is the costly mistake.
-        else -> StatusLook(status, 0xFF6B7280.toInt(), 0xFFF1F3F5.toInt())
+        else -> StatusLook(status, 0xFF6B7280.toInt())
     }
 
     /** Every active section name for the Choose Table tabs. */
@@ -1738,48 +1795,89 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             VH(LayoutInflater.from(parent.context).inflate(R.layout.item_table_tile, parent, false))
         override fun onBindViewHolder(holder: VH, position: Int) {
             val t = items[position]
-            // One colour drives the whole card - wash, border, icon and label - so the
-            // floor reads by colour alone; the legend under the grid keys them.
-            val look = lookOf(t.status)
+            // One colour drives the whole card, and the kitchen is part of it.
+            //
+            // A table's own status only knows it is taken; where its order stands with
+            // the kitchen is the next step along the same line, so it refines the fill
+            // rather than sitting beside it - Occupied becomes purple while something
+            // is still waiting to go, teal once it has all gone.
+            //
+            // Only Occupied gives way. Available has no order to have sent, and the
+            // states after service - Bill Pending, Cleaning, Blocked - have moved past
+            // the kitchen: a billed table showing teal would be reporting a stage it
+            // has already left, and Bill Pending is the thing the floor needs to see.
+            val base = lookOf(t.status)
+            val look = if (base.label == "Occupied") kotLookOf(t.code, t.section) ?: base else base
 
+            // The card IS the status: filled with the colour outright, edged in a
+            // darker cut of the same so it still has a shape against the white sheet
+            // behind it. A pale wash of the colour read as decoration; a solid one
+            // reads as the floor, from further away and at a glance.
+            //
+            // The edge is only a shade down (0.88) rather than the cut the border used
+            // to take. At 1dp on a raised card it is there to stop the fill bleeding
+            // into the sheet, not to draw a frame around it - a dark line that reads as
+            // a frame turns a floor of cards into a floor of boxes.
             (holder.itemView as com.google.android.material.card.MaterialCardView).apply {
-                setCardBackgroundColor(look.fill)
-                strokeColor = look.color
+                setCardBackgroundColor(look.color)
+                strokeColor = darken(look.color, 0.88f)
             }
+            // The fill is laid on the body rather than the card, as a gradient: a
+            // shade up at the top, a shade down at the foot. The range is deliberately
+            // narrow - the card has to stay one colour to the legend, and a wide ramp
+            // would make green-on-top read as a different key from green-at-the-foot -
+            // but it is enough to give the card a body instead of a flat rectangle.
+            //
+            // The drawable carries the card's own corner radius as well as the colour.
+            // The card would clip it to that shape anyway; matching it here means the
+            // corners are right whether the clip happens or not.
+            holder.itemView.findViewById<LinearLayout>(R.id.llTableBody).background =
+                android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                    intArrayOf(lighten(look.color, 0.13f), darken(look.color, 0.90f))
+                ).apply { cornerRadius = dp(16).toFloat() }
             // The number alone, set large - the card is already labelled "table" by
             // being on this grid. A coded one (a take-away token, a split part like
             // "5 A") is already a name, so it stands as it is, a size down to fit.
             holder.itemView.findViewById<TextView>(R.id.tvTableCode).apply {
                 val numbered = t.code.all { it.isDigit() }
                 text = t.code
-                textSize = if (numbered) 23f else 17f
-                setTextColor(look.color)
+                textSize = if (numbered) 30f else 20f
+                setTextColor(Color.WHITE)
             }
-            // Which room, and how many seats. The room shows while the grid is on All:
-            // table numbers restart in every section, so two cards can both say "1" and
-            // the line under the number is what tells them apart.
+            // Which room, and how many seats. The room shows while a search is crossing
+            // rooms: table numbers restart in every section, so two cards can both say
+            // "1" and the line under the number is what tells them apart.
+            //
+            // INVISIBLE when there is nothing to say, never GONE. A card that collapses
+            // this line is shorter than the card beside it, and a row of eight that
+            // steps up and down reads as if the steps meant something.
             holder.itemView.findViewById<TextView>(R.id.tvTableSeats).apply {
                 val bits = mutableListOf<String>()
                 if (showSection && t.section.isNotBlank()) bits.add(t.section)
                 if (t.capacity > 0) bits.add("${t.capacity} seats")
                 text = bits.joinToString("  ·  ")
-                visibility = if (bits.isEmpty()) View.GONE else View.VISIBLE
+                visibility = if (bits.isEmpty()) View.INVISIBLE else View.VISIBLE
+                setTextColor(ColorUtils.setAlphaComponent(Color.WHITE, 0xB3))
             }
+            // Tinted white and held back by the layout's own alpha - see the note on
+            // it there: out at the corner it says "table" at a distance, and the
+            // number in the body says which.
             holder.itemView.findViewById<android.widget.ImageView>(R.id.ivTableIcon)
-                .imageTintList = ColorStateList.valueOf(look.color)
-            holder.itemView.findViewById<TextView>(R.id.tvTableStatus).apply {
-                text = look.label
-                backgroundTintList = ColorStateList.valueOf(look.color)
-            }
-            // KOT badge: only for a table that actually has an order to send. Filled
-            // like the status pill rather than coloured text - small coloured type on a
-            // tinted card washes out, and this is the line a waiter checks at a glance.
-            holder.itemView.findViewById<TextView>(R.id.tvTableKot).apply {
-                val kot = kotLookOf(t.code, t.section)
-                if (kot == null) visibility = View.GONE
+                .imageTintList = ColorStateList.valueOf(Color.WHITE)
+            // Nothing on the card spells the status out: [look] IS the card, kitchen
+            // and all, and the legend under the grid keys it.
+            //
+            // What a fill cannot give is a number, so the count of what has gone to the
+            // kitchen stays. Its digits take the card's own colour a shade down rather
+            // than a fixed teal: on a white pill that reads against every fill, and it
+            // ties the count to the card it is counting for.
+            holder.itemView.findViewById<TextView>(R.id.tvKotCount).apply {
+                val sent = kotSentQty(t.code, t.section)
+                setTextColor(darken(look.color, 0.85f))
+                if (sent <= 0.0) visibility = View.GONE
                 else {
-                    text = kot.label
-                    backgroundTintList = ColorStateList.valueOf(kot.color)
+                    text = qtyText(sent)
                     visibility = View.VISIBLE
                 }
             }
@@ -2374,13 +2472,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /**
      * Payment confirmed (Bill & Pay ▸ Confirm): settle the order — save the bill,
-     * close & remove it, then print the paid receipt. For TAKE AWAY only, the KOT is
-     * also cut and printed here, so Confirm fires two prints (KOT + paid bill).
-     * Dine-in prints only the receipt (its KOT was sent during the order).
+     * close & remove it, free the table. NO BILL IS PRINTED here; see the note at the
+     * foot of this function for why. The one thing that still goes to paper is a TAKE
+     * AWAY order's KOT, which has had no other chance to be sent.
      */
     private fun settlePaidOrder(order: OrderCard, payMethod: String, tendered: Double = 0.0) {
         // Take Away sends no KOT during the order — cut & print it now, before the
-        // order is closed, so payment prints both the KOT and the paid bill together.
+        // order is closed, or the kitchen never hears about it. This is a KITCHEN
+        // ticket, not the bill: it is what the food is cooked from.
         if (order.type.equals("Take Away", ignoreCase = true)) printTakeAwayKot(order)
         val saved = persistBill(order, payMethod, tendered)  // save to td_bills / td_bill_items / td_payments
         val mergedTables = roDao.mergedTablesOf(order.dbId)
@@ -2395,27 +2494,27 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             populateOrders(root, ThemeManager.getThemeColor(requireContext()))
             clearDetail(root)
         }
-        // Then the receipt: resolve the BILL printer and print like the grocery flow.
         val billNo = saved?.billNumber
             ?: com.example.synergic_pos_offline.database.BillDao(requireContext()).lastBillNumber().orEmpty()
-        // Prints the paid receipt, re-resolving the bill printer each time so the
-        // Reprint button on the completion popup works exactly the same way.
-        val printPaidReceipt: () -> Unit = {
-            val billPrinters = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
-                .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
-            val default = billPrinters.firstOrNull { it.isDefault }
-            when {
-                billPrinters.isEmpty() ->
-                    toast("Paid — no bill printer set up to print the receipt")
-                default != null -> printGroceryStyleBill(order, default, billNo, payMethod, tendered)
-                else -> showPrinterChooser(billPrinters, "Select bill printer") {
-                    printGroceryStyleBill(order, it, billNo, payMethod, tendered)
-                }
-            }
-        }
-        printPaidReceipt()
-        // No completion popup: the order is already settled and the Orders (sale) screen
-        // was refreshed above, so just confirm with a toast.
+        // Confirm Payment settles and saves; it does not print.
+        //
+        // In a restaurant the bill is printed BEFORE it is paid - it goes to the table,
+        // the guest reads it and then hands over cash or a card - so by the time this
+        // runs the customer has had their copy from Print Bill. Printing again on
+        // confirm produced a second slip nobody had asked for, and it came out after
+        // the guest had already been given one, which is the worst moment for a till
+        // to hand over a duplicate of a bill.
+        //
+        // So payment records payment: persistBill above has written td_bills, its
+        // items and td_payments, the table is freed, and that is the whole act. The
+        // paper is Print Bill's job, and it is still one button away for a reprint.
+        //
+        // Take Away is the exception handled at the top of this function: it sends no
+        // KOT while the order is taken, so its KITCHEN ticket - not its bill - still
+        // has to be cut here, or the kitchen never learns of the order at all.
+        //
+        // No completion popup either: the order is already settled and the Orders
+        // (sale) screen was refreshed above, so just confirm with a toast.
         toast(if (billNo.isNotBlank()) "Bill No: $billNo — payment complete" else "Payment complete")
     }
 
@@ -2494,6 +2593,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(b.cgst)}"
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(b.sgst)}"
         root.findViewById<TextView>(R.id.tvOrderTotal).text = "₹ ${money(b.total)}"
+        // The same figure on the fold's handle, for while the fold is shut.
+        root.findViewById<TextView>(R.id.tvTotalBar).text = "₹ ${money(b.total)}"
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).text =
             "Checkout  ( ₹ ${money(b.total)} )"
         // Reflect the running total on the active order card. Only that one figure

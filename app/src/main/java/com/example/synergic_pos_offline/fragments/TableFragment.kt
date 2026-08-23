@@ -35,7 +35,20 @@ class TableFragment : DataTableFragment() {
     private var sections: List<TableDao.SectionOption> = emptyList()
     private var waiterNames: Map<Long, String> = emptyMap()
 
-    private val statuses = listOf("Available", "Occupied", "KOT Printed", "Reserved", "Cleaning", "Billing", "Blocked")
+    /**
+     * The statuses a table can be set to here.
+     *
+     * "Reserved" is deliberately not among them. The schema still allows it - it is
+     * one of the values md_table.table_status checks against, and the floor plan
+     * still knows how to colour one - but nothing in the app books a table ahead, so
+     * offering it only lets a table be parked in a state the service flow never
+     * clears. A table taken by a booking is Occupied like any other.
+     *
+     * A table left Reserved by an older build reads back as Available below, the way
+     * any status this list does not carry does, and is saved as Available the next
+     * time its section is edited.
+     */
+    private val statuses = listOf("Available", "Occupied", "KOT Printed", "Cleaning", "Billing", "Blocked")
 
     override fun loadRows(): MutableList<DataRow> {
         cache.clear()

@@ -304,20 +304,13 @@
                 android:paddingHorizontal="22dp"
                 android:paddingBottom="12dp">
 
-                <!-- No Add Item button: the product grid below this adds items directly. -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnPrintKot"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:paddingHorizontal="12dp"
-                    android:maxLines="1"
-                    android:textSize="12.5sp"
-                    android:letterSpacing="0"
-                    android:text="Print KOT"
-                    app:cornerRadius="10dp" />
+                <!-- No Add Item button: the product grid below this adds items directly.
+                     No Print KOT either - it moved down to the foot of the panel, next
+                     to Print Bill: the two of them are the same act at two moments,
+                     sending the order to the kitchen and then to the customer, and they
+                     belong together at the end of the panel rather than one at each end
+                     of it. What is left here is what the TABLE is, not what the order
+                     does. -->
 
                 <!-- Transfer, Merge, Split and Cancel Order live in here. -->
                 <com.google.android.material.button.MaterialButton
@@ -325,7 +318,6 @@
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="wrap_content"
                     android:layout_height="38dp"
-                    android:layout_marginStart="8dp"
                     android:insetTop="0dp"
                     android:insetBottom="0dp"
                     android:paddingHorizontal="12dp"
@@ -581,26 +573,90 @@
                                 <TextView android:id="@+id/tvSgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                             </LinearLayout>
                         </LinearLayout>
+
+                        <!-- The Total closes the breakdown it is the sum of, which is
+                             where it belongs and where it costs the items list nothing
+                             while folded. The figure itself never leaves the screen -
+                             it is repeated on the bar below, which is always up. -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:paddingHorizontal="20dp"
+                            android:paddingTop="10dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Total"
+                                android:textSize="22sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/text_main" />
+
+                            <TextView
+                                android:id="@+id/tvOrderTotal"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="₹ 0.00"
+                                android:textSize="24sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/primary_blue" />
+                        </LinearLayout>
                     </LinearLayout>
 
-                    <!-- The handle: says what is folded away and pulls it up. -->
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnToggleSummary"
-                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                    <!-- The handle: says what is folded away, pulls it up, and carries
+                         the Total while it is down.
+
+                         The Total moved into the fold to give the items list its height
+                         back, but an order's amount is the one figure the counter reads
+                         off this panel continuously - folding it away would have bought
+                         the space with the number the screen is for. So it is echoed
+                         here, in the row that was already on screen, at no height at
+                         all: the bar was 38dp before and is 38dp now. -->
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="38dp"
                         android:layout_marginHorizontal="14dp"
                         android:layout_marginTop="4dp"
-                        android:insetTop="0dp"
-                        android:insetBottom="0dp"
-                        android:minHeight="0dp"
-                        android:text="Note &amp; tax details"
-                        android:textSize="12.5sp"
-                        android:textAllCaps="false"
-                        app:icon="@drawable/ic_expand_less"
-                        app:iconGravity="textStart"
-                        app:iconSize="18dp"
-                        app:cornerRadius="8dp" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:baselineAligned="false">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnToggleSummary"
+                            style="@style/Widget.MaterialComponents.Button.TextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="1"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:minHeight="0dp"
+                            android:paddingHorizontal="8dp"
+                            android:text="Note &amp; tax details"
+                            android:textSize="12.5sp"
+                            android:textAllCaps="false"
+                            app:icon="@drawable/ic_expand_less"
+                            app:iconGravity="textStart"
+                            app:iconSize="18dp"
+                            app:cornerRadius="8dp" />
+
+                        <!-- Gone while the fold is open, where the full Total row is
+                             showing four lines below it - the same number twice, one
+                             above the other, reads as two figures to reconcile. -->
+                        <TextView
+                            android:id="@+id/tvTotalBar"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:layout_marginEnd="6dp"
+                            android:maxLines="1"
+                            android:text="₹ 0.00"
+                            android:textSize="18sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/primary_blue" />
+                    </LinearLayout>
 
                     <View
                         android:layout_width="match_parent"
@@ -611,45 +667,50 @@
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:paddingHorizontal="20dp"
-                        android:paddingTop="12dp">
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="Total"
-                            android:textSize="22sp"
-                            android:textStyle="bold"
-                            android:textColor="@color/text_main" />
-
-                        <TextView
-                            android:id="@+id/tvOrderTotal"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="₹ 0.00"
-                            android:textSize="24sp"
-                            android:textStyle="bold"
-                            android:textColor="@color/primary_blue" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
                         android:orientation="vertical"
                         android:padding="18dp">
 
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnBillPrint"
-                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        <!-- The two prints, side by side and equally weighted: the same
+                             act at two moments - the order to the kitchen, then to the
+                             customer - and an order passes through them in that order,
+                             left to right. Sharing one row costs no height over the
+                             single Print Bill that used to sit here. -->
+                        <LinearLayout
                             android:layout_width="match_parent"
-                            android:layout_height="48dp"
-                            android:insetTop="0dp"
-                            android:insetBottom="0dp"
-                            android:text="Print Bill"
-                            app:cornerRadius="12dp" />
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:baselineAligned="false">
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnPrintKot"
+                                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                                android:layout_width="0dp"
+                                android:layout_height="48dp"
+                                android:layout_weight="1"
+                                android:layout_marginEnd="5dp"
+                                android:insetTop="0dp"
+                                android:insetBottom="0dp"
+                                android:paddingHorizontal="4dp"
+                                android:maxLines="1"
+                                android:letterSpacing="0"
+                                android:text="Print KOT"
+                                app:cornerRadius="12dp" />
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnBillPrint"
+                                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                                android:layout_width="0dp"
+                                android:layout_height="48dp"
+                                android:layout_weight="1"
+                                android:layout_marginStart="5dp"
+                                android:insetTop="0dp"
+                                android:insetBottom="0dp"
+                                android:paddingHorizontal="4dp"
+                                android:maxLines="1"
+                                android:letterSpacing="0"
+                                android:text="Print Bill"
+                                app:cornerRadius="12dp" />
+                        </LinearLayout>
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnBillPay"

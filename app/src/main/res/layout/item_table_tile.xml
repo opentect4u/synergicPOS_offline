@@ -1,51 +1,83 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <!--
   One table on the Choose Table grid.
 
-  A floor plan is read by number first - "who is on 7?" - so the number is the card,
-  set large and in the status colour, with the seats under it and the status spelled
-  out on a pill at the foot. The status also tints the card and its border, so a
-  section can be taken in at a glance without reading a word of it.
+  A floor plan is read by number first - "who is on 7?" - so the number is the card:
+  set large, in white, alone in the middle of it, with the marks that qualify it
+  pushed out to the corners where they cannot crowd it. The icon takes the top left
+  and the kitchen count the top right, which gives the card a header line and gives
+  the number the whole body.
+
+  THE FILL IS THE WHOLE STATE, kitchen included. A table does not stop being occupied
+  when its order goes to the kitchen; it moves along - seated, ordered, sent, billed -
+  and that is one line of progress, not two facts to show side by side. So the fill
+  carries all of it:
+
+      green   free
+      red     seated, nothing ordered yet
+      purple  ordered, still waiting to go to the kitchen
+      teal    sent to the kitchen
+      blue    billed, waiting to pay
+
+  which is a floor that can be read across the room in one sweep. A marker beside the
+  fill could only ever say the same thing again, smaller. It is a solid fill and not a
+  pale tint of one for the same reason: a room of green and red carries across a
+  counter and reads from standing height, which a room of pastels does not.
+
+  The fill is laid on as a gradient, a shade up at the top and a shade down at the
+  foot - a narrow enough range that the colour still reads as one colour and the
+  legend still keys it, wide enough that the card has a body instead of looking like
+  a rectangle of paint. Built in TableAdapter, where the colour is known.
+
+  Which is also why there is almost no lettering on it. A card that says OCCUPIED in
+  9.5sp on a red field is saying, in the smallest type on the screen, what the field
+  already said across the room; the legend under the grid is where a colour is keyed,
+  once, for the whole floor. So the card carries the number, the one count a colour
+  cannot give, and colour carries the rest.
+
+  EVERY CARD IS THE SAME HEIGHT, and that is what makes the grid read as a room
+  rather than as a list. The seats line holds its space when it has nothing to say
+  rather than collapsing it, and the body it sits in has a floor under it (minHeight).
+  Otherwise a row of eight would step up and down with whatever each table happened to
+  have on it, and the eye would read the ragged edge as meaning.
 
   Sized for eight to a row on a full-screen picker: a whole section fits on screen and
-  the grid reads as the room rather than as a list. Eight across leaves each card about
-  100-150dp wide, so the number, the seats and the status pills are set to fit that
-  without wrapping. Filled in TableAdapter.
+  the grid reads as the room. Eight across leaves each card about 100-150dp wide, so
+  the number and the corner count are set to fit that without wrapping. Filled in
+  TableAdapter.
 -->
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/cardTableTile"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="4dp"
-    app:cardCornerRadius="12dp"
-    app:cardElevation="0dp"
-    app:cardBackgroundColor="#E7F8EE"
-    app:strokeWidth="1.5dp"
-    app:strokeColor="#16A34A"
+    android:layout_margin="5dp"
+    app:cardCornerRadius="16dp"
+    app:cardElevation="2dp"
+    app:cardBackgroundColor="#16A34A"
+    app:strokeWidth="1dp"
+    app:strokeColor="#128A3D"
     android:clickable="true"
     android:focusable="true"
-    app:rippleColor="#15000000">
+    app:rippleColor="#33FFFFFF">
 
+    <!-- The body carries the gradient and holds the card's height. Padded clear of
+         the header marks at the top so the number is centred in the room left under
+         them rather than colliding with them. -->
     <LinearLayout
+        android:id="@+id/llTableBody"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:minHeight="96dp"
         android:orientation="vertical"
         android:gravity="center"
-        android:paddingHorizontal="4dp"
-        android:paddingTop="10dp"
-        android:paddingBottom="9dp">
+        android:paddingHorizontal="6dp"
+        android:paddingTop="30dp"
+        android:paddingBottom="14dp">
 
-        <ImageView
-            android:id="@+id/ivTableIcon"
-            android:layout_width="17dp"
-            android:layout_height="17dp"
-            android:layout_marginBottom="2dp"
-            android:src="@drawable/ic_table"
-            app:tint="#16A34A"
-            android:contentDescription="Table" />
-
-        <!-- The table's number, the thing the card is actually for -->
+        <!-- The table's number, the thing the card is actually for. Tracked slightly
+             tight: at this size the default spacing leaves a two-digit number looking
+             like two separate figures. -->
         <TextView
             android:id="@+id/tvTableCode"
             android:layout_width="match_parent"
@@ -54,60 +86,79 @@
             android:maxLines="1"
             android:ellipsize="end"
             android:text="5"
-            android:textSize="23sp"
+            android:textSize="30sp"
             android:textStyle="bold"
-            android:textColor="#16A34A" />
+            android:letterSpacing="-0.02"
+            android:includeFontPadding="false"
+            android:textColor="#FFFFFF" />
 
-        <!-- Seats, when the table master says how many. Muted: it settles a choice
-             between two free tables, it is not what the card is read for. -->
+        <!-- Seats, and the room while a search is crossing rooms. Set small, tracked
+             wide and in caps: at 9.5sp that reads as a caption belonging to the number
+             above it, where the same words at reading weight would compete with it.
+             INVISIBLE, not GONE - see the note at the top about even heights. -->
         <TextView
             android:id="@+id/tvTableSeats"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="1dp"
-            android:gravity="center"
-            android:maxLines="1"
-            android:text="4 seats"
-            android:textSize="11sp"
-            android:textColor="@color/text_secondary"
-            android:visibility="gone" />
-
-        <TextView
-            android:id="@+id/tvTableStatus"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:paddingHorizontal="6dp"
-            android:paddingVertical="3dp"
-            android:background="@drawable/bg_status_tag"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:text="Available"
-            android:textSize="9.5sp"
-            android:textStyle="bold"
-            android:textAllCaps="true"
-            android:letterSpacing="0.04"
-            android:textColor="@color/white" />
-
-        <!-- Where this table's order stands with the kitchen. Gone for a table with no
-             order on it, which has nothing to have sent. -->
-        <TextView
-            android:id="@+id/tvTableKot"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="5dp"
-            android:paddingHorizontal="6dp"
-            android:paddingVertical="3dp"
-            android:background="@drawable/bg_status_tag"
+            android:layout_marginTop="4dp"
             android:gravity="center"
             android:maxLines="1"
             android:ellipsize="end"
-            android:text="KOT Pending"
+            android:text="4 SEATS"
             android:textSize="9.5sp"
-            android:textStyle="bold"
             android:textAllCaps="true"
-            android:letterSpacing="0.04"
-            android:textColor="@color/white"
-            android:visibility="gone" />
+            android:letterSpacing="0.06"
+            android:textColor="#B3FFFFFF"
+            android:visibility="invisible" />
     </LinearLayout>
+
+    <!-- Held at 45% white, out at the corner. Every card on this grid is a table, so
+         the icon is not telling anyone which one this is - it is there to make the
+         card read as a table at a distance, before the number is legible, which is
+         the job size does for it. The alpha is what keeps a big icon in second place
+         behind the number, and the corner is what keeps it out of its way. -->
+    <ImageView
+        android:id="@+id/ivTableIcon"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="9dp"
+        android:layout_marginTop="9dp"
+        android:alpha="0.45"
+        android:src="@drawable/ic_table"
+        app:tint="#FFFFFF"
+        android:contentDescription="Table" />
+
+    <!--
+      How much of this table's order is already with the kitchen.
+
+      A count, not a label - it is the one thing about a table that a colour cannot
+      say, so it is the one thing left in type on the card. It answers what the fill
+      only half answers: teal says the order is with the kitchen, this says how much
+      of it, which is what settles whether a table that has been waiting is waiting on
+      the kitchen or on the floor.
+
+      Pinned opposite the icon, so the two make a header line across the top and the
+      number keeps the body to itself. The MaterialCardView is a FrameLayout, so both
+      need no wrapper. Gone for a table with nothing sent, which is every free one.
+    -->
+    <TextView
+        android:id="@+id/tvKotCount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginEnd="9dp"
+        android:layout_marginTop="9dp"
+        android:minWidth="21dp"
+        android:paddingHorizontal="6dp"
+        android:paddingVertical="3dp"
+        android:background="@drawable/bg_kot_count"
+        android:gravity="center"
+        android:maxLines="1"
+        android:includeFontPadding="false"
+        android:text="3"
+        android:textSize="11sp"
+        android:textStyle="bold"
+        android:textColor="#0D9488"
+        android:visibility="gone" />
 </com.google.android.material.card.MaterialCardView>

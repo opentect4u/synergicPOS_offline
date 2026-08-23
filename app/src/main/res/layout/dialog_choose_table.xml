@@ -80,8 +80,10 @@
             android:paddingHorizontal="20dp"
             android:paddingTop="14dp" />
 
-        <!-- Sections, as the categories of this grid -->
+        <!-- The rooms, as the categories of this grid. Gone for a store that has not
+             set any up: one unnamed room is not a choice to offer. -->
         <HorizontalScrollView
+            android:id="@+id/svTableSections"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:scrollbars="none"
@@ -177,20 +179,10 @@
                     android:textSize="14sp"
                     android:textColor="@color/text_secondary" />
 
-                <View
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:background="@drawable/bg_legend_dot"
-                    android:backgroundTint="#F59E0B" />
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="7dp"
-                    android:layout_marginEnd="18dp"
-                    android:text="Reserved Table"
-                    android:textSize="14sp"
-                    android:textColor="@color/text_secondary" />
-
+                <!-- No Reserved key: nothing in the app books a table ahead, so the
+                     Table master no longer offers that status and no card can be in
+                     it. A key for a colour that never appears is a colour to look
+                     for on the floor plan and never find. -->
                 <View
                     android:layout_width="12dp"
                     android:layout_height="12dp"
