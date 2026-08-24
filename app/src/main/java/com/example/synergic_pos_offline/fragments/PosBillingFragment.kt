@@ -62,6 +62,26 @@ private const val PHOTO_PX = 320
 private const val HELD_PREVIEW_LINES = 8
 
 /**
+ * The longest gap between two keys that still counts as one barcode.
+ *
+ * A gun in HID mode puts characters out 5-20ms apart. A fast typist on a physical
+ * keyboard manages about 80ms at a sprint, and far more between the digits of a
+ * number they are reading off a label. 50ms sits in the gap between the two with
+ * room on both sides, so a scan is never mistaken for typing and typing is never
+ * swallowed as a scan.
+ */
+private const val SCAN_GAP_MS = 50L
+
+/**
+ * How long after the last key a scan is resolved when no Enter arrives.
+ *
+ * Guns can be configured with no terminator. Comfortably longer than the gap between
+ * a gun's own characters, so it never fires mid-code, and short enough that the line
+ * still appears while the operator is reaching for the next item.
+ */
+private const val SCAN_FLUSH_MS = 120L
+
+/**
  * Point-of-sale billing terminal, faithfully modelled on the shared design:
  * modular header, product region (search + Enter Price / Customer, category
  * tab strip, product grid, shortcut hints) and a live order ticket (customer,
@@ -408,22 +428,26 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 if (p.stock != "out") etSearch.setText("")
             }
         }
-        // A scanned barcode that names one product goes straight onto the bill, down
-        // the same path a tapped tile takes - so Direct Add to Cart, the rate and
-        // quantity popup, and the out-of-stock refusal all apply exactly as they do
-        // off the shelf. Scanning is a faster way of naming a product, not a second
-        // way of selling one.
+        // A scanned barcode that names one product goes STRAIGHT onto the bill: one
+        // line, at its own rate, no list to pick from and no popup to dismiss.
+        //
+        // This deliberately does not go through showProductDialog, which is the path a
+        // tapped tile takes. That path asks App Settings whether Direct Add to Cart is
+        // on and opens the rate/quantity popup when it is not - and a scan has already
+        // answered both questions. The gun named one product exactly, and it named one
+        // of it; stopping to confirm a rate turns a half-second per item into a
+        // dialog per item, which is the entire reason a counter owns a scanner.
+        //
+        // Scan the same item twice and the line goes to 2, the way a second tap does.
+        // addToCart carries the refusals with it - out of stock, and over the stock
+        // that is there - so bypassing the popup skips the asking, never the checking.
         //
         // Posted, because this fires from inside the search box's own text watcher and
-        // the first thing it does is empty that box - and because the box has to be
-        // clear BEFORE any popup opens, so the next scan goes into an empty field
-        // whether the operator dismisses that popup or completes it.
+        // its first act is to empty that box: the next scan then lands in a clear
+        // field, which on a counter is the very next thing to happen.
         suggestions?.onExactCode = { scanned ->
             menu.firstOrNull { it.id == scanned.id }?.let { p ->
-                etSearch.post {
-                    etSearch.setText("")
-                    showProductDialog(p)
-                }
+                etSearch.post { etSearch.setText(""); directAddScanned(p) }
             }
         }
         etSearch.addTextChangedListener(simpleWatcher {
@@ -434,8 +458,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
             // category is selected would answer a question they did not ask.
             suggestions?.update(query, menu.map(::suggestionOf))
         })
-        // A search left behind must not float over the next screen.
-        etSearch.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) suggestions?.dismiss() }
+        // The gun, read before the field: see attachScanner. Everything below this is
+        // for a person typing - a scan never reaches any of it. It also owns this
+        // field's focus listener, which both dismisses a left-behind search and puts
+        // the soft keyboard back to silent for the next scan.
+        attachScanner(etSearch)
         // The keyboard's Search key, and the Enter a hardware scanner sends after a
         // barcode: the query is finished either way, so the keyboard goes and the
         // shelf - filtered to what was asked for - is left uncovered.
@@ -443,7 +470,21 @@ class PosBillingFragment : Fragment(), TitledScreen {
             val done = actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
                 actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
                 event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER
-            if (done) { suggestions?.dismiss(); suggestions?.hideKeyboard() }
+            if (done) {
+                suggestions?.dismiss()
+                // A scanner ends every barcode with Enter, which makes this the one
+                // moment the query is KNOWN to be finished - and the safety net for
+                // every scan the per-keystroke path could not recognise: a barcode
+                // shorter than SCAN_MIN, or a product whose bar_code column is empty
+                // and is only findable by its SKU. Matching a SKU is safe here in a
+                // way it is not while typing, because Enter is a deliberate "resolve
+                // this code", not a character on the way to a name.
+                //
+                // Harmless after a scan the keystroke path already caught: it emptied
+                // the box, so there is no code left here to resolve twice.
+                if (addScannedCode(etSearch.text?.toString().orEmpty())) etSearch.setText("")
+                suggestions?.hideKeyboard()
+            }
             done
         }
         // Discount - hidden entirely when Tax Settings' Discount is on and item-wise.
@@ -872,6 +913,181 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     /** Adds [qty] units of [p] at [rate]. Merges with an existing line only when
      *  the same product is already in the cart at the same rate. */
+    // ---- Barcode gun: caught before the search box ever sees it ----------------
+    //
+    // A gun in HID mode is a keyboard. Left alone, its thirteen digits land in the
+    // search box one at a time and sit there for a tenth of a second before the match
+    // fires and clears them - visible, and enough to make the shelf behind flicker
+    // through thirteen filters on the way. The operator asked for a scan to be
+    // invisible: gun beeps, line appears, nothing else moves.
+    //
+    // So the keys are read at the source and swallowed. Speed is what tells a gun
+    // from a person: a scanner puts characters out a few milliseconds apart, and no
+    // one types at [SCAN_GAP_MS]. Below that gap the characters go into [scanBuffer]
+    // and are consumed - never reaching the field - and the code is resolved when the
+    // gun's Enter arrives, or when the keys simply stop for guns not set to send one.
+    //
+    // A SOFT keyboard is untouched by any of this: it commits text rather than
+    // dispatching key events, so onKey never fires for it and typed search behaves
+    // exactly as before. A person on a physical keyboard is safe too - the first
+    // character of any burst is always let through, and only a follow-on faster than
+    // a human hand switches this on.
+
+    private val scanBuffer = StringBuilder()
+    private var lastKeyTime = 0L
+    private var scanning = false
+    private val scanIdle = android.os.Handler(android.os.Looper.getMainLooper())
+    private var scanFlush: Runnable? = null
+
+    /**
+     * Reads the gun straight off the key stream, so the code never reaches the field.
+     *
+     * Returns true for the events it swallows. The first key of a burst is always
+     * passed through, because at that point it is indistinguishable from someone
+     * typing; when the next one arrives too fast to be a hand, the field is emptied of
+     * it and the buffer - which has been keeping it all along - carries on.
+     */
+    private fun attachScanner(etSearch: TextInputEditText) {
+        // FOCUS WITHOUT THE KEYBOARD.
+        //
+        // A gun's key events go to whatever has focus, so this field has to hold it
+        // for a scan to be read at all - and holding focus is also what makes Android
+        // raise the soft keyboard. The two came as a pair, so every scan put a
+        // keyboard over the shelf that nobody had asked for and somebody had to
+        // dismiss, between items, at a counter.
+        //
+        // Splitting them: focus no longer summons the keyboard, and a deliberate tap
+        // on the field does instead. Scanning gets the focus it needs in silence, and
+        // typing a search still raises the keyboard the moment it is asked for.
+        etSearch.showSoftInputOnFocus = false
+        etSearch.setOnClickListener {
+            etSearch.showSoftInputOnFocus = true
+            (requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as? android.view.inputmethod.InputMethodManager)
+                ?.showSoftInput(etSearch, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+        }
+        // ...and back to silent as soon as the box is done with, so the NEXT scan is
+        // as quiet as the last. Without this, one tap to type would leave the keyboard
+        // arriving on every scan for the rest of the session.
+        etSearch.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) { etSearch.showSoftInputOnFocus = false; suggestions?.dismiss() }
+        }
+
+        etSearch.setOnKeyListener { _, keyCode, event ->
+            if (event.action != android.view.KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+
+            if (keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+            ) {
+                // The gun's terminator. Only ours to act on if we were mid-scan;
+                // otherwise it is the operator pressing Enter and belongs to the
+                // editor-action handler.
+                return@setOnKeyListener finishScan(etSearch)
+            }
+
+            val ch = event.unicodeChar
+            if (ch == 0) return@setOnKeyListener false
+
+            val gap = event.eventTime - lastKeyTime
+            lastKeyTime = event.eventTime
+            scheduleScanFlush(etSearch)
+
+            if (gap <= SCAN_GAP_MS && scanBuffer.isNotEmpty()) {
+                // Too fast for a hand: this is a gun, and the burst started one
+                // character ago - take that one back out of the field.
+                if (!scanning) { scanning = true; etSearch.setText("") }
+                scanBuffer.append(ch.toChar())
+                return@setOnKeyListener true
+            }
+
+            // First key of a burst, or a human pace: keep it, show it, and wait to see
+            // what follows.
+            scanBuffer.setLength(0)
+            scanBuffer.append(ch.toChar())
+            scanning = false
+            false
+        }
+    }
+
+    /**
+     * Resolves whatever the gun has spelled out. Returns whether it handled the event.
+     *
+     * Guns that send no terminator are covered by [scheduleScanFlush], which calls
+     * this once the keys stop; the buffer is cleared either way, so a code cannot be
+     * resolved twice or bleed into the next scan.
+     */
+    private fun finishScan(etSearch: TextInputEditText): Boolean {
+        scanFlush?.let { scanIdle.removeCallbacks(it) }
+        val code = scanBuffer.toString()
+        scanBuffer.setLength(0)
+        val wasScanning = scanning
+        scanning = false
+        if (!wasScanning || code.length < SearchSuggestions.SCAN_MIN) return false
+        etSearch.setText("")
+        // Not found is worth saying out loud: the code was swallowed, so a silent
+        // failure would leave the operator with a beep, an unchanged bill and no
+        // idea which of the two happened.
+        if (!addScannedCode(code)) toast("No product with code $code")
+        return true
+    }
+
+    /** Resolves a scan that stopped without an Enter, shortly after the keys stop. */
+    private fun scheduleScanFlush(etSearch: TextInputEditText) {
+        scanFlush?.let { scanIdle.removeCallbacks(it) }
+        val flush = Runnable { if (scanning) finishScan(etSearch) }
+        scanFlush = flush
+        scanIdle.postDelayed(flush, SCAN_FLUSH_MS)
+    }
+
+    /**
+     * Puts one of [p] on the bill at its own rate - the scanner's path onto the cart.
+     *
+     * DELIBERATELY NOT showProductDialog, which is the path a tapped tile takes. That
+     * path asks App Settings whether Direct Add to Cart is on and opens the rate and
+     * quantity popup when it is not. A scan has already answered both: the gun named
+     * one product exactly, and it named one of it. So a scan adds directly WHATEVER
+     * that setting says - the setting governs tapping a tile, which is a choice being
+     * made, not scanning, which is a choice already made.
+     *
+     * Scan the same item twice and the line goes to 2, the way a second tap does.
+     * [addToCart] carries the refusals with it - out of stock, and over the stock that
+     * is there - so skipping the popup skips the asking, never the checking.
+     */
+    private fun directAddScanned(p: Product) {
+        val before = cart.sumOf { it.qty }
+        addToCart(p, 1.0, p.price)
+        // Only when it actually went on: addToCart turns away what stock will not
+        // cover, and says why itself.
+        val after = cart.sumOf { it.qty }
+        if (after > before) toast(itemsAddedMessage(after))
+    }
+
+    /**
+     * Resolves a scanned [code] to one product and puts it on the bill. Returns
+     * whether it found one.
+     *
+     * Barcode first, then SKU. The barcode is the product's own code and is what a
+     * gun reads; the SKU is the fallback for a shelf whose products were entered
+     * without barcodes, where the number on the label IS the SKU. Each has to match
+     * EXACTLY ONE product - two rows sharing a code is a data problem, and guessing
+     * between them would put the wrong thing on the bill without saying so.
+     */
+    private fun addScannedCode(code: String): Boolean {
+        // Both sides normalised - see SearchSuggestions.normalizeCode. A gun that
+        // appends a terminator, or a label entered with a hyphen, is still the same
+        // code, and a scan that misses here falls into the suggestion list to be
+        // tapped, which opens the very popup a scan is meant to skip.
+        val q = SearchSuggestions.normalizeCode(code)
+        if (q.isEmpty()) return false
+        val hit = menu.singleOrNull {
+            it.barcode.isNotBlank() && SearchSuggestions.normalizeCode(it.barcode) == q
+        } ?: menu.singleOrNull {
+            it.sku.isNotBlank() && SearchSuggestions.normalizeCode(it.sku) == q
+        } ?: return false
+        directAddScanned(hit)
+        return true
+    }
+
     private fun addToCart(p: Product, qty: Double, rate: Double) {
         if (p.stock == "out") { toast("${p.name} is out of stock"); return }
         if (exceedsStock(p.id, qty)) return

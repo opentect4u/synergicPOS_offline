@@ -102,11 +102,13 @@ class SearchSuggestions(
     /**
      * A scanned barcode resolved to exactly one product.
      *
-     * The screen decides what happens next, and both of them send it down the SAME
-     * path a tapped tile takes - so a scan honours Direct Add to Cart, the rate and
-     * quantity popup, the out-of-stock refusal and everything else a product goes
-     * through on its way to the cart. A scanner is a faster way of naming a product,
-     * not a second way of selling one.
+     * What happens next is the screen's to decide, and the two trades answer it
+     * differently on purpose. The grocery puts the line straight on the bill - a
+     * counter with a gun is scanning to sell, and a popup per item is what the gun
+     * was bought to avoid. The restaurant sends it through the same path a tapped
+     * tile takes, so Direct Add to Cart and the quantity popup still apply: an order
+     * is built by conversation, and a scan there is just a faster way of naming a
+     * dish, not a decision to serve one.
      *
      * Null leaves a scan behaving like any other query: it just filters.
      */
@@ -117,19 +119,61 @@ class SearchSuggestions(
     private var query = ""
     private val adapter = SuggestionAdapter()
 
+    /** Holds the deferred open, so a scan can outrun it. See [update]. */
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var pendingShow: Runnable? = null
+
     /**
-     * Re-runs the search and shows, updates or hides the list.
+     * Re-runs the search on every keystroke: acts on a scan at once, and opens the
+     * list only once typing has stopped.
      *
-     * Called on every keystroke, so it does its own hiding: an empty box or a query
-     * nothing matches closes the list rather than leaving an empty panel hanging
-     * under the cursor. A single exact code match closes it too - a scanned barcode
-     * has already picked the product, and offering to confirm the one thing it can
-     * possibly be would put a tap between the scanner and the order.
+     * THE TWO HALVES ARE TIMED DIFFERENTLY, AND THAT IS THE WHOLE DESIGN.
+     *
+     * A barcode gun is a keyboard that types thirteen digits in about a tenth of a
+     * second. Run per keystroke, the suggestion list would open on digit two, redraw
+     * eleven times against partial codes, and vanish - a panel flashing under the
+     * cursor on every scan, offering products nobody was looking for. So the list is
+     * held back by [SHOW_DELAY_MS]: each keystroke cancels the pending open and starts
+     * the clock again, and a scanner never leaves a gap that long between characters,
+     * so it never opens at all for a scan. A person does pause, so they still get it -
+     * a sixth of a second after they stop, which reads as instant.
+     *
+     * The scan itself is NOT delayed. It is checked first and fires immediately, so
+     * the item is on the bill by the time the gun beeps.
      */
     fun update(text: String, pool: List<Item>) {
         query = text.trim()
+        cancelPendingShow()
         if (query.length < MIN_QUERY) { dismiss(); return }
 
+        // A scanned barcode naming exactly one product goes straight through - no list
+        // to pick from, no confirmation of what the gun already said. Checked against
+        // the whole catalogue rather than the ranked matches, so the answer does not
+        // depend on how the query happened to sort.
+        //
+        // Both conditions matter. It has to be THE barcode, not any code - see the
+        // note on [Item.barcode] for why a SKU may not do this - and it has to resolve
+        // to ONE product: two products sharing a barcode is a data problem, and
+        // guessing which was meant would put the wrong thing in the cart silently. In
+        // that case it falls through and lists them to be chosen from.
+        val typed = normalizeCode(query)
+        val scanned = if (typed.length < SCAN_MIN) null else pool.singleOrNull {
+            it.barcode.isNotBlank() && normalizeCode(it.barcode) == typed
+        }
+        if (scanned != null) {
+            dismiss()
+            onExactCode?.invoke(scanned)
+            return
+        }
+
+        // Everything else: open the list, but only once the typing stops.
+        val pending = Runnable { showMatches(pool) }
+        pendingShow = pending
+        handler.postDelayed(pending, SHOW_DELAY_MS)
+    }
+
+    /** Ranks [pool] against the current query and puts the best few under the box. */
+    private fun showMatches(pool: List<Item>) {
         val q = query.lowercase()
         val matches = pool
             .mapNotNull { item -> rank(item, q)?.let { it to item } }
@@ -137,28 +181,16 @@ class SearchSuggestions(
             .map { it.second }
             .take(MAX_ROWS)
 
-        // A scanned barcode resolves to exactly one product: send it straight through
-        // rather than putting a list of one under the cursor and asking the operator to
-        // confirm what the scanner already said. This is the whole point of a scanner,
-        // and it is why the barcode is held apart from the SKU on [Item] - see there.
-        //
-        // Both conditions matter. It has to be THE barcode, not any code, and it has to
-        // resolve to ONE product: two products sharing a barcode is a data problem, and
-        // guessing which of them was meant would put the wrong thing in the cart
-        // silently. In that case it falls through and lists them to be chosen from.
-        val scanned = matches.singleOrNull {
-            it.barcode.length >= SCAN_MIN && it.barcode.equals(query, ignoreCase = true)
-        }
-        if (scanned != null && matches.size == 1) {
-            dismiss()
-            onExactCode?.invoke(scanned)
-            return
-        }
         if (matches.isEmpty()) { dismiss(); return }
 
         rows.clear(); rows.addAll(matches)
         adapter.notifyDataSetChanged()
         show()
+    }
+
+    private fun cancelPendingShow() {
+        pendingShow?.let { handler.removeCallbacks(it) }
+        pendingShow = null
     }
 
     /**
@@ -219,6 +251,9 @@ class SearchSuggestions(
     }
 
     fun dismiss() {
+        // The pending open goes too, or a list dismissed at the very moment one was
+        // queued would reopen a fraction of a second later on its own.
+        cancelPendingShow()
         popup?.takeIf { it.isShowing }?.dismiss()
     }
 
@@ -333,5 +368,32 @@ class SearchSuggestions(
          * typed on the way to a name.
          */
         const val SCAN_MIN = 4
+
+        /**
+         * A code reduced to what a scanner and a keyboard can agree on.
+         *
+         * Byte-exact matching loses scans that are plainly the same code. A gun can
+         * append a terminator character, a label can be entered with a hyphen or a
+         * space in it, and a code with letters can be stored in one case and read in
+         * another - and any one of those drops the scan into the suggestion list, to
+         * be tapped, which is the popup the operator was trying to get rid of.
+         *
+         * So both sides are stripped to letters and digits and folded to one case
+         * before they are compared. Nothing that distinguishes two real barcodes is
+         * removed: it is the punctuation and the case that go, never a digit.
+         */
+        fun normalizeCode(raw: String): String =
+            raw.trim().filter { it.isLetterOrDigit() }.uppercase()
+
+        /**
+         * How long the box must be still before the list opens.
+         *
+         * Sized to sit between the two things that type into a search box. A barcode
+         * gun puts characters out a few milliseconds apart, so it never reaches this
+         * and the list never opens for a scan. A person types at 100ms a character at
+         * their fastest and pauses far longer than this when they stop to read, so
+         * the list still feels like it was already there.
+         */
+        const val SHOW_DELAY_MS = 180L
     }
 }

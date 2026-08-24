@@ -585,6 +585,9 @@ class MainActivity : AppCompatActivity() {
                     com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment()
                 else PosBillingFragment()
             )
+            // Both trades: a settled restaurant order lands in td_bills alongside a
+            // grocery sale, so there is one history and one screen that reads it.
+            "Bill History" -> navigateTo(BillListFragment())
             "Advance Payment" -> navigateTo(AdvancePaymentFragment())
             "Customer Ledger" -> navigateTo(CustomerLedgerFragment())
             "Sale Return" -> {
@@ -607,7 +610,12 @@ class MainActivity : AppCompatActivity() {
             "Customers" -> navigateTo(CustomerFragment())
             "Description/Ledger" -> navigateTo(DescriptionLedgerFragment())
             "Units" -> navigateTo(UnitFragment())
+            "Rate Name" -> navigateTo(RateNameFragment())
+            // Restaurant-only masters. Listed in the drawer only in Restaurant mode,
+            // and routed here to the same screens the Database Settings grid opens.
             "Waiter" -> navigateTo(WaiterFragment())
+            "Section" -> navigateTo(SectionFragment())
+            "Table" -> navigateTo(TableFragment())
             // Every other leaf routes to a clean placeholder page (no dead clicks).
             else -> navigateTo(ComingSoonFragment.newInstance(title))
         }
@@ -659,20 +667,31 @@ class MainActivity : AppCompatActivity() {
             "Time Wise Item Report"
         ).filter { ReportsFragment.isVisible(context, it) }
 
+        // The masters, in the order and on the conditions [DatabaseSettingsFragment]
+        // builds its tile grid with - the drawer and the grid are two ways into the
+        // same screens, and a master that is on one and not the other is a master
+        // that is "hidden" depending on how it is looked for. Rate Name, Section and
+        // Table were on the grid only.
         val databaseSettingsNodes = mutableListOf(
             TreeNode("Category/Department"),
             TreeNode("Products"),
             TreeNode("Customers"),
             TreeNode("Description/Ledger"),
-            TreeNode("Units")
+            TreeNode("Units"),
+            TreeNode("Rate Name")
         )
-        if (!isGrocery) {
-            databaseSettingsNodes.add(TreeNode("Waiter"))
-        }
-        // Only where the shop runs shifts - the same question the Database Settings
-        // tile grid asks before it shows the tile.
+        // Only where the shop runs shifts. Off, there is nothing to put in the master
+        // and nothing that reads it - see App Settings' Shift toggle.
         if (com.example.synergic_pos_offline.database.ShiftDao.isEnabled(context)) {
             databaseSettingsNodes.add(TreeNode("Shifts"))
+        }
+        // Restaurant-only masters: a grocery has no floor to seat anyone on and nobody
+        // to wait it. Keyed off !isGrocery, exactly as the tile grid is, so Calculator
+        // mode - which never reaches this branch anyway - cannot drift from it.
+        if (!isGrocery) {
+            databaseSettingsNodes.add(TreeNode("Waiter"))
+            databaseSettingsNodes.add(TreeNode("Section"))
+            databaseSettingsNodes.add(TreeNode("Table"))
         }
 
         // Stock & Inventory only exists while stock tracking is on - the drawer has
@@ -715,6 +734,14 @@ class MainActivity : AppCompatActivity() {
             }))
             addAll(stockNodes)
             add(TreeNode("Sale"))
+            // Bill History sits straight after Sale, the way it does on the card menu:
+            // it is the record of the thing above it, and it is the one row from that
+            // menu the drawer never carried. Unconditional there and unconditional
+            // here - a settled restaurant order is written to td_bills by the same
+            // call a grocery sale is, so both trades have a history to open, and it
+            // is not behind Reports access: it is the till's own record of what it
+            // rang up, which is a different thing from the reporting section.
+            add(TreeNode("Bill History"))
             // Sale Return + Advance Payment are grocery-only; omitted in Restaurant.
             if (!isRestaurant) {
                 add(TreeNode("Sale Return"))
