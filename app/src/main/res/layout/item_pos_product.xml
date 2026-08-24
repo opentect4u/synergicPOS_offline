@@ -1,13 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   One product on the sale grid, in both trades (grocery's shelf and the restaurant's
-  menu), seven to a row.
+  menu), seven to a row at least - see ProductGrid, which counts the columns from the
+  width and treats seven as a floor rather than a fixed number.
 
-  Seven across leaves each tile roughly 70-120dp wide depending on the tablet, so the
-  photo is given as a ratio rather than a fixed height: it stays a 4:3 window on every
-  screen instead of towering over a narrow card. The type is sized down to match -
-  small enough to fit the tile, still large enough to read a name and a price at
-  arm's length across a counter.
+  Because the column count is not fixed, the tile cannot assume a width. The photo is
+  given as a RATIO rather than a fixed height, so it stays a 4:3 window on every
+  screen instead of towering over a narrow card; and the name is allowed two lines but
+  held to exactly two (minLines = maxLines), so a one-word product and a four-word one
+  make tiles of the same height and the grid does not step.
+
+  The name is set at 13sp: it is what the tile is actually read for, and at the 11sp
+  it used to be it was losing to the price beneath it at a counter's arm's length. The
+  line spacing is pulled in a point to pay for the size, so two lines of a longer name
+  still fit the same block.
 -->
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -129,11 +135,12 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Product"
-                android:textSize="11sp"
+                android:textSize="13sp"
                 android:textStyle="bold"
                 android:maxLines="2"
                 android:minLines="2"
                 android:ellipsize="end"
+                android:lineSpacingExtra="-1dp"
                 android:textColor="@color/text_main" />
 
             <LinearLayout

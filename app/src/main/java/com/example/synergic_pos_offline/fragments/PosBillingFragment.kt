@@ -137,6 +137,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             p.sku.takeIf { it.isNotBlank() },
             p.barcode.takeIf { it.isNotBlank() }
         ),
+        barcode = p.barcode,
         // Only ever the warning states, and only while stock is tracked: a badge on
         // every row saying "in stock" is a badge that stops being read.
         badge = when {
@@ -346,10 +347,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
         categoryAdapter = CategoryAdapter()
         rvCategories.adapter = categoryAdapter
 
-        // Products - seven to a row, so the shelf shows as much of the catalogue as it
-        // can at once instead of one screenful of oversized tiles.
+        // Products - seven to a row AT LEAST, and more wherever the width allows, so
+        // the shelf shows as much of the catalogue as it can at once instead of one
+        // screenful of oversized tiles. See ProductGrid for why seven is a floor
+        // rather than a count.
         val rvProducts = view.findViewById<RecyclerView>(R.id.rvProducts)
-        rvProducts.layoutManager = GridLayoutManager(ctx, 7)
+        com.example.synergic_pos_offline.utils.ProductGrid.attach(rvProducts)
         productAdapter = ProductAdapter()
         rvProducts.adapter = productAdapter
 
@@ -403,6 +406,24 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 // with a toast and nothing is added, so the query stays up to be
                 // corrected or retried rather than being wiped for no result.
                 if (p.stock != "out") etSearch.setText("")
+            }
+        }
+        // A scanned barcode that names one product goes straight onto the bill, down
+        // the same path a tapped tile takes - so Direct Add to Cart, the rate and
+        // quantity popup, and the out-of-stock refusal all apply exactly as they do
+        // off the shelf. Scanning is a faster way of naming a product, not a second
+        // way of selling one.
+        //
+        // Posted, because this fires from inside the search box's own text watcher and
+        // the first thing it does is empty that box - and because the box has to be
+        // clear BEFORE any popup opens, so the next scan goes into an empty field
+        // whether the operator dismisses that popup or completes it.
+        suggestions?.onExactCode = { scanned ->
+            menu.firstOrNull { it.id == scanned.id }?.let { p ->
+                etSearch.post {
+                    etSearch.setText("")
+                    showProductDialog(p)
+                }
             }
         }
         etSearch.addTextChangedListener(simpleWatcher {

@@ -71,6 +71,17 @@ class SearchSuggestions(
         val price: String,
         /** Searchable codes (SKU, barcode). An exact hit here outranks any name. */
         val codes: List<String> = emptyList(),
+        /**
+         * The SCANNED code alone - the barcode, never the SKU.
+         *
+         * Kept apart from [codes] because only this one may fire a product into the
+         * cart without being tapped. A SKU is the product's own row id, so the SKUs on
+         * a small shelf are "1", "2", "3": auto-adding on an exact SKU match would put
+         * product 1 in the cart the instant a "1" was typed, and no name beginning
+         * with a digit could ever be searched for. A barcode is long and belongs to
+         * the product, which is what makes it safe to act on. See [SCAN_MIN].
+         */
+        val barcode: String = "",
         /** "LOW" / "OUT", or blank for the rows that have nothing to warn about. */
         val badge: String = "",
         val badgeColor: Int = 0,
@@ -87,6 +98,19 @@ class SearchSuggestions(
         val bitmap: android.graphics.Bitmap? = null,
         val image: ByteArray? = null
     )
+
+    /**
+     * A scanned barcode resolved to exactly one product.
+     *
+     * The screen decides what happens next, and both of them send it down the SAME
+     * path a tapped tile takes - so a scan honours Direct Add to Cart, the rate and
+     * quantity popup, the out-of-stock refusal and everything else a product goes
+     * through on its way to the cart. A scanner is a faster way of naming a product,
+     * not a second way of selling one.
+     *
+     * Null leaves a scan behaving like any other query: it just filters.
+     */
+    var onExactCode: ((Item) -> Unit)? = null
 
     private var popup: ListPopupWindow? = null
     private val rows = mutableListOf<Item>()
@@ -113,10 +137,22 @@ class SearchSuggestions(
             .map { it.second }
             .take(MAX_ROWS)
 
-        // A scan resolves to exactly one product: take it straight through rather than
-        // asking the operator to confirm what the scanner already said.
-        if (matches.size == 1 && matches[0].codes.any { it.equals(query, ignoreCase = true) }) {
-            dismiss(); return
+        // A scanned barcode resolves to exactly one product: send it straight through
+        // rather than putting a list of one under the cursor and asking the operator to
+        // confirm what the scanner already said. This is the whole point of a scanner,
+        // and it is why the barcode is held apart from the SKU on [Item] - see there.
+        //
+        // Both conditions matter. It has to be THE barcode, not any code, and it has to
+        // resolve to ONE product: two products sharing a barcode is a data problem, and
+        // guessing which of them was meant would put the wrong thing in the cart
+        // silently. In that case it falls through and lists them to be chosen from.
+        val scanned = matches.singleOrNull {
+            it.barcode.length >= SCAN_MIN && it.barcode.equals(query, ignoreCase = true)
+        }
+        if (scanned != null && matches.size == 1) {
+            dismiss()
+            onExactCode?.invoke(scanned)
+            return
         }
         if (matches.isEmpty()) { dismiss(); return }
 
@@ -287,5 +323,15 @@ class SearchSuggestions(
          * which is the whole reason it is faster than the grid behind it.
          */
         const val MAX_ROWS = 8
+
+        /**
+         * The shortest barcode that may put a product in the cart on its own.
+         *
+         * A real barcode is 8 to 13 digits. Four is a floor against a product whose
+         * barcode field holds something short and typeable - "12", or a single letter
+         * - which would otherwise fire mid-search the moment those characters were
+         * typed on the way to a name.
+         */
+        const val SCAN_MIN = 4
     }
 }

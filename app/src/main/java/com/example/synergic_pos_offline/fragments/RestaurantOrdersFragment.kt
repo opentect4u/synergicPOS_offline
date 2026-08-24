@@ -1182,6 +1182,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             gp.product.sku.takeIf { it.isNotBlank() },
             gp.barcode.takeIf { it.isNotBlank() }
         ),
+        barcode = gp.barcode,
         image = gp.image
     )
 
@@ -1392,10 +1393,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         var query = ""
 
         val adapter = ProductAdapter(accent) { picked -> onProductPicked(picked) { etSearch.setText("") } }
-        // Seven to a row, the same as the grocery sale screen's shelf, so the menu shows
-        // as much of itself as it can at once and the same card comes out the same size
-        // in both trades.
-        rv.layoutManager = androidx.recyclerview.widget.GridLayoutManager(ctx, 7)
+        // Seven to a row AT LEAST, and more wherever the width allows - the same rule
+        // as the grocery sale screen's shelf, so the menu shows as much of itself as it
+        // can at once and the same card comes out the same size in both trades.
+        com.example.synergic_pos_offline.utils.ProductGrid.attach(rv)
         rv.adapter = adapter
 
         // Category tabs, rebuilt whenever the catalogue is re-read so a newly added
@@ -1447,6 +1448,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
         }
 
+        // A scanned barcode that names one item goes straight onto the order, down the
+        // same path a tapped tile takes - Direct Add to Cart and the quantity popup
+        // both apply exactly as they do off the grid. Posted, because it fires from
+        // inside the search box's own watcher and empties that box as its first act.
+        suggestions?.onExactCode = { scanned ->
+            allProducts.firstOrNull { it.product.id == scanned.id }?.let { gp ->
+                etSearch.post { onProductPicked(gp.product) { etSearch.setText("") } }
+            }
+        }
         etSearch.addTextChangedListener {
             query = it?.toString().orEmpty()
             refreshProducts?.invoke()
