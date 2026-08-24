@@ -23,6 +23,7 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.utils.CalendarGrain
 import com.example.synergic_pos_offline.utils.PeriodReportPrinter
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
+import com.example.synergic_pos_offline.utils.ReportExport
 import com.example.synergic_pos_offline.utils.ReportTable
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
@@ -188,6 +189,8 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
     private lateinit var etFrom: TextInputEditText
     private lateinit var etTo: TextInputEditText
     private lateinit var btnPrint: MaterialButton
+    private lateinit var btnPdf: MaterialButton
+    private lateinit var btnExcel: MaterialButton
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -200,6 +203,8 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         etFrom = view.findViewById(R.id.etPeriodFrom)
         etTo = view.findViewById(R.id.etPeriodTo)
         btnPrint = view.findViewById(R.id.btnPeriodPrint)
+        btnPdf = view.findViewById(R.id.btnPeriodPdf)
+        btnExcel = view.findViewById(R.id.btnPeriodExcel)
 
         val (fromHint, toHint) = rangeHints
         view.findViewById<TextInputLayout>(R.id.tilPeriodFrom).hint = fromHint
@@ -224,16 +229,25 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
                 }
             }
         }
+        // The same figures the screen is showing, as a file. Built from what was
+        // generated, not read again - see [sheetOf].
+        btnPdf.setOnClickListener { download(asPdf = true) }
+        btnExcel.setOnClickListener { download(asPdf = false) }
 
         ThemeManager.applyTheme(view)
         // ThemeManager fills every MaterialButton; Print is the secondary action here
         // and keeps its outlined look.
         val accent = ThemeManager.getThemeColor(requireContext())
-        btnPrint.apply {
-            backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-            setTextColor(accent)
-            strokeColor = ColorStateList.valueOf(accent)
+        listOf(btnPrint, btnPdf, btnExcel).forEach { b ->
+            b.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+            b.setTextColor(accent)
+            b.strokeColor = ColorStateList.valueOf(accent)
         }
+        // The file icons keep their own colours - red for PDF, green for the
+        // spreadsheet - which is what makes them identifiable at a glance. Re-set
+        // after the theme pass, which tints every button icon with the accent.
+        btnPdf.iconTint = null
+        btnExcel.iconTint = null
     }
 
     /**
@@ -310,7 +324,7 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
     private fun bind(r: T) {
         root.findViewById<View>(R.id.llPeriodEmpty).visibility = View.GONE
         root.findViewById<View>(R.id.llPeriodResult).visibility = View.VISIBLE
-        btnPrint.isEnabled = true
+        setOutputsEnabled(true)
 
         root.findViewById<TextView>(R.id.tvPeriodHeadline).text = headline(r)
 
@@ -367,8 +381,49 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         root.findViewById<View>(R.id.llPeriodEmpty).visibility = View.VISIBLE
         root.findViewById<TextView>(R.id.tvPeriodEmptyTitle).text = title
         root.findViewById<TextView>(R.id.tvPeriodEmptyHint).text = hint
-        btnPrint.isEnabled = false
+        setOutputsEnabled(false)
     }
+
+    /** Print and the two downloads live and die together: all three need a report. */
+    private fun setOutputsEnabled(enabled: Boolean) {
+        listOf(btnPrint, btnPdf, btnExcel).forEach {
+            it.isEnabled = enabled
+            it.alpha = if (enabled) 1f else 0.45f
+        }
+    }
+
+    /**
+     * The generated report as a file in Downloads.
+     *
+     * [sheetOf] is built from the columns and rows already on the screen, so what is
+     * downloaded is what was generated - the same rule Print follows, for the same
+     * reason: a sale landing between the two would otherwise put a figure in the file
+     * that nobody ever saw.
+     */
+    private fun download(asPdf: Boolean) {
+        val r = report ?: return
+        val sheet = sheetOf(r)
+        val saved = runCatching {
+            if (asPdf) ReportExport.toPdf(requireContext(), sheet)
+            else ReportExport.toExcel(requireContext(), sheet)
+        }
+        toast(
+            saved.fold(
+                onSuccess = { "Saved to $it" },
+                onFailure = { "Could not save the ${if (asPdf) "PDF" else "spreadsheet"}" }
+            )
+        )
+    }
+
+    /** What the downloads are made of: this screen, as data. */
+    private fun sheetOf(r: T) = ReportExport.Sheet(
+        title = screenTitle,
+        subtitle = headline(r),
+        columns = columns.map { it.label },
+        alignEnd = columns.map { it.alignEnd },
+        rows = rows,
+        summary = summaryOf(r) + listOf(totalOf(r))
+    )
 
     // ---- Table ---------------------------------------------------------------
 

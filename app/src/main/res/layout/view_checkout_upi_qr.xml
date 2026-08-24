@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+    The scan-to-pay code on the checkout screen, shown while Online is the chosen
+    payment mode and hidden otherwise.
+
+    It sits at the foot of the payment column, directly above the confirm button,
+    because that is the order the counter works in: pick Online, turn the screen to
+    the customer to scan, then confirm once the payment lands. The code carries the
+    amount, so the customer confirms a figure rather than keying one in.
+
+    The label and the amount go *above* the code rather than under it. The column
+    they sit in is a fixed height with the confirm button pinned below it, so
+    whatever comes last is what gets cut when the panel runs short - and a clipped
+    caption is a blemish, while a clipped QR is one that will not scan.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/llCheckoutUpiQr"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:paddingTop="6dp"
+    android:paddingBottom="8dp"
+    android:visibility="gone">
+
+    <TextView
+        android:id="@+id/tvCheckoutUpiTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="SCAN TO PAY"
+        android:textSize="12sp"
+        android:letterSpacing="0.08"
+        android:textStyle="bold"
+        android:textColor="@color/primary_blue" />
+
+    <TextView
+        android:id="@+id/tvCheckoutUpiAmount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_main" />
+
+    <ImageView
+        android:id="@+id/ivCheckoutUpiQr"
+        android:layout_width="150dp"
+        android:layout_height="150dp"
+        android:layout_marginTop="6dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="UPI payment QR for this bill" />
+</LinearLayout>

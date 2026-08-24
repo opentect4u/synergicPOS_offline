@@ -84,6 +84,7 @@ object DefaultSettings {
         billNoCharEnabled = false,
         billNoCharPrefix = "",
         hsnCode = false,
+        productSerialNumber = true,
         customerDetails = BillSettingsDao.CustomerDetails.ONLY_MOBILE,
         customerAddressPrinting = false,
         totalAmountFontSize = BillSettingsDao.FontSize.REGULAR,

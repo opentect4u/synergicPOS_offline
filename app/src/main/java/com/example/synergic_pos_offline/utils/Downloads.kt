@@ -88,6 +88,37 @@ object Downloads {
             File(dir, fileName).apply { bufferedWriter().use { write(it) } }.absolutePath
         }
 
+    /**
+     * The same, for a file that is not text - a PDF, a spreadsheet. [write] is handed
+     * the raw stream and called once; whatever it writes is the file.
+     */
+    fun bytes(
+        context: Context,
+        fileName: String,
+        mimeType: String,
+        write: (java.io.OutputStream) -> Unit
+    ): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val resolver = context.contentResolver
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("could not create file")
+            resolver.openOutputStream(uri)?.use { out -> out.buffered().use { write(it) } }
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            "Downloads/$fileName"
+        } else {
+            val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            File(dir, fileName).apply {
+                outputStream().buffered().use { write(it) }
+            }.absolutePath
+        }
+
     fun save(
         context: Context,
         fileName: String,

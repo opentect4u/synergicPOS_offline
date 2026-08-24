@@ -17,6 +17,8 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.CustomerPaymentReportDao
 import com.example.synergic_pos_offline.utils.CustomerPaymentReportRenderer
 import com.example.synergic_pos_offline.utils.PrinterSetup
+import com.example.synergic_pos_offline.utils.ReportDownloads
+import com.example.synergic_pos_offline.utils.ReportExport
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.google.android.material.button.MaterialButton
@@ -42,6 +44,9 @@ class CustomerPaymentReportFragment : Fragment(), TitledScreen {
     private lateinit var etFrom: TextInputEditText
     private lateinit var etTo: TextInputEditText
     private lateinit var btnPrint: MaterialButton
+
+    /** The PDF and Excel buttons beside Print - see [ReportDownloads]. */
+    private lateinit var downloads: ReportDownloads
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -71,6 +76,11 @@ class CustomerPaymentReportFragment : Fragment(), TitledScreen {
             setTextColor(accent)
             strokeColor = ColorStateList.valueOf(accent)
         }
+        // The same figures the screen is showing, as a file in Downloads. Built from
+        // the held report, so a download is what was generated.
+        downloads = ReportDownloads.wire(
+            view, requireContext(), accent, { if (isAdded) toast(it) }
+        ) { report?.let { sheetOf(it) } }
     }
 
     // ---- Generating ----------------------------------------------------------
@@ -98,6 +108,7 @@ class CustomerPaymentReportFragment : Fragment(), TitledScreen {
         root.findViewById<View>(R.id.llReportEmpty).visibility = View.GONE
         root.findViewById<View>(R.id.llReportResult).visibility = View.VISIBLE
         btnPrint.isEnabled = true
+        downloads.setEnabled(true)
 
         root.findViewById<TextView>(R.id.tvReportPeriod).text =
             "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.entries.size} payment(s)"
@@ -115,12 +126,38 @@ class CustomerPaymentReportFragment : Fragment(), TitledScreen {
         container.addView(kv("TOTAL PAID", money(r.totalPaid), emphasised = true))
     }
 
+    /**
+     * The screen as a downloadable table - one row per payment, where the card stacks
+     * each one over four lines to fit its width.
+     */
+    private fun sheetOf(r: CustomerPaymentReportDao.Report) = ReportExport.Sheet(
+        title = screenTitle,
+        subtitle = "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.entries.size} payment(s)",
+        columns = listOf("CUST ID", "CUSTOMER", "DATE & TIME", "BILL NO", "PAID AMT", "BALANCE AMT"),
+        alignEnd = listOf(false, false, false, false, true, true),
+        rows = r.entries.map {
+            listOf(
+                it.customerId.toString(),
+                it.customerName,
+                dateTime(it.paymentDateTime),
+                it.billNo,
+                money(it.paidAmount),
+                money(it.balanceAmount)
+            )
+        },
+        summary = listOf(
+            "Payments" to r.entries.size.toString(),
+            "Total Paid" to money(r.totalPaid)
+        )
+    )
+
     private fun showEmpty(title: String, hint: String) {
         root.findViewById<View>(R.id.llReportResult).visibility = View.GONE
         root.findViewById<View>(R.id.llReportEmpty).visibility = View.VISIBLE
         root.findViewById<TextView>(R.id.tvReportEmptyTitle).text = title
         root.findViewById<TextView>(R.id.tvReportEmptyHint).text = hint
         btnPrint.isEnabled = false
+        downloads.setEnabled(false)
     }
 
     // ---- Printing ------------------------------------------------------------

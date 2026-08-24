@@ -36,6 +36,17 @@ private const val LOGO_PX = 480
  */
 private const val CARD_WIDTH_DP = PrintType.CARD_WIDTH_DP
 
+/**
+ * Side of the printed UPI code, matching ivUpiQr in the receipt layouts.
+ *
+ * Stated in dp against [CARD_WIDTH_DP], so like every other printed size it is
+ * absolute: half the card at 80mm and three quarters of it at 58mm, the same
+ * square of paper either way. That comes to around 290 dots on both, which leaves
+ * a code of this length seven or eight dots to the module - enough that the head
+ * can print it and a phone can read it off the roll.
+ */
+private const val UPI_QR_DP = 150
+
 /** The card's own horizontal padding, per side - the bill layouts' paddingHorizontal. */
 private const val CARD_PADDING_DP = 20
 
@@ -473,6 +484,12 @@ class BillReceiptRenderer(context: Context) {
         val roundOff: Double,
         val netAmount: Double,
         val paymentModes: List<String>,
+        /**
+         * The table this bill was served on, ready to print - "5 (AC)", or a
+         * take-away token. Null on a grocery bill, which has no table, and the line
+         * is left off entirely.
+         */
+        val table: String? = null,
         /** Restaurant service charge — shown as its own totals line, added to the net. */
         val serviceCharge: Double = 0.0,
         /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
@@ -583,6 +600,8 @@ class BillReceiptRenderer(context: Context) {
             // Cash handed back to the customer when they tendered more than the payable.
             var returnAmount = 0.0
             var settingsSnapshotJson: String? = null
+            /** "TABLE : 5 (AC)" - blank on a bill with no table, i.e. every grocery one. */
+            var tableLine: String? = null
             if (draft != null) {
                 billNumber = draft.billNumber
                 dateTime = draft.dateTime
@@ -591,6 +610,8 @@ class BillReceiptRenderer(context: Context) {
                 storedNetAmount = draft.netAmount
                 serviceCharge = draft.serviceCharge
                 returnAmount = draft.returnAmount
+                tableLine = draft.table?.takeIf { it.isNotBlank() }
+                    ?.let { if (it.startsWith("Take Away", true)) it.uppercase() else "TABLE : ${it.uppercase()}" }
             } else db.rawQuery(
                 """
                 SELECT bill_number, bill_date_time, bill_date, customer_id,
@@ -619,6 +640,25 @@ class BillReceiptRenderer(context: Context) {
                 storedNetAmount = c.getDouble(5)
             }
 
+            // A reprint is a bill too: the table it was served on is read back off the
+            // saved row, so a duplicate says what the original said.
+            //
+            // Read on its own and guarded, not folded into the query above: these are
+            // columns added to the bill over time, and a database old enough to be
+            // missing one must still print its bills. The table line is what is lost
+            // then, not the bill.
+            if (draft == null) runCatching {
+                db.rawQuery(
+                    "SELECT table_number, table_section, order_type " +
+                        "FROM ${billsTableFor(db, receiptNo)} WHERE receipt_no = ?",
+                    arrayOf(receiptNo.toString())
+                ).use { c ->
+                    if (c.moveToFirst()) {
+                        tableLine = tableLabel(c.getString(0), c.getString(1), c.getString(2))
+                    }
+                }
+            }
+
             // The change given back is recorded per payment row; a reprint reads the
             // stored figure so it matches what was handed over on the day.
             if (draft == null) db.rawQuery(
@@ -641,6 +681,9 @@ class BillReceiptRenderer(context: Context) {
             val snapshot = BillSettingsSnapshot.parse(settingsSnapshotJson)
             val liveSettings by lazy { BillSettingsDao(ctx).load() }
             val hsnCode = snapshot?.hsnCode ?: liveSettings.hsnCode
+            // Whether the lines are numbered. Off the bill's own snapshot first, so a
+            // reprint carries the numbering the bill was printed with.
+            val showSerial = snapshot?.productSerialNumber ?: liveSettings.productSerialNumber
             val customerDetails = snapshot?.customerDetails ?: liveSettings.customerDetails
             val customerAddressPrinting = snapshot?.customerAddressPrinting ?: liveSettings.customerAddressPrinting
             val totalAmountFontSize = snapshot?.totalAmountFontSize ?: liveSettings.totalAmountFontSize
@@ -720,6 +763,11 @@ class BillReceiptRenderer(context: Context) {
             // from Bill history carries all three sets.
             renderCaptions(view, creditSale = creditSale, duplicate = duplicate)
 
+            // Printed whatever Customer Details says. It used to travel as the
+            // customer's NAME, which meant a till set to print only the mobile - or no
+            // customer details at all - printed a restaurant bill with no table on it,
+            // and one that did print it had nowhere left to put an actual customer.
+            setIfPresent(view, R.id.tvBillTable, tableLine)
             setIfPresent(view, R.id.tvCustMobile, if (showMobile) cust.phone?.let { custLine("MOBILE ", "MOBILE", it) } else null)
             setIfPresent(view, R.id.tvName, if (showName) cust.name?.let { custLine("NAME  ", "NAME", it) } else null)
             setIfPresent(view, R.id.tvCustGstin, if (showGstin) cust.gstin?.let { custLine("GSTIN ", "GSTIN", it) } else null)
@@ -770,7 +818,9 @@ class BillReceiptRenderer(context: Context) {
             // replaced afterwards would be laid out to the width of the English one
             // it replaced - and a wider word in another script would then wrap.
             listOf(
-                R.id.tvColSrItem to "SR.NO ITEM", R.id.tvColQty to "QTY",
+                // No numbers down the column, no "SR.NO" over it.
+                R.id.tvColSrItem to (if (showSerial) "SR.NO ITEM" else CLASSIC_NARROW_ITEM_HEADING),
+                R.id.tvColQty to "QTY",
                 R.id.tvColPrice to "PRICE", R.id.tvColDisc to "DISC", R.id.tvColNet to "AMOUNT"
             ).forEach { (id, label) -> view.findViewById<TextView>(id).text = t(label) }
             headings.forEach { view.findViewById<TextView>(it).textSize = headingSp }
@@ -812,7 +862,9 @@ class BillReceiptRenderer(context: Context) {
                 }
             }
             items.forEach {
-                llItems.addView(buildClassicItemRow(it, showDisc, headingSp, columnPx, narrow))
+                llItems.addView(
+                    buildClassicItemRow(it, showDisc, headingSp, columnPx, narrow, showSerial)
+                )
             }
 
             val totals = lineTotals.copy(discount = discount)
@@ -915,7 +967,9 @@ class BillReceiptRenderer(context: Context) {
                 view.findViewById<TextView>(R.id.tvAmountWords).visibility = View.GONE
             }
 
-            renderPayment(view, draft?.paymentModes ?: paymentModes(db, receiptNo, billType), narrow)
+            val modes = draft?.paymentModes ?: paymentModes(db, receiptNo, billType)
+            renderPayment(view, modes, narrow)
+            renderUpiQr(view, modes, payable, billNumber)
 
             renderFixedLines(
                 db, view, R.id.llBillFooterLines,
@@ -1746,6 +1800,61 @@ class BillReceiptRenderer(context: Context) {
     }
 
     /**
+     * Prints the scan-to-pay UPI code, built for this bill and this total.
+     *
+     * The code is generated here rather than being a stored picture, and that is the
+     * whole point of it: a QR saved out of a payment app names only the payee, so
+     * whoever scans it still has to key the figure in. This one carries `am`, so the
+     * app opens with [payable] already in the amount field and the customer only
+     * confirms - nothing is typed at the counter and nothing can be mistyped.
+     *
+     * Printed only on a bill actually settled over UPI rails. On a cash bill it
+     * would be an invitation to pay a second time, and on every bill it would be
+     * 150dp of paper per sale for a code nobody scans.
+     *
+     * Read from the live settings rather than the bill's snapshot, deliberately: the
+     * snapshot exists so a reprint *reads* as it did on the day, but a payment
+     * address is not a matter of how the slip looked - it is where the money goes,
+     * and money owed today goes to the account the shop banks with today.
+     */
+    private fun renderUpiQr(view: View, modes: List<String>, payable: Double, billNumber: String) {
+        val container = view.findViewById<LinearLayout>(R.id.llUpiQr) ?: return
+        container.visibility = View.GONE
+
+        if (payable <= 0.0) return
+        val online = modes.any { it.equals("ONLINE", true) }
+        val upi = modes.any { it.equals("UPI", true) }
+        if (!online && !upi) return
+
+        val settings = runCatching { BillSettingsDao(ctx).load() }.getOrNull() ?: return
+        // ONLINE prints the code whether or not the setting is on. Choosing it at
+        // checkout says the customer is paying from their phone and has nothing else
+        // to pay against - no card machine, no cash drawer - so a bill without a code
+        // leaves them keying an address and a figure in by hand. UPI is the case the
+        // setting is really about: the shop may already have a code stuck to the
+        // counter, and printing a second one on every slip is only paper.
+        if (!online && !settings.upiQrEnabled) return
+        if (!UpiQr.isValidVpa(settings.upiId)) return
+
+        val uri = UpiQr.payUri(
+            settings.upiId, settings.upiPayeeName, payable,
+            note = billNumber.takeIf { it.isNotBlank() }?.let { "Bill $it" }
+        )
+        val target = view.findViewById<android.widget.ImageView>(R.id.ivUpiQr) ?: return
+        // Encoded at the exact pixel size of its slot so the modules land on whole
+        // pixels: a code resampled to fit comes off a thermal head as a grey smear
+        // that no scanner reads.
+        val sizePx = (UPI_QR_DP * ctx.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        val bitmap = UpiQr.bitmap(uri, sizePx) ?: return
+
+        target.setImageBitmap(bitmap)
+        setIfPresent(view, R.id.tvUpiQrCaption, t("SCAN TO PAY"))
+        setIfPresent(view, R.id.tvUpiQrAmount, "${t("AMOUNT")}: ${money(payable)}")
+        setIfPresent(view, R.id.tvUpiQrVpa, settings.upiId)
+        container.visibility = View.VISIBLE
+    }
+
+    /**
      * Login id of the operator who generated the bill. Resolved from the bill's own
      * `operator_id` rather than the current session, so reprinting an older bill
      * still credits whoever actually rang it up. Falls back to `created_by`, the
@@ -1815,9 +1924,10 @@ class BillReceiptRenderer(context: Context) {
         showDisc: Boolean,
         sizeSp: Float,
         columnPx: IntArray,
-        narrow: Boolean
+        narrow: Boolean,
+        showSerial: Boolean
     ): View {
-        val heading = "${item.sr} ${item.name}"
+        val heading = if (showSerial) "${item.sr} ${item.name}" else item.name
 
         /** The figures, in their columns - the same cells whichever line they land on. */
         fun addFigures(row: LinearLayout) {
@@ -2177,6 +2287,22 @@ class BillReceiptRenderer(context: Context) {
          * A format whose layout has not been built yet falls back to Standard, which
          * is what Printer Settings > Print Template tells the operator will happen.
          */
+        /**
+         * The table line for a saved bill: its number and, where a second section has
+         * one of the same number, which section it was in. A take-away order carries
+         * a token rather than a table and says so.
+         */
+        private fun tableLabel(number: String?, section: String?, orderType: String?): String? {
+            val no = number?.trim().orEmpty()
+            if (no.isEmpty()) return null
+            if (orderType?.startsWith("take", true) == true || no.startsWith("TA-", true)) {
+                return "TAKE AWAY : ${no.replace("TA-", "TOKEN #", true).uppercase()}"
+            }
+            val room = section?.trim().orEmpty()
+            return if (room.isEmpty()) "TABLE : ${no.uppercase()}"
+            else "TABLE : ${no.uppercase()} (${room.uppercase()})"
+        }
+
         fun layoutFor(format: BillSettingsDao.BillFormat): Int = when (format) {
             BillSettingsDao.BillFormat.CLASSIC -> R.layout.fragment_bill_classic
             BillSettingsDao.BillFormat.TAX_WISE_SHORT -> R.layout.fragment_bill_tax_wise

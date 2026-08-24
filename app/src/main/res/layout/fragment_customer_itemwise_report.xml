@@ -129,6 +129,47 @@
                         app:icon="@drawable/ic_print"
                         app:iconGravity="textStart"
                         app:cornerRadius="12dp" />
+
+                    <!-- Download the generated report - see ReportDownloads. -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnReportPdf"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="52dp"
+                        android:layout_marginStart="8dp"
+                        android:paddingHorizontal="12dp"
+                        android:text="PDF"
+                        android:textSize="12sp"
+                        android:enabled="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        app:icon="@drawable/ic_file_pdf"
+                        app:iconSize="20dp"
+                        app:iconPadding="5dp"
+                        app:iconTint="@null"
+                        app:iconGravity="textStart"
+                        app:cornerRadius="12dp"
+                        android:contentDescription="Download as PDF" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnReportExcel"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="52dp"
+                        android:layout_marginStart="8dp"
+                        android:paddingHorizontal="12dp"
+                        android:text="Excel"
+                        android:textSize="12sp"
+                        android:enabled="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        app:icon="@drawable/ic_file_excel"
+                        app:iconSize="20dp"
+                        app:iconPadding="5dp"
+                        app:iconTint="@null"
+                        app:iconGravity="textStart"
+                        app:cornerRadius="12dp"
+                        android:contentDescription="Download as Excel" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

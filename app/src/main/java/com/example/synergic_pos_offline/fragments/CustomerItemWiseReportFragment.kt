@@ -18,6 +18,8 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.CustomerItemWiseReportDao
 import com.example.synergic_pos_offline.utils.CustomerItemWiseReportRenderer
 import com.example.synergic_pos_offline.utils.PrinterSetup
+import com.example.synergic_pos_offline.utils.ReportDownloads
+import com.example.synergic_pos_offline.utils.ReportExport
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.google.android.material.button.MaterialButton
@@ -47,6 +49,9 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
     private lateinit var etFrom: TextInputEditText
     private lateinit var etTo: TextInputEditText
     private lateinit var btnPrint: MaterialButton
+
+    /** The PDF and Excel buttons beside Print - see [ReportDownloads]. */
+    private lateinit var downloads: ReportDownloads
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -84,6 +89,11 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
             setTextColor(accent)
             strokeColor = ColorStateList.valueOf(accent)
         }
+        // The same figures the screen is showing, as a file in Downloads. Built from
+        // the held report, so a download is what was generated.
+        downloads = ReportDownloads.wire(
+            view, requireContext(), accent, { if (isAdded) toast(it) }
+        ) { report?.let { sheetOf(it) } }
     }
 
     private fun generate() {
@@ -107,6 +117,7 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
         root.findViewById<View>(R.id.llReportEmpty).visibility = View.GONE
         root.findViewById<View>(R.id.llReportResult).visibility = View.VISIBLE
         btnPrint.isEnabled = true
+        downloads.setEnabled(true)
 
         root.findViewById<TextView>(R.id.tvReportPeriod).text =
             "${r.customerName}   •   ${pretty(r.fromDate)} to ${pretty(r.toDate)}"
@@ -127,12 +138,37 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
         container.addView(total("TOTAL AMT :", money(r.totalAmount)))
     }
 
+    /**
+     * The screen as a downloadable table.
+     *
+     * On glass each item is two stacked lines, because the card is narrow; a
+     * spreadsheet has no such trouble, so the same figures go out as one row per item
+     * with a column each. Nothing is added or dropped - it is the same report, laid
+     * out for the page it is going to.
+     */
+    private fun sheetOf(r: CustomerItemWiseReportDao.Report) = ReportExport.Sheet(
+        title = screenTitle,
+        subtitle = "${r.customerName}   •   ${pretty(r.fromDate)} to ${pretty(r.toDate)}",
+        columns = listOf("ITEM NAME", "QUANTITY", "AMOUNT", "SGST", "CGST"),
+        alignEnd = listOf(false, true, true, true, true),
+        rows = r.items.map {
+            listOf(it.name, qtyFmt(it.qty), money(it.amount), money(it.sgst), money(it.cgst))
+        },
+        summary = listOf(
+            "Total Qty" to qtyFmt(r.totalQty),
+            "Total SGST" to money(r.totalSgst),
+            "Total CGST" to money(r.totalCgst),
+            "Total Amount" to money(r.totalAmount)
+        )
+    )
+
     private fun showEmpty(title: String, hint: String) {
         root.findViewById<View>(R.id.llReportResult).visibility = View.GONE
         root.findViewById<View>(R.id.llReportEmpty).visibility = View.VISIBLE
         root.findViewById<TextView>(R.id.tvReportEmptyTitle).text = title
         root.findViewById<TextView>(R.id.tvReportEmptyHint).text = hint
         btnPrint.isEnabled = false
+        downloads.setEnabled(false)
     }
 
     private fun printReport(r: CustomerItemWiseReportDao.Report) {

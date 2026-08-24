@@ -173,6 +173,20 @@
                 </LinearLayout>
 
                 <!-- Customer details, shown per Bill Settings' "Customer Details" mode -->
+                <!-- The table this bill was served on. Restaurant only, and not
+                     governed by the Customer Details setting: which table a bill
+                     belongs to is part of the bill, not a detail about the guest. -->
+                <TextView
+                    android:id="@+id/tvBillTable"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="TABLE : 5"
+                    android:fontFamily="@font/roboto_mono_regular"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
                 <TextView
                     android:id="@+id/tvCustMobile"
                     android:layout_width="match_parent"
@@ -457,6 +471,59 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
+
+                <!--
+                    Scan-to-pay UPI QR. Built per bill from the UPI ID in Bill
+                    Settings and carrying this bill&apos;s total, so the payment app
+                    opens with the amount already filled in. Hidden unless the bill
+                    was settled by UPI and the setting is on.
+                -->
+                <LinearLayout
+                    android:id="@+id/llUpiQr"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center_horizontal"
+                    android:layout_marginTop="8dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/tvUpiQrCaption"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="SCAN TO PAY"
+                        android:fontFamily="@font/roboto_mono_regular"
+                        android:textStyle="bold"
+                        android:textSize="13sp"
+                        android:textColor="#111111" />
+
+                    <ImageView
+                        android:id="@+id/ivUpiQr"
+                        android:layout_width="150dp"
+                        android:layout_height="150dp"
+                        android:layout_marginTop="4dp"
+                        android:scaleType="fitCenter"
+                        android:contentDescription="UPI payment QR" />
+
+                    <TextView
+                        android:id="@+id/tvUpiQrAmount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="@font/roboto_mono_regular"
+                        android:textStyle="bold"
+                        android:textSize="13sp"
+                        android:textColor="#111111" />
+
+                    <TextView
+                        android:id="@+id/tvUpiQrVpa"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:fontFamily="@font/roboto_mono_regular"
+                        android:textSize="11sp"
+                        android:textColor="#222222" />
+                </LinearLayout>
 
                 <!-- Who rang the sale up -->
                 <TextView

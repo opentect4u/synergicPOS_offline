@@ -55,6 +55,26 @@ class MainActivity : AppCompatActivity() {
 
         /** Named once: the drawer lists this leaf by it and [handleLeaf] opens it by it. */
         private const val CALCULATOR = "Calculator"
+
+        /**
+         * Header sizes, roomy and tight. Between them they take the bar from about
+         * 64dp to about 42dp - a third of it back, which on the sale screen is
+         * another row of products.
+         */
+        private const val NORMAL_TITLE_SP = 22f
+        private const val COMPACT_TITLE_SP = 17f
+        private const val NORMAL_ICON_DP = 44
+        private const val COMPACT_ICON_DP = 34
+        private const val NORMAL_BACK_DP = 40
+        private const val NORMAL_VERTICAL_PADDING_DP = 10
+        private const val COMPACT_VERTICAL_PADDING_DP = 4
+
+        /**
+         * The drawer's way back to the top. Named "Home" rather than "Dashboard"
+         * because that is what the row is *for* - the dashboard is one of the things
+         * it can land on, and in Calculator mode it is not the thing at all.
+         */
+        private const val HOME = "Home"
     }
 
     private lateinit var drawerLayout: DrawerLayout
@@ -107,6 +127,13 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnHome).setOnClickListener { goHome() }
         findViewById<View>(R.id.btnTheme).setOnClickListener { showThemePopup(it) }
         findViewById<View>(R.id.btnLogout).setOnClickListener { confirmLogout() }
+        // The drawer's own Logout, pinned at its foot. Asks the same question the
+        // header's power icon does rather than signing out on the tap: it is the one
+        // row in there that ends the session.
+        findViewById<View>(R.id.llSidebarLogout).setOnClickListener {
+            closeDrawer()
+            confirmLogout()
+        }
 
         rvSidebar.layoutManager = LinearLayoutManager(this)
         refreshSidebar()
@@ -188,6 +215,7 @@ class MainActivity : AppCompatActivity() {
         tvHeaderTitle.text = titleFor(f)
         val user = SessionManager.currentUser
         tvHeaderSubtitle.text = "Hello, ${user?.userId ?: "User"}"
+        applyHeaderDensity(compact = isSaleScreen(f))
         // Back is hidden on whatever screen is the root - the Sale screen after login,
         // or the Dashboard after the home button - and shown on anything pushed over
         // it. Decided from the back stack rather than by naming screens, so a screen
@@ -195,6 +223,56 @@ class MainActivity : AppCompatActivity() {
         // the right answer either way.
         btnBack.visibility =
             if (supportFragmentManager.backStackEntryCount == 0) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * The sale screen, whichever kind of till this is.
+     *
+     * The one page that is looked at all day and the one with no room to spare: the
+     * item grid, the running order and the totals all have to be on screen at once,
+     * and every dp the header takes is a dp off the list of products. Everywhere else
+     * is a settings page or a report, where a roomy header costs nothing.
+     */
+    private fun isSaleScreen(f: Fragment): Boolean =
+        f is com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment ||
+            f is PosBillingFragment
+
+    /**
+     * Sets the header tight or roomy.
+     *
+     * Applied in code rather than by swapping in a second layout, because the two
+     * differ only in size - same views, same ids, same click handlers - and a second
+     * layout would be a copy to keep in step every time a button is added to the
+     * first.
+     *
+     * The subtitle goes entirely on the tight setting rather than shrinking: "Hello,
+     * te98" is a greeting, and who is logged in is already in the drawer header where
+     * it is looked up rather than read past. Dropping it is what lets the bar close up
+     * to one line.
+     */
+    private fun applyHeaderDensity(compact: Boolean) {
+        val density = resources.displayMetrics.density
+        fun dp(value: Int) = (value * density).toInt()
+
+        tvHeaderTitle.textSize = if (compact) COMPACT_TITLE_SP else NORMAL_TITLE_SP
+        tvHeaderSubtitle.visibility = if (compact) View.GONE else View.VISIBLE
+
+        val icon = dp(if (compact) COMPACT_ICON_DP else NORMAL_ICON_DP)
+        listOf(R.id.btnMenu, R.id.btnHome, R.id.btnTheme, R.id.btnLogout).forEach { id ->
+            findViewById<View>(id).apply {
+                layoutParams = layoutParams.also { it.width = icon; it.height = icon }
+            }
+        }
+        // Back is a shade smaller than the rest at either setting - it sits next to
+        // the hamburger rather than in the run of actions on the right.
+        val back = dp(if (compact) COMPACT_ICON_DP - 2 else NORMAL_BACK_DP)
+        btnBack.layoutParams = btnBack.layoutParams.also { it.width = back; it.height = back }
+
+        val vertical = dp(if (compact) COMPACT_VERTICAL_PADDING_DP else NORMAL_VERTICAL_PADDING_DP)
+        headerBar.setPadding(
+            headerBar.paddingStart, vertical, headerBar.paddingEnd, vertical
+        )
+        headerBar.requestLayout()
     }
 
     private fun titleFor(f: Fragment): String = when (f) {
@@ -291,8 +369,11 @@ class MainActivity : AppCompatActivity() {
      */
     private fun refreshSidebar() {
         val tree = buildMenuTree()
-        activeLeafTitle?.let { expandToActive(tree, it) }
-        rvSidebar.adapter = SidebarAdapter(tree, activeLeafTitle) { leafTitle -> handleLeaf(leafTitle) }
+        // The dashboard is what Home opens, so the Home row is what should look
+        // current while it is on screen - the tree has no node called "Dashboard".
+        val active = if (activeLeafTitle == "Dashboard") HOME else activeLeafTitle
+        active?.let { expandToActive(tree, it) }
+        rvSidebar.adapter = SidebarAdapter(tree, active) { leafTitle -> handleLeaf(leafTitle) }
     }
 
     /**
@@ -446,6 +527,9 @@ class MainActivity : AppCompatActivity() {
     private fun handleLeaf(title: String) {
         closeDrawer()
         when (title) {
+            // goHome() closes the drawer itself and clears the back stack, which is
+            // the difference between this and every other row here.
+            HOME -> goHome()
             "Master" -> navigateTo(MasterFragment())
             "Settings" -> navigateTo(SettingsFragment())
             "General Settings" -> navigateTo(GeneralSettingsFragment())
@@ -603,6 +687,8 @@ class MainActivity : AppCompatActivity() {
         ) else emptyList()
 
         return buildList {
+            // First, because it is the way back rather than a section of its own.
+            add(TreeNode(HOME))
             if (canMaster) add(TreeNode("Master", listOf(
                 TreeNode("Captions"),
                 TreeNode("Header & Footer", buildList {

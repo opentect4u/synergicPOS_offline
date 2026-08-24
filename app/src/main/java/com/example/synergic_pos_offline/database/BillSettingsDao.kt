@@ -95,10 +95,40 @@ class BillSettingsDao(context: Context) {
         val billNoCharEnabled: Boolean = false,
         val billNoCharPrefix: String = "",
         val hsnCode: Boolean = false,
+        /**
+         * Whether each line is numbered on the printed bill - the SR.NO down the left
+         * of the item table.
+         *
+         * Defaults ON, which is what every till did before this was a choice: a shop
+         * that upgrades keeps printing the bill it printed yesterday, and only a shop
+         * that turns it off sees a change.
+         */
+        val productSerialNumber: Boolean = true,
         val customerDetails: CustomerDetails = CustomerDetails.ONLY_MOBILE,
         val customerAddressPrinting: Boolean = false,
         val totalAmountFontSize: FontSize = FontSize.REGULAR,
-        val billFormat: BillFormat = BillFormat.STANDARD
+        val billFormat: BillFormat = BillFormat.STANDARD,
+        /**
+         * Whether a UPI payment QR is printed on a bill settled by UPI.
+         *
+         * Off by default, and it stays off until a [upiId] is entered - a code built
+         * without one would be a square the customer cannot pay into.
+         *
+         * A bill settled Online prints the code regardless of this: that payment mode
+         * says the customer is paying from their phone and has no other tender to pay
+         * with, so the code is the bill doing its job rather than an extra the shop
+         * opted into. This setting decides the UPI case, where the shop may already
+         * have a code on the counter and a second one per slip is only paper.
+         */
+        val upiQrEnabled: Boolean = false,
+        /** The shop's UPI address the printed code pays into - `shop@okaxis`. */
+        val upiId: String = "",
+        /**
+         * The name the payment app shows the customer before they confirm. Blank is
+         * allowed: the app then falls back to whatever the bank has on file for
+         * [upiId], which is the shop's registered name.
+         */
+        val upiPayeeName: String = ""
     )
 
     /** Reads every bill setting for the current store, applying defaults. */
@@ -114,10 +144,14 @@ class BillSettingsDao(context: Context) {
             billNoCharEnabled = map[KEY_CHAR_ENABLED]?.toBool() ?: d.billNoCharEnabled,
             billNoCharPrefix = map[KEY_CHAR_PREFIX] ?: d.billNoCharPrefix,
             hsnCode = map[KEY_HSN_CODE]?.toBool() ?: d.hsnCode,
+            productSerialNumber = map[KEY_PRODUCT_SERIAL]?.toBool() ?: d.productSerialNumber,
             customerDetails = CustomerDetails.fromStored(map[KEY_CUSTOMER_DETAILS]) ?: d.customerDetails,
             customerAddressPrinting = map[KEY_CUSTOMER_ADDRESS_PRINTING]?.toBool() ?: d.customerAddressPrinting,
             totalAmountFontSize = FontSize.fromStored(map[KEY_TOTAL_FONT_SIZE]) ?: d.totalAmountFontSize,
-            billFormat = BillFormat.fromStored(map[KEY_BILL_FORMAT]) ?: d.billFormat
+            billFormat = BillFormat.fromStored(map[KEY_BILL_FORMAT]) ?: d.billFormat,
+            upiQrEnabled = map[KEY_UPI_QR_ENABLED]?.toBool() ?: d.upiQrEnabled,
+            upiId = map[KEY_UPI_ID] ?: d.upiId,
+            upiPayeeName = map[KEY_UPI_PAYEE_NAME] ?: d.upiPayeeName
         )
     }
 
@@ -132,10 +166,14 @@ class BillSettingsDao(context: Context) {
         put(KEY_CHAR_ENABLED, if (s.billNoCharEnabled) "1" else "0")
         put(KEY_CHAR_PREFIX, s.billNoCharPrefix.take(3))
         put(KEY_HSN_CODE, if (s.hsnCode) "1" else "0")
+        put(KEY_PRODUCT_SERIAL, if (s.productSerialNumber) "1" else "0")
         put(KEY_CUSTOMER_DETAILS, s.customerDetails.code.toString())
         put(KEY_CUSTOMER_ADDRESS_PRINTING, if (s.customerAddressPrinting) "1" else "0")
         put(KEY_TOTAL_FONT_SIZE, s.totalAmountFontSize.code)
         put(KEY_BILL_FORMAT, s.billFormat.code)
+        put(KEY_UPI_QR_ENABLED, if (s.upiQrEnabled) "1" else "0")
+        put(KEY_UPI_ID, s.upiId.trim())
+        put(KEY_UPI_PAYEE_NAME, s.upiPayeeName.trim())
         refreshCache()
     }
 
@@ -279,10 +317,14 @@ class BillSettingsDao(context: Context) {
         private const val KEY_CHAR_ENABLED = "Bill No Char Enabled"
         private const val KEY_CHAR_PREFIX = "Bill No Char Prefix"
         private const val KEY_HSN_CODE = "Bill Hsn Code"
+        private const val KEY_PRODUCT_SERIAL = "Product Serial Number"
         private const val KEY_CUSTOMER_DETAILS = "Customer Details"
         private const val KEY_CUSTOMER_ADDRESS_PRINTING = "Customer Address Printing"
         private const val KEY_TOTAL_FONT_SIZE = "Total Amount Font Size"
         private const val KEY_BILL_FORMAT = "Bill Format"
+        private const val KEY_UPI_QR_ENABLED = "Bill Upi Qr Enabled"
+        private const val KEY_UPI_ID = "Bill Upi Id"
+        private const val KEY_UPI_PAYEE_NAME = "Bill Upi Payee Name"
         private const val KEY_TEMPLATE_PAPER = "Bill Template Paper Width"
 
         /** 3-inch paper, the size most bill printers on this app run. */
