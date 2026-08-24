@@ -36,6 +36,7 @@ import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.ImageUtils
+import com.example.synergic_pos_offline.utils.SearchSuggestions
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.StockBadge
@@ -109,6 +110,44 @@ class PosBillingFragment : Fragment(), TitledScreen {
         /** Combined rate, for display only. */
         val gst: Double get() = cgst + sgst
     }
+
+    /**
+     * The search dropdown over the shelf. Held on the fragment so it can be dismissed
+     * when the screen goes away - a popup window outlives the view that anchored it.
+     */
+    private var suggestions: SearchSuggestions? = null
+
+    /**
+     * One shelf product as a suggestion row.
+     *
+     * The line under the name is what tells two similar products apart in a grocery:
+     * its category and its number. Stock is the grocery's own question - a row for
+     * something that is out has to say so before it is tapped, not after - and it is
+     * the reason this mapping is not shared with the restaurant's.
+     */
+    private fun suggestionOf(p: Product) = SearchSuggestions.Item(
+        id = p.id,
+        name = p.name,
+        meta = listOfNotNull(
+            p.category.takeIf { it.isNotBlank() },
+            p.sku.takeIf { it.isNotBlank() }?.let { "#$it" }
+        ).joinToString("  ·  "),
+        price = money(p.price),
+        codes = listOfNotNull(
+            p.sku.takeIf { it.isNotBlank() },
+            p.barcode.takeIf { it.isNotBlank() }
+        ),
+        // Only ever the warning states, and only while stock is tracked: a badge on
+        // every row saying "in stock" is a badge that stops being read.
+        badge = when {
+            !stockTrackingOn -> ""
+            p.stock == "out" -> "Out"
+            p.stock == "low" -> "Low"
+            else -> ""
+        },
+        badgeColor = if (p.stock == "out") 0xFFDC2626.toInt() else 0xFFF59E0B.toInt(),
+        bitmap = photoCache[p.id]
+    )
 
     private data class CartLine(val product: Product, var qty: Double)
     private fun CartLine.toSessionLine() = CheckoutSession.Line(
@@ -342,10 +381,50 @@ class PosBillingFragment : Fragment(), TitledScreen {
         }
         cartPanel.layoutParams = cartPanel.layoutParams.apply { width = (cartDp * density).toInt() }
 
-        // Search
-        view.findViewById<TextInputEditText>(R.id.etSearch).addTextChangedListener(simpleWatcher {
-            query = it; applyFilter()
+        // Search. Typing narrows the shelf behind, as it always has, and drops the
+        // best few matches out of the box itself - the shortcut to the top of a grid
+        // that is seven tiles wide and can hide a match below the fold.
+        val etSearch = view.findViewById<TextInputEditText>(R.id.etSearch)
+        suggestions = SearchSuggestions(ctx, etSearch, accent) { picked ->
+            // Picking a suggestion does exactly what tapping its tile does: through
+            // showProductDialog, which is where App Settings' Direct Add to Cart is
+            // read. On, the item goes straight into the cart at its default rate and
+            // no popup opens; off, the rate/quantity popup opens as it always did.
+            // One way in, so nothing can be skipped by coming through the search box
+            // rather than off the shelf.
+            menu.firstOrNull { it.id == picked.id }?.let { p ->
+                showProductDialog(p)
+                // Then empty the box, which is what makes it a flow rather than one
+                // lookup: the shelf comes back whole and the cursor is ready for the
+                // next item. Without this the search stays filtered to the thing just
+                // added and has to be cleared by hand between every scan.
+                //
+                // Except when it was refused: an out-of-stock product is turned away
+                // with a toast and nothing is added, so the query stays up to be
+                // corrected or retried rather than being wiped for no result.
+                if (p.stock != "out") etSearch.setText("")
+            }
+        }
+        etSearch.addTextChangedListener(simpleWatcher {
+            query = it
+            applyFilter()
+            // Suggested from the WHOLE shelf, not the open category: someone who types
+            // a product name has named the product, and hiding it because a different
+            // category is selected would answer a question they did not ask.
+            suggestions?.update(query, menu.map(::suggestionOf))
         })
+        // A search left behind must not float over the next screen.
+        etSearch.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) suggestions?.dismiss() }
+        // The keyboard's Search key, and the Enter a hardware scanner sends after a
+        // barcode: the query is finished either way, so the keyboard goes and the
+        // shelf - filtered to what was asked for - is left uncovered.
+        etSearch.setOnEditorActionListener { _, actionId, event ->
+            val done = actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
+                event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER
+            if (done) { suggestions?.dismiss(); suggestions?.hideKeyboard() }
+            done
+        }
         // Discount - hidden entirely when Tax Settings' Discount is on and item-wise.
         view.findViewById<View>(R.id.sectionDiscount).visibility =
             if (showDiscountBox) View.VISIBLE else View.GONE
@@ -378,6 +457,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val btnCalculator = view.findViewById<MaterialButton>(R.id.btnCalculator)
         val btnCustomer = view.findViewById<MaterialButton>(R.id.btnCustomer)
         val btnHold = view.findViewById<MaterialButton>(R.id.btnHold)
+        // The money end of the panel folds, so the cart gets the height while a bill is
+        // being built. Starts folded: a breakdown is read once, at the end.
+        view.findViewById<MaterialButton>(R.id.btnToggleBillingSummary).setOnClickListener {
+            setBillingSummaryExpanded(!billingSummaryExpanded)
+        }
+        setBillingSummaryExpanded(expanded = false, animate = false)
+
         btnCalculator.setOnClickListener { showCalculatorDialog() }
         btnCustomer.setOnClickListener { showCustomerDialog() }
         btnAddCustomer.setOnClickListener { showCustomerDialog() }
@@ -406,21 +492,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         // Theme everything, THEN restore each button's intended look
         ThemeManager.applyTheme(view)
-        
-        listOf(btnHeld, btnCalculator, btnCustomer, btnHold).forEach { styleOutlined(it, accent) }
-        
-        // "+ Add loyalty customer" is a borderless text button.
-        btnAddCustomer.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-        btnAddCustomer.setTextColor(accent)
-        
-        // Checkout button: Solid theme color
-        val isRestaurant = SettingsCache.value(ctx, "G", "Mode") == "R"
-        if (isRestaurant) {
+        restyleActions(view, accent)
+
+        if (SettingsCache.value(ctx, "G", "Mode") == "R") {
             btnCharge.text = "Bill & Print"
         }
-        btnCharge.backgroundTintList = ColorStateList.valueOf(accent)
-        btnCharge.setTextColor(Color.WHITE)
-        btnCharge.strokeWidth = 0
 
         clockRunnable = object : Runnable {
             override fun run() {
@@ -433,6 +509,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     override fun onResume() {
         super.onResume()
+        // Re-assert this panel's own button styling, AFTER the activity's theme pass.
+        //
+        // MainActivity re-themes the whole live view tree from onFragmentResumed, which
+        // runs after this fragment's onViewCreated - and ThemeManager fills every
+        // MaterialButton it does not recognise as secondary. So the fold's handle,
+        // styled flat in onViewCreated, was being repainted into a solid slab of accent
+        // a moment later, every single time this screen was shown. Posted, so it lands
+        // after that pass rather than racing it. The restaurant panel does the same
+        // thing for the same reason - see its restyle() on resume.
+        view?.post { view?.let { restyleActions(it, ThemeManager.getThemeColor(requireContext())) } }
 
         // A sale just completed and the operator asked for another one.
         if (CheckoutSession.startFreshSale) {
@@ -548,6 +634,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
     override fun onDestroyView() {
         super.onDestroyView()
         clockHandler.removeCallbacks(clockRunnable)
+        // A ListPopupWindow is a window, not a child of this view: left showing, it
+        // would float over whatever replaces this screen.
+        suggestions?.release()
+        suggestions = null
     }
 
     // ---- Filtering / cart --------------------------------------------------
@@ -1710,6 +1800,42 @@ class PosBillingFragment : Fragment(), TitledScreen {
         }
     }
 
+    /** Whether the discount box, the breakdown and the TOTAL bar are pulled up. */
+    private var billingSummaryExpanded = false
+
+    /**
+     * Folds the money end of the cart panel away, or pulls it back up to the height it
+     * used to hold permanently. The cart list above is the view that flexes, so
+     * whatever this releases goes straight to it.
+     *
+     * The same fold as the restaurant sale screen's, down to the handle carrying the
+     * total while it is shut - the two sale screens are the same screen in two trades,
+     * and an operator moving between them should not have to learn it twice.
+     */
+    private fun setBillingSummaryExpanded(expanded: Boolean, animate: Boolean = true) {
+        billingSummaryExpanded = expanded
+        val root = view ?: return
+        val detail = root.findViewById<View>(R.id.llBillingSummaryDetail)
+        if (animate) {
+            // Lays the change out in one pass with the cart growing into it, rather
+            // than the panel jumping.
+            android.transition.TransitionManager.beginDelayedTransition(
+                detail.parent as ViewGroup,
+                android.transition.AutoTransition().apply { duration = 160 }
+            )
+        }
+        detail.visibility = if (expanded) View.VISIBLE else View.GONE
+        root.findViewById<MaterialButton>(R.id.btnToggleBillingSummary).apply {
+            text = if (expanded) "Hide discount & tax details" else "Discount & tax details"
+            setIconResource(if (expanded) R.drawable.ic_expand_more else R.drawable.ic_expand_less)
+        }
+        // The handle carries the total only while the fold is shut. Open, the TOTAL bar
+        // is showing a few lines below it, and the same number twice - one above the
+        // other - reads as two figures to reconcile rather than one to read.
+        root.findViewById<TextView>(R.id.tvBillingTotalBar).visibility =
+            if (expanded) View.GONE else View.VISIBLE
+    }
+
     private fun updateTotals() {
         tvCartEmpty.visibility = if (cart.isEmpty()) View.VISIBLE else View.GONE
 
@@ -1735,15 +1861,31 @@ class PosBillingFragment : Fragment(), TitledScreen {
             } else View.GONE
 
         tvTotal.text = money(computeTotal())
+        // The same figure on the fold's handle, for while the fold is shut.
+        view?.findViewById<TextView>(R.id.tvBillingTotalBar)?.text = money(computeTotal())
+        // The amount in brackets after the label, spaced off it - the way the
+        // restaurant panel's Checkout carries its total. The label and the figure are
+        // two different things to read, and running them together made a button that
+        // said "Checkout ₹1240.00" as one word.
         val isRestaurant = SettingsCache.value(requireContext(), "G", "Mode") == "R"
         btnCharge.text = if (isRestaurant) {
-            "Bill & Print ${money(computeTotal())}"
+            "Bill & Print  ( ${money(computeTotal())} )"
         } else {
-            "Checkout ${money(computeTotal())}"
+            "Checkout  ( ${money(computeTotal())} )"
         }
     }
 
-    private fun money(v: Double): String = "₹" + String.format("%.2f", BillRounding.toPaise(v))
+    /**
+     * An amount as this app writes amounts: "₹ 1,240.00".
+     *
+     * A space after the symbol and a thousands separator, which is how the restaurant
+     * sale screen has always written them. This screen used to run the symbol into the
+     * digits and drop the grouping - "₹1240.00" - so the two sale screens disagreed
+     * about the shape of a number in the panel they share the design of. Same rounding
+     * as before; only the rendering changed.
+     */
+    private fun money(v: Double): String =
+        "₹ " + String.format(java.util.Locale.US, "%,.2f", BillRounding.toPaise(v))
 
     /** Whole quantities show without decimals; fractional ones keep up to 3 places. */
     private fun qtyText(v: Double): String =
@@ -1756,6 +1898,64 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun padded(v: View): View {
         val p = (20 * resources.displayMetrics.density).toInt()
         return android.widget.FrameLayout(requireContext()).apply { setPadding(p, p / 2, p, 0); addView(v) }
+    }
+
+    /**
+     * Puts this panel's buttons back to their intended looks after a theme pass.
+     *
+     * ThemeManager paints by NAME - anything it does not recognise as secondary comes
+     * out as a filled accent pill - and it is run over the whole live tree twice: once
+     * here at setup, and again by MainActivity when the fragment resumes. So this is
+     * not a one-off correction at build time; it has to be re-run every time the theme
+     * pass does, or the panel drifts back to a column of identical filled slabs where
+     * a handle, an outline and a primary should be three different things.
+     */
+    private fun restyleActions(root: View, accent: Int) {
+        // Resolved by id rather than captured: this runs on resume too, long after the
+        // locals in onViewCreated have gone.
+        listOf(R.id.btnCalculator, R.id.btnCustomer, R.id.btnHold)
+            .mapNotNull { root.findViewById<MaterialButton>(it) }
+            .plus(btnHeld)
+            .forEach { styleOutlined(it, accent) }
+
+        // "+ Add loyalty customer" is a borderless text button.
+        btnAddCustomer.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+        btnAddCustomer.setTextColor(accent)
+
+        // Checkout: the one filled button on the panel, and the only one that should be.
+        btnCharge.backgroundTintList = ColorStateList.valueOf(accent)
+        btnCharge.setTextColor(Color.WHITE)
+        btnCharge.strokeWidth = 0
+
+        // The total, in both the places it appears. It used to be white on a solid
+        // accent bar, which needed no tinting; on a plain row - the restaurant's
+        // arrangement - the figure itself carries the accent and has to be told.
+        tvTotal.setTextColor(accent)
+        root.findViewById<TextView>(R.id.tvBillingTotalBar).setTextColor(accent)
+
+        // The fold's handle: label and chevron in the accent on nothing behind them,
+        // which is what makes it read as a handle rather than a third button competing
+        // with Hold and Checkout under it.
+        styleTextOnly(root.findViewById(R.id.btnToggleBillingSummary), accent)
+    }
+
+    /**
+     * A plain text control: label and chevron only, no pill behind them.
+     *
+     * ThemeManager fills every MaterialButton it walks, so a TextButton style alone is
+     * not enough - the fill it puts on has to be taken back off here, or the fold's
+     * handle comes out as a solid slab of accent across the panel instead of the flat
+     * line of text the restaurant's is. Same treatment as [RestaurantOrdersFragment]'s
+     * textOnly, so the two handles are the same control.
+     */
+    private fun styleTextOnly(btn: MaterialButton, accent: Int) {
+        btn.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+        btn.setTextColor(accent)
+        btn.iconTint = ColorStateList.valueOf(accent)
+        btn.strokeWidth = 0
+        btn.rippleColor = ColorStateList.valueOf(
+            androidx.core.graphics.ColorUtils.setAlphaComponent(accent, 0x1A)
+        )
     }
 
     /** Restores an outlined button's transparent fill + accent border/text/icon. */
