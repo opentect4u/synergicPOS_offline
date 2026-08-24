@@ -389,18 +389,38 @@
                     android:textSize="14sp" />
             </FrameLayout>
 
-            <!-- Footer -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#E4E7EB" />
+
+            <!-- The money end of the panel - the discount box, the breakdown and the
+                 Total - folded away by default so the cart above gets the height
+                 instead. The handle below pulls it back up, and carries the total
+                 while it is down; the two buttons never fold, since they are what the
+                 panel is used for.
+
+                 This is the restaurant sale screen's Note & tax details fold, part for
+                 part: the same input at the top, the same OrderSummary rows under it,
+                 the same plain Total closing it, the same handle. The two sale screens
+                 are the same screen in two trades, and an operator moving between them
+                 should not have to learn the money end twice. Where they differ is
+                 only in what each trade actually has - a note and a service charge
+                 there, a discount box and a round-off here. -->
             <LinearLayout
+                android:id="@+id/llBillingSummaryDetail"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:background="#F8F9FA"
-                android:paddingHorizontal="16dp"
-                android:paddingTop="12dp"
-                android:paddingBottom="8dp">
+                android:background="@color/white"
+                android:visibility="gone">
 
-                <!-- Discount, shown only when Tax Settings has Discount off or set to
-                     Bill wise - item-wise discount is entered elsewhere per product. -->
+                <!-- The input at the top of the fold, where the restaurant's order note
+                     is: same OutlinedBox (not Dense), same 12dp corners, same 18dp
+                     margins off the panel edge, so the field sits on the same line and
+                     stands the same height in both trades. Shown only when Tax Settings
+                     has Discount off or set to Bill wise - item-wise discount is
+                     entered elsewhere, per product. -->
                 <LinearLayout
                     android:id="@+id/sectionDiscount"
                     android:layout_width="match_parent"
@@ -412,7 +432,8 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
-                        android:layout_marginBottom="4dp">
+                        android:layout_marginHorizontal="18dp"
+                        android:layout_marginTop="12dp">
 
                         <RadioButton
                             android:id="@+id/rbDiscountPercent"
@@ -431,160 +452,211 @@
                             android:textSize="12sp" />
                     </RadioGroup>
 
-                    <!-- Discount row -->
-                    <LinearLayout
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilDiscount"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical">
+                        android:layout_marginHorizontal="18dp"
+                        android:layout_marginTop="4dp"
+                        android:hint="Discount"
+                        app:suffixText="%"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
 
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:id="@+id/tilDiscount"
-                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etDiscount"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:hint="Discount"
-                            app:suffixText="%"
-                            app:boxCornerRadiusTopStart="10dp"
-                            app:boxCornerRadiusTopEnd="10dp"
-                            app:boxCornerRadiusBottomStart="10dp"
-                            app:boxCornerRadiusBottomEnd="10dp">
-
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/etDiscount"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:inputType="number"
-                                android:gravity="end"
-                                android:maxLines="1" />
-                        </com.google.android.material.textfield.TextInputLayout>
-                    </LinearLayout>
+                            android:inputType="number"
+                            android:gravity="end"
+                            android:maxLines="1"
+                            android:textSize="14sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
                 <TextView
                     android:id="@+id/tvCouponMsg"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="18dp"
                     android:layout_marginTop="2dp"
                     android:textSize="11sp"
                     android:textColor="@color/primary_dark"
                     android:visibility="gone" />
 
+                <!-- The breakdown, on the shared OrderSummary styles the restaurant
+                     panel uses, in a block padded exactly as its is - so a row is the
+                     same height, the same 14sp, the same colouring and the same indent
+                     in both trades. -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginTop="8dp">
+                    android:orientation="vertical"
+                    android:paddingHorizontal="20dp"
+                    android:paddingTop="6dp">
 
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                        android:text="Subtotal" android:textSize="13sp" android:textColor="@color/text_secondary" />
-                    <TextView android:id="@+id/tvSubtotal" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="₹ 0.00" android:textSize="13sp" android:textColor="@color/text_main" />
+                    <LinearLayout style="@style/OrderSummaryRow">
+                        <TextView style="@style/OrderSummaryLabel" android:text="Subtotal" />
+                        <TextView android:id="@+id/tvSubtotal" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/rowBillingDiscount" style="@style/OrderSummaryRow">
+                        <TextView android:id="@+id/tvDiscountLabel" style="@style/OrderSummaryLabel" android:text="Discount (0%)" />
+                        <TextView android:id="@+id/tvDiscountAmt" style="@style/OrderSummaryValue" android:text="- ₹ 0.00" />
+                    </LinearLayout>
+
+                    <LinearLayout style="@style/OrderSummaryRow">
+                        <TextView android:id="@+id/tvTaxLabel" style="@style/OrderSummaryLabel" android:text="GST" />
+                        <TextView android:id="@+id/tvTax" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                    </LinearLayout>
+
+                    <!-- Round off, shown only when the bill needs one -->
+                    <LinearLayout android:id="@+id/rowBillingRoundOff" style="@style/OrderSummaryRow"
+                        android:visibility="gone">
+                        <TextView style="@style/OrderSummaryLabel" android:text="Round off" />
+                        <TextView android:id="@+id/tvBillingRoundOff" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                    </LinearLayout>
                 </LinearLayout>
 
-                <LinearLayout
-                    android:id="@+id/rowBillingDiscount"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginTop="4dp">
-
-                    <TextView android:id="@+id/tvDiscountLabel" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                        android:text="Discount (0%)" android:textSize="13sp" android:textColor="@color/text_secondary" />
-                    <TextView android:id="@+id/tvDiscountAmt" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="- ₹ 0.00" android:textSize="13sp" android:textColor="@color/text_main" />
-                </LinearLayout>
-
+                <!-- The Total closes the breakdown it is the sum of. A plain row, not
+                     the full-bleed accent bar this used to be: on a panel where the
+                     figure is already repeated on the handle below, a band of solid
+                     colour was shouting a number that is no longer even the one being
+                     read most of the time. Identical to the restaurant's, padding
+                     included. -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:layout_marginTop="4dp">
+                    android:gravity="center_vertical"
+                    android:baselineAligned="false"
+                    android:paddingHorizontal="20dp"
+                    android:paddingTop="10dp">
 
-                    <TextView android:id="@+id/tvTaxLabel" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                        android:text="GST" android:textSize="13sp" android:textColor="@color/text_secondary" />
-                    <TextView android:id="@+id/tvTax" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="₹ 0.00" android:textSize="13sp" android:textColor="@color/text_main" />
-                </LinearLayout>
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Total"
+                        android:textSize="22sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_main" />
 
-                <!-- Round off, shown only when the bill needs one -->
-                <LinearLayout
-                    android:id="@+id/rowBillingRoundOff"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginTop="4dp"
-                    android:visibility="gone">
-
-                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                        android:text="Round off" android:textSize="13sp" android:textColor="@color/text_secondary" />
-                    <TextView android:id="@+id/tvBillingRoundOff" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="₹ 0.00" android:textSize="13sp" android:textColor="@color/text_main" />
+                    <TextView
+                        android:id="@+id/tvTotal"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="₹ 0.00"
+                        android:textSize="24sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/primary_blue" />
                 </LinearLayout>
             </LinearLayout>
+            <!-- /llBillingSummaryDetail -->
 
-            <!-- Accent total bar -->
+            <!-- The handle: says what is folded away, pulls it up, and carries the
+                 total while it is down.
+
+                 The Total went into the fold to give the cart its height back, but the
+                 amount is the one figure a counter reads off this panel continuously -
+                 folding it away would have bought the space with the number the screen
+                 is for. So it is echoed here, at no height at all: the bar is 38dp
+                 either way. Same metrics as the restaurant's handle, down to the 18sp
+                 the figure is set in. -->
             <LinearLayout
-                android:id="@+id/barTotal"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="38dp"
+                android:layout_marginHorizontal="14dp"
+                android:layout_marginTop="4dp"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:background="@color/primary_blue"
-                android:paddingHorizontal="16dp"
-                android:paddingVertical="14dp">
+                android:baselineAligned="false">
 
-                <TextView
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnToggleBillingSummary"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
                     android:layout_width="0dp"
-                    android:layout_height="wrap_content"
+                    android:layout_height="match_parent"
                     android:layout_weight="1"
-                    android:text="TOTAL"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:letterSpacing="0.1"
-                    android:textColor="@color/white" />
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minHeight="0dp"
+                    android:paddingHorizontal="8dp"
+                    android:text="Discount &amp; tax details"
+                    android:textSize="12.5sp"
+                    android:textAllCaps="false"
+                    app:icon="@drawable/ic_expand_less"
+                    app:iconGravity="textStart"
+                    app:iconSize="18dp"
+                    app:cornerRadius="8dp" />
 
+                <!-- Gone while the fold is open, where the Total row is showing a few
+                     lines below it - the same number twice, one above the other, reads
+                     as two figures to reconcile rather than one to read. -->
                 <TextView
-                    android:id="@+id/tvTotal"
+                    android:id="@+id/tvBillingTotalBar"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="6dp"
+                    android:maxLines="1"
                     android:text="₹ 0.00"
-                    android:textSize="26sp"
+                    android:textSize="18sp"
                     android:textStyle="bold"
-                    android:textColor="@color/white" />
+                    android:textColor="@color/primary_blue" />
             </LinearLayout>
 
-            <!-- Actions -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginHorizontal="20dp"
+                android:background="#E4E7EB" />
+
+            <!-- Actions, on one row: Hold beside Checkout.
+
+                 Weighted 1 to 1.6 rather than evenly. A grocery holds a bill now and
+                 then and settles one every time, and the button that ends the sale
+                 carries an amount inside it - equal halves would give the occasional
+                 action the same claim on the row as the constant one, and squeeze the
+                 figure. Same 52dp, same 12dp corner and same 18dp block as the
+                 restaurant's Checkout, so the primary is the same button in both
+                 trades even though this one shares its row. -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:padding="12dp"
+                android:baselineAligned="false"
+                android:padding="18dp"
                 android:background="@color/white">
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnHold"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="0dp"
-                    android:layout_height="54dp"
+                    android:layout_height="52dp"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
+                    android:layout_marginEnd="5dp"
                     android:text="Hold"
                     android:insetTop="0dp"
                     android:insetBottom="0dp"
-                    app:strokeWidth="1.5dp"
                     app:cornerRadius="12dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnCharge"
                     android:layout_width="0dp"
-                    android:layout_height="54dp"
-                    android:layout_weight="1.8"
-                    android:layout_marginStart="8dp"
+                    android:layout_height="52dp"
+                    android:layout_weight="1.6"
+                    android:layout_marginStart="5dp"
                     android:text="Checkout"
                     android:textColor="@color/white"
+                    android:textSize="16sp"
                     android:insetTop="0dp"
                     android:insetBottom="0dp"
+                    android:paddingHorizontal="4dp"
+                    android:maxLines="1"
                     app:backgroundTint="@color/primary_blue"
                     app:cornerRadius="12dp" />
             </LinearLayout>

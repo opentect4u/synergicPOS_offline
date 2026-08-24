@@ -1,69 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The post-login home.
+
+  There is no tab strip. This screen used to carry two - "Dashboard" and "Menu" - with
+  the second holding a grid of tiles that went to the same places the sidebar goes.
+  Two ways into the same destinations is one way too many: the sidebar is on every
+  screen in the app, the tile grid was only on this one, and a tab bar that offers a
+  choice between the figures and a second navigation menu makes the home screen a
+  junction rather than a place. So home is the dashboard, and navigation is the
+  sidebar.
+
+  The container is kept rather than inlining the dashboard here: it is still a child
+  fragment, so what it shows can be swapped without this screen knowing what it is.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@color/bg_light">
-
-    <!-- Underline tabs (same design as the Sale page's category strip). -->
-    <LinearLayout
-        android:id="@+id/tabBar"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:orientation="horizontal"
-        android:background="@color/white">
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/tabDashboard"
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:gravity="center"
-                android:text="Dashboard"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <View
-                android:id="@+id/ulDashboard"
-                android:layout_width="match_parent"
-                android:layout_height="3dp"
-                android:background="@android:color/transparent" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/tabMenu"
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:gravity="center"
-                android:text="Menu"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <View
-                android:id="@+id/ulMenu"
-                android:layout_width="match_parent"
-                android:layout_height="3dp"
-                android:background="@android:color/transparent" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="2dp"
-        android:background="#E0E0E0" />
 
     <FrameLayout
         android:id="@+id/dashboardTabContainer"

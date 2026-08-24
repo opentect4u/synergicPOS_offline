@@ -1,4 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  One line of the grocery cart.
+
+  SIZED SO TEN FIT. The cart column is about 438dp between the ticket header and the
+  fold below it, and a bill of ten is an ordinary shop of one. At the 56dp this row
+  used to stand, seven fitted and the eighth item pushed the first off the top - so
+  the operator scrolled a list they had just typed, to check it against the counter.
+  Ten rows in 438dp means 43dp a row, and the 13dp came off the parts of the row that
+  were space rather than information:
+
+      10dp -> 5dp   vertical padding, top and bottom
+      30dp -> 28dp  the stepper buttons, still over the 24dp a fingertip needs
+      -4dp each     includeFontPadding on both lines of text, which is invisible
+                    leading the font asks for and this row cannot afford
+
+  Nothing was taken out to get there: the name, the unit price, the stepper, the line
+  total and the delete are all still on it, at the same sizes. The row is tighter, not
+  emptier.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -24,7 +43,7 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:paddingVertical="10dp"
+            android:paddingVertical="5dp"
             android:paddingStart="8dp"
             android:paddingEnd="8dp">
 
@@ -44,22 +63,25 @@
                     android:textStyle="bold"
                     android:maxLines="1"
                     android:ellipsize="end"
+                    android:includeFontPadding="false"
                     android:textColor="@color/text_main" />
 
                 <TextView
                     android:id="@+id/tvLineEach"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
                     android:text="₹ 0 each"
                     android:textSize="12sp"
+                    android:includeFontPadding="false"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
 
             <!-- Qty stepper -->
             <ImageButton
                 android:id="@+id/btnMinus"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_minus"
                 app:tint="@color/text_secondary"
@@ -77,8 +99,8 @@
 
             <ImageButton
                 android:id="@+id/btnPlus"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_add"
                 app:tint="@color/text_secondary"
@@ -97,8 +119,8 @@
 
             <ImageButton
                 android:id="@+id/btnRemoveLine"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
                 android:layout_marginStart="2dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_delete"

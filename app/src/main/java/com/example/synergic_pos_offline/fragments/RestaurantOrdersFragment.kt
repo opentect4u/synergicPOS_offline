@@ -424,6 +424,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun appSettingOn(key: String): Boolean =
         SettingsCache.value(requireContext(), "A", key) == "1"
 
+    override fun onDestroyView() {
+        // A ListPopupWindow is a window, not a child of this view: left showing, it
+        // would float over whatever replaces this screen.
+        suggestions?.release()
+        suggestions = null
+        super.onDestroyView()
+    }
+
     /** Called by MainActivity when the palette colour changes — recolour instantly. */
     fun onThemeChanged() {
         val v = view ?: return
@@ -1146,6 +1154,36 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     /** A grid entry: the popup product plus its restaurant attributes (food type + spice). */
+    /**
+     * The search dropdown over the menu. Held on the fragment so it can be dismissed
+     * when the screen goes away - a popup window outlives the view that anchored it.
+     */
+    private var suggestions: com.example.synergic_pos_offline.utils.SearchSuggestions? = null
+
+    /**
+     * One menu item as a suggestion row.
+     *
+     * The line under the name is what tells two similar dishes apart on a menu:
+     * which course it belongs to and how long the kitchen needs for it - the second
+     * being a restaurant's own question, and the reason this mapping is not shared
+     * with the grocery screen's.
+     */
+    private fun suggestionOf(gp: GridProduct) = com.example.synergic_pos_offline.utils.SearchSuggestions.Item(
+        id = gp.product.id,
+        name = gp.product.name,
+        meta = listOfNotNull(
+            gp.product.category.takeIf { it.isNotBlank() },
+            gp.prepTime.takeIf { it.isNotBlank() }?.let { t -> if (t.contains("min", true)) t else "$t min" },
+            gp.product.sku.takeIf { it.isNotBlank() }?.let { "#$it" }
+        ).joinToString("  ·  "),
+        price = "₹ ${money(gp.product.price)}",
+        codes = listOfNotNull(
+            gp.product.sku.takeIf { it.isNotBlank() },
+            gp.barcode.takeIf { it.isNotBlank() }
+        ),
+        image = gp.image
+    )
+
     private data class GridProduct(
         val product: ProductEntryDialog.Product, val foodType: String, val spice: String,
         /** The scanned code, kept beside the product now that its SKU is its own id
@@ -1393,7 +1431,41 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             })
         }
 
-        etSearch.addTextChangedListener { query = it?.toString().orEmpty(); refreshProducts?.invoke() }
+        // Typing does two things at once: it narrows the menu behind, as it always
+        // has, and it drops the best few matches out of the box itself. The grid is
+        // still the answer; the list is the shortcut to the top of it, which matters
+        // on a menu deep enough that a match can be three rows below the fold.
+        suggestions = com.example.synergic_pos_offline.utils.SearchSuggestions(
+            ctx, etSearch, accent
+        ) { picked ->
+            // Picking a suggestion does exactly what tapping its tile does - the same
+            // Direct Add to Cart rule, the same quantity popup when it is off - so an
+            // item cannot come onto the order by a different route than the grid's.
+            allProducts.firstOrNull { it.product.id == picked.id }?.let { gp ->
+                onProductPicked(gp.product) { etSearch.setText("") }
+            }
+        }
+
+        etSearch.addTextChangedListener {
+            query = it?.toString().orEmpty()
+            refreshProducts?.invoke()
+            // Suggested from the WHOLE menu, not the open category: someone who types
+            // a dish name has named the dish, and hiding it because a different course
+            // is selected would be answering a question they did not ask.
+            suggestions?.update(query, allProducts.map(::suggestionOf))
+        }
+        // A search that has been left behind must not float over the next screen.
+        etSearch.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) suggestions?.dismiss() }
+        // The keyboard's Search key, and the Enter a hardware scanner sends after a
+        // barcode: the query is finished either way, so the keyboard goes and the menu
+        // - filtered to what was asked for - is left uncovered.
+        etSearch.setOnEditorActionListener { _, actionId, event ->
+            val done = actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
+                event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER
+            if (done) { suggestions?.dismiss(); suggestions?.hideKeyboard() }
+            done
+        }
 
         loadProductsFromDb()   // fills allProducts
         rebuildTabs()
