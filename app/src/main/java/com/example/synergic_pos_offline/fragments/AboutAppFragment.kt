@@ -21,6 +21,7 @@ import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.database.UserDao
 import com.example.synergic_pos_offline.utils.AutoBackup
+import com.example.synergic_pos_offline.utils.CloudBackup
 import com.example.synergic_pos_offline.utils.BackupFiles
 import com.example.synergic_pos_offline.utils.BillErase
 import com.example.synergic_pos_offline.utils.BusyDialog
@@ -504,6 +505,8 @@ class AboutAppFragment : Fragment(), TitledScreen {
             android.widget.ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, retentionLabels)
         )
 
+        bindCloudBackup(view)
+
         val current = AutoBackup.settings(requireContext())
         toggle.isChecked = current.enabled
         hours.setText(current.intervalHours.toString())
@@ -539,6 +542,23 @@ class AboutAppFragment : Fragment(), TitledScreen {
             val keepDays = retention.text?.toString()?.filter { it.isDigit() }?.toIntOrNull()
                 ?: AutoBackup.settings(requireContext()).retentionDays
             AutoBackup.save(requireContext(), toggle.isChecked, interval, keepDays)
+
+            // The cloud half of the same card, stored by the same press - the backup
+            // arrangement is one decision, not two that can drift apart.
+            val cloudOn = view.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(
+                R.id.swCloudBackup
+            ).isChecked
+            val cloudProvider = CloudBackup.Provider.fromStored(
+                view.findViewById<com.google.android.material.textfield.MaterialAutoCompleteTextView>(
+                    R.id.actCloudProvider
+                ).text?.toString()
+            ) ?: CloudBackup.Provider.GOOGLE_DRIVE
+            val cloudPath = view.findViewById<com.google.android.material.textfield.TextInputEditText>(
+                R.id.etCloudPath
+            ).text?.toString().orEmpty()
+            CloudBackup.save(requireContext(), cloudOn, cloudProvider, cloudPath)
+            showCloudBackupState(view)
+
             hours.setText(interval.toString())
             retention.setText("$keepDays days", false)
             // Apply the window straight away, so a shortened period clears the backups
@@ -560,9 +580,93 @@ class AboutAppFragment : Fragment(), TitledScreen {
                     )
                     append("\n\nBackups are kept for $keepDays days; older ones are cleared away.")
                     if (removed > 0) append(" $removed old backup(s) removed just now.")
+                    // Said here rather than left to be discovered when a backup is due.
+                    if (cloudOn) {
+                        append("\n\nCloud backup is on for ${cloudProvider.label}")
+                        append(if (cloudPath.isBlank()) ", but no folder is set." else "/${cloudPath.trim().trim('/')}.")
+                        append(" ${CloudBackup.NOT_WIRED}")
+                    }
                 }
             )
         }
+    }
+
+    // ---- Cloud backup ----------------------------------------------------------
+
+    /**
+     * The cloud section: the switch, the service, the folder and the account.
+     *
+     * Saved by the SAME Save button the rest of this card uses, so the whole backup
+     * arrangement - local and cloud - is one setting an operator confirms once, and a
+     * half-changed cloud folder cannot be mistaken for a stored one any more than a
+     * half-changed interval can.
+     */
+    private fun bindCloudBackup(view: View) {
+        val toggle = view.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(
+            R.id.swCloudBackup
+        )
+        val body = view.findViewById<View>(R.id.llCloudBackupSettings)
+        val provider = view.findViewById<com.google.android.material.textfield.MaterialAutoCompleteTextView>(
+            R.id.actCloudProvider
+        )
+        val path = view.findViewById<com.google.android.material.textfield.TextInputEditText>(
+            R.id.etCloudPath
+        )
+
+        provider.setAdapter(
+            android.widget.ArrayAdapter(
+                requireContext(), android.R.layout.simple_list_item_1,
+                CloudBackup.Provider.entries.map { it.label }
+            )
+        )
+
+        val current = CloudBackup.settings(requireContext())
+        toggle.isChecked = current.enabled
+        provider.setText(current.provider.label, false)
+        path.setText(current.path)
+        body.visibility = if (current.enabled) View.VISIBLE else View.GONE
+        showCloudBackupState(view)
+
+        toggle.setOnCheckedChangeListener { _, isChecked ->
+            body.visibility = if (isChecked) View.VISIBLE else View.GONE
+        }
+
+        // Connecting an account is a sign-in, not a setting: it opens somebody else's
+        // consent screen and comes back with a token, so it cannot wait for Save the
+        // way a typed folder can. Until a service is wired it says so plainly rather
+        // than opening something that cannot finish.
+        // Connecting an account is a sign-in, not a setting: it opens somebody else's
+        // consent screen and comes back with a token, so it cannot wait for Save the
+        // way a typed folder can. Until a service is wired it says so plainly rather
+        // than opening something that cannot finish.
+        view.findViewById<MaterialButton>(R.id.btnCloudConnect).setOnClickListener {
+            val chosen = CloudBackup.Provider.fromStored(provider.text?.toString())
+                ?: CloudBackup.Provider.GOOGLE_DRIVE
+            DialogUtils.showSuccess(
+                context = requireContext(),
+                title = "${chosen.label} not connected",
+                message = "Signing in to ${chosen.label} is not built yet, so no account " +
+                    "can be linked and nothing is being sent to the cloud.\n\n" +
+                    "The rest of this section works: the switch, the service and the " +
+                    "folder are saved with the other backup settings, and backups keep " +
+                    "being written to Downloads/${AutoBackup.FOLDER} exactly as before."
+            )
+        }
+    }
+
+    /** The line under the cloud switch: what is stored, and how the last attempt went. */
+    private fun showCloudBackupState(view: View) {
+        val s = CloudBackup.settings(requireContext())
+        view.findViewById<TextView>(R.id.tvCloudBackupState).text = when {
+            !s.enabled -> "Off - backups are kept on this device only"
+            s.path.isBlank() -> "On - but no folder is set, so nothing can be sent"
+            s.account.isBlank() -> "On - ${s.provider.label}, no account connected yet"
+            else -> "On - a copy goes to ${s.provider.label}/${s.path} when there is a connection"
+        }
+        view.findViewById<TextView>(R.id.tvCloudAccount).text =
+            s.account.ifBlank { "Not connected" }
+        view.findViewById<TextView>(R.id.tvCloudLastSync).text =
+            CloudBackup.lastSyncDescription(requireContext())
     }
 
     /** Why [typed] was refused, in the words the operator needs to fix it. */

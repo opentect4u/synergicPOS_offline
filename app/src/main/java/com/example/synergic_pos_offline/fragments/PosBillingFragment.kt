@@ -150,12 +150,17 @@ class PosBillingFragment : Fragment(), TitledScreen {
         name = p.name,
         meta = listOfNotNull(
             p.category.takeIf { it.isNotBlank() },
-            p.sku.takeIf { it.isNotBlank() }?.let { "#$it" }
+            p.sku.takeIf { it.isNotBlank() }?.let { "#$it" },
+            // Shown, not only searched. A row matched on its HSN has nothing
+            // highlighted in its name, so without the code on the line the operator is
+            // left to take on trust that it belongs in the results.
+            SearchSuggestions.realHsn(p.hsn)?.let { "HSN $it" }
         ).joinToString("  ·  "),
         price = money(p.price),
         codes = listOfNotNull(
             p.sku.takeIf { it.isNotBlank() },
-            p.barcode.takeIf { it.isNotBlank() }
+            p.barcode.takeIf { it.isNotBlank() },
+            SearchSuggestions.realHsn(p.hsn)
         ),
         barcode = p.barcode,
         // Only ever the warning states, and only while stock is tracked: a badge on
@@ -875,8 +880,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
         shownProducts.clear()
         shownProducts.addAll(menu.filter { p ->
             (activeCategory == "All" || p.categoryId == activeCategoryId) &&
+                // Name, then the three codes a product can be asked for by: its SKU,
+                // its barcode, and its HSN - which is how a shop looks up "everything
+                // I sell under 1006" when a tax question is being answered at the
+                // counter. Placeholder HSNs are not searched; see realHsn.
                 (query.isEmpty() || p.name.contains(query, true) ||
-                    p.sku.contains(query) || p.barcode.contains(query))
+                    p.sku.contains(query) || p.barcode.contains(query) ||
+                    SearchSuggestions.realHsn(p.hsn)?.contains(query, true) == true)
         })
         productAdapter.notifyDataSetChanged()
         tvNoProducts.visibility = if (shownProducts.isEmpty()) View.VISIBLE else View.GONE

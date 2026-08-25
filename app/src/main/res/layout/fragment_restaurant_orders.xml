@@ -112,52 +112,14 @@
                 </LinearLayout>
             </ScrollView>
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="#E4E7EB" />
+            <!-- No New Order / Refresh footer.
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:padding="16dp">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnNewOrder"
-                    android:layout_width="0dp"
-                    android:layout_height="46dp"
-                    android:layout_weight="1"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:paddingHorizontal="6dp"
-                    android:maxLines="1"
-                    android:textSize="13sp"
-                    android:letterSpacing="0"
-                    android:text="New Order"
-                    android:textColor="@color/white"
-                    app:icon="@drawable/ic_plus"
-                    app:iconSize="16dp"
-                    app:iconPadding="4dp"
-                    app:iconGravity="textStart"
-                    app:cornerRadius="10dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnRefreshOrders"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="0dp"
-                    android:layout_height="46dp"
-                    android:layout_weight="1"
-                    android:layout_marginStart="11dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:paddingHorizontal="6dp"
-                    android:maxLines="1"
-                    android:textSize="13sp"
-                    android:letterSpacing="0"
-                    android:text="Refresh"
-                    app:cornerRadius="10dp" />
-            </LinearLayout>
+                 Both were doing a job something else already does, in a panel whose
+                 whole purpose is the list above them. New Order opened the dine-in
+                 modal, which is what Choose Table in the top bar does - and Take Away
+                 has its own button beside it, so neither kind of order needed this
+                 one. Refresh reloaded a list that reloads itself whenever this screen
+                 comes back. Gone, the list gets the panel's full height. -->
         </LinearLayout>
 
         <!-- Dimmed backdrop while the list is open; tapping it closes the list.
@@ -391,7 +353,7 @@
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:hint="Scan barcode or search name / SKU"
+                        android:hint="Scan barcode or search name / SKU / HSN"
                         app:startIconDrawable="@android:drawable/ic_menu_search"
                         app:boxCornerRadiusTopStart="12dp"
                         app:boxCornerRadiusTopEnd="12dp"

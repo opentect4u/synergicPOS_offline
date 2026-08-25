@@ -48,6 +48,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swAmountWords: SwitchMaterial
     private lateinit var swHsn: SwitchMaterial
     private lateinit var swProductSerial: SwitchMaterial
+    private lateinit var swBillTime: SwitchMaterial
     private lateinit var swTwoCopy: SwitchMaterial
     private lateinit var etStartBillNo: TextInputEditText
     private lateinit var rgReset: RadioGroup
@@ -66,7 +67,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
     private lateinit var ivUpiQrPreview: ImageView
     private lateinit var tvUpiPreviewNote: TextView
     // Bill format is no longer editable here; keep whatever was stored on save.
-    private var currentFormat: BillFormat = BillFormat.STANDARD
+    private var currentFormat: BillFormat = BillFormat.CLASSIC
 
     /**
      * Reads the UPI ID out of a QR image the operator picked.
@@ -95,6 +96,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         swAmountWords = view.findViewById(R.id.swAmountWords)
         swHsn = view.findViewById(R.id.swHsn)
         swProductSerial = view.findViewById(R.id.swProductSerial)
+        swBillTime = view.findViewById(R.id.swBillTime)
         swTwoCopy = view.findViewById(R.id.swTwoCopy)
         etStartBillNo = view.findViewById(R.id.etStartBillNo)
         rgReset = view.findViewById(R.id.rgReset)
@@ -170,6 +172,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         swAmountWords.isChecked = s.amountInWords
         swHsn.isChecked = s.hsnCode
         swProductSerial.isChecked = s.productSerialNumber
+        swBillTime.isChecked = s.timeOnBill
         swTwoCopy.isChecked = s.twoCopyBill
         etStartBillNo.setText(s.startBillNo.toString())
         swBillNoChar.isChecked = s.billNoCharEnabled
@@ -210,6 +213,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         billNoCharPrefix = etPrefix.text?.toString()?.trim().orEmpty().take(3),
         hsnCode = swHsn.isChecked,
         productSerialNumber = swProductSerial.isChecked,
+        timeOnBill = swBillTime.isChecked,
         customerDetails = CustomerDetails.fromStored(actCustomerDetails.text?.toString()) ?: CustomerDetails.ONLY_MOBILE,
         customerAddressPrinting = swCustomerAddress.isChecked,
         totalAmountFontSize = FontSize.fromStored(actTotalFontSize.text?.toString()) ?: FontSize.REGULAR,

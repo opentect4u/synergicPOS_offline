@@ -125,6 +125,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnMenu).setOnClickListener { openDrawer() }
         btnBack.setOnClickListener { supportFragmentManager.popBackStack() }
         findViewById<View>(R.id.btnHome).setOnClickListener { goHome() }
+        findViewById<View>(R.id.btnSale).setOnClickListener { goToSale() }
         findViewById<View>(R.id.btnTheme).setOnClickListener { showThemePopup(it) }
         findViewById<View>(R.id.btnLogout).setOnClickListener { confirmLogout() }
         // The drawer's own Logout, pinned at its foot. Asks the same question the
@@ -258,7 +259,7 @@ class MainActivity : AppCompatActivity() {
         tvHeaderSubtitle.visibility = if (compact) View.GONE else View.VISIBLE
 
         val icon = dp(if (compact) COMPACT_ICON_DP else NORMAL_ICON_DP)
-        listOf(R.id.btnMenu, R.id.btnHome, R.id.btnTheme, R.id.btnLogout).forEach { id ->
+        listOf(R.id.btnMenu, R.id.btnSale, R.id.btnHome, R.id.btnTheme, R.id.btnLogout).forEach { id ->
             findViewById<View>(id).apply {
                 layoutParams = layoutParams.also { it.width = icon; it.height = icon }
             }
@@ -521,6 +522,34 @@ class MainActivity : AppCompatActivity() {
         fm.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
         fm.beginTransaction()
             .replace(R.id.fragment_container, home)
+            .commit()
+    }
+
+    /**
+     * The header's Sale button: straight to the till's own sale screen, from anywhere.
+     *
+     * Routed by mode, not by the button - Restaurant gets its Orders screen, Grocery
+     * its billing screen, and Calculator mode has no separate sale screen because the
+     * calculator IS one, so it goes there. The same three-way answer the sidebar's
+     * Sale row gives, and taken from the same place, so the two can never disagree
+     * about what "Sale" means on a given till.
+     *
+     * The back stack is cleared, like [goHome]. Selling is where a till lives; getting
+     * back to it should not leave a trail of the screens it was visited from, and a
+     * back press from the sale screen should leave the app rather than walk backwards
+     * through Reports.
+     */
+    private fun goToSale() {
+        closeDrawer()
+        val sale: Fragment = when (SettingsCache.value(this, "G", "Mode")) {
+            "C" -> CalculatorFragment()
+            "R" -> com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment()
+            else -> PosBillingFragment()
+        }
+        val fm = supportFragmentManager
+        fm.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
+        fm.beginTransaction()
+            .replace(R.id.fragment_container, sale)
             .commit()
     }
 

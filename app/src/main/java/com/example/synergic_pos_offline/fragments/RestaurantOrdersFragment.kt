@@ -266,12 +266,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 roDao.setNote(o.dbId, o.note)
             }
 
-        // New Order → dine-in table/customer modal (select the Dine In segment).
-        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnNewOrder).setOnClickListener {
-            view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
-                .check(R.id.btnDineIn)
-            showNewOrderDialog()
-        }
+        // No New Order button any more - Choose Table below starts a dine-in order and
+        // Take Away starts its own, which is both kinds. [showNewOrderDialog] is what
+        // it opened and is kept for now, unreferenced, in case that modal is wanted
+        // back on a control somewhere else.
 
         // Choose Table → table-picker grid (sections as tabs, tables as cards).
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnChooseTable).setOnClickListener {
@@ -340,19 +338,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // second lookup afterwards would find nothing and the bill would never save
             // or print.
             val order = orders.firstOrNull { it.dbId == paidId } ?: return@setFragmentResultListener
-            // What was served has left the shelf. Done here rather than at bill save
-            // because Restaurant checkout does not write a bill - settling the order is
-            // the only moment the sale is known to be complete.
-            if (stockTrackingOn) {
-                stockDao.recordSale(
-                    reference = tableLabel(order),
-                    lines = order.items.map {
-                        com.example.synergic_pos_offline.database.StockDao.SaleLine(
-                            it.productId.toInt(), it.qty.toDouble()
-                        )
-                    }
-                )
-            }
+            // NO STOCK IS MOVED HERE. It used to be, on the grounds that "Restaurant
+            // checkout does not write a bill" - which stopped being true when
+            // settlePaidOrder started persisting one. The result was every restaurant
+            // sale deducted TWICE, once from here against the table label and once
+            // from BillDao against the bill number, so selling one took two off the
+            // shelf. The device's own movement rows showed the pair, a second apart,
+            // for the same product and quantity.
+            //
+            // BillDao.createBill is the right place and the only place: it deducts
+            // inside the bill's own transaction, so the sale and the stock it moved
+            // land together or not at all - which this call, running before and
+            // outside that transaction, could never promise.
             val payMethod = bundle.getString(RestaurantCheckoutFragment.ARG_PAY_METHOD).orEmpty()
             val tendered = bundle.getDouble(RestaurantCheckoutFragment.ARG_TENDERED, 0.0)
             // Persists the bill (with the payment mode), closes & frees the table(s)
@@ -737,9 +734,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             setTextColor(accent); iconTint = ColorStateList.valueOf(accent); strokeWidth = 0
             rippleColor = ColorStateList.valueOf(ColorUtils.setAlphaComponent(accent, 0x1A))
         }
-        filled(R.id.btnNewOrder); filled(R.id.btnBillPay)
+        filled(R.id.btnBillPay)
         textOnly(R.id.btnToggleSummary)
-        outlined(R.id.btnRefreshOrders); outlined(R.id.btnPrintKot); outlined(R.id.btnChooseTable)
+        outlined(R.id.btnPrintKot); outlined(R.id.btnChooseTable)
         outlined(R.id.btnToggleOrders)
         outlined(R.id.btnTableActions); outlined(R.id.btnBillPrint)
 
@@ -864,8 +861,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         val dbId = roDao.createOrder(table, section, null, type, phone, cashier)
         if (dbId == -1L) { toast("Could not create order"); return }
-        if (!type.equals("Take Away", ignoreCase = true))
-            updateTableStatus(table, section, "Occupied")   // dine-in table now has a live order
+        // THE TABLE IS NOT MARKED OCCUPIED HERE.
+        //
+        // Opening a table is not seating anyone at it. A waiter taps a table to see it,
+        // to check it, or by mistake, and the order that gets created is an empty shell
+        // waiting for a first item - so marking it Occupied on the tap turned the floor
+        // plan red for tables with nobody at them, and left the next waiter unable to
+        // take that table because the picker refuses one that is not Available.
+        //
+        // The status moves when the ORDER does: addToCart sets Occupied as the first
+        // item goes on, which is the moment the table genuinely is. Tapping the table
+        // again before then just re-selects this empty order rather than creating a
+        // second one, so nothing is lost by waiting.
 
         orders.forEach { it.selected = false }
         val order = OrderCard(
@@ -1064,14 +1071,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     // ---- Table Split -------------------------------------------------------
 
     /**
-     * Split popup: choose how many parts (2–4); shows the sub-tables that will be
+     * Split popup: choose how many parts (2–6); shows the sub-tables that will be
      * created (e.g. 101 A, 101 B). On Split the first part keeps this order's items;
      * the rest start empty. All parts share the parent table until each is settled.
      */
     private fun showSplitDialog(order: OrderCard) {
         val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
-        val counts = listOf("2", "3", "4")
+        // Built from the same bounds the save clamps to, so the dropdown can never
+        // offer a number that is then quietly reduced. See MAX_SPLIT_PARTS.
+        val counts = (MIN_SPLIT_PARTS..MAX_SPLIT_PARTS).map { it.toString() }
 
         val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_split_table, null)
         val dialog = AlertDialog.Builder(ctx).setView(v).create().also { it.setCanceledOnTouchOutside(false) }
@@ -1101,7 +1110,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         btnSave.setOnClickListener {
             val count = actCount.text?.toString()?.trim()?.toIntOrNull() ?: 2
             dialog.dismiss()
-            performSplit(order, count.coerceIn(2, 4))
+            performSplit(order, count.coerceIn(MIN_SPLIT_PARTS, MAX_SPLIT_PARTS))
         }
         dialog.show()
     }
@@ -1113,10 +1122,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val waiterId = roDao.findByTable(parent, section)?.waiterId
         val cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—"
 
-        // Part A keeps the existing order (and its items) — occupied.
-        val firstCode = subTableDao.create(parent, section, "A", status = "Occupied")
+        // Part A keeps the existing order and its items, so it is occupied if that
+        // order has any - and Available if it does not, by the same rule everywhere
+        // else: a table is occupied once something has been ordered at it, not once it
+        // has been opened. A table can be split before anything is ordered on it.
+        val firstCode = subTableDao.create(
+            parent, section, "A",
+            status = if (order.items.isEmpty()) "Available" else "Occupied"
+        )
         roDao.transferTable(order.dbId, firstCode)
-        // Parts B, C, D start empty → Available until items are added.
+        // The remaining parts (B onward, up to F) start empty → Available until items
+        // are added.
         for (i in 1 until count) {
             val code = subTableDao.create(parent, section, ('A' + i).toString(), status = "Available")
             roDao.createOrder(code, section, waiterId, order.type, order.phone, cashier)
@@ -1175,12 +1191,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         meta = listOfNotNull(
             gp.product.category.takeIf { it.isNotBlank() },
             gp.prepTime.takeIf { it.isNotBlank() }?.let { t -> if (t.contains("min", true)) t else "$t min" },
-            gp.product.sku.takeIf { it.isNotBlank() }?.let { "#$it" }
+            gp.product.sku.takeIf { it.isNotBlank() }?.let { "#$it" },
+            // Shown, not only searched: a row matched on its HSN has nothing
+            // highlighted in its name to say why it is in the results.
+            com.example.synergic_pos_offline.utils.SearchSuggestions
+                .realHsn(gp.product.hsn)?.let { "HSN $it" }
         ).joinToString("  ·  "),
         price = "₹ ${money(gp.product.price)}",
         codes = listOfNotNull(
             gp.product.sku.takeIf { it.isNotBlank() },
-            gp.barcode.takeIf { it.isNotBlank() }
+            gp.barcode.takeIf { it.isNotBlank() },
+            com.example.synergic_pos_offline.utils.SearchSuggestions.realHsn(gp.product.hsn)
         ),
         barcode = gp.barcode,
         image = gp.image
@@ -1428,8 +1449,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val q = query.trim().lowercase()
             adapter.submit(allProducts.filter {
                 (selectedCat == "All" || it.product.category == selectedCat) &&
+                    // Name, then the three codes a dish can be asked for by: its SKU,
+                    // its barcode, and its HSN. Placeholder HSNs are not searched -
+                    // see SearchSuggestions.realHsn.
                     (q.isEmpty() || it.product.name.lowercase().contains(q) ||
-                        it.product.sku.contains(q) || it.barcode.contains(q))
+                        it.product.sku.contains(q) || it.barcode.contains(q) ||
+                        com.example.synergic_pos_offline.utils.SearchSuggestions
+                            .realHsn(it.product.hsn)?.contains(q, true) == true)
             })
         }
 
@@ -2153,9 +2179,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (exceedsStock(p.id, qty)) return
         val wasEmpty = order.items.isEmpty()
         roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate, p.cgst, p.sgst)
-        // A split sub-table with its first item is now Occupied. Only the first: the
-        // table cannot become more occupied than it already is, and this was a write
-        // to the table master behind every single tap.
+        // THE MOMENT A TABLE BECOMES OCCUPIED: its first item, not its selection.
+        // Opening a table creates an empty order and leaves the table Available (see
+        // openNewOrder) - this is where it stops being free, because this is where
+        // somebody has actually ordered something at it. Split sub-tables come through
+        // here too, and become Occupied on the same rule.
+        //
+        // Only the first item: a table cannot become more occupied than it already is,
+        // and without the guard this was a write to the table master behind every tap.
         if (wasEmpty && !order.type.equals("Take Away", ignoreCase = true)) {
             updateTableStatus(order.id, order.section, "Occupied")
         }
@@ -2370,17 +2401,36 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val config = com.example.synergic_pos_offline.utils.ThermalPrinter.configFor(printer)
             ?: run { toast("Bill printer '${printer.printerName}' is not fully configured"); return }
         val draft = buildBillDraft(order, billNumber, payment, tendered)
-        val bmp = com.example.synergic_pos_offline.utils.BillReceiptRenderer(requireContext())
-            .renderDraftToBitmap(draft, config.paperDots)
+        val renderer = com.example.synergic_pos_offline.utils.BillReceiptRenderer(requireContext())
+        val first = renderer.renderDraftToBitmap(draft, config.paperDots)
             ?: run { toast("Could not render the bill"); return }
-        com.example.synergic_pos_offline.utils.ThermalPrinter.print(requireContext(), bmp, config) { result ->
-            toast(when (result) {
-                is com.example.synergic_pos_offline.utils.ThermalPrinter.Result.Success -> "Bill printed at ${printer.printerName}"
-                is com.example.synergic_pos_offline.utils.ThermalPrinter.Result.Sent -> "Bill sent to ${printer.printerName}"
-                is com.example.synergic_pos_offline.utils.ThermalPrinter.Result.Failure -> "Bill print failed: ${result.message}"
-            })
-            bmp.recycle()
-        }
+
+        // Bill Settings' "Two Copy" toggle, which this path did not honour at all -
+        // Print Bill in a restaurant put out one slip however the setting was set,
+        // while the grocery checkout put out two. Restaurant bills print from a DRAFT
+        // (the sale is not written until payment is confirmed), so BillPrinter's
+        // receipt-number version cannot be used here; the pair is built the same way
+        // it builds one, and for the same reason: the customer's copy carries the
+        // bill's own caption, the shop's is stamped DUPLICATE, and two identical
+        // originals would be two documents each claiming to be the bill.
+        val twoCopy = com.example.synergic_pos_offline.database.BillSettingsDao(requireContext())
+            .load().twoCopyBill
+        val second = if (twoCopy) {
+            renderer.renderDraftToBitmap(draft, config.paperDots, duplicate = true) ?: first
+        } else null
+        val copies = listOfNotNull(first, second)
+
+        com.example.synergic_pos_offline.utils.ThermalPrinter
+            .printSequence(requireContext(), copies, config) { result ->
+                toast(when (result) {
+                    is com.example.synergic_pos_offline.utils.ThermalPrinter.Result.Success -> "Bill printed at ${printer.printerName}"
+                    is com.example.synergic_pos_offline.utils.ThermalPrinter.Result.Sent -> "Bill sent to ${printer.printerName}"
+                    is com.example.synergic_pos_offline.utils.ThermalPrinter.Result.Failure -> "Bill print failed: ${result.message}"
+                })
+                // distinct(), because the fallback above can put the same bitmap in
+                // twice - recycling it a second time would throw.
+                copies.distinct().forEach { it.recycle() }
+            }
     }
 
     /**
@@ -2403,10 +2453,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         order: OrderCard, billNumber: String, payment: String, tendered: Double = 0.0
     ): com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft {
         val b = computeBill(order.items, serviceRateFor(order.section))
-        val items = order.items.map {
+        val items = order.items.map { line ->
+            // HSN comes off the catalogue, because a cart line does not carry one: the
+            // order stores what was sold and at what price, and the tax code belongs to
+            // the product rather than to the sale of it.
+            //
+            // This was missing, and it is why Bill Settings' HSN Code did nothing in
+            // Restaurant mode however it was switched. A restaurant bill prints from
+            // this draft - the sale has not been written when the slip comes out - and
+            // a draft with no HSN on its lines has nothing for the renderer to print,
+            // whatever the setting says. A REPRINT from Bill History looked right,
+            // because that path reads the saved lines and joins md_products for the
+            // code, which is what made the fault look intermittent.
+            val product = allProducts.firstOrNull { it.product.id == line.productId.toString() }?.product
             com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
-                name = it.name, quantity = it.qty, rate = it.rate,
-                cgstRate = it.cgstRate, sgstRate = it.sgstRate
+                name = line.name, quantity = line.qty, rate = line.rate,
+                cgstRate = line.cgstRate, sgstRate = line.sgstRate,
+                hsn = product?.hsn
             )
         }
         // The table as the bill's own field - see Draft.table. Carries its section,
@@ -2443,7 +2506,37 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // payment mode. The mode is only known and printed on the paid receipt, after
         // Checkout -> Confirm (see settlePaidOrder -> printGroceryStyleBill with payMethod).
         printGroceryStyleBill(order, printer, billNumber = nextNo, payment = "")
+        // What was served has left the shelf, and this is the moment it did: the
+        // kitchen has cooked the order, the bill is on the table and completeTable
+        // below locks it, so no item can be added, changed or removed afterwards.
+        //
+        // Waiting for payment would leave the count wrong for as long as the table
+        // takes to settle - and wrong permanently for a table that walks out, where
+        // the food is just as gone. The lock is what makes this safe to do early:
+        // once billed, the order this deducted for is the order that gets paid.
+        //
+        // Deducted ONCE. The bill written at payment carries stockAlreadyMoved, so
+        // BillDao does not take the same items off again.
+        deductStockForOrder(order)
         completeTable(order)   // billed → locked (stays until paid)
+    }
+
+    /**
+     * Draws this order's items off the shelf, against the table it was served at.
+     *
+     * Guarded by the stock flag: with stock tracking off the till never touches the
+     * stock tables at all, which is how it behaved before they were kept.
+     */
+    private fun deductStockForOrder(order: OrderCard) {
+        if (!stockTrackingOn) return
+        stockDao.recordSale(
+            reference = tableLabel(order),
+            lines = order.items.map {
+                com.example.synergic_pos_offline.database.StockDao.SaleLine(
+                    it.productId.toInt(), it.qty.toDouble()
+                )
+            }
+        )
     }
 
     /**
@@ -2499,7 +2592,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     tableNumber = order.id,
                     tableSection = order.section,
                     orderType = order.type,
-                    serviceChargeAmount = b.service
+                    serviceChargeAmount = b.service,
+                    // True only when the bill was actually PRINTED, because that is
+                    // the moment doPrintBill takes the stock off - and `completed` is
+                    // exactly "this order has been billed".
+                    //
+                    // Not a constant, because a table can be paid without the bill
+                    // ever being printed: Checkout is reachable straight from the
+                    // order. Hard-coding true would mean that sale moved no stock at
+                    // all, which is the same bug as deducting twice pointing the other
+                    // way. Printed -> deducted there; not printed -> deducted here.
+                    stockAlreadyMoved = order.completed
                 )
             )
         }.getOrNull()
@@ -2545,30 +2648,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     /**
-     * Cuts and prints the KOT for a take-away order at payment time (its items never
-     * went to the kitchen during the order). Uses the default KOT printer (or the
-     * first one) — no chooser, so payment fires both prints back-to-back.
-     */
-    private fun printTakeAwayKot(order: OrderCard) {
-        val batch = roDao.printKot(order.dbId, order.id, null, order.section, order.note) ?: return
-        val kotPrinters = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
-            .getAll().filter { it.printFlag.equals("K", ignoreCase = true) }
-        val printer = kotPrinters.firstOrNull { it.isDefault } ?: kotPrinters.firstOrNull()
-        if (printer == null) { toast("Paid — no KOT printer set up to send the kitchen ticket"); return }
-        com.example.synergic_pos_offline.utils.KotPrinter.print(requireContext(), batch, printer) { msg -> toast(msg) }
-    }
-
-    /**
      * Payment confirmed (Bill & Pay ▸ Confirm): settle the order — save the bill,
-     * close & remove it, free the table. NO BILL IS PRINTED here; see the note at the
-     * foot of this function for why. The one thing that still goes to paper is a TAKE
-     * AWAY order's KOT, which has had no other chance to be sent.
+     * close & remove it, free the table. NOTHING IS PRINTED here at all: not the bill
+     * (see the note at the foot of this function) and not a KOT.
+     *
+     * NO KOT IS CUT ON PAYMENT, for any order type. Payment is the end of a sale, and
+     * a kitchen ticket at that moment is a ticket for food that has already been made
+     * and handed over - it reaches the pass after the customer has left with the
+     * order. A KOT belongs to the moment the order is TAKEN, which is what Print KOT
+     * is for.
      */
     private fun settlePaidOrder(order: OrderCard, payMethod: String, tendered: Double = 0.0) {
-        // Take Away sends no KOT during the order — cut & print it now, before the
-        // order is closed, or the kitchen never hears about it. This is a KITCHEN
-        // ticket, not the bill: it is what the food is cooked from.
-        if (order.type.equals("Take Away", ignoreCase = true)) printTakeAwayKot(order)
         val saved = persistBill(order, payMethod, tendered)  // save to td_bills / td_bill_items / td_payments
         val mergedTables = roDao.mergedTablesOf(order.dbId)
         roDao.close(order.dbId)                          // payment done → remove from temp table
@@ -2597,9 +2687,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // items and td_payments, the table is freed, and that is the whole act. The
         // paper is Print Bill's job, and it is still one button away for a reprint.
         //
-        // Take Away is the exception handled at the top of this function: it sends no
-        // KOT while the order is taken, so its KITCHEN ticket - not its bill - still
-        // has to be cut here, or the kitchen never learns of the order at all.
+        // There is no exception for Take Away any more: it used to have its KOT cut
+        // here, on the grounds that it never sends one while the order is taken. That
+        // ticket arrived after the food had been paid for, which is too late to cook
+        // from - see the note at the head of this function.
         //
         // No completion popup either: the order is already settled and the Orders
         // (sale) screen was refreshed above, so just confirm with a toast.
@@ -2670,6 +2761,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         reloadItems(order)
         renderCart()
         com.example.synergic_pos_offline.utils.KotPrinter.print(requireContext(), batch, printer) { msg -> toast(msg) }
+
+        // The order is with the kitchen, so this table is finished with for now - back
+        // to the floor plan, ready for the next one.
+        //
+        // Sending a KOT is the end of taking an order, the way payment is the end of a
+        // sale: the waiter turns from this table to the next, and leaving the screen on
+        // a table whose items have all gone means the next order starts with a table to
+        // clear off it first. Posted, so the toast and the cart redraw above land before
+        // the picker comes up over them.
+        view?.post { if (isAdded) showChooseTableDialog() }
     }
 
     private fun updateTotals() {
@@ -2740,6 +2841,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         const val MENU_MERGE = 2
         const val MENU_SPLIT = 3
         const val MENU_CANCEL = 4
+
+        /**
+         * How many parts a table may be split into.
+         *
+         * Two is the floor because splitting into one is not splitting. Six is the
+         * ceiling: the parts are lettered from 'A', so six is 101 A to 101 F and still
+         * reads as one table's worth of bills. Named here rather than typed into the
+         * dropdown and the clamp separately - they were 2..4 in two places, and a
+         * dropdown offering a number the clamp then quietly reduced would be the kind
+         * of bug nobody reports because it looks like it worked.
+         */
+        const val MIN_SPLIT_PARTS = 2
+        const val MAX_SPLIT_PARTS = 6
     }
 
     /**

@@ -79,6 +79,22 @@
 
                 <View style="@style/BillSettingDivider" />
 
+                <!-- Time on the bill. The DATE is not optional and has no switch: a
+                     bill is a dated record and a shop is required to be able to say
+                     which day a sale happened on. The time of day is the part that is
+                     genuinely a preference - a restaurant wants it to tell two of the
+                     same table apart, a shop billing once a customer often does not. -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Time on Bill" />
+                        <TextView style="@style/BillSettingSub" android:text="Print the time of sale beside the date. Off prints the date alone" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swBillTime" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
                 <!-- Two copy bill -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">

@@ -83,7 +83,21 @@ class BillDao(context: Context) {
         /** The table's section. Null for grocery, and for take-away. */
         val tableSection: String? = null,
         val orderType: String? = null,
-        val serviceChargeAmount: Double = 0.0
+        val serviceChargeAmount: Double = 0.0,
+        /**
+         * Set when the shelf has ALREADY been drawn down for these items, so this
+         * bill must not draw it down again.
+         *
+         * The restaurant does this: its stock comes off at Print Bill, when the
+         * kitchen has served the order and the table is locked, rather than at
+         * payment - which can be minutes later, or never, and by then the food is
+         * gone whatever the customer does. The bill is still written at payment, and
+         * without this flag that write would take the same items off a second time.
+         *
+         * Grocery leaves it false: there is no moment between serving and paying for
+         * a shelf sale, so the bill IS the deduction, inside the same transaction.
+         */
+        val stockAlreadyMoved: Boolean = false
     )
 
     /** Result of a successful generation. */
@@ -241,7 +255,11 @@ class BillDao(context: Context) {
             //
             // A void sold nothing and a return is stock coming back, so neither is a
             // deduction - the return flow has its own accounting.
+            // ...and not when the caller has already moved it - see
+            // [NewBill.stockAlreadyMoved]. A restaurant takes its stock off at Print
+            // Bill; deducting again here is how one sale came off the shelf twice.
             val movesStock = bill.billType != "VOID" && !bill.isReturnBill &&
+                !bill.stockAlreadyMoved &&
                 GeneralSettingsDao.isStockEnabled(appContext)
             if (movesStock) {
                 bill.items.forEach { item ->

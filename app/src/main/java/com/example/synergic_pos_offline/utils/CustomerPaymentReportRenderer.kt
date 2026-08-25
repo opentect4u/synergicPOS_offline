@@ -55,7 +55,12 @@ class CustomerPaymentReportRenderer(context: Context) {
         if (card.measuredHeight <= 0) return null
         card.layout(0, 0, card.measuredWidth, card.measuredHeight)
         val captured = ReceiptPrinter.capture(card) ?: return null
-        withBottomMargin(captured, paperDots / 9)
+        withBottomMargin(
+            captured,
+            // The roll's own feed, plus the fixed strip every report gets under its
+            // totals - see PrintType.REPORT_BOTTOM_MARGIN_DP.
+            paperDots / 9 + PrintType.dots(PrintType.REPORT_BOTTOM_MARGIN_DP).toInt()
+        )
     }.getOrElse {
         android.util.Log.e(TAG, "Could not render customer payment report", it)
         null

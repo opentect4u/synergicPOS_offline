@@ -415,9 +415,14 @@ class BillReceiptRenderer(context: Context) {
      * draft is byte-for-byte the grocery bill's format. The service charge should be
      * folded into the draft's items so it is part of the printed total.
      */
-    fun renderDraftToBitmap(draft: Draft, paperDots: Int = REFERENCE_PAPER_DOTS): Bitmap? =
+    fun renderDraftToBitmap(
+        draft: Draft,
+        paperDots: Int = REFERENCE_PAPER_DOTS,
+        /** Stamps the slip DUPLICATE - the second of a two-copy pair. */
+        duplicate: Boolean = false
+    ): Bitmap? =
         renderInternal(paperDots) { root ->
-            populate(root, receiptNo = 0, paperDots = paperDots, draft = draft)
+            populate(root, receiptNo = 0, paperDots = paperDots, draft = draft, duplicate = duplicate)
         }
 
     /** Inflates the receipt layout, runs [fill], then measures and captures the card. */
@@ -684,6 +689,10 @@ class BillReceiptRenderer(context: Context) {
             // Whether the lines are numbered. Off the bill's own snapshot first, so a
             // reprint carries the numbering the bill was printed with.
             val showSerial = snapshot?.productSerialNumber ?: liveSettings.productSerialNumber
+            // Whether the time of sale is printed beside the date. Off the bill's own
+            // snapshot first, for the same reason the numbering is: a reprint has to
+            // come out as the original did, not as today's settings would have it.
+            val showTime = snapshot?.timeOnBill ?: liveSettings.timeOnBill
             val customerDetails = snapshot?.customerDetails ?: liveSettings.customerDetails
             val customerAddressPrinting = snapshot?.customerAddressPrinting ?: liveSettings.customerAddressPrinting
             val totalAmountFontSize = snapshot?.totalAmountFontSize ?: liveSettings.totalAmountFontSize
@@ -779,7 +788,17 @@ class BillReceiptRenderer(context: Context) {
 
             val (date, time) = splitDateTime(dateTime)
             if (date.isNotEmpty()) view.findViewById<TextView>(R.id.tvDate).text = date
-            if (time.isNotEmpty()) view.findViewById<TextView>(R.id.tvTime).text = time
+            // The time is GONE rather than blanked when it is switched off, so the
+            // space it held goes back to the slip instead of leaving a gap where a
+            // time used to be. The date is never optional - see BillSettings.timeOnBill.
+            view.findViewById<TextView>(R.id.tvTime).apply {
+                if (showTime && time.isNotEmpty()) {
+                    text = time
+                    visibility = View.VISIBLE
+                } else {
+                    visibility = View.GONE
+                }
+            }
 
             // Line items, plus the totals summed from those same lines.
             val raws = if (draft != null) {
@@ -1536,9 +1555,30 @@ class BillReceiptRenderer(context: Context) {
             if (creditSale) add(CaptionDao.Type.CREDIT)
         }
         val captions = runCatching { CaptionDao(ctx).enabledFor(types) }.getOrDefault(emptyList())
-        if (captions.isEmpty()) return
 
         val density = ctx.resources.displayMetrics.density
+
+        // A DUPLICATE always says so, whether or not the shop has set up captions.
+        //
+        // The rest of this block is decoration a till opts into - a slogan, a returns
+        // policy - and a till with none prints none. Being a duplicate is not that: it
+        // is the whole difference between the copy the customer was handed and the copy
+        // the shop kept, and on a return it is what tells the two apart. The captions
+        // master was EMPTY on every till that had never opened that screen, so a
+        // two-copy pair came out as two identical originals no matter what the setting
+        // said - which is what this line fixes. Setting a DUPLICATE caption replaces
+        // it, so the wording is still the shop's to choose.
+        if (duplicate && captions.none { it.type == CaptionDao.Type.DUPLICATE }) {
+            container.addView(TextView(ctx).apply {
+                text = t("DUPLICATE BILL")
+                gravity = Gravity.CENTER
+                textSize = PrintType.TITLE_SP
+                setTypeface(billTypeface, Typeface.BOLD)
+                setTextColor(0xFF111111.toInt())
+                setPadding(0, (2 * density).toInt(), 0, 0)
+            })
+        } else if (captions.isEmpty()) return
+
         captions.forEach { caption ->
             container.addView(TextView(ctx).apply {
                 text = caption.text
@@ -2312,7 +2352,7 @@ class BillReceiptRenderer(context: Context) {
         /** The receipt layout for the format this till is currently set to. */
         fun layoutFor(context: Context): Int =
             layoutFor(runCatching { BillSettingsDao(context).load().billFormat }
-                .getOrDefault(BillSettingsDao.BillFormat.STANDARD))
+                .getOrDefault(BillSettingsDao.BillFormat.CLASSIC))
 
         /**
          * Logs the print against the bill, as an ORIGINAL or a DUPLICATE.

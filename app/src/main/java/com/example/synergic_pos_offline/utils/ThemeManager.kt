@@ -149,8 +149,12 @@ object ThemeManager {
 
             is TextInputLayout -> themeTextInput(view, color, tint)
 
+            // Tinted by NAME, from this list. An icon added to a screen and not added
+            // here keeps whatever colour its XML gave it and sits at the old accent
+            // while everything around it changes - which is what btnSale did until it
+            // was listed. A new header icon belongs on this line the day it is added.
             is ImageView -> if (name == "btnBack" || name == "btnMenu" ||
-                name == "btnTheme" || name == "btnHome" || name == "ivChevron" ||
+                name == "btnTheme" || name == "btnHome" || name == "btnSale" || name == "ivChevron" ||
                 name == "btnRowEdit" || name == "btnRowDelete" || name == "btnRowPrint" ||
                 name == "btnGlobalPrint" || name == "btnGlobalDelete" || name == "btnGlobalDownload" ||
                 name == "btnPlus" || name == "btnMinus" || name == "btnRemoveLine" || name == "btnRemove") {

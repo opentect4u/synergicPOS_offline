@@ -45,7 +45,7 @@ class PrintTemplateFragment : Fragment() {
 
     private val dao: BillSettingsDao by lazy { BillSettingsDao(requireContext()) }
 
-    private var format = BillFormat.STANDARD
+    private var format = BillFormat.CLASSIC
     private var paperMm = BillSettingsDao.DEFAULT_TEMPLATE_PAPER_MM
 
     override fun onCreateView(
@@ -102,7 +102,8 @@ class PrintTemplateFragment : Fragment() {
         R.id.rbTemplateClassic -> BillFormat.CLASSIC
         R.id.rbTemplateClubbed -> BillFormat.CLUBBED
         R.id.rbTemplateTaxWise -> BillFormat.TAX_WISE_SHORT
-        else -> BillFormat.STANDARD
+        // Anything unrecognised falls to the app default - see BillSettings.billFormat.
+        else -> BillFormat.CLASSIC
     }
 
     /**

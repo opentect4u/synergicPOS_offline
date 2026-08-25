@@ -104,10 +104,36 @@ class BillSettingsDao(context: Context) {
          * that turns it off sees a change.
          */
         val productSerialNumber: Boolean = true,
+        /**
+         * Whether the time of sale is printed beside the date.
+         *
+         * The DATE has no switch and never will: a bill is a dated record, and a shop
+         * has to be able to say which day a sale happened on. The time of day is the
+         * part that is a genuine preference - a restaurant wants it to tell two
+         * sittings on the same table apart, a shop that bills a customer once a day
+         * does not, and on 58mm paper it is a line's worth of width either way.
+         *
+         * Defaults ON, which is what every till did before this was a choice: a shop
+         * that upgrades keeps printing the bill it printed yesterday, and only a shop
+         * that turns it off sees a change.
+         */
+        val timeOnBill: Boolean = true,
         val customerDetails: CustomerDetails = CustomerDetails.ONLY_MOBILE,
         val customerAddressPrinting: Boolean = false,
         val totalAmountFontSize: FontSize = FontSize.REGULAR,
-        val billFormat: BillFormat = BillFormat.STANDARD,
+        /**
+         * The layout a bill prints in, until a till chooses otherwise.
+         *
+         * CLASSIC is the default: it is the narrow-roll receipt these tills actually
+         * print on, with the bill number, date and time sharing one head line and the
+         * item table sized for 58mm paper. Standard is the wider, more spacious slip -
+         * a fine choice on 80mm, and the wrong thing to hand a shop that has not been
+         * asked which paper it has.
+         *
+         * Only tills that have never stored a format are affected: a shop that has
+         * picked one keeps it, and Print Template is where it is changed.
+         */
+        val billFormat: BillFormat = BillFormat.CLASSIC,
         /**
          * Whether a UPI payment QR is printed on a bill settled by UPI.
          *
@@ -145,6 +171,7 @@ class BillSettingsDao(context: Context) {
             billNoCharPrefix = map[KEY_CHAR_PREFIX] ?: d.billNoCharPrefix,
             hsnCode = map[KEY_HSN_CODE]?.toBool() ?: d.hsnCode,
             productSerialNumber = map[KEY_PRODUCT_SERIAL]?.toBool() ?: d.productSerialNumber,
+            timeOnBill = map[KEY_TIME_ON_BILL]?.toBool() ?: d.timeOnBill,
             customerDetails = CustomerDetails.fromStored(map[KEY_CUSTOMER_DETAILS]) ?: d.customerDetails,
             customerAddressPrinting = map[KEY_CUSTOMER_ADDRESS_PRINTING]?.toBool() ?: d.customerAddressPrinting,
             totalAmountFontSize = FontSize.fromStored(map[KEY_TOTAL_FONT_SIZE]) ?: d.totalAmountFontSize,
@@ -167,6 +194,7 @@ class BillSettingsDao(context: Context) {
         put(KEY_CHAR_PREFIX, s.billNoCharPrefix.take(3))
         put(KEY_HSN_CODE, if (s.hsnCode) "1" else "0")
         put(KEY_PRODUCT_SERIAL, if (s.productSerialNumber) "1" else "0")
+        put(KEY_TIME_ON_BILL, if (s.timeOnBill) "1" else "0")
         put(KEY_CUSTOMER_DETAILS, s.customerDetails.code.toString())
         put(KEY_CUSTOMER_ADDRESS_PRINTING, if (s.customerAddressPrinting) "1" else "0")
         put(KEY_TOTAL_FONT_SIZE, s.totalAmountFontSize.code)
@@ -318,6 +346,7 @@ class BillSettingsDao(context: Context) {
         private const val KEY_CHAR_PREFIX = "Bill No Char Prefix"
         private const val KEY_HSN_CODE = "Bill Hsn Code"
         private const val KEY_PRODUCT_SERIAL = "Product Serial Number"
+        private const val KEY_TIME_ON_BILL = "Time On Bill"
         private const val KEY_CUSTOMER_DETAILS = "Customer Details"
         private const val KEY_CUSTOMER_ADDRESS_PRINTING = "Customer Address Printing"
         private const val KEY_TOTAL_FONT_SIZE = "Total Amount Font Size"

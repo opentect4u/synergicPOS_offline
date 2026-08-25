@@ -11,6 +11,7 @@ import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillDeleteDao
 import com.example.synergic_pos_offline.database.BillSettingsDao
+import com.example.synergic_pos_offline.utils.BillPrinter
 import com.example.synergic_pos_offline.utils.BillReceiptRenderer
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.PrinterSetup
@@ -57,7 +58,20 @@ class BillFragment : Fragment(), TitledScreen {
         args?.getString(ARG_BILL_NO)?.let { view.findViewById<TextView>(R.id.tvBillNo).text = "BILL NO: $it" }
         args?.getString(ARG_NAME)?.let { view.findViewById<TextView>(R.id.tvName).text = "NAME  : $it" }
         args?.getString(ARG_DATE)?.let { view.findViewById<TextView>(R.id.tvDate).text = it }
-        args?.getString(ARG_TIME)?.let { view.findViewById<TextView>(R.id.tvTime).text = it }
+        // The time is the one header field with a setting behind it, so the fallback
+        // has to obey it too: populate() below re-decides this from the bill's own
+        // snapshot, but it only runs when there is a receipt to read, and a fallback
+        // that ignored the setting would be a way round it on the path where it does
+        // not. See BillSettingsDao.BillSettings.timeOnBill.
+        val showTime = BillSettingsDao(requireContext()).load().timeOnBill
+        view.findViewById<TextView>(R.id.tvTime).apply {
+            val fallback = args?.getString(ARG_TIME).orEmpty()
+            if (showTime) {
+                if (fallback.isNotEmpty()) text = fallback
+            } else {
+                visibility = View.GONE
+            }
+        }
         // The grand total is no longer a static field - it is one line of the summary
         // block that populate() builds below, so there is nothing to pre-fill here.
 
@@ -173,12 +187,24 @@ class BillFragment : Fragment(), TitledScreen {
         receiptNo: Long
     ) {
         toast("Printing to ${config.description}…")
-        // Bill Settings' "Two Copy" toggle - sent as two separate jobs off the one
-        // rendered bitmap, not two renders.
-        val copies = if (BillSettingsDao(requireContext()).load().twoCopyBill) 2 else 1
-        ThermalPrinter.printCopies(requireContext(), capture, config, copies) { result ->
+        // Bill Settings' "Two Copy" toggle. Two separate jobs, and with the toggle on
+        // they are two DIFFERENT slips - the original, then one stamped DUPLICATE.
+        // See BillPrinter.copiesFor.
+        //
+        // [capture] is what this screen already rendered, so it is used as the first
+        // copy rather than rendering the same thing again; only the second is new.
+        // Falls back to it entirely when there is no saved bill to re-render from -
+        // the preview of a sale that has not been written has no receipt number.
+        val copies = if (receiptNo > 0) {
+            BillPrinter.copiesFor(requireContext(), receiptNo, config.paperDots, duplicate)
+                .ifEmpty { listOf(capture) }
+        } else {
+            val twoCopy = BillSettingsDao(requireContext()).load().twoCopyBill
+            if (twoCopy) listOf(capture, capture) else listOf(capture)
+        }
+        ThermalPrinter.printSequence(requireContext(), copies, config) { result ->
             // The fragment may be gone by the time the printer answers.
-            if (!isAdded) return@printCopies
+            if (!isAdded) return@printSequence
             when (result) {
                 is ThermalPrinter.Result.Success -> {
                     toast("Printed")

@@ -246,7 +246,9 @@ class PeriodReportRenderer(context: Context) {
         if (card.measuredHeight <= 0) return null
         card.layout(0, 0, card.measuredWidth, card.measuredHeight)
 
-        ReceiptPrinter.capture(card)
+        // Every report that goes through this renderer - which is most of them - gets
+        // the same blank strip under its totals. See PrintType.REPORT_BOTTOM_MARGIN_DP.
+        ReceiptPrinter.captureWithBottomMargin(card, PrintType.REPORT_BOTTOM_MARGIN_DP)
     }.getOrElse {
         android.util.Log.e(TAG, "Could not render ${content.title}", it)
         null

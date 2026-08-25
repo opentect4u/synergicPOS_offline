@@ -25,6 +25,7 @@ import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.CustomerDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
 import com.example.synergic_pos_offline.utils.CustomerCardDialog
+import com.example.synergic_pos_offline.utils.BillPrinter
 import com.example.synergic_pos_offline.utils.BillReceiptRenderer
 import com.example.synergic_pos_offline.utils.InputLimits
 import com.example.synergic_pos_offline.utils.BillRounding
@@ -170,6 +171,12 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
     private var editMode = true
     private var method = Method.CASH
+
+    /** Whether the operator has typed in Cash tendered - see [fillCashWithTotal]. */
+    private var cashEdited = false
+
+    /** True while this screen is writing that field, so its own write is not read as typing. */
+    private var fillingCash = false
     private var accent = 0
 
     /** Loaded once when the screen opens; App Settings doesn't change mid-checkout. */
@@ -258,8 +265,12 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         id<MaterialButton>(R.id.btnCard).setOnClickListener { setMethod(Method.CARD) }
         id<MaterialButton>(R.id.btnOnline).setOnClickListener { setMethod(Method.ONLINE) }
 
-        // Cash inputs
-        id<TextInputEditText>(R.id.etCash).addTextChangedListener(watcher { refreshTotals() })
+        // Cash inputs. A change the operator made - not one fillCashWithTotal made -
+        // hands the field over to them and stops the auto-fill. See that function.
+        id<TextInputEditText>(R.id.etCash).addTextChangedListener(watcher {
+            if (!fillingCash) cashEdited = true
+            refreshTotals()
+        })
 
         // Credit inputs
         id<TextInputEditText>(R.id.etCredit).addTextChangedListener(watcher { refreshTotals() })
@@ -913,6 +924,31 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         if (discountValue % 1.0 == 0.0) discountValue.toInt().toString()
         else String.format(Locale.US, "%.1f", discountValue)
 
+    /**
+     * Puts the bill total in the Cash tendered box, so the common case needs no typing.
+     *
+     * Most customers pay the exact amount, and the operator was retyping a figure
+     * already on the screen above to be told the change is zero. Prefilled, exact
+     * payment is one tap; a customer handing over more overtypes it, which is the case
+     * that genuinely needs a number.
+     *
+     * ONLY WHILE UNTOUCHED. This runs from refreshTotals, which fires on every change
+     * to the bill - so once the operator has typed, the field is theirs, or a total
+     * that moved would wipe a part-typed amount mid-keystroke. [cashEdited] is set by
+     * the field's own watcher (the only thing that fires when a person types) and this
+     * function's writes are fenced so they are not mistaken for it.
+     */
+    private fun fillCashWithTotal() {
+        if (cashEdited || !cashReceptionEnabled()) return
+        val field = id<TextInputEditText>(R.id.etCash)
+        val text = String.format(java.util.Locale.US, "%.2f", BillRounding.toPaise(total()))
+        if (field.text?.toString() == text) return
+        fillingCash = true
+        field.setText(text)
+        field.setSelection(text.length)
+        fillingCash = false
+    }
+
     private fun refreshTotals() {
         val disc = discountLabelText()
         id<TextView>(R.id.tvSubtotal).text = money(subtotal())
@@ -937,6 +973,10 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // Update item count
         val itemCount = lines.sumOf { it.qty }
         id<TextView>(R.id.tvPayItemCount).text = "Items: ${qtyText(itemCount)}"
+
+        // The tendered box starts at the total, so exact payment - which is most of
+        // them - needs no typing. See fillCashWithTotal.
+        fillCashWithTotal()
 
         // Cash change - exact amount (no tendered/change entry) when Cash Reception is off
         val tendered = if (cashReceptionEnabled()) {
@@ -1121,18 +1161,18 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // screen is gone, rather than crashing on requireContext(). The sale is saved,
         // so it can still be reprinted from Recent Bills.
         val ctx = context ?: return
-        val capture = BillReceiptRenderer(ctx).renderToBitmap(receiptNo, config.paperDots)
-        if (capture == null) {
+        // Bill Settings' "Two Copy" toggle. Two separate jobs, and with the toggle on
+        // they are two DIFFERENT slips - the customer's original, then the shop's
+        // stamped DUPLICATE. See BillPrinter.copiesFor.
+        val copies = BillPrinter.copiesFor(ctx, receiptNo, config.paperDots, duplicate = false)
+        if (copies.isEmpty()) {
             toast("Could not render the receipt")
             return
         }
-        // Bill Settings' "Two Copy" toggle - sent as two separate jobs off the one
-        // rendered bitmap, not two renders.
-        val copies = if (BillSettingsDao(ctx).load().twoCopyBill) 2 else 1
-        ThermalPrinter.printCopies(ctx, capture, config, copies) { result ->
+        ThermalPrinter.printSequence(ctx, copies, config) { result ->
             // The sale is already saved, so a printer problem is reported and never
             // blocks the till: the bill can always be reprinted from Recent Bills.
-            if (!isAdded) return@printCopies
+            if (!isAdded) return@printSequence
             when (result) {
                 is ThermalPrinter.Result.Success -> {
                     toast("Printed")
