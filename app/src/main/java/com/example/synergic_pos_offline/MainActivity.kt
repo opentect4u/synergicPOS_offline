@@ -416,6 +416,23 @@ class MainActivity : AppCompatActivity() {
         ThemeManager.applyTheme(window.decorView)
         tvHeaderTitle.setTextColor(color)
         refreshSidebarTheme()
+        applyLanguageEverywhere()
+    }
+
+    /**
+     * Relabels every currently inflated screen in the till's chosen language.
+     *
+     * Ridden along with the theme pass rather than hooked up separately, because the
+     * two want to happen at exactly the same moments - a screen has just appeared, or
+     * a setting that changes how everything looks has just been saved - and the theme
+     * pass already runs for every screen except Login and Registration. That
+     * exemption is the one this feature needs: the language is a per-till setting read
+     * after sign-in, so there is nothing to read while the login screen is up.
+     */
+    fun applyLanguageEverywhere() {
+        com.example.synergic_pos_offline.utils.AppLanguage.apply(
+            window.decorView, com.example.synergic_pos_offline.utils.AppLanguage.of(this)
+        )
     }
 
     /** Shows the theme-color dropdown anchored under the palette icon. */
@@ -546,6 +563,7 @@ class MainActivity : AppCompatActivity() {
                 ).show()
             // Opens on Connections; the Print Template tab is the other half of it.
             "Printer Settings" -> navigateTo(PrintSettingsFragment())
+            "Language" -> navigateTo(PrintLanguageFragment())
             CALCULATOR -> navigateTo(CalculatorFragment())
             CHANGE_MODE -> chooseMode()
             "Stock & Inventory" -> navigateTo(InventoryFragment())
@@ -729,6 +747,10 @@ class MainActivity : AppCompatActivity() {
                 // in list the screens in one order.
                 add(TreeNode("Printer Settings"))
                 add(TreeNode("App Settings"))
+                // Both languages - what the screens read in and what the paper prints
+                // in - live on one page, and the drawer is the only way to it now that
+                // the dashboard's Menu tab is gone.
+                add(TreeNode("Language"))
                 // About App is granted on its own - it carries the irreversible actions.
                 if (canAboutApp) add(TreeNode("About App"))
             }))
@@ -816,7 +838,13 @@ class MainActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val vn = visible[position]
-            holder.tvTitle.text = vn.node.title
+            // Displayed in the chosen language, but the node keeps its English title:
+            // that is the key handleLeaf() opens a screen by and activeTitle matches
+            // against, and a translated key would open nothing.
+            holder.tvTitle.text = com.example.synergic_pos_offline.utils.AppLanguage.tr(
+                com.example.synergic_pos_offline.utils.AppLanguage.of(this@MainActivity),
+                vn.node.title
+            )
 
             val themeColor = ThemeManager.getThemeColor(this@MainActivity)
             holder.ivChevron.imageTintList = ColorStateList.valueOf(themeColor)

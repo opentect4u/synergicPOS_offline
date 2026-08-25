@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Tag slots used by [AppLanguage] to remember what a view said in English.
+
+        A translated screen is translated in place, so the English is gone from the
+        view the moment it is applied. Without somewhere to keep it, switching to a
+        second language would translate the *first* language's words - and switching
+        back to English would have nothing to switch back to.
+    -->
+    <item name="tag_original_text" type="id" />
+    <item name="tag_original_hint" type="id" />
+
+    <!--
+        What was last written *by* the translator. A screen sets its own text all day
+        long - a running total, the signed-in user, a row count - and the pass has no
+        other way to tell "this is still my translation" from "the app has since put
+        something else here". Comparing against these is what tells the two apart.
+    -->
+    <item name="tag_applied_text" type="id" />
+    <item name="tag_applied_hint" type="id" />
+</resources>

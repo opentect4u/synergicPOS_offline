@@ -34,9 +34,10 @@ import com.example.synergic_pos_offline.utils.ThemeManager
  */
 class PrintLanguageFragment : Fragment(), TitledScreen {
 
-    override val screenTitle = "Print Language"
+    override val screenTitle = "Language"
 
     private lateinit var group: RadioGroup
+    private lateinit var appGroup: RadioGroup
 
     /** Held so the writes below are not attributed to whatever fires the listener. */
     private var applying = false
@@ -60,6 +61,18 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
         group.setOnCheckedChangeListener { _, checkedId ->
             if (applying) return@setOnCheckedChangeListener
             PrintLanguage.Language.values().getOrNull(checkedId - 1)?.let { choose(it) }
+        }
+
+        // The app's own screens, chosen separately from the paper. Its radio ids are
+        // offset past the print group's so the two sets cannot collide in one tree.
+        appGroup = view.findViewById(R.id.rgAppLanguage)
+        PrintLanguage.Language.values().forEach { language ->
+            appGroup.addView(radioFor(language, accent).also { it.id = appIdOf(language) })
+        }
+        appGroup.check(appIdOf(com.example.synergic_pos_offline.utils.AppLanguage.of(requireContext())))
+        appGroup.setOnCheckedChangeListener { _, checkedId ->
+            if (applying) return@setOnCheckedChangeListener
+            PrintLanguage.Language.values().getOrNull(checkedId - APP_ID_BASE)?.let { chooseApp(it) }
         }
 
         showProductNames(view, current)
@@ -100,6 +113,36 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
                 "${language.englishName}  ·  ${language.nativeName}"
             }
         }
+
+    /** Radio id for [language] in the app-language group. */
+    private fun appIdOf(language: PrintLanguage.Language): Int = APP_ID_BASE + language.ordinal
+
+    /**
+     * Stores the screen language and relabels the app there and then.
+     *
+     * Applied immediately rather than on the next screen, because this screen is
+     * itself the proof: an operator who picks Hindi should see this page turn, and
+     * one who picked it by accident should be able to read their way back out.
+     */
+    private fun chooseApp(language: PrintLanguage.Language) {
+        val stored = runCatching {
+            GeneralSettingsDao(requireContext()).saveAppLanguage(language.code)
+            true
+        }.getOrElse { error ->
+            android.util.Log.e(TAG, "Could not store the app language", error)
+            false
+        }
+
+        if (!stored) {
+            applying = true
+            appGroup.check(appIdOf(com.example.synergic_pos_offline.utils.AppLanguage.of(requireContext())))
+            applying = false
+            toast("Could not save the app language")
+            return
+        }
+        (activity as? com.example.synergic_pos_offline.MainActivity)?.applyLanguageEverywhere()
+        toast("The app will read in ${language.englishName}")
+    }
 
     /** Stores the choice, then says on the screen what is now stored. */
     private fun choose(language: PrintLanguage.Language) {
@@ -261,6 +304,14 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
         android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_SHORT).show()
 
     private companion object {
+        /**
+         * Where the app-language radios start numbering.
+         *
+         * Far enough past the print group's ids (ordinal + 1) that the two sets of
+         * radios can share one view tree without either finding the other's.
+         */
+        const val APP_ID_BASE = 101
+
         const val TAG = "PrintLanguage"
     }
 }

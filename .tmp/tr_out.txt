@@ -1,0 +1,23 @@
+Product              -> প্রডাক্ট
+User                 -> ইউজার
+Duplicate            -> ডুপ্লিকেট
+Tax                  -> ট্যাক্স
+Settings             -> সেটিংস
+Save                 -> সেভ
+Cancel               -> ক্যানসেল
+Home                 -> হোম
+Logout               -> লগআউট
+Sale                 -> সেল
+Reports              -> রিপোর্টস
+Stock In             -> স্টক ইন
+Customer             -> কাস্টমার
+Category             -> ক্যাটাগরি
+Checkout             -> চেকআউট
+Print Bill           -> প্রিন্ট বিল
+Order Items          -> অর্ডার ইটেম্স
+Total                -> টোটাল
+Search               -> সার্চ
+Bath Soap            -> ব্যাথ সোপ
+Basmati Rice 5kg     -> ব্যাস্মাটি রাইস 5kg
+? 100.00             -> ₹ 100.00
+Active Orders (15)   -> অ্যাক্টাইভ অর্ডারস (15)

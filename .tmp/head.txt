@@ -1,0 +1,201 @@
+package com.example.synergic_pos_offline.utils
+
+import android.content.Context
+import android.view.View
+import android.view.ViewGroup
+import android.widget.AutoCompleteTextView
+import android.widget.EditText
+import android.widget.TextView
+import com.example.synergic_pos_offline.R
+import com.google.android.material.textfield.TextInputLayout
+import java.util.Locale
+
+/**
+ * The language the app's own screens are labelled in.
+ *
+ * The counterpart to [PrintLanguage], and built the same way for the same reason: a
+ * phrase is translated because somebody wrote down what it becomes, never because a
+ * machine guessed. A till is a place where money is counted, and a button that has
+ * been mistranslated into "Delete" is worse than one still reading "Save".
+ *
+ * ## What this translates
+ *
+ * The app's *labels* - headings, buttons, menu rows, field hints. Never the shop's
+ * own data: product names, customer names, amounts and anything typed into a field
+ * are left exactly as they are. That falls out of the dictionary rather than needing
+ * a rule, because "Basmati Rice 5kg" is not a phrase anybody wrote a translation for
+ * and so nothing happens to it.
+ *
+ * ## What it deliberately does not translate
+ *
+ * The login screen, which is the one place the app is used by somebody who has not
+ * chosen a language yet - the setting is per till and is read after sign-in. It is
+ * excluded by where [apply] is called from rather than by a check in here.
+ *
+ * The receipt preview, too: that is a picture of a printed bill, and the language it
+ * is labelled in is Print Language's answer, not this one's. A till may well print
+ * Hindi bills from an English screen, or the reverse.
+ *
+ * ## Coverage
+ *
+ * Whatever is not in [WORDS] here or in [PrintLanguage]'s dictionary stays in
+ * English, exactly as an unknown print label does. That is the same trade the print
+ * side makes and it is deliberate: the app grows into a language a row at a time,
+ * and a half-translated screen is honest about which half it knows.
+ */
+object AppLanguage {
+
+    /** The setting_name this is stored under, type 'G' - see `GeneralSettingsDao`. */
+    const val SETTING_KEY = "App Language"
+
+    /** What the screens read in until somebody chooses otherwise. */
+    val DEFAULT = PrintLanguage.Language.ENGLISH
+
+    /**
+     * The language this till's screens are in.
+     *
+     * Read from the login cache, like every other setting a screen needs while it is
+     * being laid out. A till that has never chosen reads English.
+     */
+    fun of(context: Context): PrintLanguage.Language = runCatching {
+        PrintLanguage.Language.fromStored(SettingsCache.value(context, "G", SETTING_KEY))
+    }.getOrDefault(DEFAULT)
+
+    /**
+     * [raw] as this language spells it.
+     *
+     * The screens are *transliterated*, not translated: an English word written in
+     * the local script, which is how the trade actually talks. A Bengali shopkeeper
+     * says "product" and "tax" out loud, so the screen says প্রডাক্ট and ট্যাক্স -
+     * not পণ্য and কর, which are the dictionary words and read like a textbook.
+     *
+     * That is the opposite of what [PrintLanguage] does, deliberately. A bill is read
+     * by the customer holding it and wants the real word; a screen is read by whoever
+     * was trained on this till, and they learned it in English.
+     *
+     * [Transliterator] does the respelling, so every label is covered rather than
+     * only the ones somebody wrote down. [CORRECTIONS] is where its answer is
+     * overridden - it works letter by letter from the spelling, which is right for
+     * "Tax" and wrong for "User", where English says "yoo-zer" and the letters do not.
+     */
+    fun tr(lang: PrintLanguage.Language, raw: String?): String {
+        val text = raw ?: return ""
+        if (lang == DEFAULT || text.isBlank()) return text
+        CORRECTIONS[normalise(text)]?.getOrNull(lang.slotOf())?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
+        return Transliterator.to(lang, text)
+    }
+
+    /** Where this language's word sits in a [WORDS] row; -1 for English. */
+    private fun PrintLanguage.Language.slotOf(): Int = ordinal - 1
+
+    /** Trim, collapse runs of space, upper-case - the form [WORDS] is keyed in. */
+    private fun normalise(raw: String): String =
+        raw.trim().replace(WHITESPACE, " ").uppercase(Locale.ROOT)
+
+    private val WHITESPACE = Regex("\\s+")
+
+    // ---- Applying it to a live screen ------------------------------------------
+
+    /**
+     * Translates every label under [root] into [lang], in place.
+     *
+     * Walks the live view tree rather than going through string resources, because
+     * this app has none to go through: its text is written into 137 layout files and
+     * a thousand places in code. Extracting all of it would be a far larger and more
+     * dangerous change than reading it back off the views it has already been set on,
+     * and this way a screen that builds its rows in code is translated by the same
+     * pass as one that declares them in XML.
+     *
+     * Safe to call repeatedly, and safe to call with a different language than last
+     * time: each view keeps its English original in a tag ([R.id.tag_original_text]),
+     * so every pass translates the English rather than the previous translation.
+     */
+    fun apply(root: View?, lang: PrintLanguage.Language) {
+        if (root == null) return
+        walk(root, lang)
+    }
+
+    /** The same, reading the till's chosen language for itself. */
+    fun apply(root: View?) {
+        val context = root?.context ?: return
+        apply(root, of(context))
+    }
+
+    private fun walk(view: View, lang: PrintLanguage.Language) {
+        // The receipt card is a picture of printed paper. It is laid out in whatever
+        // Print Language says and must not be relabelled by the screen's setting.
+        if (view.id == R.id.cardReceipt) return
+
+        when (view) {
+            // A dropdown's text is the *value* that was chosen, and several screens
+            // read it back to work out what was selected. Translating it would leave
+            // them unable to recognise their own setting - so only the hint moves.
+            is AutoCompleteTextView -> translateHint(view, lang)
+            // The same, harder: an EditText holds whatever was typed into it.
+            is EditText -> translateHint(view, lang)
+            is TextView -> {
+                translateText(view, lang)
+                translateHint(view, lang)
+            }
+            is TextInputLayout -> translateLayoutHint(view, lang)
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) walk(view.getChildAt(i), lang)
+        }
+    }
+
+    /**
+     * Translates one label, keeping track of what the English behind it was.
+     *
+     * Two tags rather than one, because a screen sets its own text constantly - a
+     * running total, the signed-in user, a row count - and a single "the original was
+     * X" cache would keep writing a stale X back over it. So the pass also remembers
+     * what *it* last wrote: if the view still says that, the app has not touched it
+     * and the remembered English still stands; if it says anything else, the app has
+     * moved on and whatever is there now is the new English to translate from.
+     */
+    private fun translateInto(
+        current: String?,
+        originalTag: Int,
+        appliedTag: Int,
+        view: View,
+        lang: PrintLanguage.Language,
+        set: (String) -> Unit
+    ) {
+        val now = current.orEmpty()
+        val applied = view.getTag(appliedTag) as? String
+        val original = if (applied != null && applied == now) {
+            view.getTag(originalTag) as? String ?: now
+        } else {
+            now
+        }
+        if (original.isBlank()) return
+
+        val translated = tr(lang, original)
+        view.setTag(originalTag, original)
+        view.setTag(appliedTag, translated)
+        if (now != translated) set(translated)
+    }
+
+    private fun translateText(view: TextView, lang: PrintLanguage.Language) =
+        translateInto(
+            view.text?.toString(), R.id.tag_original_text, R.id.tag_applied_text, view, lang
+        ) { view.text = it }
+
+    private fun translateHint(view: TextView, lang: PrintLanguage.Language) =
+        translateInto(
+            view.hint?.toString(), R.id.tag_original_hint, R.id.tag_applied_hint, view, lang
+        ) { view.hint = it }
+
+    private fun translateLayoutHint(view: TextInputLayout, lang: PrintLanguage.Language) =
+        translateInto(
+            view.hint?.toString(), R.id.tag_original_hint, R.id.tag_applied_hint, view, lang
+        ) { view.hint = it }
+
+    // ---- The dictionary ---------------------------------------------------------
+
+    private fun MutableMap<String, Array<String>>.w(key: String, vararg values: String) {
+        put(normalise(key), arrayOf(*values))
+    }
+
