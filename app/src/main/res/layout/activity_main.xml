@@ -78,12 +78,29 @@
                 app:tint="@color/primary_blue"
                 android:contentDescription="Home / Dashboard" />
 
+            <!-- Straight to the sale screen, from wherever the till happens to be.
+                 Beside Home because it is the same kind of control - a place the app
+                 always goes back to - and it is the one that matters more on a till:
+                 a shop spends its day on the sale screen and only visits the rest.
+                 Which sale screen it opens is the mode's business, not this button's;
+                 MainActivity routes it exactly as the sidebar's Sale row does. -->
+            <ImageButton
+                android:id="@+id/btnSale"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_toStartOf="@id/btnHome"
+                android:layout_centerVertical="true"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_sale"
+                app:tint="@color/primary_blue"
+                android:contentDescription="Sale" />
+
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_centerVertical="true"
                 android:layout_toEndOf="@id/btnBack"
-                android:layout_toStartOf="@id/btnHome"
+                android:layout_toStartOf="@id/btnSale"
                 android:layout_marginStart="8dp"
                 android:orientation="vertical">
 

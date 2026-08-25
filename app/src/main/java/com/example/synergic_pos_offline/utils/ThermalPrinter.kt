@@ -177,17 +177,34 @@ object ThermalPrinter {
      * whichever one failed), so a caller written for a single [print] call needs
      * no change to use this instead.
      */
-    fun printCopies(context: Context, receipt: Bitmap, config: Config, copies: Int, onResult: (Result) -> Unit) {
-        fun sendOne(remaining: Int) {
-            print(context, receipt, config) { result ->
-                if (result is Result.Failure || remaining <= 1) {
+    fun printCopies(context: Context, receipt: Bitmap, config: Config, copies: Int, onResult: (Result) -> Unit) =
+        printSequence(context, List(copies.coerceAtLeast(1)) { receipt }, config, onResult)
+
+    /**
+     * Sends [receipts] one after another, as separate jobs, stopping at the first
+     * failure and reporting the last result.
+     *
+     * Separate from [printCopies] because the slips are no longer necessarily the
+     * same slip: a two-copy bill is the ORIGINAL followed by a DUPLICATE, which are
+     * two different renders of the same sale rather than one render sent twice. See
+     * [BillPrinter.copiesFor].
+     *
+     * Sequential, not batched: a thermal head takes one job at a time, and sending
+     * the second before the first has been acknowledged is how two bills come out
+     * interleaved on one length of paper.
+     */
+    fun printSequence(context: Context, receipts: List<Bitmap>, config: Config, onResult: (Result) -> Unit) {
+        if (receipts.isEmpty()) { onResult(Result.Failure("Nothing to print")); return }
+        fun sendFrom(index: Int) {
+            print(context, receipts[index], config) { result ->
+                if (result is Result.Failure || index >= receipts.lastIndex) {
                     onResult(result)
                 } else {
-                    sendOne(remaining - 1)
+                    sendFrom(index + 1)
                 }
             }
         }
-        sendOne(copies.coerceAtLeast(1))
+        sendFrom(0)
     }
 
     /**

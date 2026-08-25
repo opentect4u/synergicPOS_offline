@@ -386,6 +386,22 @@ class SearchSuggestions(
             raw.trim().filter { it.isLetterOrDigit() }.uppercase()
 
         /**
+         * An HSN worth searching on, or null.
+         *
+         * A product with no HSN entered carries "0000" - the placeholder the whole app
+         * writes when the field is left alone. Searching that would be worse than not
+         * searching it at all: typing "0" on a shelf where most products were never
+         * given a code would match most of the shelf, and a search for a product whose
+         * name starts with a digit would drown in placeholders. So a code that is all
+         * zeros is treated as no code.
+         */
+        fun realHsn(raw: String?): String? {
+            val v = raw?.trim().orEmpty()
+            if (v.isEmpty() || v.all { it == '0' }) return null
+            return v
+        }
+
+        /**
          * How long the box must be still before the list opens.
          *
          * Sized to sit between the two things that type into a search box. A barcode

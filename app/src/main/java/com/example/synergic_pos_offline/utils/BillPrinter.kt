@@ -15,6 +15,42 @@ import com.example.synergic_pos_offline.database.BillSettingsDao
 object BillPrinter {
 
     /**
+     * The slips one press of Print should produce, in the order they come out.
+     *
+     * WITH TWO COPY OFF this is one slip, captioned as [duplicate] says.
+     *
+     * WITH TWO COPY ON it is TWO DIFFERENT RENDERS, not one render sent twice: the
+     * first carries the bill's own number and caption, the second is stamped
+     * DUPLICATE. That is what the two copies are for - one goes to the customer and
+     * one stays with the shop - and a pair of identical originals is two documents
+     * that each claim to be the bill. Which is a real problem on a return: the copy
+     * the shop kept is indistinguishable from the one the customer brings back.
+     *
+     * Only the SECOND copy is stamped. A caller already printing a duplicate (a
+     * reprint from Bill History) gets two duplicates, because neither of them is the
+     * original - that one was issued and handed over at the time of sale.
+     *
+     * Rendering twice costs a second pass over the same bill, which is a fraction of
+     * what the printer then spends putting it on paper.
+     */
+    fun copiesFor(
+        context: Context,
+        receiptNo: Long,
+        paperDots: Int,
+        duplicate: Boolean
+    ): List<android.graphics.Bitmap> {
+        val renderer = BillReceiptRenderer(context)
+        val first = renderer.renderToBitmap(receiptNo, paperDots, duplicate = duplicate)
+            ?: return emptyList()
+        if (!BillSettingsDao(context).load().twoCopyBill) return listOf(first)
+        // The shop's copy. Falls back to a second of the first if it cannot be
+        // rendered: two copies unmarked is a smaller failure than one copy where the
+        // shop was told to expect two.
+        val second = renderer.renderToBitmap(receiptNo, paperDots, duplicate = true) ?: first
+        return listOf(first, second)
+    }
+
+    /**
      * @param duplicate marks the slip as a copy of one already issued - see
      *        [BillReceiptRenderer.populate]
      * @param report told what happened, so a caller can toast it wherever it is
@@ -45,14 +81,12 @@ object BillPrinter {
         // Rendered off-screen at the paper's own width rather than captured from a
         // view: there is no view here, and a capture scaled to fit would print 58mm
         // as a miniature of 80mm instead of at full size with more wrapping.
-        val capture = BillReceiptRenderer(context)
-            .renderToBitmap(receiptNo, config.paperDots, duplicate = duplicate)
-        if (capture == null) {
+        val copies = copiesFor(context, receiptNo, config.paperDots, duplicate)
+        if (copies.isEmpty()) {
             report("Could not render the receipt")
             return
         }
-        val copies = if (BillSettingsDao(context).load().twoCopyBill) 2 else 1
-        ThermalPrinter.printCopies(context, capture, config, copies) { result ->
+        ThermalPrinter.printSequence(context, copies, config) { result ->
             when (result) {
                 is ThermalPrinter.Result.Success -> {
                     report("Printed")

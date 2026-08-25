@@ -246,6 +246,212 @@
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="16dp"
+                    android:background="#EEEEEE" />
+
+                <!--
+                  Cloud backup.
+
+                  A backup that only ever lands in Downloads is on the one device the
+                  backup exists to survive. This copies it off the tablet as well -
+                  same file, same schedule, a second place.
+
+                  It is a COPY, never a move: the local folder is written first and
+                  keeps its rolling window whatever the cloud does. A shop with no
+                  signal must not stop having backups because a switch is on, and an
+                  upload that fails must not take the local copy with it.
+
+                  Off by default. It sends the shop's whole database - prices,
+                  customers, every bill - to a third party, and that is a decision an
+                  owner makes deliberately, not one they inherit from an installer.
+                -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:baselineAligned="false"
+                    android:layout_marginTop="14dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Cloud backup"
+                            android:textSize="14sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_main" />
+
+                        <TextView
+                            android:id="@+id/tvCloudBackupState"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="1dp"
+                            android:text="Off — backups are kept on this device only"
+                            android:textSize="12sp"
+                            android:textColor="@color/text_secondary" />
+                    </LinearLayout>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swCloudBackup"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+                </LinearLayout>
+
+                <!-- Everything the cloud needs, hidden until it is switched on: an
+                     off switch should leave no settings behind to wonder about. -->
+                <LinearLayout
+                    android:id="@+id/llCloudBackupSettings"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:baselineAligned="false"
+                        android:layout_marginTop="12dp">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Cloud service"
+                                android:textSize="14sp"
+                                android:textColor="@color/text_main" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="1dp"
+                                android:text="Where the copy is sent"
+                                android:textSize="12sp"
+                                android:textColor="@color/text_secondary" />
+                        </LinearLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilCloudProvider"
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                            android:layout_width="170dp"
+                            android:layout_height="wrap_content"
+                            app:boxCornerRadiusTopStart="12dp"
+                            app:boxCornerRadiusTopEnd="12dp"
+                            app:boxCornerRadiusBottomStart="12dp"
+                            app:boxCornerRadiusBottomEnd="12dp">
+
+                            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                                android:id="@+id/actCloudProvider"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <!-- The folder inside that account. Free text rather than a
+                         picker: the folder is created on the service if it is not
+                         there, and a picker would need the account connected before
+                         the setting could even be written down. -->
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilCloudPath"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:hint="Folder in the cloud account"
+                        app:helperTextEnabled="true"
+                        app:helperText="For example: SynergicPOS/Backups"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etCloudPath"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textNoSuggestions"
+                            android:maxLines="1"
+                            android:textSize="14sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <!-- The account itself. Separate from the switch because they fail
+                         separately: a switch can be on with nobody signed in, and that
+                         has to be visible rather than discovered when a backup is due. -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:baselineAligned="false"
+                        android:layout_marginTop="12dp">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Account"
+                                android:textSize="14sp"
+                                android:textColor="@color/text_main" />
+
+                            <TextView
+                                android:id="@+id/tvCloudAccount"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="1dp"
+                                android:text="Not connected"
+                                android:textSize="12sp"
+                                android:textColor="@color/text_secondary" />
+                        </LinearLayout>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnCloudConnect"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="44dp"
+                            android:minWidth="110dp"
+                            android:text="Connect"
+                            android:textAllCaps="false"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            app:cornerRadius="12dp" />
+                    </LinearLayout>
+
+                    <!-- What actually happened last time. A cloud upload is the one
+                         part of this screen the operator cannot see for themselves -
+                         the file is not on the tablet to go and look at - so the
+                         result of the last attempt is written down here. -->
+                    <TextView
+                        android:id="@+id/tvCloudLastSync"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="No backup has been sent yet."
+                        android:textSize="12sp"
+                        android:textColor="@color/text_secondary" />
+                </LinearLayout>
+
                 <!-- Nothing above is stored until this is pressed, and the line under
                      the switch says what actually is stored - so a half-changed
                      setting cannot be mistaken for a saved one. Right-aligned and

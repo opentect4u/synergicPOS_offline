@@ -156,7 +156,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:hint="Scan barcode or search name / SK"
+                    android:hint="Scan barcode or search name / SKU / HSN"
                     app:startIconDrawable="@android:drawable/ic_menu_search"
                     app:boxCornerRadiusTopStart="12dp"
                     app:boxCornerRadiusTopEnd="12dp"

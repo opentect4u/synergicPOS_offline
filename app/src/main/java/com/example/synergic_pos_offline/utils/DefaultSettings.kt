@@ -85,10 +85,11 @@ object DefaultSettings {
         billNoCharPrefix = "",
         hsnCode = false,
         productSerialNumber = true,
+        timeOnBill = true,
         customerDetails = BillSettingsDao.CustomerDetails.ONLY_MOBILE,
         customerAddressPrinting = false,
         totalAmountFontSize = BillSettingsDao.FontSize.REGULAR,
-        billFormat = BillSettingsDao.BillFormat.STANDARD
+        billFormat = BillSettingsDao.BillFormat.CLASSIC
     )
 
     /** The width the Print Template preview is drawn at - 3 inch. */

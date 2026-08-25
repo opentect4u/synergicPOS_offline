@@ -15,6 +15,16 @@ import com.example.synergic_pos_offline.database.RunningOrderDao
  */
 object KotPrinter {
 
+    /**
+     * Blank space under the last line of a KOT, in dp.
+     *
+     * On top of the roll's proportional feed margin. A kitchen ticket is torn off by
+     * hand at a busy pass rather than cut cleanly, so the last line wants clear paper
+     * under it - a ticket torn through its own bottom line is one the kitchen has to
+     * ask about.
+     */
+    private const val BOTTOM_MARGIN_DP = 20f
+
     fun print(
         context: Context,
         batch: RunningOrderDao.KotBatch,
@@ -105,7 +115,15 @@ object KotPrinter {
 
         val padX = width * 0.04f
         val padTop = width * 0.04f
-        val padBottom = width * 0.10f     // feed margin before the cut
+        // Feed margin before the cut, plus a fixed 10dp under it.
+        //
+        // The proportional part is the roll's own feed - it scales with the paper, so
+        // 58mm and 80mm both clear the cutter. The 10dp is a margin in the same unit
+        // the rest of the slip is set in (see PrintType.dots), so it is the same
+        // physical gap on every roll rather than a tenth of whatever width happens to
+        // be fitted: on a narrow roll a proportional margin alone leaves the last line
+        // sitting closer to the tear than it does on a wide one.
+        val padBottom = width * 0.10f + PrintType.dots(BOTTOM_MARGIN_DP)
         val gap = width * 0.012f
 
         // Build the line list top-to-bottom; ruleBefore holds indices to draw a rule above.

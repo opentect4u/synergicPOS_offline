@@ -111,6 +111,17 @@ object PrintType {
     /** Space above and below a rule, in dp - `@style/BillDashLine`'s margins. */
     const val RULE_MARGIN_DP = 6f
 
+    /**
+     * Blank paper under a printed REPORT, in dp, on top of whatever feed the printer
+     * itself adds before cutting.
+     *
+     * A report is the one slip that is read and filed rather than handed over: it is
+     * torn off at the counter, folded, and put in a drawer, and a last line sitting on
+     * the tear is a total nobody can read back. Given in dp so the gap is the same on
+     * a 58mm roll as on an 80mm one.
+     */
+    const val REPORT_BOTTOM_MARGIN_DP = 30f
+
     // ---- For slips drawn on a canvas ----------------------------------------
 
     /**

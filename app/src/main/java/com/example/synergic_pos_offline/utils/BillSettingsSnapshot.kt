@@ -21,6 +21,8 @@ object BillSettingsSnapshot {
         val hsnCode: Boolean,
         /** Whether the item lines were numbered when this bill was made. */
         val productSerialNumber: Boolean,
+        /** Whether the time of sale was printed beside the date. */
+        val timeOnBill: Boolean,
         val customerDetails: BillSettingsDao.CustomerDetails,
         val customerAddressPrinting: Boolean,
         val totalAmountFontSize: BillSettingsDao.FontSize,
@@ -44,6 +46,7 @@ object BillSettingsSnapshot {
         JSONObject().apply {
             put("hsnCode", settings.hsnCode)
             put("productSerialNumber", settings.productSerialNumber)
+            put("timeOnBill", settings.timeOnBill)
             put("customerDetails", settings.customerDetails.name)
             put("customerAddressPrinting", settings.customerAddressPrinting)
             put("totalAmountFontSize", settings.totalAmountFontSize.name)
@@ -64,6 +67,9 @@ object BillSettingsSnapshot {
                 // Bills made before this was a choice were all numbered, so their
                 // reprints stay numbered rather than quietly changing shape.
                 productSerialNumber = o.optBoolean("productSerialNumber", true),
+                // Bills taken before this was a setting were all printed WITH the
+                // time, so that is what a reprint of one has to show.
+                timeOnBill = o.optBoolean("timeOnBill", true),
                 customerDetails = runCatching { BillSettingsDao.CustomerDetails.valueOf(o.getString("customerDetails")) }
                     .getOrDefault(BillSettingsDao.CustomerDetails.ONLY_MOBILE),
                 customerAddressPrinting = o.optBoolean("customerAddressPrinting"),

@@ -58,6 +58,12 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     private val taxInclusive get() = arguments?.getBoolean(ARG_INCLUSIVE) ?: false
 
     private var total = 0.0
+
+    /** Whether the operator has typed in Amount Tendered - see [fillTenderedWithTotal]. */
+    private var tenderedEdited = false
+
+    /** True while this screen is writing that field, so its own write is not read as typing. */
+    private var fillingTendered = false
     private var payMethod = "Cash"
 
     override fun onCreateView(
@@ -88,6 +94,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         val etTendered = view.findViewById<TextInputEditText>(R.id.etTendered)
         val tvChange = view.findViewById<TextView>(R.id.tvChangeDue)
         etTendered.addTextChangedListener {
+            // A change the operator made, not one fillTenderedWithTotal made - after
+            // this the field stops being auto-filled. See that function.
+            if (!fillingTendered) tenderedEdited = true
             val tendered = it?.toString()?.toDoubleOrNull()
             tvChange.text = if (tendered != null && tendered >= total) "₹ ${money(tendered - total)}" else "—"
         }
@@ -205,6 +214,31 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             .show()
     }
 
+    /**
+     * Puts the bill total in Amount Tendered, so the common case needs no typing.
+     *
+     * Most customers hand over the exact amount - a card, an app, or counted-out cash
+     * - and the operator was retyping a figure already on the screen above, to be told
+     * the change is zero. Prefilled, exact payment is one tap; anything else is
+     * overtyped, which is the case that actually needs a number entered.
+     *
+     * ONLY WHILE UNTOUCHED. Once the operator has typed something the field is theirs:
+     * a total that reasserted itself would wipe a part-typed amount every time the
+     * figure moved. That is what [tenderedEdited] tracks - it is set by the watcher,
+     * which is the only thing that fires when a person types, and cleared by this
+     * function's own writes so they do not look like typing.
+     */
+    private fun fillTenderedWithTotal(root: View) {
+        if (tenderedEdited) return
+        val field = root.findViewById<TextInputEditText>(R.id.etTendered) ?: return
+        val text = money(total)
+        if (field.text?.toString() == text) return
+        fillingTendered = true
+        field.setText(text)
+        field.setSelection(text.length)
+        fillingTendered = false
+    }
+
     private fun populateItems(root: View) {
         val container = root.findViewById<LinearLayout>(R.id.llCheckoutItems)
         val inflater = LayoutInflater.from(requireContext())
@@ -234,6 +268,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(sgst)}"
         root.findViewById<TextView>(R.id.tvTotalAmount).text = "₹ ${money(total)}"
         root.findViewById<MaterialButton>(R.id.btnConfirmPay).text = "Confirm Payment  ( ₹ ${money(total)} )"
+        fillTenderedWithTotal(root)
         // The code is drawn for the total, so it is redrawn wherever the total is.
         showUpiQr(root)
     }
