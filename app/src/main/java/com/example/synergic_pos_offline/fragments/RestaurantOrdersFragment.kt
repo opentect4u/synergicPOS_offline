@@ -345,7 +345,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             when {
                 order.items.isEmpty() -> toast("Add items before printing the bill")
                 order.completed -> toast("Table already billed")
-                else -> resolveBillPrinterThenPrint(order)
+                else -> withCustomerIfTakeAway(order) { resolveBillPrinterThenPrint(order) }
             }
         }
 
@@ -497,20 +497,36 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val soft = ColorUtils.setAlphaComponent(accent, 0x14)   // ~8% accent tint
         list.removeAllViews()
 
+        // AN EMPTY SPLIT PART IS NOT AN ACTIVE ORDER. It is a free seat of a split
+        // table - nothing has been ordered on it and nothing is owed for it - so it
+        // belongs on the floor plan, where it now has a tile of its own, and not in a
+        // list of orders being worked on.
+        //
+        // This is what was left showing after a part was settled: the paid part went,
+        // and its untouched neighbour stayed behind reading "5 B - Available", an
+        // entry in the active list for a table with no order on it. The parts must
+        // survive settlement (closing them is what erased live tables), so the answer
+        // is not to close them but to stop calling them active.
+        //
+        // The selected one is always shown. It is what the detail panel is pointed at,
+        // and a list that leaves out the row you are working on reads as if the pick
+        // had not registered.
+        val shown = orders.filter { !it.id.contains(" ") || it.items.isNotEmpty() || it.selected }
+
         // Active-orders count badge, and the same count on the button that slides the
         // list in - with the list closed that button is the only place it shows.
         root.findViewById<TextView>(R.id.tabActive).setTextColor(accent)
         root.findViewById<TextView>(R.id.badgeActive).apply {
-            text = orders.size.toString(); backgroundTintList = ColorStateList.valueOf(accent)
+            text = shown.size.toString(); backgroundTintList = ColorStateList.valueOf(accent)
         }
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnToggleOrders)?.text =
-            if (orders.isEmpty()) "Active Orders" else "Active Orders (${orders.size})"
+            if (shown.isEmpty()) "Active Orders" else "Active Orders (${shown.size})"
 
         // Empty state: no orders yet.
         val emptyView = root.findViewById<TextView>(R.id.tvNoOrders)
-        emptyView?.visibility = if (orders.isEmpty()) View.VISIBLE else View.GONE
+        emptyView?.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
 
-        orders.forEach { o ->
+        shown.forEach { o ->
             val card = inflater.inflate(R.layout.item_order_card, list, false)
                     as com.google.android.material.card.MaterialCardView
             val takeAway = o.type.equals("Take Away", ignoreCase = true)
@@ -754,16 +770,22 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * same customer is a fault nobody notices until the list is unusable.
      *
      * Skip is the way past it: a counter with a queue must be able to take an order
-     * without an interrogation, and a walk-in has no customer to record.
+     * without an interrogation, and a walk-in has no customer to record. Skipping
+     * starts the order with nobody attached and writes nothing to the customer list.
      */
     private fun askTakeAwayCustomer(onDone: (name: String, phone: String) -> Unit) {
         com.example.synergic_pos_offline.utils.CustomerPrompt.showDetails(
             context = requireContext(),
             title = "Take Away — customer",
             positiveText = "Start Order",
-            // No Skip: a take-away is called out by name, so the customer is part of
-            // the order. The back press still closes it, and that starts the order
-            // with nobody attached - a prompt, not a lock.
+            // Skip is offered. A counter with a queue has to be able to take an order
+            // without an interrogation, and a walk-in paying cash for a coffee has no
+            // customer to record - so there is a way past the form that does not
+            // require knowing the back press does the same thing.
+            showSkip = true,
+            skipText = "Skip",
+            // Skip and the back press mean the same thing: start the order with nobody
+            // attached. Neither writes to the customer list.
             onCancel = { onDone("", "") },
             onPicked = { c -> onDone(c.name, c.phone) }
         )
@@ -2647,6 +2669,48 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * Picks the bill (BILL) printer from the Operating Printer master (print_flag = 'B'):
      * a default one prints straight away; otherwise the operator chooses one.
      */
+    /**
+     * Runs [then] once a TAKE-AWAY order has a customer on it, asking for one first if
+     * it has none. Any other order type goes straight through.
+     *
+     * A take-away bill carries the customer's name and number (see [buildBillDraft]),
+     * and a slip printed without them is a slip nobody can be matched to when they
+     * come back to the counter to collect - which is the whole reason the counter
+     * takes a name. So the bill is where the details stop being optional.
+     *
+     * NOT at the start of the order. Skip is offered there on purpose - a queue does
+     * not wait for an address, and the order still has to be able to be taken. Asking
+     * again here, once, is what makes both true: the order starts immediately, and the
+     * bill still goes out with a customer on it.
+     *
+     * Nothing prints if the prompt is turned down. That is what "no details, no bill"
+     * means, and it is said out loud rather than silently doing nothing.
+     */
+    private fun withCustomerIfTakeAway(order: OrderCard, then: () -> Unit) {
+        if (!order.type.equals("Take Away", ignoreCase = true) || order.phone.isNotBlank()) {
+            return then()
+        }
+        com.example.synergic_pos_offline.utils.CustomerPrompt.showDetails(
+            context = requireContext(),
+            title = "Customer details — needed for the bill",
+            positiveText = "Save & Print",
+            // NO SKIP HERE, unlike the prompt that starts the order. There is nothing
+            // for a skip to mean at this point: the operator has asked for a bill, and
+            // a take-away bill without a customer is the thing being prevented.
+            showSkip = false,
+            onCancel = { toast("Bill not printed — a take-away bill needs customer details") },
+            onPicked = { c ->
+                // Kept on the running order, not just in memory: the bill is written
+                // from the order, reprints read it back, and the number has to survive
+                // the screen being left and come back with the order.
+                order.phone = c.phone
+                roDao.setPhone(order.dbId, c.phone)
+                showOrderDetail(order)   // the header stops saying "Walk-in"
+                then()
+            }
+        )
+    }
+
     private fun resolveBillPrinterThenPrint(order: OrderCard) {
         val billPrinters = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
             .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
