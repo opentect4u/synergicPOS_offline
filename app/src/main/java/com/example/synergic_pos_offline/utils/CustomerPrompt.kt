@@ -68,11 +68,13 @@ object CustomerPrompt {
         /**
          * Whether a way past the form is offered.
          *
-         * Off. A take-away is called out by name at the counter, so the customer is
-         * part of the order rather than an extra on it, and a form with a way past it
-         * is a form that gets skipped. The back press still closes the dialog - this
-         * is a prompt, not a lock - and the caller decides what an unanswered one
-         * means through [onCancel].
+         * Off by default, so a caller that needs the customer asks for it and gets a
+         * form that means it. Callers taking orders at a counter turn it on: a queue
+         * does not wait for an address, and a walk-in has no customer to record.
+         *
+         * The back press closes the dialog either way - this is a prompt, not a lock -
+         * and both routes out land on [onCancel], so the caller decides once what an
+         * unanswered form means rather than handling skip and dismiss separately.
          */
         showSkip: Boolean = false,
         skipText: String = "Skip",
