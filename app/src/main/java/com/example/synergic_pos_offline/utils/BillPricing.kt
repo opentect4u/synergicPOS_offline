@@ -50,11 +50,19 @@ object BillPricing {
         discountPreTax: Boolean
     ): Line {
         val subtotal = rate * quantity
-        val combinedRate = when (regime) {
-            GstCalculator.TaxRegime.GST -> cgstRate + sgstRate
-            GstCalculator.TaxRegime.VAT -> vatRate
-            GstCalculator.TaxRegime.NONE -> 0.0
-        }
+        // Which taxes this line carries is the *line's* business, not the till's.
+        //
+        // The regime used to decide it: on a GST till only cgst/sgst were worked out
+        // and vatRate was ignored, so a VAT-rated product sold there was charged no
+        // VAT at all - the rate was read off the master, written to the bill, and
+        // then multiplied by nothing. The same in reverse on a VAT till.
+        //
+        // A shop can carry stock rated under either, and what a product is rated at
+        // is a fact about the product. So every rate the line actually has is
+        // charged. NONE still means none: switching both taxes off is a deliberate
+        // choice to charge no tax, not an invitation to read rates off the master.
+        val taxed = regime != GstCalculator.TaxRegime.NONE
+        val combinedRate = if (taxed) cgstRate + sgstRate + vatRate else 0.0
         // The listed price is stripped of any tax it already includes to reach the
         // base the rate works on.
         val rawBase = GstCalculator.taxableBase(subtotal, combinedRate, inclusive)
@@ -62,15 +70,9 @@ object BillPricing {
         val taxable = BillRounding.toPaise(
             if (postTax) rawBase else GstCalculator.taxableValue(rawBase, discountAmount)
         )
-        val cgst = BillRounding.toPaise(
-            if (regime == GstCalculator.TaxRegime.GST) GstCalculator.taxAmount(taxable, cgstRate) else 0.0
-        )
-        val sgst = BillRounding.toPaise(
-            if (regime == GstCalculator.TaxRegime.GST) GstCalculator.taxAmount(taxable, sgstRate) else 0.0
-        )
-        val vat = BillRounding.toPaise(
-            if (regime == GstCalculator.TaxRegime.VAT) GstCalculator.taxAmount(taxable, vatRate) else 0.0
-        )
+        val cgst = BillRounding.toPaise(if (taxed) GstCalculator.taxAmount(taxable, cgstRate) else 0.0)
+        val sgst = BillRounding.toPaise(if (taxed) GstCalculator.taxAmount(taxable, sgstRate) else 0.0)
+        val vat = BillRounding.toPaise(if (taxed) GstCalculator.taxAmount(taxable, vatRate) else 0.0)
         val taxSum = cgst + sgst + vat
         // discountAmount is a pre-tax-base amount; grossed up by the rate it is the
         // discount off the taxed price the customer actually gets. (rawBase + taxSum

@@ -138,6 +138,10 @@ class DatabaseHelper private constructor(context: Context) :
         // Per-item GST captured at order time, so the bill taxes each product dynamically.
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "cgst_rate", "REAL DEFAULT 0")
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "sgst_rate", "REAL DEFAULT 0")
+        // A running order carried CGST and SGST but no VAT, so a VAT-rated dish
+        // lost its rate the moment it went on a table - and the bill printed from
+        // that order could not charge a tax it no longer knew about.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "vat_rate", "REAL DEFAULT 0")
         // KOT lifecycle: link a KOT to its running order, and allow the CLOSED /
         // COMPLETE statuses the restaurant flow sets (see [ensureKotStatusSchema]).
         ensureKotStatusSchema(db)
@@ -1788,6 +1792,7 @@ class DatabaseHelper private constructor(context: Context) :
                 rate REAL DEFAULT 0,
                 cgst_rate REAL DEFAULT 0,
                 sgst_rate REAL DEFAULT 0,
+                vat_rate REAL DEFAULT 0,
                 kot_printed INTEGER NOT NULL DEFAULT 0,
                 kot_qty REAL NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
