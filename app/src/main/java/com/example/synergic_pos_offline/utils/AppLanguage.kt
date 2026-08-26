@@ -46,21 +46,21 @@ import java.util.Locale
  */
 object AppLanguage {
 
-    /** The setting_name this is stored under, type 'G' - see `GeneralSettingsDao`. */
-    const val SETTING_KEY = "App Language"
-
     /** What the screens read in until somebody chooses otherwise. */
     val DEFAULT = PrintLanguage.Language.ENGLISH
 
     /**
-     * The language this till's screens are in.
+     * The language this till's screens are in - which is the language it prints in.
      *
-     * Read from the login cache, like every other setting a screen needs while it is
-     * being laid out. A till that has never chosen reads English.
+     * There is one choice, stored once, under [PrintLanguage.SETTING_KEY]. A till is
+     * set up for a place, and the paper and the screen belong to the same place: a
+     * shop that prints Bengali bills is a shop whose staff read Bengali. Two settings
+     * would only be two things to keep in step, and somewhere for them to drift apart.
+     *
+     * What differs is not *which* language but how it is written - the bill is
+     * translated and the screen is transliterated. See [tr].
      */
-    fun of(context: Context): PrintLanguage.Language = runCatching {
-        PrintLanguage.Language.fromStored(SettingsCache.value(context, "G", SETTING_KEY))
-    }.getOrDefault(DEFAULT)
+    fun of(context: Context): PrintLanguage.Language = PrintLanguage.of(context)
 
     /**
      * [raw] as this language spells it.
@@ -110,6 +110,9 @@ object AppLanguage {
 
     private val SPACE = Regex(" ")
 
+    /** Subtrees the pass does not enter - see [walk]. */
+    private val UNTOUCHED = setOf(R.id.cardReceipt, R.id.cardProductNames)
+
     /** The row written down for [key], for tests to check none of them is short. */
     internal fun correctionsFor(key: String): Array<String>? = CORRECTIONS[normalise(key)]
 
@@ -150,9 +153,13 @@ object AppLanguage {
     }
 
     private fun walk(view: View, lang: PrintLanguage.Language) {
-        // The receipt card is a picture of printed paper. It is laid out in whatever
-        // Print Language says and must not be relabelled by the screen's setting.
-        if (view.id == R.id.cardReceipt) return
+        // Two cards show raw text on purpose and must be left exactly as they are.
+        //
+        // The receipt card is a picture of printed paper, laid out in whatever Print
+        // Language says. The product-names card is a before-and-after - what was
+        // typed beside what will print - and relabelling the "before" side would
+        // leave it comparing a thing with itself.
+        if (view.id in UNTOUCHED) return
 
         when (view) {
             // A dropdown's text is the *value* that was chosen, and several screens

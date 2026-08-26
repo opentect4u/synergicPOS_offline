@@ -213,22 +213,6 @@ class GeneralSettingsDao(context: Context) {
         )
     }
 
-    /**
-     * The language the app's own screens are labelled in - see `AppLanguage`.
-     *
-     * Kept apart from the print language on purpose. What a shop prints and what its
-     * counter staff read are two different audiences: a bill in Bengali is for the
-     * customer holding it, while the screen is for whoever has been trained on this
-     * till, and either can want a language the other does not.
-     */
-    fun saveAppLanguage(code: String) {
-        put(com.example.synergic_pos_offline.utils.AppLanguage.SETTING_KEY, code)
-        helper.regroupAppSettingsByType()
-        com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(
-            appContext, "App language save (type G)"
-        )
-    }
-
     // ---- Low-level key/value access ----------------------------------------
 
     private fun readAll(): Map<String, String> {

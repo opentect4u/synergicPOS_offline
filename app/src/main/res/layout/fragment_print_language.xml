@@ -46,7 +46,7 @@
                 <TextView
                     style="@style/BillSettingSub"
                     android:layout_marginTop="4dp"
-                    android:text="The language this app&apos;s own screens are labelled in. Applies everywhere except the login screen, and takes effect straight away." />
+                    android:text="The language this app&apos;s own screens are labelled in - everywhere except the login screen. One choice covers the screens and the printer both, so picking here picks below too." />
 
                 <RadioGroup
                     android:id="@+id/rgAppLanguage"
@@ -83,7 +83,7 @@
                 <TextView
                     style="@style/BillSettingSub"
                     android:layout_marginTop="4dp"
-                    android:text="The language bills and reports are printed in. Takes effect on the next slip - nothing already printed changes." />
+                    android:text="The language bills and reports are printed in. The same choice as above - a till prints and reads in one language. Takes effect on the next slip; nothing already printed changes." />
 
                 <RadioGroup
                     android:id="@+id/rgPrintLanguage"

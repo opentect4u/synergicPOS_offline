@@ -69,10 +69,10 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
         PrintLanguage.Language.values().forEach { language ->
             appGroup.addView(radioFor(language, accent).also { it.id = appIdOf(language) })
         }
-        appGroup.check(appIdOf(com.example.synergic_pos_offline.utils.AppLanguage.of(requireContext())))
+        appGroup.check(appIdOf(current))
         appGroup.setOnCheckedChangeListener { _, checkedId ->
             if (applying) return@setOnCheckedChangeListener
-            PrintLanguage.Language.values().getOrNull(checkedId - APP_ID_BASE)?.let { chooseApp(it) }
+            PrintLanguage.Language.values().getOrNull(checkedId - APP_ID_BASE)?.let { choose(it) }
         }
 
         showProductNames(view, current)
@@ -124,50 +124,40 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
      * itself the proof: an operator who picks Hindi should see this page turn, and
      * one who picked it by accident should be able to read their way back out.
      */
-    private fun chooseApp(language: PrintLanguage.Language) {
-        val stored = runCatching {
-            GeneralSettingsDao(requireContext()).saveAppLanguage(language.code)
-            true
-        }.getOrElse { error ->
-            android.util.Log.e(TAG, "Could not store the app language", error)
-            false
-        }
-
-        if (!stored) {
-            applying = true
-            appGroup.check(appIdOf(com.example.synergic_pos_offline.utils.AppLanguage.of(requireContext())))
-            applying = false
-            toast("Could not save the app language")
-            return
-        }
-        (activity as? com.example.synergic_pos_offline.MainActivity)?.applyLanguageEverywhere()
-        toast("The app will read in ${language.englishName}")
-    }
-
-    /** Stores the choice, then says on the screen what is now stored. */
+    /**
+     * Stores the choice, then puts the whole screen - both lists - onto it.
+     *
+     * The two lists are two ways into one setting, not two settings. Whichever is
+     * tapped, the other moves with it, because a till prints and reads in the same
+     * language and there is only one value stored for both.
+     */
     private fun choose(language: PrintLanguage.Language) {
         val stored = runCatching {
             GeneralSettingsDao(requireContext()).savePrintLanguage(language.code)
             true
         }.getOrElse { error ->
-            android.util.Log.e(TAG, "Could not store the print language", error)
+            android.util.Log.e(TAG, "Could not store the language", error)
             false
         }
 
+        // Put both radios back on what is actually stored rather than leaving the
+        // screen claiming a language nothing will use.
+        val now = if (stored) language else PrintLanguage.of(requireContext())
+        applying = true
+        group.check(idOf(now))
+        appGroup.check(appIdOf(now))
+        applying = false
+
         if (!stored) {
-            // Put the radio back on what is actually stored rather than leaving the
-            // screen claiming a language the printer will not use.
-            applying = true
-            group.check(idOf(PrintLanguage.of(requireContext())))
-            applying = false
-            toast("Could not save the print language")
+            toast("Could not save the language")
             return
         }
         view?.let {
-            showProductNames(it, language)
-            showScope(it, language)
+            showProductNames(it, now)
+            showScope(it, now)
         }
-        toast("Bills and reports will print in ${language.englishName}")
+        (activity as? com.example.synergic_pos_offline.MainActivity)?.applyLanguageEverywhere()
+        toast("The app and its bills will be in ${now.englishName}")
     }
 
     /**
