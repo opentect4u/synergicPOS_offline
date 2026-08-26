@@ -34,9 +34,10 @@ import com.example.synergic_pos_offline.utils.ThemeManager
  */
 class PrintLanguageFragment : Fragment(), TitledScreen {
 
-    override val screenTitle = "Print Language"
+    override val screenTitle = "Language"
 
     private lateinit var group: RadioGroup
+    private lateinit var appGroup: RadioGroup
 
     /** Held so the writes below are not attributed to whatever fires the listener. */
     private var applying = false
@@ -60,6 +61,18 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
         group.setOnCheckedChangeListener { _, checkedId ->
             if (applying) return@setOnCheckedChangeListener
             PrintLanguage.Language.values().getOrNull(checkedId - 1)?.let { choose(it) }
+        }
+
+        // The app's own screens, chosen separately from the paper. Its radio ids are
+        // offset past the print group's so the two sets cannot collide in one tree.
+        appGroup = view.findViewById(R.id.rgAppLanguage)
+        PrintLanguage.Language.values().forEach { language ->
+            appGroup.addView(radioFor(language, accent).also { it.id = appIdOf(language) })
+        }
+        appGroup.check(appIdOf(current))
+        appGroup.setOnCheckedChangeListener { _, checkedId ->
+            if (applying) return@setOnCheckedChangeListener
+            PrintLanguage.Language.values().getOrNull(checkedId - APP_ID_BASE)?.let { choose(it) }
         }
 
         showProductNames(view, current)
@@ -101,30 +114,50 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
             }
         }
 
-    /** Stores the choice, then says on the screen what is now stored. */
+    /** Radio id for [language] in the app-language group. */
+    private fun appIdOf(language: PrintLanguage.Language): Int = APP_ID_BASE + language.ordinal
+
+    /**
+     * Stores the screen language and relabels the app there and then.
+     *
+     * Applied immediately rather than on the next screen, because this screen is
+     * itself the proof: an operator who picks Hindi should see this page turn, and
+     * one who picked it by accident should be able to read their way back out.
+     */
+    /**
+     * Stores the choice, then puts the whole screen - both lists - onto it.
+     *
+     * The two lists are two ways into one setting, not two settings. Whichever is
+     * tapped, the other moves with it, because a till prints and reads in the same
+     * language and there is only one value stored for both.
+     */
     private fun choose(language: PrintLanguage.Language) {
         val stored = runCatching {
             GeneralSettingsDao(requireContext()).savePrintLanguage(language.code)
             true
         }.getOrElse { error ->
-            android.util.Log.e(TAG, "Could not store the print language", error)
+            android.util.Log.e(TAG, "Could not store the language", error)
             false
         }
 
+        // Put both radios back on what is actually stored rather than leaving the
+        // screen claiming a language nothing will use.
+        val now = if (stored) language else PrintLanguage.of(requireContext())
+        applying = true
+        group.check(idOf(now))
+        appGroup.check(appIdOf(now))
+        applying = false
+
         if (!stored) {
-            // Put the radio back on what is actually stored rather than leaving the
-            // screen claiming a language the printer will not use.
-            applying = true
-            group.check(idOf(PrintLanguage.of(requireContext())))
-            applying = false
-            toast("Could not save the print language")
+            toast("Could not save the language")
             return
         }
         view?.let {
-            showProductNames(it, language)
-            showScope(it, language)
+            showProductNames(it, now)
+            showScope(it, now)
         }
-        toast("Bills and reports will print in ${language.englishName}")
+        (activity as? com.example.synergic_pos_offline.MainActivity)?.applyLanguageEverywhere()
+        toast("The app and its bills will be in ${now.englishName}")
     }
 
     /**
@@ -261,6 +294,14 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
         android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_SHORT).show()
 
     private companion object {
+        /**
+         * Where the app-language radios start numbering.
+         *
+         * Far enough past the print group's ids (ordinal + 1) that the two sets of
+         * radios can share one view tree without either finding the other's.
+         */
+        const val APP_ID_BASE = 101
+
         const val TAG = "PrintLanguage"
     }
 }

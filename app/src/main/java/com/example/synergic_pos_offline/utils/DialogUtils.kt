@@ -498,6 +498,11 @@ object DialogUtils {
         dialog.window?.apply {
             setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.CENTER)
+            // A dialog is its own window, so the pass that relabels the activity does
+            // not reach it. Done here rather than in each show* method because every
+            // one of them ends up through here, and a dialog added later should not
+            // have to remember.
+            AppLanguage.apply(decorView)
         }
     }
 
