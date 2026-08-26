@@ -48,6 +48,16 @@ object CouponPrinter {
     data class Line(val name: String, val quantity: Double)
 
     /**
+     * One sold line together with the counter it belongs to.
+     *
+     * The shape both entry points meet at. A saved bill reads its categories out of
+     * the database; a restaurant bill prints before the sale is written and has to
+     * pass the ones it is already holding. Grouping and rendering happen once, below,
+     * on whichever of the two produced the list.
+     */
+    data class CategorisedLine(val category: String, val name: String, val quantity: Double)
+
+    /**
      * One printed row: what sits on the left, what sits hard against the right, and
      * the paint for both.
      *
@@ -74,36 +84,83 @@ object CouponPrinter {
      * remember to check.
      */
     fun couponsFor(context: Context, receiptNo: Long, paperDots: Int): List<Bitmap> {
-        if (!runCatching {
-                com.example.synergic_pos_offline.database.BillSettingsDao(context).load().couponSplit
-            }.getOrDefault(false)
-        ) return emptyList()
+        if (!enabled(context)) return emptyList()
 
         // The whole thing under one runCatching, rendering included: a coupon is an
         // extra, and nothing that goes wrong producing one may stop the bill it came
         // with from printing. The customer can be sent to the counter without a slip;
         // they cannot be sent away without their bill.
         return runCatching {
-            val language = PrintLanguage.of(context)
-            read(context, receiptNo).map { render(it, paperDots, language) }
+            val (billNumber, dateTime, lines) = read(context, receiptNo)
+            draw(context, group(lines, billNumber, dateTime), paperDots)
         }.getOrElse {
             android.util.Log.e(TAG, "Could not build the coupons for bill $receiptNo", it)
             emptyList()
         }
     }
 
-    private const val TAG = "CouponPrinter"
+    /**
+     * The coupons for a sale that has not been written yet.
+     *
+     * The restaurant prints its bill from an order in memory - the sale lands in the
+     * transaction tables only once payment is confirmed - so there is no receipt
+     * number to read items back by. That path passes the lines it is already holding,
+     * categories and all, and gets the same coupons a saved bill would have produced.
+     */
+    fun couponsFrom(
+        context: Context,
+        lines: List<CategorisedLine>,
+        billNumber: String,
+        dateTime: String,
+        paperDots: Int
+    ): List<Bitmap> {
+        if (!enabled(context)) return emptyList()
+        return runCatching {
+            draw(context, group(lines, billNumber, dateTime), paperDots)
+        }.getOrElse {
+            android.util.Log.e(TAG, "Could not build the coupons for bill $billNumber", it)
+            emptyList()
+        }
+    }
+
+    /** Whether this till splits a bill into counter coupons at all. */
+    private fun enabled(context: Context): Boolean = runCatching {
+        com.example.synergic_pos_offline.database.BillSettingsDao(context).load().couponSplit
+    }.getOrDefault(false)
+
+    private fun draw(context: Context, coupons: List<Coupon>, paperDots: Int): List<Bitmap> {
+        val language = PrintLanguage.of(context)
+        return coupons.map { render(it, paperDots, language) }
+    }
 
     /**
-     * The bill's items grouped by category, in the order the categories first appear
-     * on the bill.
+     * Groups [lines] into one coupon per counter, in the order the counters first
+     * appear on the bill.
      *
      * Insertion order rather than alphabetical: the bill was rung up in some order
      * and the coupons come off in it, so a counter's slip lands in the same place in
      * the stack every time rather than moving with whatever the categories happen to
      * be called.
      */
-    private fun read(context: Context, receiptNo: Long): List<Coupon> {
+    internal fun group(
+        lines: List<CategorisedLine>,
+        billNumber: String,
+        dateTime: String
+    ): List<Coupon> {
+        val grouped = linkedMapOf<String, MutableList<Line>>()
+        lines.forEach { line ->
+            val name = line.name.trim()
+            if (name.isEmpty()) return@forEach
+            val counter = oneLine(line.category).ifBlank { UNCATEGORISED }
+            grouped.getOrPut(counter) { mutableListOf() }.add(Line(name, line.quantity))
+        }
+        return grouped.map { (category, items) -> Coupon(category, billNumber, dateTime, items) }
+    }
+
+    private const val TAG = "CouponPrinter"
+
+    /** A saved bill's number, date and sold lines, each with the counter it is on. */
+    private fun read(context: Context, receiptNo: Long): Triple<String, String, List<CategorisedLine>> {
         val db = DatabaseHelper.getInstance(context).readableDatabase
 
         var billNumber = receiptNo.toString()
@@ -118,29 +175,23 @@ object CouponPrinter {
             }
         }
 
-        val grouped = linkedMapOf<String, MutableList<Line>>()
+        val lines = mutableListOf<CategorisedLine>()
         db.rawQuery(
             """
-            SELECT COALESCE(NULLIF(TRIM(c.category_name), ''), ?) AS counter,
-                   COALESCE(p.product_name, '') AS item,
-                   i.quantity
+            SELECT COALESCE(c.category_name, ''), COALESCE(p.product_name, ''), i.quantity
             FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
             LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCTS} p ON i.product_id = p.id
             LEFT JOIN ${DatabaseHelper.Tables.MD_CATEGORY} c ON c.id = p.category_id
             WHERE i.bill_id = ?
             ORDER BY i.id ASC
             """.trimIndent(),
-            arrayOf(UNCATEGORISED, receiptNo.toString())
+            arrayOf(receiptNo.toString())
         ).use { c ->
             while (c.moveToNext()) {
-                val name = c.getString(1).orEmpty().trim()
-                if (name.isEmpty()) continue
-                grouped.getOrPut(oneLine(c.getString(0).orEmpty())) { mutableListOf() }
-                    .add(Line(name, c.getDouble(2)))
+                lines.add(CategorisedLine(c.getString(0).orEmpty(), c.getString(1).orEmpty(), c.getDouble(2)))
             }
         }
-
-        return grouped.map { (category, lines) -> Coupon(category, billNumber, dateTime, lines) }
+        return Triple(billNumber, dateTime, lines)
     }
 
     /**

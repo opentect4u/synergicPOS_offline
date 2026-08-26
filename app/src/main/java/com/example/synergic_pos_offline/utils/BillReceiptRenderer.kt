@@ -403,6 +403,18 @@ class BillReceiptRenderer(context: Context) {
         val vat: Double
     ) {
         val tax: Double get() = cgst + sgst + vat
+
+        /**
+         * Whether this slab carries GST / VAT at all.
+         *
+         * Asked of the slab rather than of the till's regime, which is the whole
+         * point: a product can carry VAT on a bill from a shop set up for GST -
+         * imported stock, an older item never re-rated - and the money is VAT
+         * whatever the setting says. Deciding by the setting is how a VAT figure
+         * came to be printed under the words TOTAL GST.
+         */
+        val hasGst: Boolean get() = cgst + sgst > 0.005
+        val hasVat: Boolean get() = vat > 0.005
     }
 
     /**
@@ -420,12 +432,55 @@ class BillReceiptRenderer(context: Context) {
      *
      * @return null if the bill could not be rendered, so a caller does not print blank paper
      */
+    /**
+     * Which lines of a mixed-tax bill a render covers.
+     *
+     * A shop can sell VAT-rated and GST-rated goods on one sale, and the two cannot
+     * share a document: they are assessed separately and a single slip carrying both
+     * has no honest grand total to put at the foot of it. So a mixed sale comes off
+     * as two bills - the main one, and a second numbered with an A after it - each a
+     * complete bill with its own totals.
+     *
+     * [ALL] is what an unmixed sale renders as, which is every sale on almost every
+     * till: one bill, numbered as it always was.
+     */
+    enum class TaxPart {
+        /** Every line - a bill that needs no splitting. */
+        ALL,
+
+        /** The main bill: everything that is not VAT-rated. */
+        WITHOUT_VAT,
+
+        /** The A bill: the VAT-rated lines alone. */
+        VAT_ONLY;
+
+        /**
+         * Whether a line carrying [vat] at [vatRate] belongs on this part.
+         *
+         * The rate counts as well as the money, so a VAT-rated line that happened to
+         * work out at zero still goes on the A bill rather than quietly joining the
+         * GST one.
+         */
+        internal fun covers(vat: Double, vatRate: Double): Boolean {
+            val vatLine = vat > 0.005 || vatRate > 0.0
+            return when (this) {
+                ALL -> true
+                VAT_ONLY -> vatLine
+                WITHOUT_VAT -> !vatLine
+            }
+        }
+    }
+
+    /** The suffix this part adds to the bill number - "10" against "10A". */
+    private fun TaxPart.numberSuffix(): String = if (this == TaxPart.VAT_ONLY) "A" else ""
+
     fun renderToBitmap(
         receiptNo: Long,
         paperDots: Int = REFERENCE_PAPER_DOTS,
-        duplicate: Boolean = false
+        duplicate: Boolean = false,
+        part: TaxPart = TaxPart.ALL
     ): Bitmap? = renderInternal(paperDots) { root ->
-        populate(root, receiptNo, paperDots, duplicate = duplicate)
+        populate(root, receiptNo, paperDots, duplicate = duplicate, part = part)
     }
 
     /**
@@ -438,10 +493,14 @@ class BillReceiptRenderer(context: Context) {
         draft: Draft,
         paperDots: Int = REFERENCE_PAPER_DOTS,
         /** Stamps the slip DUPLICATE - the second of a two-copy pair. */
-        duplicate: Boolean = false
+        duplicate: Boolean = false,
+        part: TaxPart = TaxPart.ALL
     ): Bitmap? =
         renderInternal(paperDots) { root ->
-            populate(root, receiptNo = 0, paperDots = paperDots, draft = draft, duplicate = duplicate)
+            populate(
+                root, receiptNo = 0, paperDots = paperDots, draft = draft,
+                duplicate = duplicate, part = part
+            )
         }
 
     /** Inflates the receipt layout, runs [fill], then measures and captures the card. */
@@ -584,7 +643,8 @@ class BillReceiptRenderer(context: Context) {
         receiptNo: Long,
         paperDots: Int = REFERENCE_PAPER_DOTS,
         draft: Draft? = null,
-        duplicate: Boolean = false
+        duplicate: Boolean = false,
+        part: TaxPart = TaxPart.ALL
     ) {
         try {
             val db = DatabaseHelper.getInstance(ctx).readableDatabase
@@ -767,7 +827,8 @@ class BillReceiptRenderer(context: Context) {
             val narrow = paperDots < NARROW_PAPER_DOTS
 
             val billNoLabel = t(if (classic && narrow) NARROW_BILL_NO_LABEL else "BILL NO")
-            view.findViewById<TextView>(R.id.tvBillNo).text = "$billNoLabel: $billNumber"
+            view.findViewById<TextView>(R.id.tvBillNo).text =
+                "$billNoLabel: $billNumber${part.numberSuffix()}"
             // Moved to the foot of the bill, where "created by" belongs.
             view.findViewById<TextView>(R.id.tvBillCreatedBy).text =
                 "${t("Created by")}: ${draft?.cashier ?: cashierName(db, operatorId, createdBy)}"
@@ -833,7 +894,16 @@ class BillReceiptRenderer(context: Context) {
             } else {
                 readRawLines(db, receiptNo, hsnCode)
             }
-            val (items, lineTotals, taxSlabs) = loadItems(raws, inclusive)
+            // The lines this part of the bill covers. An unsplit bill keeps them all.
+            val partRaws = raws.filter { part.covers(it.vat, it.vatRate) }
+            // The bill-level figures belong to the sale, not to either half of it.
+            // Charging the round-off and the service charge on both slips would take
+            // them from the customer twice, so they stay with the main bill.
+            if (part == TaxPart.VAT_ONLY) {
+                roundOff = 0.0
+                serviceCharge = 0.0
+            }
+            val (items, lineTotals, taxSlabs) = loadItems(partRaws, inclusive)
             val llItems = view.findViewById<LinearLayout>(R.id.llItems)
             llItems.removeAllViews()
             // The DISC column earns its place only when a line actually carries a
@@ -957,7 +1027,6 @@ class BillReceiptRenderer(context: Context) {
             }
 
             val totals = lineTotals.copy(discount = discount)
-            val isGst = taxRegime == GstCalculator.TaxRegime.GST
 
             // Round off is whatever the bill recorded, not something worked out here:
             // the printed total has to match the amount that was actually charged.
@@ -1036,11 +1105,11 @@ class BillReceiptRenderer(context: Context) {
                 // the block below them carries none: no line per rate, and no total
                 // of them either, since the table's own TOTAL column already states
                 // each rate's value with its tax on it.
-                if (taxWise) renderTaxWiseTable(view, taxSlabs, isGst, headingSp, narrow)
+                if (taxWise) renderTaxWiseTable(view, taxSlabs, headingSp, narrow)
                 renderClassicSummary(
                     llSummary, totals,
                     taxSlabs = if (taxWise) emptyList() else taxSlabs,
-                    isGst = isGst, summarySp = summarySp, showTotalTax = !taxWise,
+                    summarySp = summarySp, showTotalTax = !taxWise,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
                     roundOff = roundOff, showRoundOff = roundOffSetting, narrow = narrow,
                     serviceCharge = serviceCharge, charges = chargeRows, trailer = trailer
@@ -1060,7 +1129,7 @@ class BillReceiptRenderer(context: Context) {
                 }
             } else {
                 renderStandardSummary(
-                    llSummary, totals, taxSlabs, isGst, summarySp, netSize,
+                    llSummary, totals, taxSlabs, summarySp, netSize,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
                     roundOff = roundOff, showRoundOff = roundOffSetting,
                     payable = payable, narrow = narrow, serviceCharge = serviceCharge,
@@ -1103,7 +1172,6 @@ class BillReceiptRenderer(context: Context) {
         llSummary: LinearLayout,
         totals: BillTotals,
         taxSlabs: List<TaxSlab>,
-        isGst: Boolean,
         summarySp: Float,
         netSize: Float,
         showDiscount: Boolean,
@@ -1142,15 +1210,20 @@ class BillReceiptRenderer(context: Context) {
             summaryHead(counts, "${t("AMT")}: ${money(totals.grossMrp)}", summarySp, narrow)
         )
         if (showDiscount && discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
-        taxSlabs.forEach { slab ->
-            if (isGst) {
-                row("CGST @${rate(slab.cgstRate)}%", money(slab.cgst))
-                row("SGST @${rate(slab.sgstRate)}%", money(slab.sgst))
-            } else {
-                row("VAT @${rate(slab.vatRate)}%", money(slab.vat))
-            }
+        // GST first, then VAT, each with its own total - so a bill carrying both
+        // shows which money is which instead of one sum under one of the two names.
+        // A bill carrying neither prints no tax lines at all and nothing to demarcate.
+        taxSlabs.filter { it.hasGst }.forEach { slab ->
+            row("CGST @${rate(slab.cgstRate)}%", money(slab.cgst))
+            row("SGST @${rate(slab.sgstRate)}%", money(slab.sgst))
         }
-        if (totals.tax > 0.005) row(if (isGst) "TOTAL GST" else "TOTAL VAT", money(totals.tax))
+        val gstTotal = taxSlabs.sumOf { it.cgst + it.sgst }
+        if (gstTotal > 0.005) row("TOTAL GST", money(gstTotal))
+        taxSlabs.filter { it.hasVat }.forEach { slab ->
+            row("VAT @${rate(slab.vatRate)}%", money(slab.vat))
+        }
+        val vatTotal = taxSlabs.sumOf { it.vat }
+        if (vatTotal > 0.005) row("TOTAL VAT", money(vatTotal))
         if (showDiscount && !discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
         row("TOTAL", money(totals.grandTotal))
         if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
@@ -1199,7 +1272,6 @@ class BillReceiptRenderer(context: Context) {
         llSummary: LinearLayout,
         totals: BillTotals,
         taxSlabs: List<TaxSlab>,
-        isGst: Boolean,
         summarySp: Float,
         showTotalTax: Boolean,
         showDiscount: Boolean,
@@ -1219,15 +1291,26 @@ class BillReceiptRenderer(context: Context) {
         if (showDiscount && discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
         // [loadItems] orders the slabs highest-rate first, the Standard order; the
         // Classic slip lists them the other way up.
-        taxSlabs.asReversed().forEach { slab ->
-            if (isGst) {
-                row("SGST @ ${classicRate(slab.sgstRate)}%", money(slab.sgst))
-                row("CGST @ ${classicRate(slab.cgstRate)}%", money(slab.cgst))
-            } else {
-                row("VAT @ ${classicRate(slab.vatRate)}%", money(slab.vat))
+        taxSlabs.asReversed().filter { it.hasGst }.forEach { slab ->
+            row("SGST @ ${classicRate(slab.sgstRate)}%", money(slab.sgst))
+            row("CGST @ ${classicRate(slab.cgstRate)}%", money(slab.cgst))
+        }
+        taxSlabs.asReversed().filter { it.hasVat }.forEach { slab ->
+            row("VAT @ ${classicRate(slab.vatRate)}%", money(slab.vat))
+        }
+        // A bill carrying only one kind of tax keeps the single TOTAL TAX line
+        // Classic has always printed - there is nothing to tell apart. One carrying
+        // both gets a total each, which is the demarcation.
+        val classicGst = taxSlabs.sumOf { it.cgst + it.sgst }
+        val classicVat = taxSlabs.sumOf { it.vat }
+        if (showTotalTax) {
+            if (classicGst > 0.005 && classicVat > 0.005) {
+                row("TOTAL GST", money(classicGst))
+                row("TOTAL VAT", money(classicVat))
+            } else if (totals.tax > 0.005) {
+                row("TOTAL TAX", money(totals.tax))
             }
         }
-        if (showTotalTax && totals.tax > 0.005) row("TOTAL TAX", money(totals.tax))
         if (showDiscount && !discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
         // Stated before the rounding adjustment, so TOTAL AMOUNT + SERVICE CHARGE +
         // ROUNDED OFF is visibly the GRAND TOTAL below.
@@ -1290,7 +1373,6 @@ class BillReceiptRenderer(context: Context) {
     private fun renderTaxWiseTable(
         view: View,
         taxSlabs: List<TaxSlab>,
-        isGst: Boolean,
         sizeSp: Float,
         narrow: Boolean
     ) {
@@ -1325,23 +1407,48 @@ class BillReceiptRenderer(context: Context) {
         view.findViewById<TextView>(R.id.tvTaxColTotal).text = t("TOTAL")
         // Under VAT the tax is not split, so the second tax column goes and the
         // first is headed for what it holds.
-        view.findViewById<TextView>(R.id.tvTaxColSgst).text = if (isGst) "SGST" else "VAT"
+        // The columns are decided by what the bill actually carries, not by the
+        // till's regime. A bill with any GST on it needs the split pair of columns;
+        // one with none needs a single column headed for the tax it does carry.
+        val anyGst = taxSlabs.any { it.hasGst }
+        val anyVat = taxSlabs.any { it.hasVat }
+        view.findViewById<TextView>(R.id.tvTaxColSgst).text = if (anyGst) "SGST" else "VAT"
         view.findViewById<TextView>(R.id.tvTaxColCgst).visibility =
-            if (isGst) View.VISIBLE else View.GONE
+            if (anyGst) View.VISIBLE else View.GONE
 
-        // Lowest rate first, as the Classic slip lists its own tax lines.
-        taxSlabs.asReversed().forEach { slab ->
+        /** One slab's row. [vatRow] puts the VAT in the single tax column. */
+        fun slabRow(slab: TaxSlab, vatRow: Boolean) {
             val row = classicRow(narrow)
-            val rate = if (isGst) slab.cgstRate + slab.sgstRate else slab.vatRate
+            val rate = if (vatRow) slab.vatRate else slab.cgstRate + slab.sgstRate
             row.addView(cell("${classicRate(rate)}%", columns[0], Gravity.START, sizeSp))
             row.addView(cell(money(slab.base), columns[1], Gravity.END, sizeSp))
             row.addView(
-                cell(money(if (isGst) slab.sgst else slab.vat), columns[2], Gravity.END, sizeSp)
+                cell(money(if (vatRow) slab.vat else slab.sgst), columns[2], Gravity.END, sizeSp)
             )
-            if (isGst) row.addView(cell(money(slab.cgst), columns[3], Gravity.END, sizeSp))
+            // The CGST column exists only when the bill has GST on it. A VAT row
+            // under those columns leaves it blank rather than repeating the figure,
+            // which would read as a split that VAT does not have.
+            if (anyGst) {
+                row.addView(cell(if (vatRow) "" else money(slab.cgst), columns[3], Gravity.END, sizeSp))
+            }
             row.addView(cell(money(slab.base + slab.tax), columns[4], Gravity.END, sizeSp))
             rows.addView(row)
         }
+
+        // Lowest rate first, as the Classic slip lists its own tax lines.
+        taxSlabs.asReversed().filter { it.hasGst }.forEach { slabRow(it, vatRow = false) }
+        // A heading between the two, but only on a bill that carries both - on a
+        // single-tax bill the column headings already say which it is.
+        if (anyGst && anyVat) {
+            val heading = classicRow(narrow)
+            heading.addView(
+                cell(t("VAT"), columns[0], Gravity.START, sizeSp).apply {
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                }
+            )
+            rows.addView(heading)
+        }
+        taxSlabs.asReversed().filter { it.hasVat }.forEach { slabRow(it, vatRow = true) }
     }
 
     /**
@@ -1547,7 +1654,14 @@ class BillReceiptRenderer(context: Context) {
                 // rate on its own line. Only taxed lines form a slab - an exempt
                 // (0%) line contributes no tax line.
                 if (cgstAmt + sgstAmt + vatAmt > 0.0) {
-                    val key = Math.round((cgstRate + sgstRate + vatRate) * 100.0)
+                    // Keyed by the *kind* of tax as well as the rate. Without the
+                    // kind, a GST line at 2.5+2.5 and a VAT line at 5 land on the
+                    // same key and merge into one slab - which read as a single 5%
+                    // line for as long as the summary only ever printed one of the
+                    // two, and would now report one base under both headings.
+                    val vatLine = vatAmt > 0.0 && cgstAmt + sgstAmt <= 0.0
+                    val key = Math.round((cgstRate + sgstRate + vatRate) * 100.0) * 2 +
+                        (if (vatLine) 1L else 0L)
                     val acc = slabs.getOrPut(key) { DoubleArray(7) }
                     acc[0] = cgstRate
                     acc[1] = sgstRate
@@ -2527,6 +2641,32 @@ class BillReceiptRenderer(context: Context) {
             return if (room.isEmpty()) "TABLE : ${no.uppercase()}"
             else "TABLE : ${no.uppercase()} (${room.uppercase()})"
         }
+
+        /**
+         * Whether [receiptNo] carries both VAT-rated and non-VAT lines.
+         *
+         * Asked of the sold lines, not of Tax Settings: the split is about what the
+         * products carry, and a shop that has switched VAT off still has to account
+         * for stock that was rated under it. A bill that is all one or all the other
+         * needs no splitting and prints as it always did.
+         */
+        fun isMixedTax(context: Context, receiptNo: Long): Boolean = runCatching {
+            val db = DatabaseHelper.getInstance(context).readableDatabase
+            var vat = 0
+            var other = 0
+            db.rawQuery(
+                """
+                SELECT COALESCE(vat_amount, 0), COALESCE(vat_rate, 0)
+                FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} WHERE bill_id = ?
+                """.trimIndent(),
+                arrayOf(receiptNo.toString())
+            ).use { c ->
+                while (c.moveToNext()) {
+                    if (c.getDouble(0) > 0.005 || c.getDouble(1) > 0.0) vat++ else other++
+                }
+            }
+            vat > 0 && other > 0
+        }.getOrDefault(false)
 
         fun layoutFor(format: BillSettingsDao.BillFormat): Int = when (format) {
             BillSettingsDao.BillFormat.CLASSIC -> R.layout.fragment_bill_classic

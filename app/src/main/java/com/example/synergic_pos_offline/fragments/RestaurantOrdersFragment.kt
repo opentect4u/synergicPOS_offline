@@ -188,6 +188,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         items.forEach {
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
                 rate = it.rate, quantity = it.qty,
+                // Always zero: a restaurant CartItem carries CGST and SGST only, so
+                // there is no VAT on an order to price. Giving the cart a VAT rate is
+                // what the VAT bill split would need here - see BillReceiptRenderer.TaxPart.
                 cgstRate = it.cgstRate, sgstRate = it.sgstRate, vatRate = 0.0,
                 discountAmount = 0.0, regime = taxRegime, inclusive = taxInclusive, discountPreTax = discountPreTax
             )
@@ -2754,7 +2757,28 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val second = if (twoCopy) {
             renderer.renderDraftToBitmap(draft, config.paperDots, duplicate = true) ?: first
         } else null
-        val copies = listOfNotNull(first, second)
+        // The counter coupons, after every copy of the bill - the same slips the
+        // grocery path gets from BillPrinter.copiesFor. They are built from the order
+        // in hand rather than from the sale, because there is no sale yet: a
+        // restaurant bill prints from a draft and the transaction tables are written
+        // only when payment is confirmed. The category comes off the catalogue the
+        // grid was built from, which already carries it.
+        val coupons = com.example.synergic_pos_offline.utils.CouponPrinter.couponsFrom(
+            requireContext(),
+            order.items.map { line ->
+                com.example.synergic_pos_offline.utils.CouponPrinter.CategorisedLine(
+                    category = allProducts
+                        .firstOrNull { it.product.id == line.productId.toString() }
+                        ?.product?.category.orEmpty(),
+                    name = line.name,
+                    quantity = line.qty
+                )
+            },
+            billNumber = billNumber,
+            dateTime = draft.dateTime,
+            paperDots = config.paperDots
+        )
+        val copies = listOfNotNull(first, second) + coupons
 
         com.example.synergic_pos_offline.utils.ThermalPrinter
             .printSequence(requireContext(), copies, config) { result ->
