@@ -107,6 +107,16 @@
 
                 <View style="@style/BillSettingDivider" />
 
+                <!-- Coupon splitting -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Coupon Splitting" />
+                        <TextView style="@style/BillSettingSub" android:text="Print a coupon per category with every bill, each on its own half-cut slip - so a customer can take one to each counter." />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swCouponSplit" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
                 <!-- Total amount font size -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">

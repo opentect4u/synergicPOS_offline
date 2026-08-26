@@ -163,7 +163,14 @@ class BillSettingsDao(context: Context) {
          * allowed: the app then falls back to whatever the bank has on file for
          * [upiId], which is the shop's registered name.
          */
-        val upiPayeeName: String = ""
+        val upiPayeeName: String = "",
+        /**
+         * Whether a bill also prints a coupon per category - see `CouponPrinter`.
+         *
+         * Off by default. A shop with one counter has nothing to split: the coupons
+         * would be a second copy of the bill in pieces, on paper nobody asked for.
+         */
+        val couponSplit: Boolean = false
     )
 
     /** Reads every bill setting for the current store, applying defaults. */
@@ -187,7 +194,8 @@ class BillSettingsDao(context: Context) {
             billFormat = BillFormat.fromStored(map[KEY_BILL_FORMAT]) ?: d.billFormat,
             upiQrEnabled = map[KEY_UPI_QR_ENABLED]?.toBool() ?: d.upiQrEnabled,
             upiId = map[KEY_UPI_ID] ?: d.upiId,
-            upiPayeeName = map[KEY_UPI_PAYEE_NAME] ?: d.upiPayeeName
+            upiPayeeName = map[KEY_UPI_PAYEE_NAME] ?: d.upiPayeeName,
+            couponSplit = map[KEY_COUPON_SPLIT]?.toBool() ?: d.couponSplit
         )
     }
 
@@ -211,6 +219,7 @@ class BillSettingsDao(context: Context) {
         put(KEY_UPI_QR_ENABLED, if (s.upiQrEnabled) "1" else "0")
         put(KEY_UPI_ID, s.upiId.trim())
         put(KEY_UPI_PAYEE_NAME, s.upiPayeeName.trim())
+        put(KEY_COUPON_SPLIT, if (s.couponSplit) "1" else "0")
         refreshCache()
     }
 
@@ -363,6 +372,7 @@ class BillSettingsDao(context: Context) {
         private const val KEY_UPI_QR_ENABLED = "Bill Upi Qr Enabled"
         private const val KEY_UPI_ID = "Bill Upi Id"
         private const val KEY_UPI_PAYEE_NAME = "Bill Upi Payee Name"
+        private const val KEY_COUPON_SPLIT = "Bill Coupon Split"
         private const val KEY_TEMPLATE_PAPER = "Bill Template Paper Width"
 
         /** 3-inch paper, the size most bill printers on this app run. */

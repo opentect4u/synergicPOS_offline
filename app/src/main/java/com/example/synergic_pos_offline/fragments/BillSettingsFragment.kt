@@ -50,6 +50,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swProductSerial: SwitchMaterial
     private lateinit var swBillTime: SwitchMaterial
     private lateinit var swTwoCopy: SwitchMaterial
+    private lateinit var swCouponSplit: SwitchMaterial
     private lateinit var etStartBillNo: TextInputEditText
     private lateinit var rgReset: RadioGroup
     private lateinit var swBillNoChar: SwitchMaterial
@@ -98,6 +99,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         swProductSerial = view.findViewById(R.id.swProductSerial)
         swBillTime = view.findViewById(R.id.swBillTime)
         swTwoCopy = view.findViewById(R.id.swTwoCopy)
+        swCouponSplit = view.findViewById(R.id.swCouponSplit)
         etStartBillNo = view.findViewById(R.id.etStartBillNo)
         rgReset = view.findViewById(R.id.rgReset)
         swBillNoChar = view.findViewById(R.id.swBillNoChar)
@@ -174,6 +176,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         swProductSerial.isChecked = s.productSerialNumber
         swBillTime.isChecked = s.timeOnBill
         swTwoCopy.isChecked = s.twoCopyBill
+        swCouponSplit.isChecked = s.couponSplit
         etStartBillNo.setText(s.startBillNo.toString())
         swBillNoChar.isChecked = s.billNoCharEnabled
         tilPrefix.isVisible = s.billNoCharEnabled
@@ -202,6 +205,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         roundOff = swRoundOff.isChecked,
         amountInWords = swAmountWords.isChecked,
         twoCopyBill = swTwoCopy.isChecked,
+        couponSplit = swCouponSplit.isChecked,
         startBillNo = etStartBillNo.text?.toString()?.toIntOrNull() ?: 0,
         resetMode = when (rgReset.checkedRadioButtonId) {
             R.id.rbDaily -> ResetMode.DAILY

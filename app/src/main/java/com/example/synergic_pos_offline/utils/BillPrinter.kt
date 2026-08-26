@@ -42,12 +42,21 @@ object BillPrinter {
         val renderer = BillReceiptRenderer(context)
         val first = renderer.renderToBitmap(receiptNo, paperDots, duplicate = duplicate)
             ?: return emptyList()
-        if (!BillSettingsDao(context).load().twoCopyBill) return listOf(first)
-        // The shop's copy. Falls back to a second of the first if it cannot be
-        // rendered: two copies unmarked is a smaller failure than one copy where the
-        // shop was told to expect two.
-        val second = renderer.renderToBitmap(receiptNo, paperDots, duplicate = true) ?: first
-        return listOf(first, second)
+        val bill = if (!BillSettingsDao(context).load().twoCopyBill) listOf(first) else {
+            // The shop's copy. Falls back to a second of the first if it cannot be
+            // rendered: two copies unmarked is a smaller failure than one copy where
+            // the shop was told to expect two.
+            val second = renderer.renderToBitmap(receiptNo, paperDots, duplicate = true) ?: first
+            listOf(first, second)
+        }
+        // The counter coupons, after every copy of the bill. Last because they are
+        // what gets torn off and handed out: the customer keeps the bill and walks
+        // the coupons round the counters, so the coupons want to be the loose end of
+        // the run rather than buried between two copies of the same document.
+        //
+        // Added here rather than at each print button because this is the one place
+        // that answers "what should one press of Print produce" - see the callers.
+        return bill + CouponPrinter.couponsFor(context, receiptNo, paperDots)
     }
 
     /**

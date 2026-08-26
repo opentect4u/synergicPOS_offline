@@ -174,6 +174,52 @@ class ProductsFragment : DataTableFragment() {
 
     override fun onEditRow(row: DataRow) = showProductDialog(row.id.toIntOrNull())
 
+    /**
+     * Prints the catalogue as a table rather than as a block per record.
+     *
+     * The generic master printout is right for a screen with a handful of records
+     * and a few fields each. The item master is neither: it is the one master that
+     * runs to hundreds of rows, and what anyone printing it wants is a price list -
+     * names down one column, figures down another, so a wrong rate is found by
+     * running a finger down the page. See [ProductListPrinter].
+     */
+    override fun onBulkPrint() {
+        val ids = selectedRowIds
+        if (ids.isEmpty()) { toast("Select at least one product to print"); return }
+
+        val ctx = requireContext()
+        val config = com.example.synergic_pos_offline.utils.ThermalPrinter.configForPurpose(ctx, "BILL")
+        if (config == null) {
+            toast("No printer set up — configure a bill printer first")
+            return
+        }
+
+        DialogUtils.showConfirm(
+            context = ctx,
+            title = "Print Selected",
+            message = "Do you want to print ${ids.size} selected product(s)?",
+            positiveText = "Print All",
+            negativeText = "Cancel",
+            iconRes = android.R.drawable.ic_menu_set_as
+        ) {
+            val bitmap = com.example.synergic_pos_offline.utils.ProductListPrinter
+                .render(ctx, ids, config.paperDots)
+            if (bitmap == null) {
+                toast("Could not build the product list")
+                return@showConfirm
+            }
+            toast("Printing ${ids.size} product(s)…")
+            com.example.synergic_pos_offline.utils.ThermalPrinter.print(ctx, bitmap, config) { result ->
+                if (!isAdded) return@print
+                when (result) {
+                    is com.example.synergic_pos_offline.utils.ThermalPrinter.Result.Failure ->
+                        toast("Print failed: ${result.message}")
+                    else -> toast("Sent ${ids.size} product(s) to the printer")
+                }
+            }
+        }
+    }
+
     override fun onBulkDelete() {
         val ids = selectedRowIds.toList()
         if (ids.isEmpty()) return

@@ -72,6 +72,8 @@ class SettingsFragment : Fragment() {
             e("Amount in Words", "Bill Settings", bill, match = "Amount in words"),
             e("Total Amount Font Size", "Bill Settings", bill, match = "Total amount Font Size"),
             e("Two Copy Bill", "Bill Settings", bill, match = "Two copy bill"),
+            e("Coupon Splitting", "Bill Settings", bill),
+            e("Coupon", "Bill Settings", bill, match = "Coupon Splitting"),
             e("Round Off", "Bill Settings", bill),
             e("HSN Code", "Bill Settings", bill),
             e("Product Serial Number", "Bill Settings", bill),
