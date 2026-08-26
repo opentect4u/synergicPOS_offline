@@ -38,7 +38,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private data class CartItem(
         val productId: Long, val name: String, var qty: Double, var rate: Double,
         var dbItemId: Long = 0, var kotQty: Double = 0.0,
-        val cgstRate: Double = 0.0, val sgstRate: Double = 0.0
+        val cgstRate: Double = 0.0, val sgstRate: Double = 0.0,
+        /**
+         * The product's VAT rate, off the master.
+         *
+         * A restaurant cart used to carry GST alone, so a VAT-rated dish arrived at
+         * the bill rated at nothing and was charged nothing - see BillPricing, which
+         * charges whatever rates the line actually has.
+         */
+        val vatRate: Double = 0.0
     ) {
         /** Quantity not yet sent to the kitchen. */
         val pending: Double get() = (qty - kotQty).coerceAtLeast(0.0)
@@ -134,7 +142,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             )
             // qty 0 lines are removed items awaiting a cancellation KOT — hide from the cart.
             roDao.itemsFor(ro.id).filter { it.qty > 0.0 }.forEach { ri ->
-                card.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate))
+                card.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate))
             }
             card.amount = "₹ ${money(computeBill(card.items, serviceRateFor(card.section)).total)}"
             orders.add(card)
@@ -145,7 +153,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun reloadItems(order: OrderCard) {
         order.items.clear()
         roDao.itemsFor(order.dbId).filter { it.qty > 0.0 }.forEach { ri ->
-            order.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate))
+            order.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate))
         }
     }
 
@@ -188,10 +196,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         items.forEach {
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
                 rate = it.rate, quantity = it.qty,
-                // Always zero: a restaurant CartItem carries CGST and SGST only, so
-                // there is no VAT on an order to price. Giving the cart a VAT rate is
-                // what the VAT bill split would need here - see BillReceiptRenderer.TaxPart.
-                cgstRate = it.cgstRate, sgstRate = it.sgstRate, vatRate = 0.0,
+                cgstRate = it.cgstRate, sgstRate = it.sgstRate, vatRate = it.vatRate,
                 discountAmount = 0.0, regime = taxRegime, inclusive = taxInclusive, discountPreTax = discountPreTax
             )
             subtotal += it.qty * it.rate     // gross (as listed) — what the Subtotal line shows
@@ -2434,7 +2439,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun addToCart(p: ProductEntryDialog.Product, qty: Double, rate: Double) {
         val order = currentOrder() ?: run { toast("Select a table order first"); return }
         if (exceedsStock(p.id, qty)) return
-        roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate, p.cgst, p.sgst)
+        // The VAT rate goes on with the GST ones. Without it a VAT-rated dish was
+        // stored on the order rated at zero, and no later step could recover it.
+        roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate, p.cgst, p.sgst, p.vat)
         // ADDING AN ITEM NO LONGER TAKES THE TABLE.
         //
         // It used to mark the table Occupied on its first item. The moment is now the
@@ -2844,6 +2851,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
                 name = line.name, quantity = line.qty, rate = line.rate,
                 cgstRate = line.cgstRate, sgstRate = line.sgstRate,
+                vatRate = line.vatRate,
                 hsn = product?.hsn
             )
         }
@@ -2958,7 +2966,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                             quantity = it.qty,
                             rate = it.rate,
                             cgstRate = it.cgstRate,
-                            sgstRate = it.sgstRate
+                            sgstRate = it.sgstRate,
+                            // Saved with the line, so a reprint from Bill History
+                            // charges the same VAT the original slip did.
+                            vatRate = it.vatRate
                         )
                     },
                     payment = com.example.synergic_pos_offline.database.BillDao.Payment(

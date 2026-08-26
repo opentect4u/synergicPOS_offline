@@ -1004,7 +1004,7 @@ class BillReceiptRenderer(context: Context) {
                 // The GST half's own total, so the section stands on its own before the
                 // second one starts - without it the reader has to work out which of
                 // the figures below belongs to which table.
-                llItems.addView(sectionTotalLine(t("GST TOTAL"), gstItems, headingSp))
+                llItems.addView(sectionTotalLine(t("TOTAL"), gstItems, headingSp))
                 llItems.addView(
                     fullWidthLine(PrintType.RULE, headingSp).apply { maxLines = 1 }
                 )
@@ -1023,7 +1023,7 @@ class BillReceiptRenderer(context: Context) {
                         buildClassicItemRow(it, showDisc, headingSp, columnPx, narrow, showSerial)
                     )
                 }
-                llItems.addView(sectionTotalLine(t("VAT TOTAL"), vatItems, headingSp))
+                llItems.addView(sectionTotalLine(t("TOTAL"), vatItems, headingSp))
             }
 
             val totals = lineTotals.copy(discount = discount)

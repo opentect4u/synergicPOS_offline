@@ -30,7 +30,9 @@ class RunningOrderDao(context: Context) {
     data class RunningItem(
         val id: Long, val productId: Long, val name: String,
         var qty: Double, var rate: Double, val kotQty: Double,
-        val cgstRate: Double = 0.0, val sgstRate: Double = 0.0
+        val cgstRate: Double = 0.0, val sgstRate: Double = 0.0,
+        /** Carried so a VAT-rated dish is still VAT-rated when the bill is priced. */
+        val vatRate: Double = 0.0
     ) {
         /** Quantity newly added, not yet sent to the kitchen. */
         val pending: Double get() = (qty - kotQty).coerceAtLeast(0.0)
@@ -182,6 +184,7 @@ class RunningOrderDao(context: Context) {
                         put("rate", src.rate)
                         put("cgst_rate", src.cgstRate)
                         put("sgst_rate", src.sgstRate)
+                        put("vat_rate", src.vatRate)
                         put("kot_qty", src.kotQty)
                         put("kot_printed", if (src.kotQty > 0) 1 else 0)
                     })
@@ -277,7 +280,7 @@ class RunningOrderDao(context: Context) {
      */
     fun addItem(
         orderId: Long, productId: Long, name: String, qty: Double, rate: Double,
-        cgstRate: Double = 0.0, sgstRate: Double = 0.0
+        cgstRate: Double = 0.0, sgstRate: Double = 0.0, vatRate: Double = 0.0
     ): Long {
         val db = helper.writableDatabase
         val lineId = db.query(
@@ -300,6 +303,7 @@ class RunningOrderDao(context: Context) {
                     put("rate", rate)
                     put("cgst_rate", cgstRate)
                     put("sgst_rate", sgstRate)
+                    put("vat_rate", vatRate)
                     put("kot_printed", 0)
                     put("kot_qty", 0)
                 })
@@ -314,7 +318,10 @@ class RunningOrderDao(context: Context) {
     fun itemsFor(orderId: Long): List<RunningItem> {
         val list = mutableListOf<RunningItem>()
         helper.readableDatabase.query(
-            items, arrayOf("id", "product_id", "product_name", "quantity", "rate", "kot_qty", "cgst_rate", "sgst_rate"),
+            items, arrayOf(
+                "id", "product_id", "product_name", "quantity", "rate", "kot_qty",
+                "cgst_rate", "sgst_rate", "vat_rate"
+            ),
             "running_order_id = ?", arrayOf(orderId.toString()), null, null, "id ASC"
         ).use { c ->
             while (c.moveToNext()) {
@@ -327,7 +334,8 @@ class RunningOrderDao(context: Context) {
                         rate = c.getDouble(4),
                         kotQty = c.getDouble(5),
                         cgstRate = c.getDouble(6),
-                        sgstRate = c.getDouble(7)
+                        sgstRate = c.getDouble(7),
+                        vatRate = c.getDouble(8)
                     )
                 )
             }

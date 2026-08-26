@@ -40,7 +40,14 @@ class BillDao(context: Context) {
         val rate: Double,
         val cgstRate: Double = 0.0,
         val sgstRate: Double = 0.0,
-        /** Only meaningful when Tax Settings has VAT active instead of GST. */
+        /**
+         * The product's VAT rate, off the master.
+         *
+         * Charged whenever the line carries one, whichever tax the till is set up
+         * for - see [com.example.synergic_pos_offline.utils.BillPricing]. It used to
+         * be read only under a VAT regime, which is how a VAT-rated product sold on
+         * a GST till came to be charged no VAT at all.
+         */
         val vatRate: Double = 0.0,
         /** This line's share of the bill discount; tax is charged on the remainder. */
         val discountAmount: Double = 0.0
