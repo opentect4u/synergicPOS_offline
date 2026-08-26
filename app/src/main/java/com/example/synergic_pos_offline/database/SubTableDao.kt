@@ -50,6 +50,18 @@ class SubTableDao(context: Context) {
         return out
     }
 
+    /**
+     * Removes ONE part of a split (e.g. "4 C"), leaving its siblings alone.
+     *
+     * How a split is given up a part at a time: the parts nobody used are dropped by
+     * the operator rather than swept away by the till, and dropping the last one is
+     * what ends the split. See RestaurantOrdersFragment.freeParentIfSplitDone.
+     */
+    fun remove(subCode: String, section: String) {
+        val (where, args) = parentScope(subCode.substringBeforeLast(" ").trim(), section)
+        helper.writableDatabase.delete(table, "$where AND sub_code = ?", args + subCode)
+    }
+
     /** Removes all sub-table rows for a parent (once the whole table is settled). */
     fun clearForParent(parentCode: String, section: String) {
         val (where, args) = parentScope(parentCode, section)

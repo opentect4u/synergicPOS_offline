@@ -174,6 +174,7 @@ object ProductEntryDialog {
 
         val etRate = view.findViewById<TextInputEditText>(R.id.etRate)
         val etQty = view.findViewById<TextInputEditText>(R.id.etQty)
+        val tilQty = view.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilQty)
         val tvTaxable = view.findViewById<TextView>(R.id.tvTaxable)
         val tvCgstAmt = view.findViewById<TextView>(R.id.tvCgstAmt)
         val tvSgstAmt = view.findViewById<TextView>(R.id.tvSgstAmt)
@@ -182,9 +183,20 @@ object ProductEntryDialog {
         etRate.setText(String.format("%.2f", startRate))
         etQty.setText(qtyText(startQty))
         // A unit that allows fractions accepts decimals; otherwise whole numbers only.
+        //
+        // THREE DECIMAL PLACES, and the field enforces it rather than the Add button
+        // complaining afterwards. Three is what the trade weighs in: a gram is 0.001kg
+        // and a millilitre 0.001L, so three places says everything a scale can, and a
+        // fourth is a figure no shop can measure, no customer can check and no printed
+        // slip has room for. Capped at entry so what is typed is what is charged -
+        // rounding it later would price a line differently from the number on screen.
         etQty.inputType = if (product.allowFraction)
             (android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL)
         else android.text.InputType.TYPE_CLASS_NUMBER
+        if (product.allowFraction) {
+            etQty.filters = arrayOf(DecimalPlacesFilter(QTY_DECIMALS))
+            tilQty?.helperText = "Up to $QTY_DECIMALS decimals (${product.unit})"
+        }
 
         // Manual rate off: the rate is fixed to the product's price and can't be edited.
         if (!rateEditable) {
@@ -322,6 +334,39 @@ object ProductEntryDialog {
     }
 
     /** Whole quantities show without decimals; fractional ones keep up to 3 places. */
+    /**
+     * How many decimal places a fractional quantity may carry.
+     *
+     * Three, because that is what the trade weighs in: a gram is 0.001kg and a
+     * millilitre 0.001L. A fourth place is a figure no shop can measure, no customer
+     * can check, and no slip has the width to print.
+     */
+    const val QTY_DECIMALS = 3
+
+    /**
+     * Stops a decimal field taking more than [max] places.
+     *
+     * At the FIELD rather than on the way out. A quantity rounded after it was typed
+     * charges a line at a number the operator never saw, and a quantity refused only
+     * when Add is pressed makes them delete digits they were allowed to type. Here,
+     * the fourth keystroke simply does not land.
+     *
+     * Whole numbers, a lone ".", and pasted text are all handled by measuring what the
+     * field WOULD hold after the edit rather than the keystroke on its own.
+     */
+    class DecimalPlacesFilter(private val max: Int) : android.text.InputFilter {
+        override fun filter(
+            source: CharSequence, start: Int, end: Int,
+            dest: android.text.Spanned, dstart: Int, dend: Int
+        ): CharSequence? {
+            val result = dest.substring(0, dstart) + source.subSequence(start, end) + dest.substring(dend)
+            val dot = result.indexOf('.')
+            // No decimal point yet, or nothing after it - nothing to limit.
+            if (dot < 0 || result.length - dot - 1 <= max) return null
+            return ""   // reject this edit, leave the field as it was
+        }
+    }
+
     private fun qtyText(v: Double): String =
         if (v % 1.0 == 0.0) v.toLong().toString()
         else v.toString().trimEnd('0').trimEnd('.')

@@ -197,33 +197,12 @@
                     android:textSize="14sp"
                     android:textColor="@color/text_secondary" />
 
-                <!-- KOT keys: the line on a card, not the card's own colour -->
-                <View
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:background="@drawable/bg_legend_dot"
-                    android:backgroundTint="#7C3AED" />
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="7dp"
-                    android:layout_marginEnd="18dp"
-                    android:text="KOT Pending"
-                    android:textSize="14sp"
-                    android:textColor="@color/text_secondary" />
-
-                <View
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:background="@drawable/bg_legend_dot"
-                    android:backgroundTint="#0D9488" />
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="7dp"
-                    android:text="KOT Sent"
-                    android:textSize="14sp"
-                    android:textColor="@color/text_secondary" />
+                <!-- No KOT keys. The cards no longer take a kitchen colour, so a
+                     purple and a teal key here would name two colours that never
+                     appear on the floor plan - and a legend listing colours the grid
+                     cannot show is worse than no legend, because it sends the eye
+                     looking for them. Where an order stands with the kitchen is on
+                     the ticket and on the order panel. -->
             </LinearLayout>
         </HorizontalScrollView>
     </LinearLayout>

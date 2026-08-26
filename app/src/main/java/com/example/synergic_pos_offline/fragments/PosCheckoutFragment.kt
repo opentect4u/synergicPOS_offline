@@ -898,21 +898,51 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      */
     private fun taxedTotal(): Double {
         val extra = itemwiseDiscountSum()
-        return if (discountPreTax) {
+        val goods = if (discountPreTax) {
             (taxableSum() + taxAmt() - extra).coerceAtLeast(0.0)
         } else {
             (taxableSum() + taxAmt() - discountAmt() - extra).coerceAtLeast(0.0)
         }
+        // Added last, on top of the taxed goods - see extraCharges.
+        return goods + extraChargesTotal()
     }
 
-    private fun roundOffAmt() = BillRounding.roundOff(taxedTotal())
+    /**
+     * Whether any line is sold by a fraction of its unit - 0.125 kg, 1.5 L.
+     *
+     * Such a line was measured on a scale, and rounding the bill to the rupee throws
+     * away the precision the measurement was for. The same rule the sale screen
+     * applies, so the figure quoted there is the figure charged here.
+     */
+    /**
+     * The shop's own extra charges for this bill, on the item lines before tax.
+     *
+     * The same base and the same rule the sale screen uses, so the figure quoted there
+     * is the figure charged here - see PosBillingFragment.extraCharges.
+     */
+    private fun extraCharges(): List<com.example.synergic_pos_offline.database.ChargeDao.Applied> =
+        runCatching {
+            com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal())
+        }.getOrDefault(emptyList())
+
+    private fun extraChargesTotal(): Double = BillRounding.toPaise(extraCharges().sumOf { it.amount })
+
+    private fun hasFractionalQty(): Boolean = lines.any { it.qty % 1.0 != 0.0 }
+
+    private fun roundOffAmt() =
+        if (hasFractionalQty()) 0.0 else BillRounding.roundOff(taxedTotal())
 
     /**
      * What the customer actually pays. Everything downstream - the amount due, the
      * cash validation, the figure written to the bill - works from this, so the
      * receipt, the payment record and the till all agree on one number.
+     *
+     * Rounded to whole rupees, except on a bill with a measured line: see
+     * [hasFractionalQty].
      */
-    private fun total() = BillRounding.payable(taxedTotal())
+    private fun total() =
+        if (hasFractionalQty()) BillRounding.toPaise(taxedTotal())
+        else BillRounding.payable(taxedTotal())
 
     /** "Discount (10%)" or "Discount (₹50.00)", matching however it was entered. */
     private fun discountLabelText(): String = "Discount (" + (
@@ -1281,7 +1311,12 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             netAmount = grandTotal,
             // net_amount is the rounded figure the customer paid; the adjustment is
             // stored beside it so the receipt can reconcile it to the taxed value.
-            roundOffAmount = roundOffAmt()
+            roundOffAmount = roundOffAmt(),
+            // The shop's extra charges, stored on the bill in the column that has
+            // always been there for them. Reports and reprints then read what was
+            // actually charged rather than recomputing it from a master that may have
+            // been edited since.
+            otherChargesAmount = extraChargesTotal()
         )
 
         return dao.createBill(newBill)

@@ -248,7 +248,9 @@ class ProductsFragment : DataTableFragment() {
 
         view.findViewById<TextInputEditText>(R.id.etName).setText(existing?.name.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etHsn).setText(existing?.hsn.orEmpty())
-        view.findViewById<TextInputEditText>(R.id.etBarcode).setText(existing?.barcode.orEmpty())
+        val etBarcode = view.findViewById<TextInputEditText>(R.id.etBarcode)
+        etBarcode.setText(existing?.barcode.orEmpty())
+        bindGenerateBarcode(view, etBarcode)
         view.findViewById<TextInputEditText>(R.id.etStockAlert).setText(existing?.stockAlert.orEmpty())
 
         // The stock block shows whenever stock is tracked, but says different things
@@ -884,6 +886,59 @@ class ProductsFragment : DataTableFragment() {
         val prepTime: String, val availability: String,
         val rates: List<RateRow>
     )
+
+    /**
+     * The Generate button inside the Barcode field.
+     *
+     * For the stock that arrives without a code of its own - loose goods, repacks, the
+     * shop's own cooking, anything sold by weight. Those still need something the gun
+     * can read off a shelf-edge label, and a number typed by hand produces codes that
+     * collide and that carry no check digit for a scanner to verify.
+     *
+     * ASKS BEFORE OVERWRITING. A barcode already in the box was almost certainly
+     * scanned off the packet, and replacing it silently would swap a manufacturer's
+     * code for one this shop invented - after which the gun stops finding the product
+     * it is pointed at. An empty box generates straight away.
+     */
+    private fun bindGenerateBarcode(
+        view: android.view.View,
+        etBarcode: TextInputEditText
+    ) {
+        val til = view.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilBarcode)
+        til.setEndIconOnClickListener {
+            val current = etBarcode.text?.toString()?.trim().orEmpty()
+            if (current.isEmpty()) {
+                generateBarcodeInto(etBarcode)
+                return@setEndIconOnClickListener
+            }
+            com.example.synergic_pos_offline.utils.DialogUtils.showConfirm(
+                context = requireContext(),
+                title = "Replace this barcode?",
+                message = "This product already has the barcode $current. If it was " +
+                    "scanned off the packet, replacing it will stop the scanner finding " +
+                    "this product.",
+                positiveText = "Replace",
+                destructive = true
+            ) { generateBarcodeInto(etBarcode) }
+        }
+    }
+
+    /** Builds a code no product in this catalogue is already using, and fills it in. */
+    private fun generateBarcodeInto(etBarcode: TextInputEditText) {
+        val code = com.example.synergic_pos_offline.utils.BarcodeGenerator
+            .nextEan13 { candidate -> barcodeExists(candidate) }
+        etBarcode.setText(code)
+        etBarcode.setSelection(code.length)
+        toast("Barcode $code generated")
+    }
+
+    /** Whether any product already carries [code] as its barcode. */
+    private fun barcodeExists(code: String): Boolean = runCatching {
+        DatabaseHelper.getInstance(requireContext()).readableDatabase.rawQuery(
+            "SELECT 1 FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE bar_code = ? LIMIT 1",
+            arrayOf(code)
+        ).use { it.moveToFirst() }
+    }.getOrDefault(false)
 
     private fun loadProduct(productId: Int): ExistingProduct? {
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase

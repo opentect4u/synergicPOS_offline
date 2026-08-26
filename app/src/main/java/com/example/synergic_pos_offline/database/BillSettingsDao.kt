@@ -118,7 +118,16 @@ class BillSettingsDao(context: Context) {
          * that turns it off sees a change.
          */
         val timeOnBill: Boolean = true,
-        val customerDetails: CustomerDetails = CustomerDetails.ONLY_MOBILE,
+        /**
+         * Which customer fields the bill prints.
+         *
+         * Defaults to mobile AND name. A bill that names the customer is the one a
+         * counter can hand to the right person out of three waiting, and a take-away
+         * is called out by name rather than by number - so a till that has never been
+         * asked should print both. The number alone was the old default and is still
+         * a choice, for a shop that would rather not put a name on paper.
+         */
+        val customerDetails: CustomerDetails = CustomerDetails.MOBILE_NAME,
         val customerAddressPrinting: Boolean = false,
         val totalAmountFontSize: FontSize = FontSize.REGULAR,
         /**

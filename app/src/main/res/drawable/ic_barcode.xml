@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Generate button inside the product form's Barcode field.
+
+  Bars rather than a plus or a dice: what the button produces is a barcode, and the
+  icon says which field it belongs to as much as what it does - it sits inside that
+  box, so it is read together with the label above it.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#000000">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M2,4h2v16h-2z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M5.5,4h1v16h-1z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M8,4h2v16h-2z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M11.5,4h1v16h-1z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M14,4h2v16h-2z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M17.5,4h1v16h-1z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M20,4h2v16h-2z" />
+</vector>

@@ -41,6 +41,18 @@ class RunningOrderDao(context: Context) {
     /** One KOT batch produced by [printKot], ready to print. */
     data class KotBatch(
         val kotNumber: String, val tableCode: String, val section: String, val time: String,
+        /**
+         * The day the ticket was cut, "dd-MM-yyyy".
+         *
+         * A KOT is a working document that outlives its shift: tickets are spiked at
+         * the pass and kept, and a stack of them carrying only "03:45 PM" cannot be
+         * told apart the next morning - not for a dispute over what was ordered, not
+         * for a count of covers, not for matching a cancelled item back to its day.
+         *
+         * Defaulted so nothing that builds a batch has to be changed to keep working;
+         * both real callers set it.
+         */
+        val date: String = "",
         val lines: List<Pair<String, Double>>,          // newly-added:   name -> qty
         val cancelLines: List<Pair<String, Double>> = emptyList(),  // cancelled: name -> qty
         val note: String = ""
@@ -215,6 +227,21 @@ class RunningOrderDao(context: Context) {
         )
     }
 
+    /**
+     * Puts a customer's phone on a running order.
+     *
+     * For the take-away flow, where the customer is asked for as the order is started
+     * and an empty token that is already open is reused rather than a second one being
+     * cut. Blank clears it, so skipping the prompt on a reused order does not leave the
+     * previous customer attached to somebody else's food.
+     */
+    fun setPhone(orderId: Long, phone: String) {
+        helper.writableDatabase.update(
+            orders, ContentValues().apply { put("customer_phone", phone.ifBlank { null }) },
+            "id = ?", arrayOf(orderId.toString())
+        )
+    }
+
     fun findByTable(tableCode: String, section: String): RunningOrder? =
         allRunning().firstOrNull {
             it.tableCode.equals(tableCode, ignoreCase = true) &&
@@ -365,6 +392,7 @@ class RunningOrderDao(context: Context) {
         return KotBatch(
             kotNumber = nextKotNumber(), tableCode = tableCode, section = section,
             time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date()),
+            date = SimpleDateFormat("dd-MM-yyyy", Locale.getDefault()).format(Date()),
             lines = adds.map { it.name to it.pending },
             cancelLines = cancels.map { it.name to it.pendingCancel },
             note = note.trim()
@@ -434,6 +462,7 @@ class RunningOrderDao(context: Context) {
         return KotBatch(
             kotNumber = kotNumberOf(kotId), tableCode = tableCode, section = section,
             time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(now),
+            date = SimpleDateFormat("dd-MM-yyyy", Locale.getDefault()).format(now),
             lines = adds.map { it.name to it.pending },
             cancelLines = cancels.map { it.name to it.pendingCancel },
             note = note.trim()

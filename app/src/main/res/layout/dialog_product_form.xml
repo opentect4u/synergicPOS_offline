@@ -141,11 +141,20 @@
                 <!-- Row: Barcode | Category -->
                 <LinearLayout style="@style/ProductFormRow">
 
+                    <!-- Generate sits INSIDE the field as its end icon rather than as a
+                         button beside it: this row is two fields sharing the width by
+                         weight, and a third control in it would squeeze Barcode and
+                         Category to make room for something that belongs to one of
+                         them. An end icon is on the right of the box, which is where
+                         it was asked for, and costs the row no width at all. -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilBarcode"
                         style="@style/ProductFormField"
                         android:layout_marginEnd="8dp"
-                        android:hint="Barcode">
+                        android:hint="Barcode"
+                        app:endIconMode="custom"
+                        app:endIconDrawable="@drawable/ic_barcode"
+                        app:endIconContentDescription="Generate a barcode">
 
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/etBarcode"

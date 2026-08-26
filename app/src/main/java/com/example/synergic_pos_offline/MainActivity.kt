@@ -199,6 +199,25 @@ class MainActivity : AppCompatActivity() {
                     } else outcome.error?.let {
                         android.util.Log.e("AutoBackup", "automatic backup failed: $it")
                     }
+                    // The retention window is applied on this tick too, not only when a
+                    // backup happens to be taken.
+                    //
+                    // Pruning used to ride along inside backupNow, which meant a till
+                    // with automatic backup OFF never cleared anything: the setting
+                    // promises backups are kept N days, and on that till they were kept
+                    // for ever. It also meant a till left open past midnight held
+                    // yesterday's expired folder until the next backup fell due.
+                    //
+                    // Cheap to repeat: with nothing expired it is one directory listing
+                    // (or one MediaStore query) and no deletes, on the worker thread the
+                    // backup itself uses.
+                    if (!outcome.taken) {
+                        val cleared = runCatching { AutoBackup.pruneOldBackups(applicationContext) }
+                            .getOrDefault(0)
+                        if (cleared > 0) {
+                            android.util.Log.i("AutoBackup", "cleared $cleared expired backup file(s)")
+                        }
+                    }
                 }.start()
                 autoBackupHandler.postDelayed(this, AUTO_BACKUP_CHECK_MS)
             }
@@ -658,6 +677,7 @@ class MainActivity : AppCompatActivity() {
             "Description/Ledger" -> navigateTo(DescriptionLedgerFragment())
             "Units" -> navigateTo(UnitFragment())
             "Rate Name" -> navigateTo(RateNameFragment())
+            "Extra Charges" -> navigateTo(ChargesFragment())
             // Restaurant-only masters. Listed in the drawer only in Restaurant mode,
             // and routed here to the same screens the Database Settings grid opens.
             "Waiter" -> navigateTo(WaiterFragment())
@@ -725,7 +745,8 @@ class MainActivity : AppCompatActivity() {
             TreeNode("Customers"),
             TreeNode("Description/Ledger"),
             TreeNode("Units"),
-            TreeNode("Rate Name")
+            TreeNode("Rate Name"),
+            TreeNode("Extra Charges")
         )
         // Only where the shop runs shifts. Off, there is nothing to put in the master
         // and nothing that reads it - see App Settings' Shift toggle.

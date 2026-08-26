@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The customer taken at the counter, before an order is started.
+
+  Three fields, in the order they are asked for: the PHONE first, because it is the
+  one that finds the other two. Type a number the shop already knows and the name and
+  address fill themselves in - so a returning customer is one field of typing, and the
+  fields below it are a confirmation rather than a form.
+
+  Deliberately not the full Customers master form (dialog_customer.xml). That one
+  carries a GSTIN, a birthday, an anniversary, a balance and a credit limit, none of
+  which anybody types with a queue waiting - and a form long enough to scroll is one
+  the counter learns to dismiss. What is missing is filled in later, from the master,
+  by whoever has time.
+
+  Sized and styled from dialog_form.xml so it reads as the same dialog the rest of the
+  app puts up, and reuses btnFormPositive / btnFormNegative so ThemeManager paints its
+  buttons without being told about this layout.
+-->
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_margin="24dp"
+    app:cardCornerRadius="24dp"
+    app:cardElevation="16dp"
+    app:cardBackgroundColor="@color/white">
+
+    <LinearLayout
+        android:id="@+id/llQuickCustomerContent"
+        android:layout_width="450dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="28dp">
+
+        <TextView
+            android:id="@+id/tvQuickCustomerTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Customer Details"
+            android:textSize="21sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:textColor="@color/text_main" />
+
+        <!-- Says what the phone field does, so the auto-fill is expected rather than
+             surprising - a name appearing in a box nobody typed in reads as a fault. -->
+        <TextView
+            android:id="@+id/tvQuickCustomerHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="20dp"
+            android:gravity="center"
+            android:text="Enter the phone number — a known customer fills in the rest"
+            android:textSize="12.5sp"
+            android:textColor="@color/text_secondary" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilQuickPhone"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Phone Number"
+            app:boxCornerRadiusTopStart="12dp"
+            app:boxCornerRadiusTopEnd="12dp"
+            app:boxCornerRadiusBottomStart="12dp"
+            app:boxCornerRadiusBottomEnd="12dp">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etQuickPhone"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="phone"
+                android:maxLength="10"
+                android:maxLines="1" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilQuickName"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:hint="Customer Name"
+            app:boxCornerRadiusTopStart="12dp"
+            app:boxCornerRadiusTopEnd="12dp"
+            app:boxCornerRadiusBottomStart="12dp"
+            app:boxCornerRadiusBottomEnd="12dp">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etQuickName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textPersonName|textCapWords"
+                android:maxLines="1" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilQuickAddress"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:hint="Address"
+            app:boxCornerRadiusTopStart="12dp"
+            app:boxCornerRadiusTopEnd="12dp"
+            app:boxCornerRadiusBottomStart="12dp"
+            app:boxCornerRadiusBottomEnd="12dp">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etQuickAddress"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:gravity="top"
+                android:inputType="textMultiLine|textCapSentences"
+                android:maxLines="2" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <!-- Says which of the two happened, once a number is recognised: found, or
+             about to be added. The counter should know whether it is confirming a
+             record or writing one. -->
+        <TextView
+            android:id="@+id/tvQuickCustomerState"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center"
+            android:textSize="12.5sp"
+            android:textColor="@color/text_secondary"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:paddingHorizontal="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFormNegative"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:minHeight="48dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="Skip"
+                android:textAllCaps="false"
+                app:cornerRadius="12dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFormPositive"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:minHeight="48dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="Start Order"
+                android:textAllCaps="false"
+                app:cornerRadius="12dp" />
+        </LinearLayout>
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

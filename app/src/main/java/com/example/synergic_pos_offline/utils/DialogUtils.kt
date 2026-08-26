@@ -351,6 +351,17 @@ object DialogUtils {
         negativeText: String = "Cancel",
         showNegative: Boolean = true,
         mandatoryFields: List<Int> = emptyList(),
+        /**
+         * Run when the form is dismissed WITHOUT saving - the negative button or a
+         * back press.
+         *
+         * Optional, and null for the forms that are only ever an edit: cancelling
+         * those means "leave it as it was", which needs nothing done. It exists for a
+         * form standing in front of something else, where declining to fill it in is
+         * still a decision to carry on - the take-away customer prompt, where Skip
+         * means start the order without a customer rather than start no order at all.
+         */
+        onCancel: (() -> Unit)? = null,
         onSave: (List<String>) -> Unit
     ) {
         val ctx = FixedFontScale.wrap(context)
@@ -368,6 +379,8 @@ object DialogUtils {
         // Dynamic column count: 1 if only one field, 2 for more.
         grid.columnCount = if (fields.size == 1) 1 else 2
         
+        /** Set by Save, so its own dismiss is not also reported as a cancel. */
+        var saved = false
         val btnPositive = view.findViewById<MaterialButton>(R.id.btnFormPositive)
         val btnNegative = view.findViewById<MaterialButton>(R.id.btnFormNegative)
         btnPositive.text = positiveText
@@ -484,10 +497,16 @@ object DialogUtils {
                 }
             }
 
+            saved = true
             dialog.dismiss()
             onSave(values)
         }
         btnNegative.setOnClickListener { dialog.dismiss() }
+        // Every way out that is NOT Save runs onCancel - the negative button and the
+        // back press - so a caller standing this form in front of something else only
+        // has to handle "declined" once. [saved] is what keeps Save's own dismiss from
+        // counting as a decline as well.
+        dialog.setOnDismissListener { if (!saved) onCancel?.invoke() }
 
         dialog.show()
         centerWindow(dialog)

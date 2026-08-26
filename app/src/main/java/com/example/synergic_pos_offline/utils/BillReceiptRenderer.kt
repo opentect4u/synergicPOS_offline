@@ -16,6 +16,7 @@ import android.widget.TextView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillHeaderFooterDao
 import com.example.synergic_pos_offline.database.BillSettingsDao
+import com.example.synergic_pos_offline.database.ChargeDao
 import com.example.synergic_pos_offline.database.CaptionDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.LogoDao
@@ -323,7 +324,25 @@ class BillReceiptRenderer(context: Context) {
          * actually records one: a bill line with no unit prints the bare figure
          * rather than a guessed unit.
          */
-        val unit: String? = null
+        val unit: String? = null,
+        /**
+         * Whether this line was sold under VAT rather than GST.
+         *
+         * Carried on the ROW because a bill can hold both - groceries under GST and
+         * liquor under VAT, rung up together - and the printed slip separates them
+         * into two tables that each total on their own. Taken from the line's own
+         * recorded rates, not from the shop's general setting, which is what lets one
+         * bill answer to two tax authorities.
+         */
+        val vat: Boolean = false,
+        /**
+         * The line's net, as a number rather than the formatted [netAmount].
+         *
+         * Only so a section of the table can be totalled without parsing its own
+         * printed strings back into figures - which is how a total ends up disagreeing
+         * with the rows above it the moment a currency format changes.
+         */
+        val amount: Double = 0.0
     )
 
     /**
@@ -497,6 +516,14 @@ class BillReceiptRenderer(context: Context) {
         val table: String? = null,
         /** Restaurant service charge — shown as its own totals line, added to the net. */
         val serviceCharge: Double = 0.0,
+        /**
+         * The shop's extra charges for this bill, already worked out - name to amount.
+         *
+         * Carried on the draft rather than recomputed here because the screen that
+         * built it has already charged them: recomputing would let a slip disagree
+         * with the total the customer was quoted if the master were edited in between.
+         */
+        val charges: List<Pair<String, Double>> = emptyList(),
         /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
         val returnAmount: Double = 0.0
     ) {
@@ -880,10 +907,53 @@ class BillReceiptRenderer(context: Context) {
                     srItem.text = t(CLASSIC_NARROW_ITEM_HEADING)
                 }
             }
-            items.forEach {
+            // THE VAT SPLIT.
+            //
+            // A shop can sell taxed two ways at once - groceries under GST, liquor
+            // under VAT - and the two cannot be added up in one column, because the
+            // tax lines under them are answering different authorities. So a bill
+            // carrying both prints as two tables: the GST items under this bill's own
+            // number, then the VAT items under the same number suffixed "A", then one
+            // grand total over both.
+            //
+            // Split by the LINE, not by the till's setting. Each line already records
+            // the rates it was sold at, so a line with VAT on it is a VAT line whatever
+            // the shop's general regime is - which is what makes one bill able to carry
+            // both. A bill of one kind only takes the untouched path below and prints
+            // exactly as it always has.
+            val vatItems = items.filter { it.vat }
+            val gstItems = items.filter { !it.vat }
+            val split = vatItems.isNotEmpty() && gstItems.isNotEmpty()
+
+            (if (split) gstItems else items).forEach {
                 llItems.addView(
                     buildClassicItemRow(it, showDisc, headingSp, columnPx, narrow, showSerial)
                 )
+            }
+            if (split) {
+                // The GST half's own total, so the section stands on its own before the
+                // second one starts - without it the reader has to work out which of
+                // the figures below belongs to which table.
+                llItems.addView(sectionTotalLine(t("GST TOTAL"), gstItems, headingSp))
+                llItems.addView(
+                    fullWidthLine(PrintType.RULE, headingSp).apply { maxLines = 1 }
+                )
+                // The VAT half, under its own bill number - "10A" to this bill's "10".
+                // A suffix rather than a number of its own: it is the same sale, rung
+                // up at one counter at one moment, and giving it an independent number
+                // would put two bills in the book for one customer.
+                llItems.addView(
+                    fullWidthLine("${t("BILL NO")}: ${billNumber}A", headingSp).apply {
+                        gravity = Gravity.CENTER
+                        setTypeface(billTypeface, Typeface.BOLD)
+                    }
+                )
+                vatItems.forEach {
+                    llItems.addView(
+                        buildClassicItemRow(it, showDisc, headingSp, columnPx, narrow, showSerial)
+                    )
+                }
+                llItems.addView(sectionTotalLine(t("VAT TOTAL"), vatItems, headingSp))
             }
 
             val totals = lineTotals.copy(discount = discount)
@@ -895,7 +965,28 @@ class BillReceiptRenderer(context: Context) {
             // net_amount is stored already rounded, so the adjustment is only added
             // to a total summed from the line items - adding it to the stored figure
             // would count it twice.
-            val payable = if (items.isEmpty()) storedNetAmount else totals.grandTotal + roundOff + serviceCharge
+            // THE SHOP'S EXTRA CHARGES.
+            //
+            // From the draft where there is one - the screen that quoted them has
+            // already worked them out, and recomputing would let the slip disagree
+            // with the figure the customer was given. Otherwise from the master,
+            // against this bill's own item lines before tax, which is what the charge
+            // is a percentage of.
+            //
+            // Only enabled charges ever come back; a disabled one has no line and no
+            // amount. See ChargeDao.
+            val chargeLines: List<Pair<String, Double>> = draft?.charges?.takeIf { it.isNotEmpty() }
+                ?: runCatching {
+                    ChargeDao(ctx).amountsOn(totals.itemsSubtotal).map { it.name to it.amount }
+                }.getOrDefault(emptyList())
+            val chargesTotal = BillRounding.toPaise(chargeLines.sumOf { it.second })
+            // Printed as label / amount, the name as the shop typed it.
+            val chargeRows = chargeLines.map { (name, amount) -> name.uppercase() to money(amount) }
+
+            // Round off is whatever the bill recorded, not something worked out here:
+            // the printed total has to match the amount that was actually charged.
+            val payable = if (items.isEmpty()) storedNetAmount
+            else totals.grandTotal + roundOff + serviceCharge + chargesTotal
 
             // Bill summary: item count / qty / gross, each tax rate on its own line,
             // discount and totals - laid out as "label : value" lines. Replaces the
@@ -952,7 +1043,7 @@ class BillReceiptRenderer(context: Context) {
                     isGst = isGst, summarySp = summarySp, showTotalTax = !taxWise,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
                     roundOff = roundOff, showRoundOff = roundOffSetting, narrow = narrow,
-                    serviceCharge = serviceCharge, trailer = trailer
+                    serviceCharge = serviceCharge, charges = chargeRows, trailer = trailer
                 )
                 view.findViewById<TextView>(R.id.tvGrandTotalLabel)?.text = "${t("GRAND TOTAL")}:"
                 val big = totalAmountFontSize == BillSettingsDao.FontSize.BIG
@@ -973,6 +1064,7 @@ class BillReceiptRenderer(context: Context) {
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
                     roundOff = roundOff, showRoundOff = roundOffSetting,
                     payable = payable, narrow = narrow, serviceCharge = serviceCharge,
+                    charges = chargeRows,
                     trailer = trailer, boldTrailer = boldTrailer
                 )
             }
@@ -1021,6 +1113,11 @@ class BillReceiptRenderer(context: Context) {
         payable: Double,
         narrow: Boolean,
         serviceCharge: Double = 0.0,
+        /**
+         * The shop's extra charges, one printed line each - already named and totalled.
+         * Only the enabled ones ever reach here; see ChargeDao.
+         */
+        charges: List<Pair<String, String>> = emptyList(),
         /** Account lines printed under the totals - see where it is built in render(). */
         trailer: List<Pair<String, String>> = emptyList(),
         /** Which of [trailer]'s labels are set in bold, in the print language. */
@@ -1057,6 +1154,14 @@ class BillReceiptRenderer(context: Context) {
         if (showDiscount && !discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
         row("TOTAL", money(totals.grandTotal))
         if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
+        // Each charge on its own line, under its own name: a customer asked to pay a
+        // packing charge should see the words "packing charge", not find it folded
+        // into a total they cannot account for.
+        charges.forEach { (label, value) ->
+            llSummary.addView(
+                summaryRow(label, value, false, summarySp, labelSize = summarySp, narrow = narrow)
+            )
+        }
         if (showRoundOff) row("ROUND OFF", money(roundOff))
         row("NET AMT", money(payable), bold = true, valueSize = netSize)
         // The account block under the totals (credit breakdown, or change + outstanding).
@@ -1103,6 +1208,8 @@ class BillReceiptRenderer(context: Context) {
         showRoundOff: Boolean,
         narrow: Boolean,
         serviceCharge: Double = 0.0,
+        /** The shop's extra charges, one line each - see the Classic summary. */
+        charges: List<Pair<String, String>> = emptyList(),
         /** Account lines printed under the totals - see where it is built in render(). */
         trailer: List<Pair<String, String>> = emptyList()
     ) {
@@ -1126,6 +1233,9 @@ class BillReceiptRenderer(context: Context) {
         // ROUNDED OFF is visibly the GRAND TOTAL below.
         row("TOTAL AMOUNT", money(totals.grandTotal))
         if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
+        // Each charge named on its own line - already translated, so they are added
+        // straight to the rows rather than through row(), which would translate again.
+        charges.forEach { (label, value) -> rows.add(label to value) }
         if (showRoundOff) row("ROUNDED OFF", money(roundOff))
         // The account block under the totals (credit breakdown, or change + outstanding),
         // added to the rows so its colons line up with the totals above. Its labels
@@ -1483,7 +1593,11 @@ class BillReceiptRenderer(context: Context) {
                         netAmount = money(lineNetListed),
                         hsn = hsn,
                         discount = disc,
-                        unit = raw.unit
+                        unit = raw.unit,
+                        // Off the line's own rate, so a VAT item is a VAT item whatever
+                        // the shop's general regime happens to be.
+                        vat = vatRate > 0.005,
+                        amount = lineNetListed
                     )
                 )
             }
@@ -1848,9 +1962,12 @@ class BillReceiptRenderer(context: Context) {
      * app opens with [payable] already in the amount field and the customer only
      * confirms - nothing is typed at the counter and nothing can be mistyped.
      *
-     * Printed only on a bill actually settled over UPI rails. On a cash bill it
-     * would be an invitation to pay a second time, and on every bill it would be
-     * 150dp of paper per sale for a code nobody scans.
+     * Printed on a bill settled over UPI rails, and on one not settled at all - the
+     * provisional slip a restaurant puts on the table before the guest pays, where a
+     * code is the point rather than an afterthought. NOT on a bill that names cash or
+     * a card: there the money is already in, and a code would be an invitation to pay
+     * a second time. Nor on every bill regardless, which would be 150dp of paper per
+     * sale for a code nobody scans.
      *
      * Read from the live settings rather than the bill's snapshot, deliberately: the
      * snapshot exists so a reprint *reads* as it did on the day, but a payment
@@ -1864,7 +1981,17 @@ class BillReceiptRenderer(context: Context) {
         if (payable <= 0.0) return
         val online = modes.any { it.equals("ONLINE", true) }
         val upi = modes.any { it.equals("UPI", true) }
-        if (!online && !upi) return
+        // A bill with NO payment mode on it has not been paid by anything yet - it is
+        // the provisional slip that goes to a restaurant table before the customer
+        // settles. That is the one bill a payment code is most use on: the guest reads
+        // the total, scans, and pays without the floor coming back. It is also the one
+        // case where a code cannot be "an invitation to pay a second time", because
+        // nothing has been paid a first time.
+        //
+        // Distinct from a CASH or CARD bill, which carries a mode saying the money is
+        // already in - those still print no code, as before.
+        val unpaid = modes.isEmpty()
+        if (!online && !upi && !unpaid) return
 
         val settings = runCatching { BillSettingsDao(ctx).load() }.getOrNull() ?: return
         // ONLINE prints the code whether or not the setting is on. Choosing it at
@@ -2079,6 +2206,46 @@ class BillReceiptRenderer(context: Context) {
      * that it stops being broken up, so it is cut at the edge rather than wrapped if
      * it somehow outruns the whole roll as well.
      */
+    /**
+     * "GST TOTAL              1500.00" - one section of a split bill, added up.
+     *
+     * Summed from the rows' own [BillItem.amount] rather than re-derived from the
+     * cart, so the figure printed under a table is the sum of the figures printed in
+     * it. A total worked out separately is a total that can disagree with what is
+     * above it, and on a tax document that disagreement is the whole problem.
+     *
+     * Laid out as label-left / figure-right on one line, which is what the summary
+     * block below does, so the two read as the same kind of row.
+     */
+    private fun sectionTotalLine(label: String, rows: List<BillItem>, sizeSp: Float): View {
+        val total = BillRounding.toPaise(rows.sumOf { it.amount })
+        return LinearLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            orientation = LinearLayout.HORIZONTAL
+            addView(TextView(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                text = "$label:"
+                gravity = Gravity.END
+                typeface = billTypeface
+                setTypeface(billTypeface, Typeface.BOLD)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                setTextColor(0xFF111111.toInt())
+            })
+            addView(TextView(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).also { it.marginStart = (6 * ctx.resources.displayMetrics.density).toInt() }
+                text = money(total)
+                gravity = Gravity.END
+                setTypeface(billTypeface, Typeface.BOLD)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                setTextColor(0xFF111111.toInt())
+            })
+        }
+    }
+
     private fun fullWidthLine(text: String, sizeSp: Float): TextView = TextView(ctx).apply {
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -2282,15 +2449,33 @@ class BillReceiptRenderer(context: Context) {
         if (qty % 1.0 == 0.0) qty.toInt().toString() else String.format(Locale.US, "%.2f", qty)
 
     private fun splitDateTime(value: String): Pair<String, String> {
-        return try {
-            val parsed = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(value)
+        val raw = value.trim()
+        if (raw.isEmpty()) return "" to ""
+
+        // The formats a bill's timestamp actually arrives in. A saved bill stores
+        // "yyyy-MM-dd HH:mm:ss"; a draft is built by the screen that is printing it,
+        // and the restaurant's own is "dd-MM-yyyy hh:mm a".
+        //
+        // This USED TO PARSE ONE FORMAT and, on failure, hand the whole string back as
+        // the date - which is why switching Time on Bill off did nothing on a
+        // restaurant slip: the time was inside the date field, and hiding the time
+        // field could not remove it. Any format that misses now falls through to the
+        // split below rather than leaking a time into the date.
+        for (pattern in listOf("yyyy-MM-dd HH:mm:ss", "dd-MM-yyyy hh:mm a", "dd-MM-yyyy HH:mm:ss", "yyyy-MM-dd HH:mm")) {
+            val parsed = runCatching { SimpleDateFormat(pattern, Locale.US).parse(raw) }.getOrNull()
             if (parsed != null) {
-                SimpleDateFormat("dd-MM-yyyy", Locale.US).format(parsed) to
+                return SimpleDateFormat("dd-MM-yyyy", Locale.US).format(parsed) to
                     SimpleDateFormat("HH:mm", Locale.US).format(parsed)
-            } else value to ""
-        } catch (_: Exception) {
-            value to ""
+            }
         }
+
+        // Unrecognised, but still split rather than returned whole: a timestamp is a
+        // date, a space, and a time, so everything before the first space is the date
+        // and everything after it is the time. That keeps the two fields separable -
+        // and separable is what the setting needs in order to hide one of them.
+        val space = raw.indexOf(' ')
+        return if (space > 0) raw.substring(0, space) to raw.substring(space + 1).trim()
+        else raw to ""
     }
 
 

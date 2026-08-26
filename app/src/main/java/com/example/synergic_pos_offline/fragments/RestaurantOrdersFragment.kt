@@ -17,6 +17,7 @@ import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.TableDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
+import com.example.synergic_pos_offline.utils.CartDensity
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.SettingsCache
@@ -44,7 +45,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     private data class OrderCard(
-        val dbId: Long, var id: String, val type: String, val section: String, val phone: String,
+        // phone is a var: a take-away's customer is attached as the order is started,
+        // and an empty token that gets reused takes the next customer's number.
+        val dbId: Long, var id: String, val type: String, val section: String, var phone: String,
         val time: String, var amount: String, val cashier: String,
         var status: String, var selected: Boolean, var note: String = "",
         // Each order keeps its own cart, so switching tables shows its own items.
@@ -74,7 +77,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /**
      * Whether the note + tax breakdown are pulled up. Folded away to start with, so a
      * long order scrolls in the whole panel rather than a letterbox above the totals -
-     * the figures those rows carry are all in the Total and on Checkout anyway.
+     * the figures those rows carry are all in the Total and on Settlement anyway.
      */
     private var summaryExpanded = false
 
@@ -150,8 +153,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** A bill breakdown computed from per-product GST plus the section's service charge. */
     private data class BillBreakdown(
-        val subtotal: Double, val service: Double, val cgst: Double, val sgst: Double, val total: Double
-    )
+        val subtotal: Double, val service: Double, val cgst: Double, val sgst: Double, val total: Double,
+        /**
+         * The shop's own extra charges for this order - see the Extra Charges master.
+         *
+         * Held on the breakdown rather than worked out again wherever it is printed,
+         * so the panel, the slip and the saved bill all quote one set of figures.
+         */
+        val charges: List<com.example.synergic_pos_offline.database.ChargeDao.Applied> = emptyList()
+    ) {
+        /** What [charges] adds to the order. */
+        val chargesTotal: Double get() = charges.sumOf { it.amount }
+    }
 
     /**
      * Flat service-charge amount (₹) for a section, from the Section master.
@@ -184,9 +197,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
         // Flat section service charge, applied only to a non-empty order.
         val service = if (subtotal > 0.0) serviceChargeAmt else 0.0
+        // The shop's extra charges, on the ITEM LINES before tax - the same base and
+        // the same rule the grocery till uses, so a 5% charge on 300 of food is 15
+        // whichever screen rang it up. Worked out on the gross subtotal, not on the
+        // service charge, which is itself an addition rather than something sold.
+        val charges = runCatching {
+            com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal)
+        }.getOrDefault(emptyList())
+        val chargesTotal = charges.sumOf { it.amount }
         // Inclusive: tax is already inside the gross subtotal, so don't add it again.
-        val total = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
-        return BillBreakdown(subtotal, service, cgst, sgst, total)
+        val total = (if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst) +
+            chargesTotal
+        return BillBreakdown(subtotal, service, cgst, sgst, total, charges)
     }
 
     // Tax configuration, resolved the same way the grocery billing screen does.
@@ -220,6 +242,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         loadRunningOrders()          // restore open tables from the database
         populateOrders(view, accent)
         clearDetail(view)
+        watchCartHeight(view)
 
         // The order-type segment fills the selected side (handled by a state list).
         val segOrderType =
@@ -236,24 +259,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         // Take Away needs no table — tapping it opens a take-away order: if one is
         // already active, just select it (no duplicate token); otherwise start a new one.
-        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnTakeAway).setOnClickListener {
-            view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
-                .check(R.id.btnTakeAway)
-            val existing = orders.firstOrNull { it.type.equals("Take Away", ignoreCase = true) && !it.completed }
-            if (existing != null) {
-                selectOrder(existing)
-            } else {
-                openNewOrder(nextTakeAwayCode(), section = "", phone = "", type = "Take Away")
-                toast("Take-away order started — add items, then Bill & Pay")
-            }
-        }
-        // Dine In switches the segment and selects a dine-in table if one is active.
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnTakeAway)
+            .setOnClickListener { openTakeAway() }
+        // Dine In switches the segment and opens the floor plan.
+        //
+        // The two halves of this control now answer the same way. Take Away above
+        // needs no table, so tapping it opens the order itself; Dine In DOES need a
+        // table, so tapping it opens the picker to choose one - rather than quietly
+        // selecting whichever dine-in order happened to be open, which is what it used
+        // to do and which answered a question nobody had asked. A waiter reaching for
+        // Dine In is starting to serve a table, and the first thing they need is the
+        // floor.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnDineIn).setOnClickListener {
             view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
                 .check(R.id.btnDineIn)
-            val dineIn = orders.firstOrNull { it.type.equals("Dine In", ignoreCase = true) && !it.completed }
-                ?: orders.firstOrNull { it.type.equals("Dine In", ignoreCase = true) }
-            if (dineIn != null) selectOrder(dineIn)
+            showChooseTableDialog()
         }
 
         // Order note: persist per-order as it's typed (guarded against programmatic sets).
@@ -302,10 +322,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         // Print KOT → resolve the kitchen printer, then cut a ticket for the new items.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnPrintKot).setOnClickListener {
-            val order = currentOrder() ?: return@setOnClickListener toast("Select a table order first")
-            if (order.type.equals("Take Away", ignoreCase = true))
-                return@setOnClickListener toast("Not available for Take Away — KOT prints on payment")
-            if (order.completed) return@setOnClickListener toast("Table already billed")
+            // No Take Away refusal here any more. It used to turn one away with "KOT
+            // prints on payment", which was true when payment cut the ticket itself -
+            // that was removed, and this refusal outlived it, leaving take-away with
+            // an enabled button that answered every press by declining. A take-away
+            // has food to cook and sends its ticket like any other order.
+            val order = currentOrder() ?: return@setOnClickListener toast("Select an order first")
+            if (order.completed) return@setOnClickListener toast("Order already billed")
             if (!roDao.hasPendingKot(order.dbId)) {
                 toast("No new or cancelled items to send to kitchen"); return@setOnClickListener
             }
@@ -558,7 +581,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvDetailOrderTime).text =
             "Order Time: ${order.time.ifBlank { "—" }}"
         setNoteField(root, order.note)
-        // Take Away has no table to KOT/transfer/merge; disable those actions.
+        // Take Away has no table to transfer, merge or split; those fold away. It does
+        // have food to cook, so Print KOT stays available - see setDineInActionsEnabled.
         setDineInActionsEnabled(root, !order.type.equals("Take Away", ignoreCase = true))
     }
 
@@ -656,13 +680,93 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
         val label = if (order.type.equals("Take Away", ignoreCase = true))
             order.id.replace("TA-", "Take Away Token #") else "Table ${order.id}"
+        // An empty split part is not an order being thrown away - it is a seat of a
+        // split nobody used, and cancelling it is how the operator gives that seat
+        // back. Asking "remove all its items?" about a part with no items reads as a
+        // warning about losing something, when the opposite is true.
+        val emptyPart = order.id.contains(" ") && order.items.isEmpty()
         com.example.synergic_pos_offline.utils.DialogUtils.showConfirm(
             requireContext(),
-            title = "Clear this order?",
-            message = "Remove $label and all its items? This can't be undone.",
-            positiveText = "Clear",
+            title = if (emptyPart) "Remove this part?" else "Clear this order?",
+            message = if (emptyPart)
+                "Give up $label? It has no items. The table goes back to whole once its last part is removed."
+            else "Remove $label and all its items? This can't be undone.",
+            positiveText = if (emptyPart) "Remove" else "Clear",
             destructive = true
         ) { clearActiveOrder(order) }
+    }
+
+    /**
+     * Switches to Take Away and puts an order on screen: the one already running if
+     * there is one, a new token if there is not.
+     *
+     * Reused by the Take Away button and by closing the table picker without choosing
+     * a table - see [showChooseTableDialog]. One definition, so the two cannot drift
+     * into starting a second token for a counter that already has one open.
+     */
+    private fun openTakeAway() {
+        val root = view ?: return
+        root.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
+            .check(R.id.btnTakeAway)
+        // THE PROMPT ALWAYS SHOWS.
+        //
+        // It used to return here when any take-away was already running - "no duplicate
+        // token" - which meant that once one counter order was open, Take Away silently
+        // re-selected it and the customer was never asked for again. A counter serves
+        // one customer after another, and each of them is their own order with their
+        // own name on it.
+        askTakeAwayCustomer { name, phone ->
+            // An EMPTY take-away already open is reused rather than adding a second
+            // token beside it. That is the case the old guard was really protecting
+            // against: tapping Take Away twice, or skipping the prompt and coming back,
+            // should not leave a trail of TA-1, TA-2, TA-3 with nothing on any of them.
+            // One with items on it is a real order being served and is left alone.
+            val reusable = orders.firstOrNull {
+                it.type.equals("Take Away", ignoreCase = true) && !it.completed && it.items.isEmpty()
+            }
+            if (reusable != null) {
+                reusable.phone = phone
+                roDao.setPhone(reusable.dbId, phone)
+                selectOrder(reusable)
+            } else {
+                openNewOrder(nextTakeAwayCode(), section = "", phone = phone, type = "Take Away")
+            }
+            toast(
+                if (name.isBlank()) "Take-away order started — add items, then Settlement"
+                else "Take-away order for $name — add items, then Settlement"
+            )
+        }
+    }
+
+    /**
+     * Asks who the take-away is for - the SAME prompt the grocery till uses.
+     *
+     * A dine-in order has a table to be known by: the floor calls out "table 7" and
+     * everyone knows which order that is. A take-away has only a token number, so the
+     * customer is part of the order rather than an extra on it, and is asked for
+     * first.
+     *
+     * What it asks, and what it writes, is CustomerPrompt's business rather than this
+     * screen's - one phone number, found or created in md_customers, never a
+     * duplicate. This screen only decides WHEN to ask and what to do with the answer.
+     * Written out twice the two would drift, and a shop's address book collecting two
+     * records for one phone because two screens disagreed about what counts as the
+     * same customer is a fault nobody notices until the list is unusable.
+     *
+     * Skip is the way past it: a counter with a queue must be able to take an order
+     * without an interrogation, and a walk-in has no customer to record.
+     */
+    private fun askTakeAwayCustomer(onDone: (name: String, phone: String) -> Unit) {
+        com.example.synergic_pos_offline.utils.CustomerPrompt.showDetails(
+            context = requireContext(),
+            title = "Take Away — customer",
+            positiveText = "Start Order",
+            // No Skip: a take-away is called out by name, so the customer is part of
+            // the order. The back press still closes it, and that starts the order
+            // with nobody attached - a prompt, not a lock.
+            onCancel = { onDone("", "") },
+            onPicked = { c -> onDone(c.name, c.phone) }
+        )
     }
 
     /** Choose Table, greyed out the same way the other dine-in-only actions are. */
@@ -673,14 +777,28 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     /**
-     * Enables/disables the dine-in-only actions: Print KOT, which is a button, and
-     * Transfer/Merge/Split, which are items on the Table Actions menu and so are held
-     * as a flag until that menu is built.
+     * Enables/disables the dine-in-only actions - Transfer, Merge and Split, which are
+     * items on the Table Actions menu and so are held as a flag until that menu is
+     * built.
+     *
+     * Also un-greys Print KOT unconditionally, for the reason in the body.
      */
     private fun setDineInActionsEnabled(root: View, enabled: Boolean) {
         dineInActionsEnabled = enabled
+        // PRINT KOT IS NOT ONE OF THEM, and used to be.
+        //
+        // Transfer, Merge and Split all act on a TABLE, so a take-away order has
+        // nothing for them to do. A KOT is not about the table at all - it is the
+        // kitchen's copy of what to cook - and a take-away has food to cook like any
+        // other order. Disabling it left take-away with no way to reach the kitchen:
+        // the ticket used to be cut for it at payment instead, which arrived after the
+        // food was paid for and has since been removed.
+        //
+        // Left enabled for every order type. Whether there is anything to send is a
+        // separate question, and the button answers it when pressed - "No new items to
+        // send to kitchen" - rather than being greyed on a rule about tables.
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnPrintKot).apply {
-            isEnabled = enabled; alpha = if (enabled) 1f else 0.4f
+            isEnabled = true; alpha = 1f
         }
     }
 
@@ -709,7 +827,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvOrderTotal).text = zero
         root.findViewById<TextView>(R.id.tvTotalBar).text = zero
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).text =
-            "Checkout  ( $zero )"
+            "Settlement  ( $zero )"
     }
 
     /** Accent the filled buttons, headers and the active tab (avoids ThemeManager's name rules). */
@@ -880,6 +998,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             amount = "₹ ${money(0.0)}", cashier = cashier, status = "RUNNING", selected = true
         )
         orders.add(0, order)                                  // newest on top
+        // The top segment shows what the NEW order is, the way [selectOrder] does for
+        // one being re-opened. It was only done there, so an order created here left
+        // the segment on whatever was last lit - a take-away token opening with Dine In
+        // still selected, which reads as the wrong kind of order on the one control
+        // that says which kind it is.
+        //
+        // Set AFTER the order exists rather than before, so nothing between here and
+        // the screen settling can put it back. A programmatic check does not fire the
+        // buttons' own click listeners, so this cannot re-enter and open a second order.
+        root.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType).check(
+            if (type.equals("Take Away", ignoreCase = true)) R.id.btnTakeAway else R.id.btnDineIn
+        )
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         showOrderDetail(order)
         renderCart()   // this order's (empty) cart + zeroed totals
@@ -945,7 +1075,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Both tables are in the order's own section — a transfer only ever offers
         // same-section targets.
         updateTableStatus(from, order.section, "Available")   // old table freed
-        updateTableStatus(to, order.section, "Occupied")      // new table taken
+        // The new table inherits what the old one WAS. An order transferred before its
+        // KOT went out has taken nobody's table yet, and marking the target Occupied
+        // would take one - the same thing adding an item used to do, in the one place
+        // it was left. Sent already: the guests have moved and the new table is theirs.
+        val sentAlready = order.items.any { it.kotQty > 0.0 }
+        updateTableStatus(to, order.section, if (sentAlready) "Occupied" else "Available")
         order.id = to
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -1122,13 +1257,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val waiterId = roDao.findByTable(parent, section)?.waiterId
         val cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—"
 
-        // Part A keeps the existing order and its items, so it is occupied if that
-        // order has any - and Available if it does not, by the same rule everywhere
-        // else: a table is occupied once something has been ordered at it, not once it
-        // has been opened. A table can be split before anything is ordered on it.
+        // Part A keeps the existing order, so it is occupied if that order has been
+        // SENT to the kitchen - the same rule as everywhere else. Items merely typed
+        // in do not take a table, so a split made before the KOT goes out leaves part A
+        // free like the rest, and it is taken when the ticket is cut.
+        val sentAlready = order.items.any { it.kotQty > 0.0 }
         val firstCode = subTableDao.create(
             parent, section, "A",
-            status = if (order.items.isEmpty()) "Available" else "Occupied"
+            status = if (sentAlready) "Occupied" else "Available"
         )
         roDao.transferTable(order.dbId, firstCode)
         // The remaining parts (B onward, up to F) start empty → Available until items
@@ -1147,10 +1283,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     /**
-     * The split is finished once every remaining part is empty (no items) or gone:
-     * tear down all its parts, free the parent table and drop its sub-table records.
-     * While at least one part still has items, the split stays and empty parts remain
-     * as Available slots to re-order.
+     * A split is over once NOTHING of it is left - no part still has a running order.
+     * Then, and only then, the parent table goes back to being one table: it is freed
+     * and its sub-table records are dropped.
+     *
+     * The test used to be "every remaining part is empty", and that was wrong in a way
+     * that lost live tables. An empty part is not a finished part - it is a seat that
+     * has not ordered yet, which is exactly what every part except A is the moment a
+     * table is split. So settling the parts that HAD ordered swept away the ones that
+     * had not: split a table four ways, bill parts 1 and 2, and parts 3 and 4 were
+     * closed underneath the guests still sitting at them, their orders deleted and
+     * their sub-tables cleared. Reproduced against the device's own database - the
+     * second settlement is the one that did it, because that is when the last part
+     * holding items left the list and the untouched parts became "all empty".
+     *
+     * A part therefore leaves a split only when it is settled or when the operator
+     * cancels it (see [clearActiveOrder]) - never as a side effect of what its
+     * neighbours did. Dropping the last part is what ends the split.
      */
     private fun freeParentIfSplitDone(code: String, section: String) {
         if (!code.contains(" ")) return
@@ -1161,10 +1310,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             it.id.startsWith("$parent ") &&
                 (section.isBlank() || it.section.equals(section, ignoreCase = true))
         }
-        if (parts.all { it.items.isEmpty() }) {
-            val partIds = parts.map { it.dbId }.toSet()
-            parts.forEach { roDao.close(it.dbId) }
-            orders.removeAll { it.dbId in partIds }
+        if (parts.isEmpty()) {
             updateTableStatus(parent, section, "Available")
             subTableDao.clearForParent(parent, section)
         }
@@ -1419,6 +1565,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // can at once and the same card comes out the same size in both trades.
         com.example.synergic_pos_offline.utils.ProductGrid.attach(rv)
         rv.adapter = adapter
+        // Only a page of the menu is drawn at a time; the rest arrives as the grid is
+        // scrolled. See GridPager - the filtered list itself is whole, so searching and
+        // the category tabs still see every dish.
+        val pager = com.example.synergic_pos_offline.utils.GridPager<GridProduct>(rv) { page ->
+            adapter.submit(page)
+        }
 
         // Category tabs, rebuilt whenever the catalogue is re-read so a newly added
         // category cannot be missing from the tabs until the screen is reopened.
@@ -1447,7 +1599,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         refreshProducts = {
             val q = query.trim().lowercase()
-            adapter.submit(allProducts.filter {
+            pager.set(allProducts.filter {
                 (selectedCat == "All" || it.product.category == selectedCat) &&
                     // Name, then the three codes a dish can be asked for by: its SKU,
                     // its barcode, and its HSN. Placeholder HSNs are not searched -
@@ -1581,7 +1733,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         var selectedCat = catNames.firstOrNull().orEmpty()
         var query = ""
 
+        // Closing the picker without choosing a table means the next order is not a
+        // table order - so it becomes a take-away one rather than leaving the screen
+        // on nothing. See the dismiss listener below for the one case it does not.
+        var pickedATable = false
+
         val adapter = TableAdapter(accent) { t ->
+            pickedATable = true
             dialog.dismiss()
             val existing = orderFor(t.code, t.section)
             // Named with its room in every message: the number on its own belongs to
@@ -1593,7 +1751,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             } else {
                 // Only a free table can start a new order; an occupied/billing one is
                 // busy on an order this table picker cannot reach.
-                val status = TableDao(requireContext()).statusOf(t.code, t.section)
+                //
+                // A SPLIT PART reads its status off the tile. Its status lives in
+                // md_subtable, not md_table, so asking TableDao about "4 B" comes back
+                // with nothing - which read as "no status recorded", i.e. free, and let
+                // a part that was already taken start a second order on itself.
+                val status = if (t.code.contains(" ")) t.status
+                else TableDao(requireContext()).statusOf(t.code, t.section)
                 if (!status.isNullOrBlank() && !status.equals("Available", ignoreCase = true)) {
                     toast("Table $named is $status")
                 } else {
@@ -1656,6 +1820,27 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         etSearch.addTextChangedListener { query = it?.toString().orEmpty(); refresh() }
         v.findViewById<ImageButton>(R.id.btnCloseChooseTable).setOnClickListener { dialog.dismiss() }
+
+        // Closed without picking a table -> Take Away. Always.
+        //
+        // The picker is the only way into a dine-in order, so closing it without
+        // choosing is the operator saying this order has no table - which is what a
+        // take-away is. It opens by itself on the way into this screen, when Dine In is
+        // tapped, and again after a KOT goes out, so "close it" is the answer to the
+        // same question every time and gets the same reply.
+        //
+        // Unconditional on purpose. It was briefly limited to the case where no order
+        // was selected, so that opening the floor plan mid-service to look at it and
+        // closing it again did not abandon the table being served. That is a real
+        // trade, and it is settled the other way: one rule the counter can predict
+        // beats a rule that depends on what happened to be selected. Nothing is lost
+        // either way - the table keeps its order, and it is one tap away in the list.
+        //
+        // Covers every way out at once: the close button, the back press, a tap
+        // outside.
+        dialog.setOnDismissListener {
+            if (!pickedATable && isAdded) openTakeAway()
+        }
 
         ThemeManager.applyTheme(v)
         // After the theme pass, so it cannot repaint the chips out from under us.
@@ -1720,14 +1905,6 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private data class StatusLook(val label: String, val color: Int)
 
     /**
-     * Where [tableCode]'s order stands with the kitchen, or null when it has no order
-     * (or an empty one) - there is nothing to have sent, so the card shows no line.
-     *
-     * Read from the orders already loaded on this screen rather than the KOT tables:
-     * `pending` is the quantity on a line that has not gone to the kitchen yet, which
-     * is the same figure Print KOT acts on, so the card and that button agree.
-     */
-    /**
      * How much of [tableCode]'s order has already gone to the kitchen - the quantity,
      * summed across its lines, not the number of lines.
      *
@@ -1736,19 +1913,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * counting something nobody in the building counts.
      *
      * Read from `kotQty` - the part of a line that has been sent - which is the same
-     * figure [kotLookOf] reads `pending` against, so the count and the bar under it
-     * can never disagree about the same order.
+     * figure Print KOT acts on, so the count on a card and that button agree.
+     *
+     * This is all the floor plan says about the kitchen now: a number, and no colour.
+     * The card's fill was refined by the same reading and is not any more - see the
+     * note in the adapter's bind.
      */
     private fun kotSentQty(tableCode: String, section: String): Double =
         orderFor(tableCode, section)?.items?.sumOf { it.kotQty } ?: 0.0
-
-    private fun kotLookOf(tableCode: String, section: String): StatusLook? {
-        val order = orderFor(tableCode, section) ?: return null
-        if (order.items.isEmpty()) return null
-        return if (order.items.any { it.pending > 0.0 })
-            StatusLook("KOT Pending", 0xFF7C3AED.toInt())
-        else StatusLook("KOT Sent", 0xFF0D9488.toInt())
-    }
 
     /**
      * The tally across the top of the picker: the total, then one box per status.
@@ -1854,16 +2026,31 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         return out
     }
 
-    /** Every table with its section and current status, for the Choose Table grid. */
+    /**
+     * Every table with its section and current status, for the Choose Table grid -
+     * with a SPLIT TABLE STANDING AS ITS PARTS rather than as itself.
+     *
+     * A split table is not one table any more. Its parts are what a waiter serves,
+     * bills and settles, so they are what the floor plan has to offer: split table 4
+     * three ways and the grid shows 4 A, 4 B and 4 C where the single card used to be,
+     * each with its own colour for its own status. Before this the parts were not on
+     * the plan at all - they existed only in the Active Orders list, so the one screen
+     * a waiter picks a table from could not reach them, and table 4 sat there as a
+     * single card whose colour spoke for parts that were doing different things.
+     *
+     * The parts take the parent's place in the order, so the plan still reads as the
+     * room: they appear where table 4 was, lettered in turn, not appended at the end.
+     */
     private fun loadTables(): List<TableTile> {
         val db = com.example.synergic_pos_offline.database.DatabaseHelper.getInstance(requireContext()).readableDatabase
         val store = currentStoreId(db)
         val out = mutableListOf<TableTile>()
         val where = if (store != null) "WHERE t.store_id = ?" else ""
         val args = store?.let { arrayOf(it.toString()) }
+        val parts = loadSplitParts(db, store)
         db.rawQuery(
             "SELECT t.table_code, COALESCE(s.section_name,'') AS section, COALESCE(t.table_status,'Available'), " +
-                "COALESCE(t.seating_capacity, 0), COALESCE(w.waiter_name, '') " +
+                "COALESCE(t.seating_capacity, 0), COALESCE(w.waiter_name, ''), t.id " +
                 "FROM ${com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_TABLE} t " +
                 "LEFT JOIN ${com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_SECTION} s ON s.id = t.section_id " +
                 "LEFT JOIN ${com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_WAITERS} w ON w.id = t.waiter_id " +
@@ -1872,18 +2059,65 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         ).use { c ->
             while (c.moveToNext()) {
                 val code = c.getString(0)?.takeIf { it.isNotBlank() } ?: continue
-                out.add(
-                    TableTile(
-                        code = code,
-                        section = c.getString(1).orEmpty(),
-                        status = c.getString(2).orEmpty(),
-                        capacity = c.getInt(3),
-                        waiter = c.getString(4).orEmpty()
+                val section = c.getString(1).orEmpty()
+                val waiter = c.getString(4).orEmpty()
+                // Parts are keyed by the table's own row id where they have one, and
+                // by the parent code where they do not - parts split before the id was
+                // recorded carry no table_id. Same fallback SubTableDao scopes by.
+                val mine = parts[c.getLong(5).toString()] ?: parts[code]
+                if (mine.isNullOrEmpty()) {
+                    out.add(
+                        TableTile(
+                            code = code, section = section,
+                            status = c.getString(2).orEmpty(),
+                            capacity = c.getInt(3), waiter = waiter
+                        )
                     )
-                )
+                } else {
+                    // NO SEAT COUNT ON A PART. The parent's capacity is the whole
+                    // table's; printing it on each of four parts would say the table
+                    // seats four times what it does. How a split table's seats divide
+                    // is not recorded, so the honest answer is to say nothing.
+                    mine.sortedBy { it.second }.forEach { (subCode, _, status) ->
+                        out.add(
+                            TableTile(
+                                code = subCode, section = section,
+                                status = status, capacity = 0, waiter = waiter
+                            )
+                        )
+                    }
+                }
             }
         }
         return out
+    }
+
+    /**
+     * Live split parts for the store, grouped by the parent they belong to - keyed
+     * both by the parent's table id and by its code, so a part written either way is
+     * found. Each entry is (sub_code, suffix, status).
+     */
+    private fun loadSplitParts(
+        db: android.database.sqlite.SQLiteDatabase, store: Long?
+    ): Map<String, List<Triple<String, String, String>>> {
+        val byKey = mutableMapOf<String, MutableList<Triple<String, String, String>>>()
+        val where = if (store != null) "WHERE store_id = ?" else ""
+        val args = store?.let { arrayOf(it.toString()) }
+        db.rawQuery(
+            "SELECT sub_code, suffix, COALESCE(table_status,'Available'), parent_code, table_id " +
+                "FROM ${com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_SUBTABLE} $where",
+            args
+        ).use { c ->
+            while (c.moveToNext()) {
+                val sub = c.getString(0)?.takeIf { it.isNotBlank() } ?: continue
+                val row = Triple(sub, c.getString(1).orEmpty(), c.getString(2).orEmpty())
+                if (!c.isNull(4)) byKey.getOrPut(c.getLong(4).toString()) { mutableListOf() }.add(row)
+                c.getString(3)?.takeIf { it.isNotBlank() }?.let {
+                    byKey.getOrPut(it) { mutableListOf() }.add(row)
+                }
+            }
+        }
+        return byKey
     }
 
     private inner class TableAdapter(
@@ -1904,19 +2138,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             VH(LayoutInflater.from(parent.context).inflate(R.layout.item_table_tile, parent, false))
         override fun onBindViewHolder(holder: VH, position: Int) {
             val t = items[position]
-            // One colour drives the whole card, and the kitchen is part of it.
+            // One colour drives the whole card, and it is the TABLE'S OWN STATUS -
+            // free, taken, waiting to pay. Nothing else.
             //
-            // A table's own status only knows it is taken; where its order stands with
-            // the kitchen is the next step along the same line, so it refines the fill
-            // rather than sitting beside it - Occupied becomes purple while something
-            // is still waiting to go, teal once it has all gone.
-            //
-            // Only Occupied gives way. Available has no order to have sent, and the
-            // states after service - Bill Pending, Cleaning, Blocked - have moved past
-            // the kitchen: a billed table showing teal would be reporting a stage it
-            // has already left, and Bill Pending is the thing the floor needs to see.
-            val base = lookOf(t.status)
-            val look = if (base.label == "Occupied") kotLookOf(t.code, t.section) ?: base else base
+            // The fill used to be refined by where the order stood with the kitchen,
+            // turning an occupied table purple while something was waiting to go and
+            // teal once it had gone. That is a second thing to learn from the same
+            // patch of colour, and it split "occupied" - the one state the floor plan
+            // exists to show - across three shades that all mean the table is taken.
+            // The kitchen's business is on the ticket and on the order panel; the
+            // floor plan answers whether a table is free.
+            val look = lookOf(t.status)
 
             // The card IS the status: filled with the colour outright, edged in a
             // darker cut of the same so it still has a shape against the white sheet
@@ -2177,19 +2409,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun addToCart(p: ProductEntryDialog.Product, qty: Double, rate: Double) {
         val order = currentOrder() ?: run { toast("Select a table order first"); return }
         if (exceedsStock(p.id, qty)) return
-        val wasEmpty = order.items.isEmpty()
         roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate, p.cgst, p.sgst)
-        // THE MOMENT A TABLE BECOMES OCCUPIED: its first item, not its selection.
-        // Opening a table creates an empty order and leaves the table Available (see
-        // openNewOrder) - this is where it stops being free, because this is where
-        // somebody has actually ordered something at it. Split sub-tables come through
-        // here too, and become Occupied on the same rule.
+        // ADDING AN ITEM NO LONGER TAKES THE TABLE.
         //
-        // Only the first item: a table cannot become more occupied than it already is,
-        // and without the guard this was a write to the table master behind every tap.
-        if (wasEmpty && !order.type.equals("Take Away", ignoreCase = true)) {
-            updateTableStatus(order.id, order.section, "Occupied")
-        }
+        // It used to mark the table Occupied on its first item. The moment is now the
+        // KOT going out (see doPrintKot): until then the order is still being built at
+        // the till and can be emptied, cancelled or abandoned without anybody having
+        // been served, and a table showing red for a basket nobody committed to is a
+        // table the next waiter cannot take. Once the kitchen has the ticket, food is
+        // being cooked for that table and it genuinely is taken.
         reloadItems(order)
         renderCart()
     }
@@ -2199,6 +2427,38 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun itemsAddedMessage(total: Double): String {
         val display = if (total % 1.0 == 0.0) total.toInt().toString() else total.toString()
         return "$display ${if (total == 1.0) "item" else "items"} added"
+    }
+
+    /**
+     * Keeps cart rows sized to whatever height the panel currently has.
+     *
+     * The target is ten lines visible at once. How much room ten lines have is not a
+     * constant: it differs between a phone and a 12" tablet, and on one device it
+     * changes as the tax fold opens and closes beneath the list. So rather than pick a
+     * row height in XML and hope, the panel is measured as it is laid out and the rows
+     * are squeezed to suit - see CartDensity for what gives way first.
+     *
+     * A layout listener rather than a one-off measure at startup, because the height
+     * that matters is not the one the panel has when the screen is built. Rows already
+     * on screen are re-sized in place, so an order taken with the fold shut does not
+     * have to be redrawn from scratch when it opens.
+     */
+    private fun watchCartHeight(root: View) {
+        val scroller = root.findViewById<View>(R.id.svOrderItems) ?: return
+        val container = root.findViewById<LinearLayout>(R.id.llOrderItems)
+        scroller.addOnLayoutChangeListener { v, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (bottom - top == oldBottom - oldTop) return@addOnLayoutChangeListener
+            val scale = CartDensity.scaleFor(
+                v.height - v.paddingTop - v.paddingBottom,
+                v.resources.displayMetrics.density
+            )
+            if (kotlin.math.abs(scale - cartRowScale) < 0.01f) return@addOnLayoutChangeListener
+            cartRowScale = scale
+            for (i in 0 until container.childCount) {
+                CartDensity.apply(container.getChildAt(i), scale)
+            }
+            container.requestLayout()
+        }
     }
 
     /** Rebuilds the order-item rows from the SELECTED order's cart and recomputes totals. */
@@ -2253,7 +2513,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * every tap.
      */
     private fun newOrderRow(inflater: LayoutInflater, parent: LinearLayout, layoutRes: Int): View =
-        inflater.inflate(layoutRes, parent, false).also { ThemeManager.applyTheme(it) }
+        inflater.inflate(layoutRes, parent, false).also {
+            ThemeManager.applyTheme(it)
+            // Only the panel's own narrow row is squeezed; the More popup is roomy by
+            // definition and its wide row has no business being compressed.
+            if (layoutRes == R.layout.item_order_line_compact) CartDensity.apply(it, cartRowScale)
+        }
 
     /** Fills a row (new or reused) with one cart line and wires its steppers. */
     private fun bindOrderRow(
@@ -2351,6 +2616,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     /** Redraws the open More popup, or does nothing when it is closed. */
+    /**
+     * How tightly cart rows are drawn, 1 roomy … 0 tight - see CartDensity. Recomputed
+     * whenever the panel changes height, which is both at first layout and every time
+     * the tax fold opens or closes underneath it.
+     */
+    private var cartRowScale = 1f
+
     private var refillOrderItemsDialog: (() -> Unit)? = null
 
     private fun fillAgain() { refillOrderItemsDialog?.invoke() }
@@ -2438,6 +2710,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * [phone], or null when there is no matching customer / nothing owed - for the
      * OUTSTANDING line printed with the totals on the restaurant bill.
      */
+    /**
+     * The name on file for [phone], or null when there is none to print.
+     *
+     * Null rather than a placeholder: a blank name leaves the bill's name line out
+     * entirely, where "Guest" or "Walk-in" would print a word the customer never gave
+     * and make an anonymous sale look like a named one.
+     */
+    private fun customerNameFor(phone: String): String? {
+        if (phone.isBlank()) return null
+        return runCatching {
+            com.example.synergic_pos_offline.database.CustomerDao(requireContext())
+                .findByPhone(phone)?.name?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+    }
+
     private fun customerOutstanding(phone: String): Double? {
         if (phone.isBlank()) return null
         val db = com.example.synergic_pos_offline.database.DatabaseHelper
@@ -2483,7 +2770,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             billNumber = billNumber,
             dateTime = now,
             cashier = order.cashier,
+            // The customer, by NAME as well as number. The order only carries a phone -
+            // that is what identifies them - so the name is read off the customer list
+            // it was filed in when the order was started. Without this the slip could
+            // only ever show a number, whatever Bill Settings asked for, because the
+            // draft had no name in it to print.
             customer = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Customer(
+                name = customerNameFor(order.phone),
                 phone = order.phone.takeIf { it.isNotBlank() },
                 outstanding = customerOutstanding(order.phone)
             ),
@@ -2492,6 +2785,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             discount = 0.0, roundOff = 0.0, netAmount = b.total,
             paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),
             serviceCharge = b.service,   // shown as its own totals line, not an item
+            // The figures already quoted on the order panel, handed to the slip rather
+            // than worked out again - so what prints is what the customer was told.
+            charges = b.charges.map { it.name to it.amount },
             returnAmount = (tendered - b.total).coerceAtLeast(0.0)   // cash to hand back
         )
     }
@@ -2504,7 +2800,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val nextNo = com.example.synergic_pos_offline.database.BillDao(requireContext()).nextBillNumber()
         // This is the provisional table bill, printed before payment - so it carries no
         // payment mode. The mode is only known and printed on the paid receipt, after
-        // Checkout -> Confirm (see settlePaidOrder -> printGroceryStyleBill with payMethod).
+        // Settlement -> Confirm (see settlePaidOrder -> printGroceryStyleBill with payMethod).
         printGroceryStyleBill(order, printer, billNumber = nextNo, payment = "")
         // What was served has left the shelf, and this is the moment it did: the
         // kitchen has cooked the order, the bill is on the table and completeTable
@@ -2598,7 +2894,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     // exactly "this order has been billed".
                     //
                     // Not a constant, because a table can be paid without the bill
-                    // ever being printed: Checkout is reachable straight from the
+                    // ever being printed: Settlement is reachable straight from the
                     // order. Hard-coding true would mean that sale moved no stock at
                     // all, which is the same bug as deducting twice pointing the other
                     // way. Printed -> deducted there; not printed -> deducted here.
@@ -2617,22 +2913,38 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private fun clearActiveOrder(order: OrderCard) {
         val root = view ?: return
-        // Split sub-table: empty it but keep it as an Available part to re-order.
+        // Split sub-table. Cancel means two different things here, and which one it
+        // means depends on whether the part has been ordered on:
+        //
+        //  - it HAS items → clear them, keep the part. The guests are still there and
+        //    the seat is still theirs; they are just starting again.
+        //  - it is EMPTY → drop the part altogether. An empty part is one nobody is
+        //    using, and this is the operator saying so - which is the only way a split
+        //    ends now that the till no longer decides that for itself. Dropping the
+        //    last part hands the table back whole.
         if (order.id.contains(" ")) {
-            roDao.clearItems(order.dbId)
-            order.items.clear()
-            updateTableStatus(order.id, order.section, "Available")
-            // if every part is now empty, tear the split down
-            freeParentIfSplitDone(order.id, order.section)
-            if (orders.any { it.dbId == order.dbId }) {  // still there → kept as an available part
-                populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+            val accent = ThemeManager.getThemeColor(requireContext())
+            if (order.items.isNotEmpty()) {
+                roDao.clearItems(order.dbId)
+                order.items.clear()
+                updateTableStatus(order.id, order.section, "Available")
+                populateOrders(root, accent)
                 renderCart()
                 toast("Sub-table ${order.id} cleared — available to re-order")
-            } else {                                     // whole split collapsed
-                populateOrders(root, ThemeManager.getThemeColor(requireContext()))
-                clearDetail(root)
-                toast("Table cleared")
+                return
             }
+            roDao.close(order.dbId)
+            orders.removeAll { it.dbId == order.dbId }
+            subTableDao.remove(order.id, order.section)
+            // Frees the parent if that was the last part standing.
+            freeParentIfSplitDone(order.id, order.section)
+            populateOrders(root, accent)
+            clearDetail(root)
+            toast(
+                if (orders.any { it.id.startsWith("${order.id.substringBeforeLast(" ")} ") })
+                    "Sub-table ${order.id} removed"
+                else "Table ${order.id.substringBeforeLast(" ")} is whole again"
+            )
             return
         }
         val mergedTables = roDao.mergedTablesOf(order.dbId)
@@ -2744,14 +3056,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             toast("No new items to send to kitchen"); return
         }
 
-        // Sending a KOT does not change what the table IS: it is still occupied, and
-        // stays that way until the bill is paid. It used to be set to "KOT Printed",
-        // which is not one of the statuses the table master allows
-        // ('Available','Occupied','Reserved','Cleaning','Billing','Blocked') - so the
-        // value either failed to save or read back as unknown, and an unknown status
-        // showed the table as free while guests were sitting at it. Where the order
-        // stands with the kitchen is carried by the KOT badge instead, off the items'
-        // own pending quantity.
+        // THIS IS THE MOMENT A TABLE BECOMES OCCUPIED, and the only one.
+        //
+        // Not opening it, and not adding items to it: until the ticket is cut the
+        // order is still being built at the till and can be emptied, cancelled or
+        // walked away from without anybody having been served. Once the kitchen has
+        // it, food is being cooked for that table - which is what "occupied" means to
+        // a floor - and it stays that way until the bill is paid.
+        //
+        // The status written is "Occupied", not "KOT Printed". That was tried and is
+        // not one of the values the table master allows ('Available','Occupied',
+        // 'Reserved','Cleaning','Billing','Blocked'), so it either failed to save or
+        // read back as unknown - and an unknown status showed the table as FREE while
+        // guests were sitting at it.
         if (!order.type.equals("Take Away", ignoreCase = true)) {
             updateTableStatus(order.id, order.section, "Occupied")
             roDao.mergedTablesOf(order.dbId)
@@ -2770,7 +3087,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // a table whose items have all gone means the next order starts with a table to
         // clear off it first. Posted, so the toast and the cart redraw above land before
         // the picker comes up over them.
-        view?.post { if (isAdded) showChooseTableDialog() }
+        //
+        // DINE-IN ONLY. A take-away has no next table to go to - the counter stays on
+        // the order it just sent, because Settlement is what happens to it next. Now
+        // that Print KOT works for take-away, without this the floor plan would open
+        // over a counter order that is nowhere near finished.
+        if (!order.type.equals("Take Away", ignoreCase = true)) {
+            view?.post { if (isAdded) showChooseTableDialog() }
+        }
     }
 
     private fun updateTotals() {
@@ -2785,7 +3109,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // The same figure on the fold's handle, for while the fold is shut.
         root.findViewById<TextView>(R.id.tvTotalBar).text = "₹ ${money(b.total)}"
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).text =
-            "Checkout  ( ₹ ${money(b.total)} )"
+            "Settlement  ( ₹ ${money(b.total)} )"
         // Reflect the running total on the active order card. Only that one figure
         // moves as items go on, so the card is patched where it stands - rebuilding
         // the whole list meant inflating a card per open table on every tap.

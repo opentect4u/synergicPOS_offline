@@ -45,7 +45,8 @@ class DatabaseSettingsFragment : Fragment() {
             DatabaseItem("Customers", android.R.drawable.ic_menu_myplaces, R.color.menu_report, R.color.menu_report_icon),
             DatabaseItem("Description/Ledger", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon),
             DatabaseItem("Units", android.R.drawable.ic_menu_crop, R.color.menu_settings, R.color.menu_settings_icon),
-            DatabaseItem("Rate Name", android.R.drawable.ic_menu_sort_by_size, R.color.menu_inventory, R.color.menu_inventory_icon)
+            DatabaseItem("Rate Name", android.R.drawable.ic_menu_sort_by_size, R.color.menu_inventory, R.color.menu_inventory_icon),
+            DatabaseItem("Extra Charges", android.R.drawable.ic_menu_agenda, R.color.menu_settings, R.color.menu_settings_icon)
         )
         // Only where the shop runs shifts. Off, there is nothing to put in the master
         // and nothing that reads it - see App Settings' Shift toggle.
@@ -64,6 +65,7 @@ class DatabaseSettingsFragment : Fragment() {
                 "Category/Department" -> openFragment(CategoryDepartmentFragment())
                 "Units" -> openFragment(UnitFragment())
                 "Rate Name" -> openFragment(RateNameFragment())
+                "Extra Charges" -> openFragment(ChargesFragment())
                 "Shifts" -> openFragment(ShiftFragment())
                 "Waiter" -> openFragment(WaiterFragment())
                 "Customers" -> openFragment(CustomerFragment())

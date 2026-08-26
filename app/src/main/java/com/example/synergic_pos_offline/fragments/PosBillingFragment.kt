@@ -272,7 +272,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
      */
     private val heldOrders: MutableList<CheckoutSession.HeldBill> get() = CheckoutSession.heldOrders
 
+    /**
+     * The rows the grid is currently DRAWING - a page of [filteredProducts], grown as
+     * it is scrolled. The adapter reads this; everything that reasons about the whole
+     * result (the empty state, the counts) reads [filteredProducts].
+     */
     private val shownProducts = mutableListOf<Product>()
+
+    /** Everything the current search and category leave, however much of it is drawn. */
+    private val filteredProducts = mutableListOf<Product>()
+
+    /** Feeds [shownProducts] a page at a time - see GridPager. */
+    private var productPager: com.example.synergic_pos_offline.utils.GridPager<Product>? = null
     private lateinit var productAdapter: ProductAdapter
     private lateinit var categoryAdapter: CategoryAdapter
     private lateinit var cartAdapter: CartAdapter
@@ -380,6 +391,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
         com.example.synergic_pos_offline.utils.ProductGrid.attach(rvProducts)
         productAdapter = ProductAdapter()
         rvProducts.adapter = productAdapter
+        productPager = com.example.synergic_pos_offline.utils.GridPager(rvProducts) { page ->
+            shownProducts.clear()
+            shownProducts.addAll(page)
+            productAdapter.notifyDataSetChanged()
+        }
 
         // Cart
         val rvCart = view.findViewById<RecyclerView>(R.id.rvCart)
@@ -877,8 +893,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
     }
 
     private fun applyFilter() {
-        shownProducts.clear()
-        shownProducts.addAll(menu.filter { p ->
+        filteredProducts.clear()
+        filteredProducts.addAll(menu.filter { p ->
             (activeCategory == "All" || p.categoryId == activeCategoryId) &&
                 // Name, then the three codes a product can be asked for by: its SKU,
                 // its barcode, and its HSN - which is how a shop looks up "everything
@@ -888,8 +904,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
                     p.sku.contains(query) || p.barcode.contains(query) ||
                     SearchSuggestions.realHsn(p.hsn)?.contains(query, true) == true)
         })
-        productAdapter.notifyDataSetChanged()
-        tvNoProducts.visibility = if (shownProducts.isEmpty()) View.VISIBLE else View.GONE
+        // Only the first page reaches the adapter; the rest arrives as the grid is
+        // scrolled. The empty state still asks the WHOLE filtered result, so "no
+        // products" means none matched rather than none drawn yet.
+        productPager?.set(filteredProducts.toList()) ?: run {
+            shownProducts.clear(); shownProducts.addAll(filteredProducts)
+            productAdapter.notifyDataSetChanged()
+        }
+        tvNoProducts.visibility = if (filteredProducts.isEmpty()) View.VISIBLE else View.GONE
     }
 
     /**
@@ -1888,17 +1910,58 @@ class PosBillingFragment : Fragment(), TitledScreen {
      */
     private fun taxedTotal(): Double {
         val extra = itemwiseDiscountSumOf(cart, discountAmt())
-        return if (discountPreTax) {
+        val goods = if (discountPreTax) {
             (taxableSumOf(cart, discountAmt()) + taxAmt() - extra).coerceAtLeast(0.0)
         } else {
             (taxableSumOf(cart, discountAmt()) + taxAmt() - discountAmt() - extra).coerceAtLeast(0.0)
         }
+        // The extra charges join LAST, on top of the taxed goods. They are the shop's
+        // own additions rather than part of what was sold, so nothing above them is
+        // worked out from them.
+        return goods + extraChargesTotal()
     }
 
-    private fun roundOffAmt(): Double = BillRounding.roundOff(taxedTotal())
+    /**
+     * Whether any line on this bill is sold by a fraction of its unit - 0.125 kg,
+     * 1.5 L, 2.750 m.
+     *
+     * A fractional line is a MEASURED one: it came off a scale, and the price was
+     * worked out from a weight the customer watched being taken. Rounding that bill to
+     * the rupee throws away the precision the measurement was for - the shop weighed
+     * to the gram and then charged to the rupee, and the two figures no longer agree
+     * with each other on the slip.
+     *
+     * So a bill carrying one is charged exactly. See [roundOffAmt] and [computeTotal].
+     */
+    /**
+     * The shop's own extra charges, worked out against this cart.
+     *
+     * The base is [subtotal] - the sum of the item lines, BEFORE any tax. That is what
+     * these charges are charges on: two items at 100 and 200 make a 5% charge 15,
+     * whatever tax the goods themselves then carry. Each enabled charge takes its
+     * percentage of that same figure and never of a running total, so the order they
+     * sit in the master cannot change the bill.
+     */
+    private fun extraCharges(): List<com.example.synergic_pos_offline.database.ChargeDao.Applied> =
+        runCatching {
+            com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal())
+        }.getOrDefault(emptyList())
 
-    /** Rounded to whole rupees, so this screen quotes what checkout will charge. */
-    private fun computeTotal(): Double = BillRounding.payable(taxedTotal())
+    /** What [extraCharges] adds to the bill. */
+    private fun extraChargesTotal(): Double = BillRounding.toPaise(extraCharges().sumOf { it.amount })
+
+    private fun hasFractionalQty(): Boolean = cart.any { it.qty % 1.0 != 0.0 }
+
+    private fun roundOffAmt(): Double =
+        if (hasFractionalQty()) 0.0 else BillRounding.roundOff(taxedTotal())
+
+    /**
+     * What checkout will charge: rounded to whole rupees, unless a line was measured -
+     * see [hasFractionalQty] - in which case the exact taxed total stands.
+     */
+    private fun computeTotal(): Double =
+        if (hasFractionalQty()) BillRounding.toPaise(taxedTotal())
+        else BillRounding.payable(taxedTotal())
 
     /**
      * A line's taxable value, tax and (for item-wise discount only) the further

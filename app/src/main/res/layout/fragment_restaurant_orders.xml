@@ -293,10 +293,33 @@
                     app:iconGravity="textEnd"
                     app:cornerRadius="10dp" />
 
-                <View
+                <!-- The product search, up here rather than over the menu below.
+                     Takes the row's spare width instead of a spacer, so it sits
+                     between the table controls and Active Orders and grows with
+                     whatever the buttons leave. Narrower than it was, which costs it
+                     nothing: it holds one line of text either way, and the height it
+                     used to occupy is now menu. -->
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
                     android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="10dp"
+                    android:hint="Search / scan"
+                    app:startIconDrawable="@android:drawable/ic_menu_search"
+                    app:boxCornerRadiusTopStart="10dp"
+                    app:boxCornerRadiusTopEnd="10dp"
+                    app:boxCornerRadiusBottomStart="10dp"
+                    app:boxCornerRadiusBottomEnd="10dp">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etProductSearch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="text"
+                        android:imeOptions="actionSearch"
+                        android:maxLines="1"
+                        android:textSize="14sp" />
+                </com.google.android.material.textfield.TextInputLayout>
 
                 <!-- Slides the active-order list in over the menu (and out again). -->
                 <com.google.android.material.button.MaterialButton
@@ -349,25 +372,10 @@
                     android:orientation="vertical"
                     android:paddingHorizontal="18dp">
 
-                    <com.google.android.material.textfield.TextInputLayout
-                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:hint="Scan barcode or search name / SKU / HSN"
-                        app:startIconDrawable="@android:drawable/ic_menu_search"
-                        app:boxCornerRadiusTopStart="12dp"
-                        app:boxCornerRadiusTopEnd="12dp"
-                        app:boxCornerRadiusBottomStart="12dp"
-                        app:boxCornerRadiusBottomEnd="12dp">
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/etProductSearch"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:inputType="text"
-                            android:imeOptions="actionSearch"
-                            android:maxLines="1"
-                            android:textSize="15sp" />
-                    </com.google.android.material.textfield.TextInputLayout>
+                    <!-- The search box is not here any more: it moved up into the action
+                         row, between Choose Table and Active Orders. It is narrower
+                         there, which a search box can afford - it holds one line either
+                         way - and the height it used to take goes to the menu below. -->
 
                     <!-- Section/category tabs -->
                     <HorizontalScrollView
@@ -456,6 +464,7 @@
 
                     <!-- The one part that flexes; everything under it keeps its height. -->
                     <ScrollView
+                        android:id="@+id/svOrderItems"
                         android:layout_width="match_parent"
                         android:layout_height="0dp"
                         android:layout_weight="1"
@@ -682,7 +691,7 @@
                             android:layout_marginTop="10dp"
                             android:insetTop="0dp"
                             android:insetBottom="0dp"
-                            android:text="Checkout"
+                            android:text="Settlement"
                             android:textColor="@color/white"
                             android:textSize="16sp"
                             app:cornerRadius="12dp" />

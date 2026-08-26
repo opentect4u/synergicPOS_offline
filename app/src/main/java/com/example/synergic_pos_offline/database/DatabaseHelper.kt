@@ -37,6 +37,10 @@ class DatabaseHelper private constructor(context: Context) :
         // takes nothing away, so an existing till gains it on the next open without
         // a migration that could fail half-done.
         runCatching { db.execSQL(SQL_CREATE_MD_SHIFTS) }
+        // The extra-charges master. Created here rather than behind a version bump,
+        // for the same reason the two above are: it takes nothing away, so a till
+        // that already exists gains it on its next open.
+        runCatching { db.execSQL(SQL_CREATE_MD_CHARGES) }
         addColumnIfMissing(db, Tables.MD_USERS, "shift_id", "INTEGER")
         // Older installs created md_rate_name before it was store-scoped and audited;
         // add the missing columns and attach any pre-existing rows to the registered
@@ -1196,6 +1200,7 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_UNITS = "md_units"
         const val MD_SHIFTS = "md_shifts"
         const val MD_RATE_NAME = "md_rate_name"
+        const val MD_CHARGES = "md_charges"
         const val MD_PRODUCTS = "md_products"
         const val MD_PRODUCT_RATES = "md_product_rates"
         const val MD_CUSTOMERS = "md_customers"
@@ -1382,6 +1387,36 @@ class DatabaseHelper private constructor(context: Context) :
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 store_id INTEGER,
                 rate_name TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
+        /**
+         * The extra-charges master: a shop's own additions to a bill - service,
+         * packing, delivery - each a NAME and a PERCENTAGE, switched on and off one
+         * at a time.
+         *
+         * A percentage rather than a flat amount because that is what these charges
+         * are in practice: packing a large order costs more than packing a small one.
+         * What it is a percentage OF is the bill's item lines before any tax - see
+         * ChargeDao.
+         *
+         * is_enabled is deliberately separate from is_active. Active is whether the
+         * row exists at all (deleting clears it); enabled is whether a charge that
+         * exists is currently being applied. A shop that stops charging for delivery
+         * for a month wants the row back afterwards with its rate intact, not retyped.
+         */
+        private const val SQL_CREATE_MD_CHARGES = """
+            CREATE TABLE IF NOT EXISTS md_charges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                charge_name TEXT NOT NULL,
+                percentage REAL NOT NULL DEFAULT 0,
+                is_enabled INTEGER NOT NULL DEFAULT 1,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,

@@ -86,7 +86,7 @@ object DefaultSettings {
         hsnCode = false,
         productSerialNumber = true,
         timeOnBill = true,
-        customerDetails = BillSettingsDao.CustomerDetails.ONLY_MOBILE,
+        customerDetails = BillSettingsDao.CustomerDetails.MOBILE_NAME,
         customerAddressPrinting = false,
         totalAmountFontSize = BillSettingsDao.FontSize.REGULAR,
         billFormat = BillSettingsDao.BillFormat.CLASSIC

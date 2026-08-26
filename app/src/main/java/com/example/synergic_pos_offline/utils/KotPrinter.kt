@@ -136,14 +136,26 @@ object KotPrinter {
         // the kitchen, the floor and the till all say it - and spelling out "kitchen
         // order ticket" in another language would name it something nobody asks for.
         lines += Line("KOT", title, center = true)
-        // The KOT number, the table code and the time are identifiers, not words: the
-        // staff match them against a physical table and a screen that both say "T1",
-        // so they print as they are, the way a bill number does.
+        // The KOT number, the table code, the time and the date are identifiers, not
+        // words: the staff match them against a physical table and a screen that both
+        // say "T1", so they print as they are, the way a bill number does.
         lines += Line(batch.kotNumber, sub, center = true)
         if (batch.section.isNotBlank()) {
             lines += Line("${t("SECTION")}: ${batch.section}", sub, center = true)
         }
         lines += Line("${t("TABLE")}: ${batch.tableCode}    ${batch.time}", sub, center = true)
+        // The date on its own line, under the table and time.
+        //
+        // Not appended to the line above: on a 58mm roll "TABLE: 12    26-08-2026
+        // 03:45 PM" runs off the edge, and the table code is the first thing the pass
+        // looks for - it must not be the thing that gets pushed out. A line of its own
+        // costs one line of paper and keeps both readable at a glance.
+        //
+        // Blank on a batch built without one, which prints nothing rather than an
+        // empty line.
+        if (batch.date.isNotBlank()) {
+            lines += Line(batch.date, sub, center = true)
+        }
         /**
          * One dish: how many, and what - in the print language, and wrapped.
          *
