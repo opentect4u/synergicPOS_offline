@@ -447,16 +447,30 @@ object DialogUtils {
                     inputs.add(TextInputEditText(ctx).apply { visibility = android.view.View.GONE })
                 }
                 "dropdown" -> {
-                    // Create a dropdown (AutoCompleteTextView with ArrayAdapter)
+                    // Create a dropdown using TextInputLayout
                     val til = inflater.inflate(R.layout.item_form_field, grid, false) as TextInputLayout
                     til.hint = field.label
                     til.layoutParams = params
 
                     val et = til.findViewById<TextInputEditText>(R.id.etField)
                     et.setText(field.value)
+                    et.inputType = android.text.InputType.TYPE_NULL  // Disable keyboard
+                    et.isFocusable = true
+                    et.isClickable = true
 
-                    val adapter = android.widget.ArrayAdapter(ctx, android.R.layout.simple_dropdown_item_1line, field.options)
-                    (et as? android.widget.AutoCompleteTextView)?.setAdapter(adapter)
+                    // Show dropdown menu on click
+                    et.setOnClickListener { view ->
+                        android.widget.PopupMenu(ctx, view).apply {
+                            field.options.forEach { option ->
+                                menu.add(option)
+                            }
+                            setOnMenuItemClickListener { item ->
+                                et.setText(item.title)
+                                true
+                            }
+                            show()
+                        }
+                    }
 
                     grid.addView(til, params)
                     inputs.add(et)
