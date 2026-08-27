@@ -1948,18 +1948,22 @@ class PosBillingFragment : Fragment(), TitledScreen {
     /** What [extraCharges] adds to the bill. */
     private fun extraChargesTotal(): Double = BillRounding.toPaise(extraCharges().sumOf { it.amount })
 
-    private fun hasFractionalQty(): Boolean = cart.any { it.qty % 1.0 != 0.0 }
+    /** Bill Settings' own switch - the one and only say in whether a bill rounds. */
+    private fun roundOffOn(): Boolean =
+        runCatching {
+            com.example.synergic_pos_offline.database.BillSettingsDao(requireContext()).load().roundOff
+        }.getOrDefault(false)
 
     private fun roundOffAmt(): Double =
-        if (hasFractionalQty()) 0.0 else BillRounding.roundOff(taxedTotal())
+        if (roundOffOn()) BillRounding.roundOff(taxedTotal()) else 0.0
 
     /**
-     * What checkout will charge: rounded to whole rupees, unless a line was measured -
-     * see [hasFractionalQty] - in which case the exact taxed total stands.
+     * What checkout will charge: rounded to whole rupees whenever Bill Settings'
+     * Round Off is on - a measured line (0.700 kg, 1.5 L) is not an exception, the
+     * setting is the only thing that decides this.
      */
     private fun computeTotal(): Double =
-        if (hasFractionalQty()) BillRounding.toPaise(taxedTotal())
-        else BillRounding.payable(taxedTotal())
+        if (roundOffOn()) BillRounding.payable(taxedTotal()) else BillRounding.toPaise(taxedTotal())
 
     /**
      * A line's taxable value, tax and (for item-wise discount only) the further

@@ -927,22 +927,24 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
     private fun extraChargesTotal(): Double = BillRounding.toPaise(extraCharges().sumOf { it.amount })
 
-    private fun hasFractionalQty(): Boolean = lines.any { it.qty % 1.0 != 0.0 }
+    /** Bill Settings' own switch - the one and only say in whether a bill rounds. */
+    private fun roundOffOn(): Boolean =
+        runCatching { BillSettingsDao(requireContext()).load().roundOff }.getOrDefault(false)
 
     private fun roundOffAmt() =
-        if (hasFractionalQty()) 0.0 else BillRounding.roundOff(taxedTotal())
+        if (roundOffOn()) BillRounding.roundOff(taxedTotal()) else 0.0
 
     /**
      * What the customer actually pays. Everything downstream - the amount due, the
      * cash validation, the figure written to the bill - works from this, so the
      * receipt, the payment record and the till all agree on one number.
      *
-     * Rounded to whole rupees, except on a bill with a measured line: see
-     * [hasFractionalQty].
+     * Rounded to whole rupees whenever Bill Settings' Round Off is on - a measured
+     * line (0.700 kg, 1.5 L) is not an exception: the setting is the only thing that
+     * decides this, not what happens to be in the cart.
      */
     private fun total() =
-        if (hasFractionalQty()) BillRounding.toPaise(taxedTotal())
-        else BillRounding.payable(taxedTotal())
+        if (roundOffOn()) BillRounding.payable(taxedTotal()) else BillRounding.toPaise(taxedTotal())
 
     /** "Discount (10%)" or "Discount (₹50.00)", matching however it was entered. */
     private fun discountLabelText(): String = "Discount (" + (

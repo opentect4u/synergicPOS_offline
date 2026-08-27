@@ -147,7 +147,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             roDao.itemsFor(ro.id).filter { it.qty > 0.0 }.forEach { ri ->
                 card.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate))
             }
-            card.amount = "₹ ${money(computeBill(card.items, serviceRateFor(card.section), card.type).total)}"
+            card.amount = "₹ ${money(payableTotal(computeBill(card.items, serviceRateFor(card.section), card.type).total))}"
             orders.add(card)
         }
     }
@@ -225,6 +225,25 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             chargesTotal
         return BillBreakdown(subtotal, service, cgst, sgst, total, charges)
     }
+
+    /**
+     * Bill Settings' Round Off switch - the one and only say in whether a restaurant
+     * bill rounds. On, every payable total is rounded to the whole rupee regardless
+     * of what is in the order; off, the exact taxed total stands. Read live rather
+     * than cached, same as the grocery till, so a setting changed mid-shift takes
+     * effect on the next bill without a restart.
+     */
+    private fun roundOffOn(): Boolean = runCatching {
+        com.example.synergic_pos_offline.database.BillSettingsDao(requireContext()).load().roundOff
+    }.getOrDefault(false)
+
+    /** [total] as the customer actually pays - see [roundOffOn]. */
+    private fun payableTotal(total: Double): Double =
+        if (roundOffOn()) BillRounding.payable(total) else BillRounding.toPaise(total)
+
+    /** The adjustment [payableTotal] applied to reach the rounded figure - 0 when off. */
+    private fun roundOffAmount(total: Double): Double =
+        if (roundOffOn()) BillRounding.roundOff(total) else 0.0
 
     // Tax configuration, resolved the same way the grocery billing screen does.
     private val taxSettings by lazy { TaxSettingsDao(requireContext()).load() }
@@ -2806,7 +2825,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             .also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
-        val total = computeBill(order.items, serviceRateFor(order.section), order.type).total
+        // Rounded here rather than at settlement, so what the operator reads, what
+        // gets validated against the cash handed over, and what persistBill() later
+        // charges are all the one figure - not the exact total with the rounding
+        // sprung on the counter only once the bill is saved.
+        val total = payableTotal(computeBill(order.items, serviceRateFor(order.section), order.type).total)
         v.findViewById<TextView>(R.id.tvQpTotal).text = "₹ ${money(total)}"
         v.findViewById<TextView>(R.id.tvQpSubtitle).text = buildString {
             append(order.id.replace("TA-", "Token #"))
@@ -3069,7 +3092,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             ),
             table = billTable,
             items = items,
-            discount = 0.0, roundOff = BillRounding.roundOff(b.total), netAmount = BillRounding.payable(b.total),
+            discount = 0.0, roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
             paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),
             serviceCharge = b.service,   // shown as its own totals line, not an item
             // The figures already quoted on the order panel, handed to the slip rather
@@ -3078,7 +3101,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             chargeTypes = b.charges.map { it.type.name },
             chargeApplicabilities = b.charges.map { it.applicability.name },
             orderType = chargeOrderType,
-            returnAmount = (tendered - BillRounding.payable(b.total)).coerceAtLeast(0.0)   // cash to hand back
+            returnAmount = (tendered - payableTotal(b.total)).coerceAtLeast(0.0)   // cash to hand back
         )
     }
 
@@ -3141,10 +3164,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val billType = when (payMethod.lowercase(java.util.Locale.US)) {
             "card" -> "CARD"; "online" -> "ONLINE"; else -> "CASH"
         }
+        // What the customer actually owes, Round Off applied the same way it is
+        // everywhere else on this bill - the DB record has to agree with the slip
+        // that was printed from the same order.
+        val payable = payableTotal(b.total)
         // Cash handed over more than the bill → book the change and record what was
         // actually tendered; otherwise the payment settles exactly the total.
-        val change = (tendered - b.total).coerceAtLeast(0.0)
-        val amountPaid = if (tendered > b.total) tendered else b.total
+        val change = (tendered - payable).coerceAtLeast(0.0)
+        val amountPaid = if (tendered > payable) tendered else payable
         val custId = billDao.findCustomerIdByPhone(order.phone.takeIf { it.isNotBlank() })
         val waiterId = roDao.findByTable(order.id, order.section)?.waiterId
 
@@ -3175,7 +3202,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     discountPercentage = 0.0,
                     cgstAmount = b.cgst,
                     sgstAmount = b.sgst,
-                    netAmount = b.total,
+                    netAmount = payable,
+                    roundOffAmount = roundOffAmount(b.total),
                     otherChargesAmount = b.service,   // so net reconciles with stored components
                     waiterId = waiterId,
                     tableNumber = order.id,
@@ -3394,20 +3422,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val root = view ?: return
         val order = currentOrder()
         val b = computeBill(order?.items ?: emptyList(), serviceRateFor(order?.section.orEmpty()), order?.type)
+        val payable = payableTotal(b.total)
         root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(b.subtotal)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(b.service)}"
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(b.cgst)}"
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(b.sgst)}"
-        root.findViewById<TextView>(R.id.tvOrderTotal).text = "₹ ${money(b.total)}"
+        root.findViewById<TextView>(R.id.tvOrderTotal).text = "₹ ${money(payable)}"
         // The same figure on the fold's handle, for while the fold is shut.
-        root.findViewById<TextView>(R.id.tvTotalBar).text = "₹ ${money(b.total)}"
+        root.findViewById<TextView>(R.id.tvTotalBar).text = "₹ ${money(payable)}"
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).text =
-            "Settlement  ( ₹ ${money(b.total)} )"
+            "Settlement  ( ₹ ${money(payable)} )"
         // Reflect the running total on the active order card. Only that one figure
         // moves as items go on, so the card is patched where it stands - rebuilding
         // the whole list meant inflating a card per open table on every tap.
         order?.let {
-            it.amount = "₹ ${money(b.total)}"
+            it.amount = "₹ ${money(payable)}"
             if (!updateOrderCardAmount(root, it)) {
                 populateOrders(root, ThemeManager.getThemeColor(requireContext()))
             }

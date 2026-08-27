@@ -163,6 +163,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         // Flat section service charge (₹), applied only to a non-empty order.
         val service = if (subtotal > 0.0) serviceRate else 0.0
         val netTotal = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
+        val roundOffOn = runCatching {
+            com.example.synergic_pos_offline.database.BillSettingsDao(ctx).load().roundOff
+        }.getOrDefault(false)
 
         // The table as the bill's own field - see Draft.table - rather than smuggled
         // in as the customer's name, which the Customer Details setting could switch
@@ -183,14 +186,20 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                     cgstRate = it.cgstRate, sgstRate = it.sgstRate, hsn = it.hsn
                 )
             },
-            discount = 0.0, roundOff = BillRounding.roundOff(netTotal), netAmount = BillRounding.payable(netTotal),
+            // Bill Settings' Round Off is the only say in whether this rounds - on,
+            // it rounds every total regardless of what is in the cart; off, the exact
+            // taxed figure stands.
+            discount = 0.0,
+            roundOff = if (roundOffOn) BillRounding.roundOff(netTotal) else 0.0,
+            netAmount = if (roundOffOn) BillRounding.payable(netTotal) else BillRounding.toPaise(netTotal),
             paymentModes = listOf(payMethod.uppercase(java.util.Locale.US)),
             serviceCharge = service,
             orderType = if (tableNo.startsWith("TA-", ignoreCase = true)) "TAKEAWAY" else "DINE_IN",
             returnAmount = run {
                 val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
                     ?.text?.toString()?.toDoubleOrNull() ?: 0.0
-                (tendered - BillRounding.payable(netTotal)).coerceAtLeast(0.0)
+                val payable = if (roundOffOn) BillRounding.payable(netTotal) else BillRounding.toPaise(netTotal)
+                (tendered - payable).coerceAtLeast(0.0)
             }
         )
         val paperDots = com.example.synergic_pos_offline.database.OperatingPrinterDao(ctx).getAll()
