@@ -417,6 +417,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     val rates = order.items.map { it.rate }.toDoubleArray()
                     val cgsts = order.items.map { it.cgstRate }.toDoubleArray()
                     val sgsts = order.items.map { it.sgstRate }.toDoubleArray()
+                    // Off the catalogue, same as buildBillDraft() - a cart line does not
+                    // carry its own HSN, the product it was sold from does.
+                    val hsns = ArrayList(order.items.map { line ->
+                        allProducts.firstOrNull { it.product.id == line.productId.toString() }
+                            ?.product?.hsn.orEmpty()
+                    })
                     requireActivity().supportFragmentManager.beginTransaction()
                         .replace(
                             R.id.fragment_container,
@@ -424,7 +430,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 order.dbId, order.id, order.section,
                                 order.phone.ifBlank { "Walk-in" }, names, qtys, rates,
                                 cgsts, sgsts, serviceRateFor(order.section),
-                                gstEnabled = taxSettings.gstEnabled, inclusive = taxInclusive
+                                gstEnabled = taxSettings.gstEnabled, inclusive = taxInclusive,
+                                hsns = hsns
                             )
                         )
                         .addToBackStack(null)

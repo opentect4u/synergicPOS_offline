@@ -23,7 +23,10 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Checkout"
 
-    private data class Line(val name: String, val qty: Double, val rate: Double, val cgstRate: Double, val sgstRate: Double)
+    private data class Line(
+        val name: String, val qty: Double, val rate: Double, val cgstRate: Double, val sgstRate: Double,
+        val hsn: String? = null
+    )
 
     // The selected order's items, passed in from the Orders screen.
     private val lines: List<Line> by lazy {
@@ -32,9 +35,13 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         val rates = arguments?.getDoubleArray(ARG_RATES) ?: DoubleArray(0)
         val cgsts = arguments?.getDoubleArray(ARG_CGSTS) ?: DoubleArray(0)
         val sgsts = arguments?.getDoubleArray(ARG_SGSTS) ?: DoubleArray(0)
+        val hsns = arguments?.getStringArrayList(ARG_HSNS)
         names.mapIndexed { i, n ->
-            Line(n, qtys.getOrElse(i) { 1.0 }, rates.getOrElse(i) { 0.0 },
-                cgsts.getOrElse(i) { 0.0 }, sgsts.getOrElse(i) { 0.0 })
+            Line(
+                n, qtys.getOrElse(i) { 1.0 }, rates.getOrElse(i) { 0.0 },
+                cgsts.getOrElse(i) { 0.0 }, sgsts.getOrElse(i) { 0.0 },
+                hsns?.getOrNull(i)?.takeIf { it.isNotBlank() }
+            )
         }
     }
 
@@ -172,7 +179,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             table = receiptTable,
             items = lines.map {
                 com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
-                    it.name, it.qty.toDouble(), it.rate, it.cgstRate, it.sgstRate
+                    name = it.name, quantity = it.qty.toDouble(), rate = it.rate,
+                    cgstRate = it.cgstRate, sgstRate = it.sgstRate, hsn = it.hsn
                 )
             },
             discount = 0.0, roundOff = BillRounding.roundOff(netTotal), netAmount = BillRounding.payable(netTotal),
@@ -325,6 +333,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_RATES = "rates"
         private const val ARG_CGSTS = "cgsts"
         private const val ARG_SGSTS = "sgsts"
+        private const val ARG_HSNS = "hsns"
         private const val ARG_SERVICE_RATE = "service_rate"
         private const val ARG_GST_ON = "gst_on"
         private const val ARG_INCLUSIVE = "inclusive"
@@ -333,12 +342,16 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
          * Builds a checkout for the running order [orderId] on [table] in [section],
          * carrying its items and tax. The order id travels with it so the paid result
          * settles this order rather than the same-numbered table in another section.
+         *
+         * [hsns] is optional and defaults to empty - a caller that has not looked the
+         * codes up (or a build predating this parameter) still gets a working preview,
+         * just without HSN on it. Empty string in a slot means "this item has none".
          */
         fun newInstance(
             orderId: Long, table: String, section: String, customer: String,
             names: ArrayList<String>, qtys: DoubleArray, rates: DoubleArray,
             cgsts: DoubleArray, sgsts: DoubleArray, serviceRate: Double,
-            gstEnabled: Boolean, inclusive: Boolean
+            gstEnabled: Boolean, inclusive: Boolean, hsns: ArrayList<String> = arrayListOf()
         ): RestaurantCheckoutFragment = RestaurantCheckoutFragment().apply {
             arguments = android.os.Bundle().apply {
                 putLong(ARG_ORDER_ID, orderId)
@@ -350,6 +363,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putDoubleArray(ARG_RATES, rates)
                 putDoubleArray(ARG_CGSTS, cgsts)
                 putDoubleArray(ARG_SGSTS, sgsts)
+                putStringArrayList(ARG_HSNS, hsns)
                 putDouble(ARG_SERVICE_RATE, serviceRate)
                 putBoolean(ARG_GST_ON, gstEnabled)
                 putBoolean(ARG_INCLUSIVE, inclusive)
