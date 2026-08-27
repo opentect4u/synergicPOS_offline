@@ -312,8 +312,21 @@ class GeneralSettingsDao(context: Context) {
          */
         fun canAccessSection(context: Context, key: String): Boolean {
             if (com.example.synergic_pos_offline.utils.SessionManager.isAdmin()) return true
-            val cached = com.example.synergic_pos_offline.utils.SettingsCache.value(context, "G", key)
-            return cached == "1"
+            // Read off the signed-in user's own row. It used to be one flag per till
+            // out of the settings cache, which answered the same for everyone who
+            // signed in on that machine - a manager and a counter hand sharing a till
+            // could not be given different sections.
+            val id = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.serialNo
+                ?.takeIf { it > 0 } ?: return false
+            val access = runCatching { UserDao(context).accessFor(id) }
+                .getOrDefault(UserDao.Access())
+            return when (key) {
+                KEY_ACCESS_MASTER -> access.master
+                KEY_ACCESS_SETTINGS -> access.settings
+                KEY_ACCESS_REPORTS -> access.reports
+                KEY_ACCESS_ABOUT_APP -> access.aboutApp
+                else -> false
+            }
         }
 
         /**

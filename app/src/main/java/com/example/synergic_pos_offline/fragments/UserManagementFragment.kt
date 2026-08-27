@@ -95,6 +95,22 @@ class UserManagementFragment : DataTableFragment() {
         val tilShift = view.findViewById<TextInputLayout>(R.id.tilShift)
         val actShift = view.findViewById<android.widget.AutoCompleteTextView>(R.id.actShift)
         val swBlock = view.findViewById<SwitchMaterial>(R.id.swBlock)
+        val cardAccess = view.findViewById<View>(R.id.cardUserAccess)
+        val swAccessMaster = view.findViewById<SwitchMaterial>(R.id.swAccessMaster)
+        val swAccessSettings = view.findViewById<SwitchMaterial>(R.id.swAccessSettings)
+        val swAccessReports = view.findViewById<SwitchMaterial>(R.id.swAccessReports)
+        val swAccessAboutApp = view.findViewById<SwitchMaterial>(R.id.swAccessAboutApp)
+
+        // Granting access is an admin's job. A general user editing their own details
+        // must not be able to hand themselves the Master section.
+        cardAccess.visibility =
+            if (com.example.synergic_pos_offline.utils.SessionManager.isAdmin()) View.VISIBLE
+            else View.GONE
+        val access = existing?.access ?: UserDao.Access()
+        swAccessMaster.isChecked = access.master
+        swAccessSettings.isChecked = access.settings
+        swAccessReports.isChecked = access.reports
+        swAccessAboutApp.isChecked = access.aboutApp
         val tvBlockState = view.findViewById<TextView>(R.id.tvBlockState)
         val btnSave = view.findViewById<MaterialButton>(R.id.btnFormPositive)
         val btnCancel = view.findViewById<MaterialButton>(R.id.btnFormNegative)
@@ -231,23 +247,42 @@ class UserManagementFragment : DataTableFragment() {
                 picked.id
             }
 
+            // What the form is granting. A non-admin never sees the card, so their
+            // save carries whatever the user already had rather than a row of offs.
+            val grantedAccess = if (com.example.synergic_pos_offline.utils.SessionManager.isAdmin()) {
+                UserDao.Access(
+                    master = swAccessMaster.isChecked,
+                    settings = swAccessSettings.isChecked,
+                    reports = swAccessReports.isChecked,
+                    aboutApp = swAccessAboutApp.isChecked
+                )
+            } else {
+                access
+            }
+
             if (existing == null) {
                 val password = etPassword.text?.toString().orEmpty()
                 if (password.isEmpty()) { etPassword.error = "Password is required"; return@setOnClickListener }
                 if (dao.userIdExists(userId)) { etUserId.error = "User ID already exists"; return@setOnClickListener }
                 // Managed users are always created as General User.
-                val id = dao.insert(userId, password, userName, phone, Role.GENERAL, blocked, shiftId)
+                val id = dao.insert(
+                    userId, password, userName, phone, Role.GENERAL, blocked, shiftId, grantedAccess
+                )
                 if (id == -1L) { toast("Save failed"); return@setOnClickListener }
                 dialog.dismiss()
-                val created = UserDao.AppUser(id, userId, userName, phone, Role.GENERAL, blocked, shiftId)
+                val created =
+                    UserDao.AppUser(id, userId, userName, phone, Role.GENERAL, blocked, shiftId, grantedAccess)
                 cache[id.toString()] = created
                 addRow(created.toRow())
                 toast("User added (${created.operatorId})")
             } else {
                 // Keep the existing role; managed edits don't change it.
-                dao.update(existing.id, userName, phone, existing.role, blocked, shiftId)
+                dao.update(existing.id, userName, phone, existing.role, blocked, shiftId, grantedAccess)
                 dialog.dismiss()
-                val updated = existing.copy(userName = userName, phone = phone, blocked = blocked, shiftId = shiftId)
+                val updated = existing.copy(
+                    userName = userName, phone = phone, blocked = blocked,
+                    shiftId = shiftId, access = grantedAccess
+                )
                 cache[existing.id.toString()] = updated
                 updateRow(existing.id.toString(), updated.toRow().cells)
                 toast("User updated")

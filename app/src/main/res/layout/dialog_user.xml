@@ -255,6 +255,89 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!--
+                Access control, granted per user. It used to be one set of switches in
+                General Settings covering everyone who signed in on the till, which
+                could not describe a shop with a manager and a counter hand on the same
+                machine. Hidden for an admin, who reaches every section regardless.
+            -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardUserAccess"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="0dp"
+                app:strokeWidth="1dp"
+                app:strokeColor="#E4E7EB"
+                app:cardBackgroundColor="@color/white">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="18dp">
+
+                    <TextView
+                        android:id="@+id/tvUserAccessHeader"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="ACCESS CONTROL"
+                        android:textSize="12sp"
+                        android:letterSpacing="0.08"
+                        android:textStyle="bold"
+                        android:textColor="@color/primary_blue" />
+
+                    <TextView
+                        style="@style/BillSettingSub"
+                        android:layout_marginTop="4dp"
+                        android:text="Which sections this user may open. Everything is off until it is granted." />
+
+                    <LinearLayout style="@style/BillSettingRow">
+                        <LinearLayout style="@style/BillSettingText">
+                            <TextView style="@style/BillSettingTitle" android:text="Master" />
+                            <TextView style="@style/BillSettingSub" android:text="Access to the Master section" />
+                        </LinearLayout>
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/swAccessMaster" style="@style/BillSettingSwitch" />
+                    </LinearLayout>
+
+                    <View style="@style/BillSettingDivider" />
+
+                    <LinearLayout style="@style/BillSettingRow">
+                        <LinearLayout style="@style/BillSettingText">
+                            <TextView style="@style/BillSettingTitle" android:text="Settings" />
+                            <TextView style="@style/BillSettingSub" android:text="Access to the Settings section" />
+                        </LinearLayout>
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/swAccessSettings" style="@style/BillSettingSwitch" />
+                    </LinearLayout>
+
+                    <View style="@style/BillSettingDivider" />
+
+                    <LinearLayout style="@style/BillSettingRow">
+                        <LinearLayout style="@style/BillSettingText">
+                            <TextView style="@style/BillSettingTitle" android:text="Reports" />
+                            <TextView style="@style/BillSettingSub" android:text="Access to the Reports section" />
+                        </LinearLayout>
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/swAccessReports" style="@style/BillSettingSwitch" />
+                    </LinearLayout>
+
+                    <View style="@style/BillSettingDivider" />
+
+                    <LinearLayout style="@style/BillSettingRow">
+                        <LinearLayout style="@style/BillSettingText">
+                            <TextView style="@style/BillSettingTitle" android:text="About App" />
+                            <TextView style="@style/BillSettingSub"
+                                android:text="Access to About App - backup, restore and the actions that cannot be undone" />
+                        </LinearLayout>
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/swAccessAboutApp" style="@style/BillSettingSwitch" />
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
             <!-- Actions -->
             <LinearLayout
                 android:layout_width="match_parent"

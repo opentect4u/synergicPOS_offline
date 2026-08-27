@@ -42,6 +42,17 @@ class DatabaseHelper private constructor(context: Context) :
         // that already exists gains it on its next open.
         runCatching { db.execSQL(SQL_CREATE_MD_CHARGES) }
         addColumnIfMissing(db, Tables.MD_USERS, "shift_id", "INTEGER")
+        // Which sections this user may open. Access used to be one set of flags for
+        // the whole till, which meant every general user saw the same thing; it is
+        // granted per user now, from the Add/Edit User form.
+        //
+        // Default 0: a user created before this had no access of their own, and an
+        // account that silently gained the Master section on upgrade would be worse
+        // than one an admin has to grant it to.
+        addColumnIfMissing(db, Tables.MD_USERS, "access_master", "INTEGER DEFAULT 0")
+        addColumnIfMissing(db, Tables.MD_USERS, "access_settings", "INTEGER DEFAULT 0")
+        addColumnIfMissing(db, Tables.MD_USERS, "access_reports", "INTEGER DEFAULT 0")
+        addColumnIfMissing(db, Tables.MD_USERS, "access_about_app", "INTEGER DEFAULT 0")
         // Older installs created md_rate_name before it was store-scoped and audited;
         // add the missing columns and attach any pre-existing rows to the registered
         // store, so the list, add/edit/delete and store filtering all work on them.
