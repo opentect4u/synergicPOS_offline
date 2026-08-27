@@ -2226,10 +2226,15 @@ class BillReceiptRenderer(context: Context) {
         /** The figures, in their columns - the same cells whichever line they land on. */
         fun addFigures(row: LinearLayout) {
             ITEM_FIGURE_COLUMNS.filter { showDisc || it != DISC_COLUMN }.forEach { i ->
+                val text = when {
+                    i == QTY_COLUMN && item.hsn != null -> "HSN: ${item.hsn}\n${itemCellText(item, i)}"
+                    else -> itemCellText(item, i)
+                }
+                val lines = if (i == QTY_COLUMN && item.hsn != null) 2 else 1
                 row.addView(
                     figureCell(
-                        itemCellText(item, i), columnPx[i],
-                        if (i == QTY_COLUMN) Gravity.CENTER else Gravity.END, sizeSp
+                        text, columnPx[i],
+                        if (i == QTY_COLUMN) Gravity.CENTER else Gravity.END, sizeSp, lines
                     )
                 )
             }
@@ -2246,11 +2251,7 @@ class BillReceiptRenderer(context: Context) {
 
         if (sharesTheLine) {
             val row = classicRow(narrow)
-            val name = buildString {
-                append(heading)
-                if (item.hsn != null) append("\nHSN: ${item.hsn}")
-            }
-            row.addView(nameCell(name, columnPx[0], sizeSp))
+            row.addView(nameCell(heading, columnPx[0], sizeSp))
             addFigures(row)
             return row
         }
@@ -2267,7 +2268,6 @@ class BillReceiptRenderer(context: Context) {
             setPadding(0, gap, 0, gap)
 
             addView(fullWidthLine(heading, sizeSp))
-            if (item.hsn != null) addView(fullWidthLine("HSN: ${item.hsn}", sizeSp))
 
             addView(
                 LinearLayout(ctx).apply {
@@ -2287,10 +2287,13 @@ class BillReceiptRenderer(context: Context) {
     /**
      * A figure cell of the item table, at the width [itemColumnWidths] settled on.
      *
-     * Held to one line. The width was measured to hold the value, so there is nothing
+     * Held to one line by default. The width was measured to hold the value, so there is nothing
      * to wrap - and if a figure ever did outrun its column, breaking it across two
      * lines is the one thing it must not do: a quantity split as "1.0" over "0" reads
      * as a different quantity.
+     *
+     * When HSN is prepended to the quantity, it may span two lines (HSN on line 1,
+     * quantity on line 2).
      *
      * One line is set with [TextView.setMaxLines], never `isSingleLine`. They read as
      * the same instruction and are not: `isSingleLine` also turns on horizontal
@@ -2299,14 +2302,14 @@ class BillReceiptRenderer(context: Context) {
      * cell. Every figure on the bill printed blank, in a cell of exactly the right
      * width, holding exactly the right text.
      */
-    private fun figureCell(text: String, widthPx: Int, gravity: Int, sizeSp: Float): TextView =
+    private fun figureCell(text: String, widthPx: Int, gravity: Int, sizeSp: Float, maxLines: Int = 1): TextView =
         TextView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
             this.text = text
             this.gravity = gravity
             typeface = billTypeface
             textSize = sizeSp
-            maxLines = 1
+            this.maxLines = maxLines
             setTextColor(0xFF222222.toInt())
         }
 

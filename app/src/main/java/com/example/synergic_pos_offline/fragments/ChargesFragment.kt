@@ -17,17 +17,21 @@ class ChargesFragment : DataTableFragment() {
 
     override val screenTitle = "Extra Charges"
 
-    override val columns = listOf("Charge Name", "Percentage", "Status")
+    override val columns = listOf("Charge Name", "Value", "Status")
 
     private val dao: ChargeDao by lazy { ChargeDao(requireContext()) }
 
     override fun loadRows(): MutableList<DataRow> =
         dao.getAll().map {
+            val displayValue = when (it.type) {
+                ChargeDao.Type.PERCENTAGE -> "${trimPct(it.value)}%"
+                ChargeDao.Type.AMOUNT -> "₹${trimPct(it.value)}"
+            }
             DataRow(
                 it.id.toString(),
                 listOf(
                     it.name,
-                    "${trimPct(it.percentage)}%",
+                    displayValue,
                     if (it.enabled) "Enabled" else "Disabled"
                 )
             )
@@ -63,43 +67,48 @@ class ChargesFragment : DataTableFragment() {
 
     private fun showChargeForm(existing: DataRow?) {
         val current = existing?.id?.toLongOrNull()?.let { id -> dao.getAll().firstOrNull { it.id == id } }
+        val currentType = current?.type ?: ChargeDao.Type.PERCENTAGE
         DialogUtils.showForm(
             context = requireContext(),
             title = if (existing == null) "Add Extra Charge" else "Edit Extra Charge",
             fields = listOf(
                 DialogUtils.FormField(label = "Charge Name", value = current?.name.orEmpty()),
                 DialogUtils.FormField(
-                    label = "Percentage",
-                    value = current?.let { trimPct(it.percentage) }.orEmpty(),
+                    label = "Value",
+                    value = current?.let { trimPct(it.value) }.orEmpty(),
                     inputType = "decimal"
                 ),
-                // Typed rather than switched, because DialogUtils.showForm builds text
-                // fields. Read leniently below: "yes", "y", "1" and "enabled" all mean
-                // the same thing to somebody filling this in quickly.
+                DialogUtils.FormField(
+                    label = "Type (Percentage / Amount)",
+                    value = if (currentType == ChargeDao.Type.PERCENTAGE) "Percentage" else "Amount"
+                ),
                 DialogUtils.FormField(
                     label = "Enabled (Yes / No)",
                     value = if (current?.enabled != false) "Yes" else "No"
                 )
             ),
             positiveText = if (existing == null) "Add" else "Update",
-            mandatoryFields = listOf(0, 1)
+            mandatoryFields = listOf(0, 1, 2)
         ) { values ->
             val name = values.getOrNull(0)?.trim().orEmpty()
-            val pct = values.getOrNull(1)?.trim()?.toDoubleOrNull()
-            val enabled = readYesNo(values.getOrNull(2))
+            val value = values.getOrNull(1)?.trim()?.toDoubleOrNull()
+            val typeStr = values.getOrNull(2)?.trim()?.uppercase().orEmpty()
+            val type = try {
+                ChargeDao.Type.valueOf(typeStr.replace(" / AMOUNT", "").replace(" / PERCENTAGE", ""))
+            } catch (e: Exception) {
+                if (typeStr.startsWith("A")) ChargeDao.Type.AMOUNT else ChargeDao.Type.PERCENTAGE
+            }
+            val enabled = readYesNo(values.getOrNull(3))
             when {
                 name.isEmpty() -> { toast("Charge name is required"); return@showForm }
-                pct == null || pct < 0.0 -> { toast("Enter a valid percentage"); return@showForm }
-                // A charge over 100% is a arithmetic slip - a decimal point in the
-                // wrong place - not a rate anybody levies, and it would more than
-                // double the bill before anyone noticed.
-                pct > 100.0 -> { toast("A charge cannot be more than 100%"); return@showForm }
+                value == null || value < 0.0 -> { toast("Enter a valid value"); return@showForm }
+                type == ChargeDao.Type.PERCENTAGE && value > 100.0 -> { toast("Percentage cannot exceed 100%"); return@showForm }
             }
             if (existing == null) {
-                if (dao.insert(name, pct!!, enabled) == -1L) { toast("Save failed"); return@showForm }
+                if (dao.insert(name, value!!, type, enabled) == -1L) { toast("Save failed"); return@showForm }
                 toast("Added $name")
             } else {
-                dao.update(existing.id.toLong(), name, pct!!, enabled)
+                dao.update(existing.id.toLong(), name, value!!, type, enabled)
                 toast("Updated $name")
             }
             refreshRows()

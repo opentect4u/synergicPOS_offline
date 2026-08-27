@@ -10,6 +10,7 @@ import android.widget.TextView
 import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
@@ -174,13 +175,13 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                     it.name, it.qty.toDouble(), it.rate, it.cgstRate, it.sgstRate
                 )
             },
-            discount = 0.0, roundOff = 0.0, netAmount = netTotal,
+            discount = 0.0, roundOff = BillRounding.roundOff(netTotal), netAmount = BillRounding.payable(netTotal),
             paymentModes = listOf(payMethod.uppercase(java.util.Locale.US)),
             serviceCharge = service,
             returnAmount = run {
                 val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
                     ?.text?.toString()?.toDoubleOrNull() ?: 0.0
-                (tendered - netTotal).coerceAtLeast(0.0)
+                (tendered - BillRounding.payable(netTotal)).coerceAtLeast(0.0)
             }
         )
         val paperDots = com.example.synergic_pos_offline.database.OperatingPrinterDao(ctx).getAll()

@@ -31,11 +31,13 @@ import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.database.StockDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
+import com.example.synergic_pos_offline.utils.AppLanguage
 import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.ImageUtils
+import com.example.synergic_pos_offline.utils.ProductName
 import com.example.synergic_pos_offline.utils.SearchSuggestions
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.SettingsCache
@@ -145,17 +147,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * something that is out has to say so before it is tapped, not after - and it is
      * the reason this mapping is not shared with the restaurant's.
      */
-    private fun suggestionOf(p: Product) = SearchSuggestions.Item(
-        id = p.id,
-        name = p.name,
-        meta = listOfNotNull(
-            p.category.takeIf { it.isNotBlank() },
-            p.sku.takeIf { it.isNotBlank() }?.let { "#$it" },
-            // Shown, not only searched. A row matched on its HSN has nothing
-            // highlighted in its name, so without the code on the line the operator is
-            // left to take on trust that it belongs in the results.
-            SearchSuggestions.realHsn(p.hsn)?.let { "HSN $it" }
-        ).joinToString("  ·  "),
+    private fun suggestionOf(p: Product): SearchSuggestions.Item {
+        val language = AppLanguage.of(requireContext())
+        return SearchSuggestions.Item(
+            id = p.id,
+            name = ProductName.inAppLanguage(language, p.name),
+            meta = listOfNotNull(
+                p.category.takeIf { it.isNotBlank() }?.let { AppLanguage.tr(language, it) },
+                p.sku.takeIf { it.isNotBlank() }?.let { "#$it" }
+            ).joinToString("  ·  "),
         price = money(p.price),
         codes = listOfNotNull(
             p.sku.takeIf { it.isNotBlank() },
@@ -173,7 +173,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
         },
         badgeColor = if (p.stock == "out") 0xFFDC2626.toInt() else 0xFFF59E0B.toInt(),
         bitmap = photoCache[p.id]
-    )
+        )
+    }
 
     private data class CartLine(val product: Product, var qty: Double)
     private fun CartLine.toSessionLine() = CheckoutSession.Line(
@@ -896,13 +897,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         filteredProducts.clear()
         filteredProducts.addAll(menu.filter { p ->
             (activeCategory == "All" || p.categoryId == activeCategoryId) &&
-                // Name, then the three codes a product can be asked for by: its SKU,
-                // its barcode, and its HSN - which is how a shop looks up "everything
-                // I sell under 1006" when a tax question is being answered at the
-                // counter. Placeholder HSNs are not searched; see realHsn.
+                // Name, SKU (serial number), and barcode only - no HSN.
                 (query.isEmpty() || p.name.contains(query, true) ||
-                    p.sku.contains(query) || p.barcode.contains(query) ||
-                    SearchSuggestions.realHsn(p.hsn)?.contains(query, true) == true)
+                    p.sku.contains(query) || p.barcode.contains(query))
         })
         // Only the first page reaches the adapter; the rest arrives as the grid is
         // scrolled. The empty state still asks the WHOLE filtered result, so "no
@@ -1187,7 +1184,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // Direct Add to Cart (App Settings): tapping a product adds one straight to the
         // cart with its default rate - no popup. Each tap adds one more. Only for a
         // fresh add; editing an existing cart line still opens the dialog.
-        if (!editing && SettingsCache.value(requireContext(), "A", "Direct Add to Cart") == "1") {
+        // Exception: if the product has a fractional unit, always show the dialog so the
+        // operator can enter the fractional quantity (e.g., 0.5 kg).
+        if (!editing && !p.allowFraction && SettingsCache.value(requireContext(), "A", "Direct Add to Cart") == "1") {
             val before = cart.sumOf { it.qty }
             addToCart(p, 1.0, p.price)
             // Only announce when the tap actually added (not blocked by stock), and
@@ -2301,7 +2300,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
             val cat = categories[position]
             val accent = ThemeManager.getThemeColor(holder.itemView.context)
             val selected = cat == activeCategory
-            holder.tv.text = cat
+            val language = AppLanguage.of(holder.itemView.context)
+            holder.tv.text = AppLanguage.tr(language, cat)
             holder.tv.setTextColor(if (selected) accent else Color.parseColor("#8A8A8A"))
             holder.underline.setBackgroundColor(if (selected) accent else Color.TRANSPARENT)
             holder.itemView.setOnClickListener {
@@ -2331,7 +2331,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         override fun onBindViewHolder(holder: VH, position: Int) {
             val p = shownProducts[position]
-            holder.name.text = p.name
+            val language = AppLanguage.of(holder.itemView.context)
+            holder.name.text = ProductName.inAppLanguage(language, p.name)
             holder.price.text = money(p.price)
             holder.sku.text = p.sku
 
@@ -2374,8 +2375,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         override fun onBindViewHolder(holder: VH, position: Int) {
             val line = cart[position]
             val accent = ThemeManager.getThemeColor(holder.itemView.context)
-            
-            holder.name.text = line.product.name
+            val language = AppLanguage.of(holder.itemView.context)
+
+            holder.name.text = ProductName.inAppLanguage(language, line.product.name)
             holder.each.text = "${money(line.product.price)} each"
             holder.qty.text = qtyText(line.qty)
             holder.total.text = money(lineSalePrice(line))

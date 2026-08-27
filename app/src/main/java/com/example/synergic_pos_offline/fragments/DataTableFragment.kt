@@ -162,6 +162,12 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     /** Invoked when a row is tapped, if [rowClickable]. */
     open fun onRowClick(row: DataRow) {}
 
+    /**
+     * Transforms a cell's text before display, e.g., for transliteration.
+     * Override in subclasses to apply language-specific formatting.
+     */
+    open fun formatCellText(columnIndex: Int, row: DataRow, text: String): String = text
+
     /** Set false on a table that shows records rather than owning them (no + FAB). */
     open val showsAddAction: Boolean get() = true
 
@@ -698,7 +704,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         return bitmap
     }
 
-    private class DataTableAdapter(
+    private inner class DataTableAdapter(
         private val rows: List<DataRow>,
         private val columnCount: Int,
         private val selectedIds: MutableSet<String>,
@@ -754,7 +760,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
                 }
                 val tv = TextView(ctx)
                 tv.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                tv.text = row.cells.getOrNull(i).orEmpty()
+                val cellText = row.cells.getOrNull(i).orEmpty()
+                tv.text = formatCellText(i, row, cellText)
                 tv.setTextColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.text_main))
                 tv.textSize = 16f
                 // Recycled cells carry the last row's setting, so both branches always
@@ -905,11 +912,11 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         }
 
         override fun getItemCount() = rows.size
+    }
 
-        private companion object {
-            const val THUMB_PX = 120
-            /** Cell values (lowercased) that render the inline switch as ON. */
-            val ON_VALUES = setOf("on", "enabled", "yes", "active", "true")
-        }
+    companion object {
+        private const val THUMB_PX = 120
+        /** Cell values (lowercased) that render the inline switch as ON. */
+        private val ON_VALUES = setOf("on", "enabled", "yes", "active", "true")
     }
 }

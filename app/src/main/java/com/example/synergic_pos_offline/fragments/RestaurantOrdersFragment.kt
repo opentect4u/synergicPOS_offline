@@ -17,9 +17,11 @@ import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.TableDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
+import com.example.synergic_pos_offline.utils.AppLanguage
 import com.example.synergic_pos_offline.utils.CartDensity
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
+import com.example.synergic_pos_offline.utils.ProductName
 import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 
@@ -1401,11 +1403,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * being a restaurant's own question, and the reason this mapping is not shared
      * with the grocery screen's.
      */
-    private fun suggestionOf(gp: GridProduct) = com.example.synergic_pos_offline.utils.SearchSuggestions.Item(
-        id = gp.product.id,
-        name = gp.product.name,
-        meta = listOfNotNull(
-            gp.product.category.takeIf { it.isNotBlank() },
+    private fun suggestionOf(gp: GridProduct): com.example.synergic_pos_offline.utils.SearchSuggestions.Item {
+        val language = AppLanguage.of(requireContext())
+        return com.example.synergic_pos_offline.utils.SearchSuggestions.Item(
+            id = gp.product.id,
+            name = ProductName.inAppLanguage(language, gp.product.name),
+            meta = listOfNotNull(
+            gp.product.category.takeIf { it.isNotBlank() }?.let { AppLanguage.tr(language, it) },
             gp.prepTime.takeIf { it.isNotBlank() }?.let { t -> if (t.contains("min", true)) t else "$t min" },
             gp.product.sku.takeIf { it.isNotBlank() }?.let { "#$it" },
             // Shown, not only searched: a row matched on its HSN has nothing
@@ -1421,7 +1425,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         ),
         barcode = gp.barcode,
         image = gp.image
-    )
+        )
+    }
 
     private data class GridProduct(
         val product: ProductEntryDialog.Product, val foodType: String, val spice: String,
@@ -1671,13 +1676,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val q = query.trim().lowercase()
             pager.set(allProducts.filter {
                 (selectedCat == "All" || it.product.category == selectedCat) &&
-                    // Name, then the three codes a dish can be asked for by: its SKU,
-                    // its barcode, and its HSN. Placeholder HSNs are not searched -
-                    // see SearchSuggestions.realHsn.
+                    // Name, SKU (serial number), and barcode only - no HSN.
                     (q.isEmpty() || it.product.name.lowercase().contains(q) ||
-                        it.product.sku.contains(q) || it.barcode.contains(q) ||
-                        com.example.synergic_pos_offline.utils.SearchSuggestions
-                            .realHsn(it.product.hsn)?.contains(q, true) == true)
+                        it.product.sku.contains(q) || it.barcode.contains(q))
             })
         }
 
@@ -1735,6 +1736,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * A product tapped on the grid. Refuses politely when there is no order to put it
      * on, or the table is already billed; otherwise honours App Settings' Direct Add to
      * Cart - straight in at its default rate, or through the quantity popup.
+     * Exception: if the product has a fractional unit, always show the dialog so the
+     * operator can enter the fractional quantity.
      */
     private fun onProductPicked(picked: ProductEntryDialog.Product, onAdded: () -> Unit) {
         val order = currentOrder()
@@ -1742,7 +1745,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             order == null -> { toast("Create or select a table order first"); return }
             order.completed -> { toast("Table already billed — cannot add items"); return }
         }
-        if (directAddToCart) {
+        if (directAddToCart && !picked.allowFraction) {
             val before = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
             addToCart(picked, 1.0, picked.price)
             val after = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
@@ -2352,7 +2355,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         override fun onBindViewHolder(holder: VH, position: Int) {
             val gp = items[position]
             val p = gp.product
-            holder.itemView.findViewById<TextView>(R.id.tvName).text = p.name
+            val language = AppLanguage.of(holder.itemView.context)
+            holder.itemView.findViewById<TextView>(R.id.tvName).text = ProductName.inAppLanguage(language, p.name)
             holder.itemView.findViewById<TextView>(R.id.tvPrice).text = "₹ ${money(p.price)}"
             holder.itemView.findViewById<TextView>(R.id.tvSku).text = p.sku
 

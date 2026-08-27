@@ -28,7 +28,9 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.database.StockDao
+import com.example.synergic_pos_offline.utils.AppLanguage
 import com.example.synergic_pos_offline.utils.DialogUtils
+import com.example.synergic_pos_offline.utils.ProductName
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.Downloads
 import com.example.synergic_pos_offline.utils.ProductCsvExport
@@ -168,6 +170,16 @@ class ProductsFragment : DataTableFragment() {
             }
         }
         return rows
+    }
+
+    override fun formatCellText(columnIndex: Int, row: DataRow, text: String): String {
+        return when (columnIndex) {
+            1 -> {
+                val language = AppLanguage.of(requireContext())
+                ProductName.inAppLanguage(language, text)
+            }
+            else -> text
+        }
     }
 
     override fun onAddRow() = showProductDialog(null)
