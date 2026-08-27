@@ -43,12 +43,34 @@ class UserManagementFragment : DataTableFragment() {
 
     // ---- Data --------------------------------------------------------------
 
+    /**
+     * ADMINS ARE NOT LISTED TO A GENERAL USER.
+     *
+     * A general user who can reach this screen is here to look after the people below
+     * them, not the people above. Listing an admin puts their login name and their
+     * status in front of somebody who cannot act on either - and the row is not inert:
+     * it opens for edit, so a name, a phone number and a shift on an admin's account
+     * would be editable by a counter hand.
+     *
+     * They are filtered out of [cache] as well as the table, not hidden in the view.
+     * Anything that later resolves a row back to a user - edit, delete, a restored
+     * selection - reads that map, and a row nobody can see should not be reachable
+     * through it either.
+     */
     override fun loadRows(): MutableList<DataRow> {
         cache.clear()
-        val users = dao.getAll()
+        val users = dao.getAll().filter { SessionManager.isAdmin() || it.role == Role.GENERAL }
         for (u in users) cache[u.id.toString()] = u
         return users.map { it.toRow() }.toMutableList()
     }
+
+    /**
+     * Only an admin may add users - the + is not shown to anyone else.
+     *
+     * Gone rather than disabled: a greyed + reads as something that might become
+     * available, and this one never will for a general user.
+     */
+    override val showsAddAction: Boolean get() = SessionManager.isAdmin()
 
     private fun UserDao.AppUser.toRow(): DataRow = DataRow(
         id.toString(),
@@ -57,7 +79,16 @@ class UserManagementFragment : DataTableFragment() {
 
     // ---- Custom Add / Edit popups -----------------------------------------
 
-    override fun onAddRow() = showUserDialog(null)
+    // Checked again here rather than trusting the hidden +: this is the call that
+    // actually creates a user, and it is the one that has to refuse. The same reason
+    // onBulkDelete re-checks below.
+    override fun onAddRow() {
+        if (!SessionManager.isAdmin()) {
+            toast("Only admin can add users")
+            return
+        }
+        showUserDialog(null)
+    }
 
     override fun onEditRow(row: DataRow) = showUserDialog(cache[row.id])
 
@@ -101,11 +132,26 @@ class UserManagementFragment : DataTableFragment() {
         val swAccessReports = view.findViewById<SwitchMaterial>(R.id.swAccessReports)
         val swAccessAboutApp = view.findViewById<SwitchMaterial>(R.id.swAccessAboutApp)
 
-        // Granting access is an admin's job. A general user editing their own details
-        // must not be able to hand themselves the Master section.
-        cardAccess.visibility =
-            if (com.example.synergic_pos_offline.utils.SessionManager.isAdmin()) View.VISIBLE
-            else View.GONE
+        // Who may see the access switches, and for whom they mean anything.
+        //
+        // WHO: an admin. A general user editing their own details must not be able to
+        // hand themselves the Master section.
+        //
+        // FOR WHOM: general users only. An admin already reaches every section by
+        // role - GeneralSettingsDao.canAccessSection lets them through without ever
+        // consulting these flags - so offering the switches on an admin's own record
+        // is offering a control that does nothing. Worse, it reads as though it does:
+        // an admin shown four switches turned off would take it that this user is
+        // locked out of Reports and About App, when they are not.
+        //
+        // The note takes the card's place rather than leaving a gap, so the absence is
+        // explained rather than looking like something failed to load.
+        val editedRole = existing?.role ?: UserDao.Role.GENERAL
+        val perSectionApplies = editedRole == UserDao.Role.GENERAL
+        val canGrant = com.example.synergic_pos_offline.utils.SessionManager.isAdmin()
+        cardAccess.visibility = if (canGrant && perSectionApplies) View.VISIBLE else View.GONE
+        view.findViewById<TextView>(R.id.tvAccessAdminNote).visibility =
+            if (canGrant && !perSectionApplies) View.VISIBLE else View.GONE
         val access = existing?.access ?: UserDao.Access()
         swAccessMaster.isChecked = access.master
         swAccessSettings.isChecked = access.settings
@@ -247,9 +293,15 @@ class UserManagementFragment : DataTableFragment() {
                 picked.id
             }
 
-            // What the form is granting. A non-admin never sees the card, so their
-            // save carries whatever the user already had rather than a row of offs.
-            val grantedAccess = if (com.example.synergic_pos_offline.utils.SessionManager.isAdmin()) {
+            // What the form is granting - read off the switches ONLY when the switches
+            // were on screen. A save that could not have touched them carries what the
+            // user already had rather than a row of offs, which is what an unshown
+            // card full of unchecked switches would otherwise write. That covers both
+            // ways the card can be absent: a non-admin editing details, and an admin's
+            // own record, where the flags are not consulted but should not be wiped
+            // either - a role can be changed later, and the record should still say
+            // what it said.
+            val grantedAccess = if (cardAccess.visibility == View.VISIBLE) {
                 UserDao.Access(
                     master = swAccessMaster.isChecked,
                     settings = swAccessSettings.isChecked,
