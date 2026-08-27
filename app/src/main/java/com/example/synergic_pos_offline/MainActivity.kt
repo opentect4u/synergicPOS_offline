@@ -436,23 +436,8 @@ class MainActivity : AppCompatActivity() {
         ThemeManager.applyTheme(window.decorView)
         tvHeaderTitle.setTextColor(color)
         refreshSidebarTheme()
-        applyLanguageEverywhere()
-    }
-
-    /**
-     * Relabels every currently inflated screen in the till's chosen language.
-     *
-     * Ridden along with the theme pass rather than hooked up separately, because the
-     * two want to happen at exactly the same moments - a screen has just appeared, or
-     * a setting that changes how everything looks has just been saved - and the theme
-     * pass already runs for every screen except Login and Registration. That
-     * exemption is the one this feature needs: the language is a per-till setting read
-     * after sign-in, so there is nothing to read while the login screen is up.
-     */
-    fun applyLanguageEverywhere() {
-        com.example.synergic_pos_offline.utils.AppLanguage.apply(
-            window.decorView, com.example.synergic_pos_offline.utils.AppLanguage.of(this)
-        )
+        // NOTE: App language is NOT applied globally here. It only affects product names
+        // in sale screens, which are refreshed separately in PrintLanguageFragment.chooseAppLanguage()
     }
 
     /** Shows the theme-color dropdown anchored under the palette icon. */

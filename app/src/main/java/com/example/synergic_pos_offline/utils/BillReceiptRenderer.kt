@@ -2240,15 +2240,10 @@ class BillReceiptRenderer(context: Context) {
         /** The figures, in their columns - the same cells whichever line they land on. */
         fun addFigures(row: LinearLayout) {
             ITEM_FIGURE_COLUMNS.filter { showDisc || it != DISC_COLUMN }.forEach { i ->
-                val text = when {
-                    i == QTY_COLUMN && item.hsn != null -> "HSN: ${item.hsn}\n${itemCellText(item, i)}"
-                    else -> itemCellText(item, i)
-                }
-                val lines = if (i == QTY_COLUMN && item.hsn != null) 2 else 1
                 row.addView(
                     figureCell(
-                        text, columnPx[i],
-                        if (i == QTY_COLUMN) Gravity.CENTER else Gravity.END, sizeSp, lines
+                        itemCellText(item, i), columnPx[i],
+                        if (i == QTY_COLUMN) Gravity.CENTER else Gravity.END, sizeSp
                     )
                 )
             }
@@ -2283,15 +2278,16 @@ class BillReceiptRenderer(context: Context) {
 
             addView(fullWidthLine(heading, sizeSp))
 
+            // HSN and figures on the same line if HSN exists
             addView(
                 LinearLayout(ctx).apply {
                     layoutParams = LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                     )
                     orientation = LinearLayout.HORIZONTAL
-                    // The name column is held open and empty, so the figures stay
-                    // under the headings instead of sliding left into its place.
-                    addView(nameCell("", columnPx[0], sizeSp))
+                    // HSN in the name column (left), figures on the right
+                    val hsnText = if (item.hsn != null) "HSN: ${item.hsn}" else ""
+                    addView(nameCell(hsnText, columnPx[0], sizeSp))
                     addFigures(this)
                 }
             )
