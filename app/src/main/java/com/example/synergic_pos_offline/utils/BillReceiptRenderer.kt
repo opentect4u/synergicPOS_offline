@@ -1197,7 +1197,7 @@ class BillReceiptRenderer(context: Context) {
 
             val modes = draft?.paymentModes ?: paymentModes(db, receiptNo, billType)
             renderPayment(view, modes, narrow)
-            renderUpiQr(view, modes, payable, billNumber)
+            renderUpiQr(view, modes, payable, billNumber, isRestaurant = tableLine != null)
 
             renderFixedLines(
                 db, view, R.id.llBillFooterLines,
@@ -2126,17 +2126,23 @@ class BillReceiptRenderer(context: Context) {
      *
      * Printed on a bill settled over UPI rails, and on one not settled at all - the
      * provisional slip a restaurant puts on the table before the guest pays, where a
-     * code is the point rather than an afterthought. NOT on a bill that names cash or
-     * a card: there the money is already in, and a code would be an invitation to pay
-     * a second time. Nor on every bill regardless, which would be 150dp of paper per
-     * sale for a code nobody scans.
+     * code is the point rather than an afterthought. NOT on a restaurant bill that
+     * names cash or a card there: the money is already in, and a code would be an
+     * invitation to pay a second time.
+     *
+     * On a GROCERY bill, though, once a QR is saved in Bill Settings ([Applied.upiQrEnabled])
+     * it prints regardless of payment mode - cash, card or credit included. A grocery
+     * sale is settled once, at the counter, in front of the customer; the code is not
+     * a second invitation to pay, it is simply the shop's UPI code the way it would be
+     * stuck to the counter, and printing it costs no more paper on a cash bill than on
+     * any other.
      *
      * Read from the live settings rather than the bill's snapshot, deliberately: the
      * snapshot exists so a reprint *reads* as it did on the day, but a payment
      * address is not a matter of how the slip looked - it is where the money goes,
      * and money owed today goes to the account the shop banks with today.
      */
-    private fun renderUpiQr(view: View, modes: List<String>, payable: Double, billNumber: String) {
+    private fun renderUpiQr(view: View, modes: List<String>, payable: Double, billNumber: String, isRestaurant: Boolean) {
         val container = view.findViewById<LinearLayout>(R.id.llUpiQr) ?: return
         container.visibility = View.GONE
 
@@ -2149,21 +2155,28 @@ class BillReceiptRenderer(context: Context) {
         // the total, scans, and pays without the floor coming back. It is also the one
         // case where a code cannot be "an invitation to pay a second time", because
         // nothing has been paid a first time.
-        //
-        // Distinct from a CASH or CARD bill, which carries a mode saying the money is
-        // already in - those still print no code, as before.
         val unpaid = modes.isEmpty()
-        if (!online && !upi && !unpaid) return
 
         val settings = runCatching { BillSettingsDao(ctx).load() }.getOrNull() ?: return
+        if (!UpiQr.isValidVpa(settings.upiId)) return
+
         // ONLINE prints the code whether or not the setting is on. Choosing it at
         // checkout says the customer is paying from their phone and has nothing else
         // to pay against - no card machine, no cash drawer - so a bill without a code
-        // leaves them keying an address and a figure in by hand. UPI is the case the
-        // setting is really about: the shop may already have a code stuck to the
-        // counter, and printing a second one on every slip is only paper.
-        if (!online && !settings.upiQrEnabled) return
-        if (!UpiQr.isValidVpa(settings.upiId)) return
+        // leaves them keying an address and a figure in by hand.
+        //
+        // Otherwise, a GROCERY bill prints once the QR is saved (the toggle is on),
+        // whatever the mode - cash, card, credit, UPI or unpaid all qualify. A
+        // RESTAURANT bill keeps to UPI or unpaid only, cash/card still printing
+        // nothing: the floor has already been paid, and a second code invites a
+        // second payment.
+        val shouldPrint = when {
+            online -> true
+            !settings.upiQrEnabled -> false
+            isRestaurant -> upi || unpaid
+            else -> true
+        }
+        if (!shouldPrint) return
 
         val uri = UpiQr.payUri(
             settings.upiId, settings.upiPayeeName, payable,
