@@ -178,6 +178,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             discount = 0.0, roundOff = BillRounding.roundOff(netTotal), netAmount = BillRounding.payable(netTotal),
             paymentModes = listOf(payMethod.uppercase(java.util.Locale.US)),
             serviceCharge = service,
+            orderType = if (tableNo.startsWith("TA-", ignoreCase = true)) "TAKEAWAY" else "DINE_IN",
             returnAmount = run {
                 val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
                     ?.text?.toString()?.toDoubleOrNull() ?: 0.0

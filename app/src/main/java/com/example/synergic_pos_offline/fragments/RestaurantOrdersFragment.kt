@@ -147,7 +147,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             roDao.itemsFor(ro.id).filter { it.qty > 0.0 }.forEach { ri ->
                 card.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate))
             }
-            card.amount = "₹ ${money(computeBill(card.items, serviceRateFor(card.section)).total)}"
+            card.amount = "₹ ${money(computeBill(card.items, serviceRateFor(card.section), card.type).total)}"
             orders.add(card)
         }
     }
@@ -194,7 +194,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * uses — and adds the section's service charge as a flat rupee amount. For an
      * inclusive regime the tax is already within the rate, so it isn't added again.
      */
-    private fun computeBill(items: List<CartItem>, serviceChargeAmt: Double): BillBreakdown {
+    private fun computeBill(items: List<CartItem>, serviceChargeAmt: Double, orderType: String? = null): BillBreakdown {
         var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0
         items.forEach {
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
@@ -212,8 +212,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // the same rule the grocery till uses, so a 5% charge on 300 of food is 15
         // whichever screen rang it up. Worked out on the gross subtotal, not on the
         // service charge, which is itself an addition rather than something sold.
+        //
+        // Filtered by applicability against this order's TAKEAWAY/DINE_IN type - see
+        // ChargeDao.Applicability. A charge set to "None" never comes back here.
+        val chargeOrderType = if (orderType?.equals("Take Away", ignoreCase = true) == true) "TAKEAWAY" else "DINE_IN"
         val charges = runCatching {
-            com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal)
+            com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal, chargeOrderType)
         }.getOrDefault(emptyList())
         val chargesTotal = charges.sumOf { it.amount }
         // Inclusive: tax is already inside the gross subtotal, so don't add it again.
@@ -2795,7 +2799,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             .also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
-        val total = computeBill(order.items, serviceRateFor(order.section)).total
+        val total = computeBill(order.items, serviceRateFor(order.section), order.type).total
         v.findViewById<TextView>(R.id.tvQpTotal).text = "₹ ${money(total)}"
         v.findViewById<TextView>(R.id.tvQpSubtitle).text = buildString {
             append(order.id.replace("TA-", "Token #"))
@@ -3008,7 +3012,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun buildBillDraft(
         order: OrderCard, billNumber: String, payment: String, tendered: Double = 0.0
     ): com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft {
-        val b = computeBill(order.items, serviceRateFor(order.section))
+        val b = computeBill(order.items, serviceRateFor(order.section), order.type)
+        val chargeOrderType = if (order.type.equals("Take Away", ignoreCase = true)) "TAKEAWAY" else "DINE_IN"
         val items = order.items.map { line ->
             // HSN comes off the catalogue, because a cart line does not carry one: the
             // order stores what was sold and at what price, and the tax code belongs to
@@ -3064,6 +3069,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // than worked out again - so what prints is what the customer was told.
             charges = b.charges.map { it.name to it.amount },
             chargeTypes = b.charges.map { it.type.name },
+            chargeApplicabilities = b.charges.map { it.applicability.name },
+            orderType = chargeOrderType,
             returnAmount = (tendered - BillRounding.payable(b.total)).coerceAtLeast(0.0)   // cash to hand back
         )
     }
@@ -3122,7 +3129,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         order: OrderCard, payMethod: String, tendered: Double = 0.0
     ): com.example.synergic_pos_offline.database.BillDao.Result? {
         val billDao = com.example.synergic_pos_offline.database.BillDao(requireContext())
-        val b = computeBill(order.items, serviceRateFor(order.section))
+        val b = computeBill(order.items, serviceRateFor(order.section), order.type)
 
         val billType = when (payMethod.lowercase(java.util.Locale.US)) {
             "card" -> "CARD"; "online" -> "ONLINE"; else -> "CASH"
@@ -3379,7 +3386,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun updateTotals() {
         val root = view ?: return
         val order = currentOrder()
-        val b = computeBill(order?.items ?: emptyList(), serviceRateFor(order?.section.orEmpty()))
+        val b = computeBill(order?.items ?: emptyList(), serviceRateFor(order?.section.orEmpty()), order?.type)
         root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(b.subtotal)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(b.service)}"
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(b.cgst)}"

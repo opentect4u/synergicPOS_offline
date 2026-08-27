@@ -50,7 +50,10 @@ class ChargeDao(context: Context) {
     )
 
     /** One charge worked out against a particular bill. */
-    data class Applied(val name: String, val value: Double, val type: Type, val amount: Double)
+    data class Applied(
+        val name: String, val value: Double, val type: Type, val amount: Double,
+        val applicability: Applicability = Applicability.BOTH
+    )
 
     /** Every charge in the master, enabled or not - what the master screen lists. */
     fun getAll(): List<Charge> {
@@ -101,15 +104,28 @@ class ChargeDao(context: Context) {
      *
      * Percentage charges are calculated as a percentage of itemsTotal.
      * Amount charges are fixed amounts added to the bill.
+     *
+     * [orderType] filters by [Applicability]: pass "TAKEAWAY" or "DINE_IN" for a
+     * restaurant order so a TAKEAWAY-only or DINE_IN-only charge only comes back on
+     * the order it was set for. Left null for grocery, where there is no order type -
+     * only a BOTH charge ever applies there. A NONE charge never comes back, whatever
+     * is passed.
      */
-    fun amountsOn(itemsTotal: Double): List<Applied> {
+    fun amountsOn(itemsTotal: Double, orderType: String? = null): List<Applied> {
         if (itemsTotal <= 0.0) return emptyList()
-        return enabled().map {
+        return enabled().filter {
+            when (it.applicability) {
+                Applicability.NONE -> false
+                Applicability.TAKEAWAY -> orderType == "TAKEAWAY"
+                Applicability.DINE_IN -> orderType == "DINE_IN"
+                Applicability.BOTH -> true
+            }
+        }.map {
             val amount = when (it.type) {
                 Type.PERCENTAGE -> round2(itemsTotal * it.value / 100.0)
                 Type.AMOUNT -> round2(it.value)
             }
-            Applied(it.name, it.value, it.type, amount)
+            Applied(it.name, it.value, it.type, amount, it.applicability)
         }
     }
 

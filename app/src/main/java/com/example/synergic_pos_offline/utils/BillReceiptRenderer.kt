@@ -585,6 +585,9 @@ class BillReceiptRenderer(context: Context) {
          */
         val charges: List<Pair<String, Double>> = emptyList(),
         val chargeTypes: List<String> = emptyList(), // PERCENTAGE or AMOUNT for each charge
+        val chargeApplicabilities: List<String> = emptyList(), // BOTH, TAKEAWAY, DINE_IN, or NONE
+        /** Order type for filtering charges: "TAKEAWAY" or "DINE_IN", null for grocery */
+        val orderType: String? = null,
         /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
         val returnAmount: Double = 0.0
     ) {
@@ -1058,15 +1061,33 @@ class BillReceiptRenderer(context: Context) {
             // is a percentage of.
             //
             // Only enabled charges ever come back; a disabled one has no line and no
-            // amount. See ChargeDao.
-            val chargeLines: List<Pair<String, Double>> = draft?.charges?.takeIf { it.isNotEmpty() }
-                ?: runCatching {
-                    ChargeDao(ctx).amountsOn(totals.itemsSubtotal).map { it.name to it.amount }
-                }.getOrDefault(emptyList())
-            val chargeTypes: List<String> = draft?.chargeTypes?.takeIf { it.isNotEmpty() }
-                ?: runCatching {
-                    ChargeDao(ctx).amountsOn(totals.itemsSubtotal).map { it.type.name }
-                }.getOrDefault(emptyList())
+            // amount. See ChargeDao. Applicability further filters by order type:
+            // a TAKEAWAY-only charge is dropped on a DINE_IN bill and vice versa, and
+            // a NONE charge is dropped from every bill regardless of order type.
+            val orderType = draft?.orderType
+            val rawChargeLines: List<Pair<String, Double>>
+            val rawChargeTypes: List<String>
+            val rawChargeApplicabilities: List<String>
+            if (draft?.charges?.isNotEmpty() == true) {
+                rawChargeLines = draft.charges
+                rawChargeTypes = draft.chargeTypes
+                rawChargeApplicabilities = draft.chargeApplicabilities
+            } else {
+                val applied = runCatching { ChargeDao(ctx).amountsOn(totals.itemsSubtotal, orderType) }.getOrDefault(emptyList())
+                rawChargeLines = applied.map { it.name to it.amount }
+                rawChargeTypes = applied.map { it.type.name }
+                rawChargeApplicabilities = applied.map { it.applicability.name }
+            }
+            val keepIndices = rawChargeLines.indices.filter { i ->
+                when (rawChargeApplicabilities.getOrNull(i) ?: "BOTH") {
+                    "NONE" -> false
+                    "TAKEAWAY" -> orderType == "TAKEAWAY"
+                    "DINE_IN" -> orderType == "DINE_IN"
+                    else -> true // BOTH - always applies, grocery or restaurant, any order type
+                }
+            }
+            val chargeLines = keepIndices.map { rawChargeLines[it] }
+            val chargeTypes = keepIndices.map { rawChargeTypes.getOrNull(it) ?: "PERCENTAGE" }
             val chargesTotal = BillRounding.toPaise(chargeLines.sumOf { it.second })
             // Printed as label / amount, the name as the shop typed it, with type indicator
             val chargeRows = chargeLines.mapIndexed { index, (name, amount) ->
