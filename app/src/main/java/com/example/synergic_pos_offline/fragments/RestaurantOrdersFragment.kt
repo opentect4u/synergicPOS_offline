@@ -1410,7 +1410,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             id = gp.product.id,
             name = ProductName.inAppLanguage(language, gp.product.name),
             meta = listOfNotNull(
-            gp.product.category.takeIf { it.isNotBlank() }?.let { AppLanguage.tr(language, it) },
+            gp.product.category.takeIf { it.isNotBlank() },
             gp.prepTime.takeIf { it.isNotBlank() }?.let { t -> if (t.contains("min", true)) t else "$t min" },
             gp.product.sku.takeIf { it.isNotBlank() }?.let { "#$it" },
             // Shown, not only searched: a row matched on its HSN has nothing

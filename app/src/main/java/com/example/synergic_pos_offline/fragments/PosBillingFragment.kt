@@ -153,7 +153,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             id = p.id,
             name = ProductName.inAppLanguage(language, p.name),
             meta = listOfNotNull(
-                p.category.takeIf { it.isNotBlank() }?.let { AppLanguage.tr(language, it) },
+                p.category.takeIf { it.isNotBlank() },
                 p.sku.takeIf { it.isNotBlank() }?.let { "#$it" }
             ).joinToString("  ·  "),
         price = money(p.price),
@@ -2300,8 +2300,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             val cat = categories[position]
             val accent = ThemeManager.getThemeColor(holder.itemView.context)
             val selected = cat == activeCategory
-            val language = AppLanguage.of(holder.itemView.context)
-            holder.tv.text = AppLanguage.tr(language, cat)
+            holder.tv.text = cat
             holder.tv.setTextColor(if (selected) accent else Color.parseColor("#8A8A8A"))
             holder.underline.setBackgroundColor(if (selected) accent else Color.TRANSPARENT)
             holder.itemView.setOnClickListener {
