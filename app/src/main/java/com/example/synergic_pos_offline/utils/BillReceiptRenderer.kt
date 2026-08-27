@@ -2287,9 +2287,14 @@ class BillReceiptRenderer(context: Context) {
         // with the figures; anything longer takes a line of its own - and so does a
         // shorter name that still will not fit the column on this paper. See
         // [CLASSIC_NAME_MAX_CHARS] and [CLASSIC_NARROW_NAME_MAX_CHARS].
+        //
+        // An HSN code forces the two-line layout even for a name that would
+        // otherwise fit the single-line row: the code needs its own line under the
+        // name, sharing THAT line with the figures instead - a name-only row has
+        // nowhere left to put it.
         val maxNameChars =
             if (narrow) CLASSIC_NARROW_NAME_MAX_CHARS else CLASSIC_NAME_MAX_CHARS
-        val sharesTheLine = item.name.length <= maxNameChars &&
+        val sharesTheLine = item.hsn == null && item.name.length <= maxNameChars &&
             measure(sizeSp).measureText(heading) <= columnPx[0]
 
         if (sharesTheLine) {
