@@ -25,6 +25,21 @@ object KotPrinter {
      */
     private const val BOTTOM_MARGIN_DP = 20f
 
+    /**
+     * Blank lines fed after the ticket, on top of [BOTTOM_MARGIN_DP].
+     *
+     * Counted in LINES rather than dp because that is what a feed is on a thermal
+     * head, and because a line is the one unit that stays the same height on every
+     * roll - print sizes here are absolute, so two lines is the same length of paper
+     * on 58mm as on 80mm (see PrintType).
+     *
+     * They are there to clear the head. On most counter printers the last line stops
+     * under the print head rather than past the tear bar, so a ticket torn straight
+     * after printing takes the bottom of itself with it; the next one then starts on
+     * paper that has already been through.
+     */
+    private const val EXTRA_FEED_LINES = 2
+
     fun print(
         context: Context,
         batch: RunningOrderDao.KotBatch,
@@ -123,7 +138,11 @@ object KotPrinter {
         // physical gap on every roll rather than a tenth of whatever width happens to
         // be fitted: on a narrow roll a proportional margin alone leaves the last line
         // sitting closer to the tear than it does on a wide one.
-        val padBottom = width * 0.10f + PrintType.dots(BOTTOM_MARGIN_DP)
+        // Two blank lines of the same pitch the ticket is set in, so the feed matches
+        // the document rather than being a number picked in dots.
+        val feedLine = item.descent() - item.ascent()
+        val padBottom = width * 0.10f + PrintType.dots(BOTTOM_MARGIN_DP) +
+            EXTRA_FEED_LINES * feedLine
         val gap = width * 0.012f
 
         // Build the line list top-to-bottom; ruleBefore holds indices to draw a rule above.

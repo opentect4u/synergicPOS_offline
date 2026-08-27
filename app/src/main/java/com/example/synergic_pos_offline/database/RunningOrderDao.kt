@@ -251,6 +251,28 @@ class RunningOrderDao(context: Context) {
                 (section.isBlank() || it.section.equals(section, ignoreCase = true))
         }
 
+    /**
+     * Holds the bill number this order's slip was printed under, until it settles.
+     *
+     * Written at Print Bill and read back by the settlement, so the two agree. It also
+     * takes the number out of circulation while the order is open - BillDao counts
+     * these when working out the next one, which is what stops the table after this
+     * one printing the same number.
+     */
+    fun setBillSeq(orderId: Long, seq: Int) {
+        helper.writableDatabase.update(
+            orders, ContentValues().apply { put("bill_seq_no", seq) },
+            "id = ?", arrayOf(orderId.toString())
+        )
+    }
+
+    /** The number reserved for this order at Print Bill, or null if it has none. */
+    fun billSeqOf(orderId: Long): Int? = runCatching {
+        helper.readableDatabase.query(
+            orders, arrayOf("bill_seq_no"), "id = ?", arrayOf(orderId.toString()), null, null, null, "1"
+        ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null }
+    }.getOrNull()
+
     /** Empties an order (deletes its items, closes its KOT) but keeps the order row —
      *  used to reset a split sub-table so it stays available to re-order. */
     fun clearItems(orderId: Long) {

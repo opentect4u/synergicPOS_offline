@@ -343,5 +343,24 @@ class GeneralSettingsDao(context: Context) {
             if (!cached.isNullOrBlank()) return cached == "1" || cached.equals("true", true)
             return GeneralSettingsDao(context).load().stockFlag
         }
+
+        /**
+         * Whether the till collects customer details at all - General Settings ▸
+         * Customer Info.
+         *
+         * A shop that does not keep a customer list has no use for being asked who
+         * every order is for, and a counter that has to dismiss a form on each sale
+         * learns to dismiss it without reading it. Off, the prompt does not appear
+         * and the order runs without a customer attached.
+         *
+         * Read the same way as the stock flag: the login cache first, the database
+         * only when the cache has no answer.
+         */
+        fun isCustomerInfoEnabled(context: Context): Boolean {
+            val cached = com.example.synergic_pos_offline.utils.SettingsCache
+                .value(context, "G", KEY_CUSTOMER_INFO)
+            if (!cached.isNullOrBlank()) return cached == "1" || cached.equals("true", true)
+            return GeneralSettingsDao(context).load().customerInfo
+        }
     }
 }

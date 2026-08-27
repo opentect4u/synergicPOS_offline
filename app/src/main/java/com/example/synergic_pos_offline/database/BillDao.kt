@@ -92,6 +92,16 @@ class BillDao(context: Context) {
         val orderType: String? = null,
         val serviceChargeAmount: Double = 0.0,
         /**
+         * The number this bill was already printed under, held on the running order
+         * since Print Bill - see td_running_order.bill_seq_no.
+         *
+         * Null for a sale numbered at the moment it is saved, which is every grocery
+         * bill: the till prints and books it in one act, so there is no gap for the
+         * counter to move in. A restaurant bill has a gap of minutes, and this is what
+         * carries the number across it.
+         */
+        val reservedBillSeq: Int? = null,
+        /**
          * Set when the shelf has ALREADY been drawn down for these items, so this
          * bill must not draw it down again.
          *
@@ -124,7 +134,10 @@ class BillDao(context: Context) {
         val nowDateTime = now()
         val nowDate = today()
         val settings = settingsDao.load()
-        val seq = nextBillSequence(db, settings, nowDate)
+        // The number this sale was PRINTED under, where it was printed before being
+        // paid, so the books carry what the customer is holding. Only a fresh sale -
+        // one whose slip has not been cut yet - takes the next number off the counter.
+        val seq = bill.reservedBillSeq ?: nextBillSequence(db, settings, nowDate)
         val billNumber = formatBillNumber(seq, settings)
         val taxSettings = taxSettingsDao.load()
         val regime = GstCalculator.regimeFor(taxSettings.gstEnabled, taxSettings.vatEnabled)
@@ -362,10 +375,23 @@ class BillDao(context: Context) {
     }
 
     /** The bill number the next completed sale will be given, per Bill Settings. */
-    fun nextBillNumber(): String {
+    fun nextBillNumber(): String = nextNumber().number
+
+    /** A bill number and the counter behind it, taken together so they cannot disagree. */
+    data class NextNumber(val seq: Int, val number: String)
+
+    /**
+     * The number the next bill will carry, with its raw counter.
+     *
+     * Handed out as a pair because a caller that PRINTS a number has to be able to
+     * save that same one later - see [NewBill.reservedBillSeq]. Asking twice and
+     * hoping the answer has not moved is what put one number on the slip and another
+     * in the books.
+     */
+    fun nextNumber(): NextNumber {
         val settings = settingsDao.load()
         val seq = nextBillSequence(helper.readableDatabase, settings, today())
-        return formatBillNumber(seq, settings)
+        return NextNumber(seq, formatBillNumber(seq, settings))
     }
 
     /**
@@ -457,7 +483,14 @@ class BillDao(context: Context) {
         // are NOT part of this: they run on their own keyname sequence (see AdvancePaymentDao).
         val maxSeq = listOfNotNull(
             maxSeqIn(db, DatabaseHelper.Tables.TD_BILLS, "bill_date", settings.resetMode, nowDate),
-            maxSeqIn(db, DatabaseHelper.Tables.TD_SALE_RETURNS, "return_date", settings.resetMode, nowDate)
+            maxSeqIn(db, DatabaseHelper.Tables.TD_SALE_RETURNS, "return_date", settings.resetMode, nowDate),
+            // Numbers already PRINTED on a bill that has not been settled yet. They
+            // are spoken for: the slip is on a table with that number on it, so the
+            // next table has to be given a different one. Not scoped to the reset
+            // period - an unsettled order that has crossed midnight still holds its
+            // number, and handing it out again would put one number on two bills,
+            // which is worse than the gap that skipping it leaves.
+            maxReservedSeq(db)
         ).maxOrNull()
         return when {
             maxSeq != null -> maxSeq + 1
@@ -465,6 +498,13 @@ class BillDao(context: Context) {
             else -> 1
         }
     }
+
+    /** Highest bill number reserved by an order whose bill is printed but not settled. */
+    private fun maxReservedSeq(db: SQLiteDatabase): Int? = runCatching {
+        db.rawQuery(
+            "SELECT MAX(bill_seq_no) FROM ${DatabaseHelper.Tables.TD_RUNNING_ORDER}", null
+        ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null }
+    }.getOrNull()
 
     /** Highest bill_seq_no in [table] within the reset period (dated on [dateCol]). */
     private fun maxSeqIn(

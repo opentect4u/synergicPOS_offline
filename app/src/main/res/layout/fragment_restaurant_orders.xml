@@ -429,7 +429,12 @@
                         android:paddingTop="10dp"
                         android:paddingBottom="6dp">
 
+                        <!-- Says what this list is showing. Once a round has gone to
+                             the kitchen the panel holds only what has NOT been sent,
+                             so the header names the rest rather than leaving the
+                             operator to wonder where it went. -->
                         <TextView
+                            android:id="@+id/tvOrderItemsHeader"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
@@ -473,10 +478,32 @@
                         android:scrollbars="none">
 
                         <LinearLayout
-                            android:id="@+id/llOrderItems"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:orientation="vertical" />
+                            android:orientation="vertical">
+
+                            <LinearLayout
+                                android:id="@+id/llOrderItems"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical" />
+
+                            <!-- Shown when everything on the order is already with the
+                                 kitchen, so the panel is empty for a good reason. An
+                                 empty list under a table that clearly has an order on
+                                 it reads as lost items; this says where they are. -->
+                            <TextView
+                                android:id="@+id/tvCartAllSent"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:paddingVertical="22dp"
+                                android:gravity="center"
+                                android:lineSpacingExtra="3dp"
+                                android:text="All items sent to the kitchen.\nAdd a dish for the next round, or tap More to see the order."
+                                android:textSize="12.5sp"
+                                android:textColor="@color/text_secondary"
+                                android:visibility="gone" />
+                        </LinearLayout>
                     </ScrollView>
 
                     <View

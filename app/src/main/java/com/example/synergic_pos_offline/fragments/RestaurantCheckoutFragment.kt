@@ -97,7 +97,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             // A change the operator made, not one fillTenderedWithTotal made - after
             // this the field stops being auto-filled. See that function.
             if (!fillingTendered) tenderedEdited = true
-            val tendered = it?.toString()?.toDoubleOrNull()
+            val tendered = com.example.synergic_pos_offline.utils.Amounts.parse(it?.toString())
             tvChange.text = if (tendered != null && tendered >= total) "₹ ${money(tendered - total)}" else "—"
         }
 
@@ -120,7 +120,10 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                     putString(ARG_PAY_METHOD, payMethod)
                     // Cash tendered (0 when not entered) so the Orders screen can book
                     // the change and print the amount returned on the receipt.
-                    putDouble(ARG_TENDERED, etTendered.text?.toString()?.toDoubleOrNull() ?: 0.0)
+                    putDouble(
+                        ARG_TENDERED,
+                        com.example.synergic_pos_offline.utils.Amounts.parse(etTendered.text?.toString()) ?: 0.0
+                    )
                 }
             )
             parentFragmentManager.popBackStack()
@@ -231,7 +234,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     private fun fillTenderedWithTotal(root: View) {
         if (tenderedEdited) return
         val field = root.findViewById<TextInputEditText>(R.id.etTendered) ?: return
-        val text = money(total)
+        // Ungrouped: this value is read back, and money()'s thousands comma does not
+        // survive the trip - see Amounts. Here it failed quietly rather than loudly:
+        // no validation refused it, so any bill over ₹999 settled with the tendered
+        // amount recorded as zero and no change worked out.
+        val text = com.example.synergic_pos_offline.utils.Amounts.editable(total)
         if (field.text?.toString() == text) return
         fillingTendered = true
         field.setText(text)
