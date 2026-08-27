@@ -1421,8 +1421,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         price = "₹ ${money(gp.product.price)}",
         codes = listOfNotNull(
             gp.product.sku.takeIf { it.isNotBlank() },
-            gp.barcode.takeIf { it.isNotBlank() },
-            com.example.synergic_pos_offline.utils.SearchSuggestions.realHsn(gp.product.hsn)
+            gp.barcode.takeIf { it.isNotBlank() }
         ),
         barcode = gp.barcode,
         image = gp.image

@@ -159,8 +159,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         price = money(p.price),
         codes = listOfNotNull(
             p.sku.takeIf { it.isNotBlank() },
-            p.barcode.takeIf { it.isNotBlank() },
-            SearchSuggestions.realHsn(p.hsn)
+            p.barcode.takeIf { it.isNotBlank() }
         ),
         barcode = p.barcode,
         // Only ever the warning states, and only while stock is tracked: a badge on
