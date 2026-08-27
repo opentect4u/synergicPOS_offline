@@ -873,13 +873,9 @@ class MainActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val vn = visible[position]
-            // Displayed in the chosen language, but the node keeps its English title:
-            // that is the key handleLeaf() opens a screen by and activeTitle matches
-            // against, and a translated key would open nothing.
-            holder.tvTitle.text = com.example.synergic_pos_offline.utils.AppLanguage.tr(
-                com.example.synergic_pos_offline.utils.AppLanguage.of(this@MainActivity),
-                vn.node.title
-            )
+            // App language only affects product names in sale screens - the sidebar
+            // stays in English regardless of the app language setting.
+            holder.tvTitle.text = vn.node.title
 
             val themeColor = ThemeManager.getThemeColor(this@MainActivity)
             holder.ivChevron.imageTintList = ColorStateList.valueOf(themeColor)
