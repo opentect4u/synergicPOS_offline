@@ -18,6 +18,7 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.TableDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
 import com.example.synergic_pos_offline.utils.AppLanguage
+import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.CartDensity
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
@@ -3057,14 +3058,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             ),
             table = billTable,
             items = items,
-            discount = 0.0, roundOff = 0.0, netAmount = b.total,
+            discount = 0.0, roundOff = BillRounding.roundOff(b.total), netAmount = BillRounding.payable(b.total),
             paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),
             serviceCharge = b.service,   // shown as its own totals line, not an item
             // The figures already quoted on the order panel, handed to the slip rather
             // than worked out again - so what prints is what the customer was told.
             charges = b.charges.map { it.name to it.amount },
             chargeTypes = b.charges.map { it.type.name },
-            returnAmount = (tendered - b.total).coerceAtLeast(0.0)   // cash to hand back
+            returnAmount = (tendered - BillRounding.payable(b.total)).coerceAtLeast(0.0)   // cash to hand back
         )
     }
 
