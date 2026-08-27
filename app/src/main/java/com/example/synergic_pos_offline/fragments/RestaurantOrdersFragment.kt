@@ -3063,6 +3063,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // The figures already quoted on the order panel, handed to the slip rather
             // than worked out again - so what prints is what the customer was told.
             charges = b.charges.map { it.name to it.amount },
+            chargeTypes = b.charges.map { it.type.name },
             returnAmount = (tendered - b.total).coerceAtLeast(0.0)   // cash to hand back
         )
     }

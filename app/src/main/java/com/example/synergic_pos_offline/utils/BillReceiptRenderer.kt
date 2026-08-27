@@ -576,13 +576,15 @@ class BillReceiptRenderer(context: Context) {
         /** Restaurant service charge — shown as its own totals line, added to the net. */
         val serviceCharge: Double = 0.0,
         /**
-         * The shop's extra charges for this bill, already worked out - name to amount.
+         * The shop's extra charges for this bill, already worked out - (name, value, type, amount).
+         * type is "PERCENTAGE" or "AMOUNT", value is the original percentage/amount, amount is calculated.
          *
          * Carried on the draft rather than recomputed here because the screen that
          * built it has already charged them: recomputing would let a slip disagree
          * with the total the customer was quoted if the master were edited in between.
          */
         val charges: List<Pair<String, Double>> = emptyList(),
+        val chargeTypes: List<String> = emptyList(), // PERCENTAGE or AMOUNT for each charge
         /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
         val returnAmount: Double = 0.0
     ) {
@@ -1061,9 +1063,21 @@ class BillReceiptRenderer(context: Context) {
                 ?: runCatching {
                     ChargeDao(ctx).amountsOn(totals.itemsSubtotal).map { it.name to it.amount }
                 }.getOrDefault(emptyList())
+            val chargeTypes: List<String> = draft?.chargeTypes?.takeIf { it.isNotEmpty() }
+                ?: runCatching {
+                    ChargeDao(ctx).amountsOn(totals.itemsSubtotal).map { it.type.name }
+                }.getOrDefault(emptyList())
             val chargesTotal = BillRounding.toPaise(chargeLines.sumOf { it.second })
-            // Printed as label / amount, the name as the shop typed it.
-            val chargeRows = chargeLines.map { (name, amount) -> name.uppercase() to money(amount) }
+            // Printed as label / amount, the name as the shop typed it, with type indicator
+            val chargeRows = chargeLines.mapIndexed { index, (name, amount) ->
+                val typeIndicator = when (chargeTypes.getOrNull(index)) {
+                    "PERCENTAGE" -> "(% amount)"
+                    "AMOUNT" -> "(fixed)"
+                    else -> ""
+                }
+                val displayName = if (typeIndicator.isNotEmpty()) "$name $typeIndicator" else name
+                displayName.uppercase() to money(amount)
+            }
 
             // Round off is whatever the bill recorded, not something worked out here:
             // the printed total has to match the amount that was actually charged.
