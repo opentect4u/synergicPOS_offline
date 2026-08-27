@@ -447,29 +447,26 @@ object DialogUtils {
                     inputs.add(TextInputEditText(ctx).apply { visibility = android.view.View.GONE })
                 }
                 "dropdown" -> {
-                    // Create a dropdown using TextInputLayout
+                    // Create a dropdown using dialog selection
                     val til = inflater.inflate(R.layout.item_form_field, grid, false) as TextInputLayout
                     til.hint = field.label
                     til.layoutParams = params
 
                     val et = til.findViewById<TextInputEditText>(R.id.etField)
                     et.setText(field.value)
-                    et.inputType = android.text.InputType.TYPE_NULL  // Disable keyboard
-                    et.isFocusable = true
+                    et.inputType = android.text.InputType.TYPE_NULL
+                    et.isFocusable = false
                     et.isClickable = true
+                    et.isCursorVisible = false
 
-                    // Show dropdown menu on click
-                    et.setOnClickListener { view ->
-                        android.widget.PopupMenu(ctx, view).apply {
-                            field.options.forEach { option ->
-                                menu.add(option)
+                    // Show selection dialog on click
+                    et.setOnClickListener {
+                        AlertDialog.Builder(ctx)
+                            .setTitle(field.label)
+                            .setItems(field.options.toTypedArray()) { _, which ->
+                                et.setText(field.options[which])
                             }
-                            setOnMenuItemClickListener { item ->
-                                et.setText(item.title)
-                                true
-                            }
-                            show()
-                        }
+                            .show()
                     }
 
                     grid.addView(til, params)
