@@ -68,28 +68,49 @@ class ChargesFragment : DataTableFragment() {
     private fun showChargeForm(existing: DataRow?) {
         val current = existing?.id?.toLongOrNull()?.let { id -> dao.getAll().firstOrNull { it.id == id } }
         val currentType = current?.type ?: ChargeDao.Type.PERCENTAGE
+        val isRestaurant = com.example.synergic_pos_offline.utils.SettingsCache.value(requireContext(), "G", "Mode") == "R"
+
+        val fields = mutableListOf(
+            DialogUtils.FormField(label = "Charge Name", value = current?.name.orEmpty()),
+            DialogUtils.FormField(
+                label = "Value",
+                value = current?.let { trimPct(it.value) }.orEmpty(),
+                inputType = "decimal"
+            ),
+            DialogUtils.FormField(
+                label = "Type",
+                value = if (currentType == ChargeDao.Type.PERCENTAGE) "Percentage" else "Amount",
+                fieldType = "dropdown",
+                options = listOf("Percentage", "Amount")
+            ),
+            DialogUtils.FormField(
+                label = "Enabled",
+                value = if (current?.enabled != false) "Yes" else "No",
+                fieldType = "toggle"
+            )
+        )
+
+        // Add applicability field only for restaurant mode
+        if (isRestaurant) {
+            fields.add(
+                DialogUtils.FormField(
+                    label = "Applicable For",
+                    value = when (current?.applicability) {
+                        ChargeDao.Applicability.TAKEAWAY -> "Takeaway"
+                        ChargeDao.Applicability.DINE_IN -> "Dine In"
+                        ChargeDao.Applicability.NONE -> "None"
+                        else -> "Both"
+                    },
+                    fieldType = "dropdown",
+                    options = listOf("Both", "Takeaway", "Dine In", "None")
+                )
+            )
+        }
+
         DialogUtils.showForm(
             context = requireContext(),
             title = if (existing == null) "Add Extra Charge" else "Edit Extra Charge",
-            fields = listOf(
-                DialogUtils.FormField(label = "Charge Name", value = current?.name.orEmpty()),
-                DialogUtils.FormField(
-                    label = "Value",
-                    value = current?.let { trimPct(it.value) }.orEmpty(),
-                    inputType = "decimal"
-                ),
-                DialogUtils.FormField(
-                    label = "Type",
-                    value = if (currentType == ChargeDao.Type.PERCENTAGE) "Percentage" else "Amount",
-                    fieldType = "dropdown",
-                    options = listOf("Percentage", "Amount")
-                ),
-                DialogUtils.FormField(
-                    label = "Enabled",
-                    value = if (current?.enabled != false) "Yes" else "No",
-                    fieldType = "toggle"
-                )
-            ),
+            fields = fields,
             positiveText = if (existing == null) "Add" else "Update",
             mandatoryFields = listOf(0, 1, 2)
         ) { values ->
@@ -102,16 +123,31 @@ class ChargesFragment : DataTableFragment() {
                 if (typeStr.startsWith("A")) ChargeDao.Type.AMOUNT else ChargeDao.Type.PERCENTAGE
             }
             val enabled = values.getOrNull(3)?.equals("Yes", ignoreCase = true) ?: true
+
+            // Parse applicability only if restaurant mode
+            val applicabilityStr = values.getOrNull(if (isRestaurant) 4 else -1)?.trim().orEmpty()
+            val applicability = try {
+                ChargeDao.Applicability.valueOf(applicabilityStr.uppercase().replace(" ", "_"))
+            } catch (e: Exception) {
+                when (applicabilityStr.lowercase()) {
+                    "takeaway" -> ChargeDao.Applicability.TAKEAWAY
+                    "dine in" -> ChargeDao.Applicability.DINE_IN
+                    "both" -> ChargeDao.Applicability.BOTH
+                    "none" -> ChargeDao.Applicability.NONE
+                    else -> ChargeDao.Applicability.BOTH
+                }
+            }
+
             when {
                 name.isEmpty() -> { toast("Charge name is required"); return@showForm }
                 value == null || value < 0.0 -> { toast("Enter a valid value"); return@showForm }
                 type == ChargeDao.Type.PERCENTAGE && value > 100.0 -> { toast("Percentage cannot exceed 100%"); return@showForm }
             }
             if (existing == null) {
-                if (dao.insert(name, value!!, type, enabled) == -1L) { toast("Save failed"); return@showForm }
+                if (dao.insert(name, value!!, type, enabled, applicability) == -1L) { toast("Save failed"); return@showForm }
                 toast("Added $name")
             } else {
-                dao.update(existing.id.toLong(), name, value!!, type, enabled)
+                dao.update(existing.id.toLong(), name, value!!, type, enabled, applicability)
                 toast("Updated $name")
             }
             refreshRows()

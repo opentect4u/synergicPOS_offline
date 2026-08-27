@@ -36,12 +36,17 @@ class ChargeDao(context: Context) {
         PERCENTAGE, AMOUNT
     }
 
+    enum class Applicability {
+        BOTH, TAKEAWAY, DINE_IN, NONE
+    }
+
     data class Charge(
         val id: Long,
         val name: String,
         val value: Double,  // percentage value (e.g., 5) or amount value (e.g., 50)
         val type: Type,      // PERCENTAGE or AMOUNT
-        val enabled: Boolean
+        val enabled: Boolean,
+        val applicability: Applicability = Applicability.BOTH  // For restaurants: BOTH, TAKEAWAY, DINE_IN, or NONE
     )
 
     /** One charge worked out against a particular bill. */
@@ -52,7 +57,7 @@ class ChargeDao(context: Context) {
         val list = mutableListOf<Charge>()
         val store = currentStoreId()
         helper.readableDatabase.query(
-            table, arrayOf("id", "charge_name", "percentage", "charge_type", "is_enabled"),
+            table, arrayOf("id", "charge_name", "percentage", "charge_type", "is_enabled", "applicability"),
             (if (store != null) "store_id = ? AND is_active = 1" else "is_active = 1"),
             store?.let { arrayOf(it.toString()) },
             null, null, "id ASC"
@@ -68,7 +73,12 @@ class ChargeDao(context: Context) {
                         } catch (e: Exception) {
                             Type.PERCENTAGE
                         },
-                        enabled = c.getInt(4) != 0
+                        enabled = c.getInt(4) != 0,
+                        applicability = try {
+                            Applicability.valueOf(c.getString(5)?.uppercase() ?: "BOTH")
+                        } catch (e: Exception) {
+                            Applicability.BOTH
+                        }
                     )
                 )
             }
@@ -106,13 +116,14 @@ class ChargeDao(context: Context) {
     /** What [amountsOn] adds up to - the figure that joins the grand total. */
     fun totalOn(itemsTotal: Double): Double = round2(amountsOn(itemsTotal).sumOf { it.amount })
 
-    fun insert(name: String, value: Double, type: Type, enabled: Boolean): Long {
+    fun insert(name: String, value: Double, type: Type, enabled: Boolean, applicability: Applicability = Applicability.BOTH): Long {
         val v = ContentValues().apply {
             put("store_id", currentStoreId())
             put("charge_name", name)
             put("percentage", value)
             put("charge_type", type.name)
             put("is_enabled", if (enabled) 1 else 0)
+            put("applicability", applicability.name)
             put("is_active", 1)
             put("created_at", now())
             put("created_by", currentUser())
@@ -120,12 +131,13 @@ class ChargeDao(context: Context) {
         return helper.writableDatabase.insert(table, null, v)
     }
 
-    fun update(id: Long, name: String, value: Double, type: Type, enabled: Boolean): Int {
+    fun update(id: Long, name: String, value: Double, type: Type, enabled: Boolean, applicability: Applicability = Applicability.BOTH): Int {
         val v = ContentValues().apply {
             put("charge_name", name)
             put("percentage", value)
             put("charge_type", type.name)
             put("is_enabled", if (enabled) 1 else 0)
+            put("applicability", applicability.name)
             put("modified_at", now())
             put("modified_by", currentUser())
         }
