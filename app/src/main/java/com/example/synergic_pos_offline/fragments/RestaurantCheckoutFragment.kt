@@ -280,7 +280,16 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             sgst += p.sgst
         }
         val service = subtotal * serviceRate / 100.0   // section-wise service charge
-        total = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
+        val exactTotal = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
+        // Bill Settings' Round Off is the only say in whether this rounds - see
+        // RestaurantOrdersFragment.roundOffOn(). Applied here, on the class field
+        // that everything below (the total shown, the Confirm button, the tendered
+        // validation, the QR amount, and ARG_TENDERED handed back to the Orders
+        // screen) reads from, so all of it agrees on the one payable figure.
+        val roundOffOn = runCatching {
+            com.example.synergic_pos_offline.database.BillSettingsDao(requireContext()).load().roundOff
+        }.getOrDefault(false)
+        total = if (roundOffOn) BillRounding.payable(exactTotal) else BillRounding.toPaise(exactTotal)
         root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(subtotal)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(service)}"
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(cgst)}"
