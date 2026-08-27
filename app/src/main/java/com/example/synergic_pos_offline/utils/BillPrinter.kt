@@ -41,24 +41,11 @@ object BillPrinter {
     ): List<android.graphics.Bitmap> {
         val renderer = BillReceiptRenderer(context)
 
-        // A sale mixing VAT-rated and GST-rated goods comes off as two bills: the
-        // main one without the VAT lines, then the same bill again carrying only
-        // those, numbered with an A after it. They are separately assessed taxes and
-        // one slip cannot carry an honest grand total for both.
-        if (BillReceiptRenderer.isMixedTax(context, receiptNo)) {
-            val main = renderer.renderToBitmap(
-                receiptNo, paperDots, duplicate, BillReceiptRenderer.TaxPart.WITHOUT_VAT
-            )
-            val vat = renderer.renderToBitmap(
-                receiptNo, paperDots, duplicate, BillReceiptRenderer.TaxPart.VAT_ONLY
-            )
-            val split = listOfNotNull(main, vat)
-            if (split.size == 2) {
-                return split + CouponPrinter.couponsFor(context, receiptNo, paperDots)
-            }
-            // Half a split is worse than none - fall through and print the whole bill.
-        }
-
+        // A sale mixing VAT-rated and GST-rated goods still prints as ONE slip - see
+        // BillReceiptRenderer.populate()'s own demarcation, "BILL NO: NA" partway
+        // down the item table, each half carrying its own summary and one grand
+        // total over both at the foot of the whole thing. Not cut into two separate
+        // pieces of paper: they are one sale, rung up at one counter at one moment.
         val first = renderer.renderToBitmap(receiptNo, paperDots, duplicate = duplicate)
             ?: return emptyList()
         val bill = if (!BillSettingsDao(context).load().twoCopyBill) listOf(first) else {

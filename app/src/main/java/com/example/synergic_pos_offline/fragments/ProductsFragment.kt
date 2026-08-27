@@ -480,8 +480,13 @@ class ProductsFragment : DataTableFragment() {
             }
         }
 
-        // Tax settings (local cache, type 'T') decide which tax fields are editable:
-        // GST on -> CGST/SGST/IGST; VAT on -> VAT; both off -> all disabled.
+        // Tax settings (local cache, type 'T') decide the CALCULATION only - which
+        // of a rate's own GST or VAT figure the sell price (and later, the bill) is
+        // worked out from. They do not decide what can be typed into the master: a
+        // shop with VAT switched off can still carry a VAT rate against a product it
+        // may sell under GST tomorrow, and the field stays open to it. See
+        // syncGstVatFields below for what DOES gate these fields against each other -
+        // the values themselves, not the setting.
         val gstOn = SettingsCache.value(requireContext(), "T", "GST") == "1"
         val vatOn = SettingsCache.value(requireContext(), "T", "VAT") == "1"
         val gstInclusive = SettingsCache.value(requireContext(), "T", "GST Type") == "I"
@@ -519,11 +524,12 @@ class ProductsFragment : DataTableFragment() {
             // Keyed on the rate rather than on the dialog, so "+ Add Rate" during an
             // edit still gives a rate that can be configured: a genuinely different
             // tax or discount is a different rate, and that is how one is made.
+            val etVat = row.findViewById<TextInputEditText>(R.id.etRateVat)
             val savedRate = prefill != null
-            etCgst.isEnabled = gstOn && !savedRate
-            etSgst.isEnabled = gstOn && !savedRate
-            etIgst.isEnabled = gstOn && !savedRate
-            row.findViewById<TextInputEditText>(R.id.etRateVat).isEnabled = vatOn && !savedRate
+            etCgst.isEnabled = !savedRate
+            etSgst.isEnabled = !savedRate
+            etIgst.isEnabled = !savedRate
+            etVat.isEnabled = !savedRate
             etDiscount.isEnabled = itemWiseDiscount && !savedRate
             actDiscType.isEnabled = itemWiseDiscount && !savedRate
 
@@ -534,30 +540,44 @@ class ProductsFragment : DataTableFragment() {
                 etCgst.setText(prefill.cgst)
                 etSgst.setText(prefill.sgst)
                 etIgst.setText(prefill.igst)
-                row.findViewById<TextInputEditText>(R.id.etRateVat).setText(prefill.vat)
+                etVat.setText(prefill.vat)
                 etDiscount.setText(prefill.discount)
                 row.findViewById<TextInputEditText>(R.id.etRatePurchase).setText(prefill.purchasePrice)
             }
 
-            // Within a rate (GST on): entering CGST/SGST disables IGST, and entering
-            // IGST disables CGST + SGST - they are two ways to charge the same tax.
+            // A rate is taxed one way or the other, never both - see the comment
+            // above computeSellPrice for why one effective rate has to come out of
+            // whatever is entered here. So within CGST/SGST/IGST/VAT: a VAT value
+            // locks out all three GST fields, and a GST value (CGST+SGST, or IGST)
+            // locks out VAT; within GST itself, CGST/SGST and IGST stay mutually
+            // exclusive as before - two ways to charge the same tax.
             //
-            // Not wired on a saved rate: this rule decides which GST fields are
+            // Gated only on the rate being new, never on whether GST or VAT is
+            // switched on - Tax Settings decides which of these figures the bill
+            // is CALCULATED from, not which ones the master will accept. A shop
+            // with VAT off can still carry a VAT rate here against the day it sells
+            // this product under VAT instead.
+            //
+            // Not wired on a saved rate: this rule decides which fields are
             // enabled, and on a saved rate none of them are. Left in, it would
-            // re-enable whichever half of the split was blank the moment the row was
-            // laid out.
-            if (gstOn && !savedRate) {
-                fun syncGstFields() {
+            // re-enable whichever half of the split was blank the moment the row
+            // was laid out.
+            if (!savedRate) {
+                fun syncTaxFields() {
+                    val vatFilled = !etVat.text.isNullOrBlank()
                     val cgstSgstFilled = !etCgst.text.isNullOrBlank() || !etSgst.text.isNullOrBlank()
                     val igstFilled = !etIgst.text.isNullOrBlank()
-                    etIgst.isEnabled = !cgstSgstFilled
-                    etCgst.isEnabled = !igstFilled
-                    etSgst.isEnabled = !igstFilled
+                    val gstFilled = cgstSgstFilled || igstFilled
+                    etVat.isEnabled = !gstFilled
+                    etIgst.isEnabled = !vatFilled && !cgstSgstFilled
+                    etCgst.isEnabled = !vatFilled && !igstFilled
+                    etSgst.isEnabled = !vatFilled && !igstFilled
                 }
-                etCgst.addTextChangedListener { syncGstFields() }
-                etSgst.addTextChangedListener { syncGstFields() }
-                etIgst.addTextChangedListener { syncGstFields() }
-                syncGstFields()
+                etCgst.addTextChangedListener { syncTaxFields() }
+                etSgst.addTextChangedListener { syncTaxFields() }
+                etIgst.addTextChangedListener { syncTaxFields() }
+                etVat.addTextChangedListener { syncTaxFields() }
+                syncTaxFields()
             }
 
             // Sell price is always derived and read-only. GST and VAT are mutually
@@ -569,7 +589,6 @@ class ProductsFragment : DataTableFragment() {
             //   post-tax + exclusive  -> add tax to rate; then discount the gross
             // No item discount: inclusive -> rate ; exclusive -> rate + tax.
             val etRateVal = row.findViewById<TextInputEditText>(R.id.etRate)
-            val etVat = row.findViewById<TextInputEditText>(R.id.etRateVat)
             val etSell = row.findViewById<TextInputEditText>(R.id.etRateSell)
             etSell.isFocusable = false
             etSell.isFocusableInTouchMode = false

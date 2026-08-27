@@ -1000,9 +1000,12 @@ class BillReceiptRenderer(context: Context) {
             // A shop can sell taxed two ways at once - groceries under GST, liquor
             // under VAT - and the two cannot be added up in one column, because the
             // tax lines under them are answering different authorities. So a bill
-            // carrying both prints as two tables: the GST items under this bill's own
-            // number, then the VAT items under the same number suffixed "A", then one
-            // grand total over both.
+            // carrying both prints as one continuous slip with two tables on it: the
+            // GST items under this bill's own number, each with its own summary, then
+            // the VAT items under the same number suffixed "A", with a summary of its
+            // own too, then one grand total over both at the foot of the whole thing.
+            // Not cut apart into two pieces of paper - it is one sale, rung up at one
+            // counter at one moment, and "NA" says so.
             //
             // Split by the LINE, not by the till's setting. Each line already records
             // the rates it was sold at, so a line with VAT on it is a VAT line whatever
@@ -1019,10 +1022,43 @@ class BillReceiptRenderer(context: Context) {
                 )
             }
             if (split) {
-                // The GST half's own total, so the section stands on its own before the
-                // second one starts - without it the reader has to work out which of
-                // the figures below belongs to which table.
-                llItems.addView(sectionTotalLine(t("TOTAL"), gstItems, headingSp))
+                // A section's own summary - item count/qty/gross, its own tax rates,
+                // its own TOTAL - built the exact way the whole bill's summary below
+                // is, just scoped to this section's raw lines rather than all of them.
+                // So a section reads as a complete bill in miniature, not a bare figure
+                // with no tax on it to check.
+                val summarySp = if (narrow) NARROW_SUMMARY_SP else WIDE_SUMMARY_SP
+                val netSize = if (totalAmountFontSize == BillSettingsDao.FontSize.BIG) 20f else 15f
+                fun sectionSummary(sectionRaws: List<RawLine>) {
+                    val (_, secTotals, secTaxSlabs) = loadItems(sectionRaws, inclusive)
+                    val secShowDiscount = secTotals.totalDiscount > 0.005
+                    val secSummary = LinearLayout(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                        )
+                        orientation = LinearLayout.VERTICAL
+                    }
+                    // Round off, service charge and extra charges belong to the sale as
+                    // a whole, not to either half of it - they stay off a section's own
+                    // summary and join the GRAND TOTAL below instead.
+                    if (classic) {
+                        renderClassicSummary(
+                            secSummary, secTotals, secTaxSlabs, summarySp,
+                            showTotalTax = true, showDiscount = secShowDiscount,
+                            discountPreTax = discountPreTax, roundOff = 0.0, showRoundOff = false,
+                            narrow = narrow
+                        )
+                    } else {
+                        renderStandardSummary(
+                            secSummary, secTotals, secTaxSlabs, summarySp, netSize,
+                            showDiscount = secShowDiscount, discountPreTax = discountPreTax,
+                            roundOff = 0.0, showRoundOff = false, payable = secTotals.grandTotal,
+                            narrow = narrow
+                        )
+                    }
+                    llItems.addView(secSummary)
+                }
+                sectionSummary(partRaws.filter { TaxPart.WITHOUT_VAT.covers(it.vat, it.vatRate) })
                 llItems.addView(
                     fullWidthLine(PrintType.RULE, headingSp).apply { maxLines = 1 }
                 )
@@ -1041,7 +1077,10 @@ class BillReceiptRenderer(context: Context) {
                         buildClassicItemRow(it, showDisc, headingSp, columnPx, narrow, showSerial)
                     )
                 }
-                llItems.addView(sectionTotalLine(t("TOTAL"), vatItems, headingSp))
+                sectionSummary(partRaws.filter { TaxPart.VAT_ONLY.covers(it.vat, it.vatRate) })
+                llItems.addView(
+                    fullWidthLine(PrintType.RULE, headingSp).apply { maxLines = 1 }
+                )
             }
 
             val totals = lineTotals.copy(discount = discount)
@@ -2385,46 +2424,6 @@ class BillReceiptRenderer(context: Context) {
      * that it stops being broken up, so it is cut at the edge rather than wrapped if
      * it somehow outruns the whole roll as well.
      */
-    /**
-     * "GST TOTAL              1500.00" - one section of a split bill, added up.
-     *
-     * Summed from the rows' own [BillItem.amount] rather than re-derived from the
-     * cart, so the figure printed under a table is the sum of the figures printed in
-     * it. A total worked out separately is a total that can disagree with what is
-     * above it, and on a tax document that disagreement is the whole problem.
-     *
-     * Laid out as label-left / figure-right on one line, which is what the summary
-     * block below does, so the two read as the same kind of row.
-     */
-    private fun sectionTotalLine(label: String, rows: List<BillItem>, sizeSp: Float): View {
-        val total = BillRounding.toPaise(rows.sumOf { it.amount })
-        return LinearLayout(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            orientation = LinearLayout.HORIZONTAL
-            addView(TextView(ctx).apply {
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                text = "$label:"
-                gravity = Gravity.END
-                typeface = billTypeface
-                setTypeface(billTypeface, Typeface.BOLD)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
-                setTextColor(0xFF111111.toInt())
-            })
-            addView(TextView(ctx).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).also { it.marginStart = (6 * ctx.resources.displayMetrics.density).toInt() }
-                text = money(total)
-                gravity = Gravity.END
-                setTypeface(billTypeface, Typeface.BOLD)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
-                setTextColor(0xFF111111.toInt())
-            })
-        }
-    }
-
     private fun fullWidthLine(text: String, sizeSp: Float): TextView = TextView(ctx).apply {
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -2706,32 +2705,6 @@ class BillReceiptRenderer(context: Context) {
             return if (room.isEmpty()) "TABLE : ${no.uppercase()}"
             else "TABLE : ${no.uppercase()} (${room.uppercase()})"
         }
-
-        /**
-         * Whether [receiptNo] carries both VAT-rated and non-VAT lines.
-         *
-         * Asked of the sold lines, not of Tax Settings: the split is about what the
-         * products carry, and a shop that has switched VAT off still has to account
-         * for stock that was rated under it. A bill that is all one or all the other
-         * needs no splitting and prints as it always did.
-         */
-        fun isMixedTax(context: Context, receiptNo: Long): Boolean = runCatching {
-            val db = DatabaseHelper.getInstance(context).readableDatabase
-            var vat = 0
-            var other = 0
-            db.rawQuery(
-                """
-                SELECT COALESCE(vat_amount, 0), COALESCE(vat_rate, 0)
-                FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} WHERE bill_id = ?
-                """.trimIndent(),
-                arrayOf(receiptNo.toString())
-            ).use { c ->
-                while (c.moveToNext()) {
-                    if (c.getDouble(0) > 0.005 || c.getDouble(1) > 0.0) vat++ else other++
-                }
-            }
-            vat > 0 && other > 0
-        }.getOrDefault(false)
 
         fun layoutFor(format: BillSettingsDao.BillFormat): Int = when (format) {
             BillSettingsDao.BillFormat.CLASSIC -> R.layout.fragment_bill_classic

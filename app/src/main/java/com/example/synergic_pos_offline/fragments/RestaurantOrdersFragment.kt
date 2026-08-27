@@ -436,6 +436,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     val rates = order.items.map { it.rate }.toDoubleArray()
                     val cgsts = order.items.map { it.cgstRate }.toDoubleArray()
                     val sgsts = order.items.map { it.sgstRate }.toDoubleArray()
+                    val vats = order.items.map { it.vatRate }.toDoubleArray()
                     // Off the catalogue, same as buildBillDraft() - a cart line does not
                     // carry its own HSN, the product it was sold from does.
                     val hsns = ArrayList(order.items.map { line ->
@@ -450,7 +451,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 order.phone.ifBlank { "Walk-in" }, names, qtys, rates,
                                 cgsts, sgsts, serviceRateFor(order.section),
                                 gstEnabled = taxSettings.gstEnabled, inclusive = taxInclusive,
-                                hsns = hsns
+                                hsns = hsns, vats = vats, vatEnabled = taxSettings.vatEnabled
                             )
                         )
                         .addToBackStack(null)
@@ -2947,6 +2948,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             ?: run { toast("Bill printer '${printer.printerName}' is not fully configured"); return }
         val draft = buildBillDraft(order, billNumber, payment, tendered)
         val renderer = com.example.synergic_pos_offline.utils.BillReceiptRenderer(requireContext())
+        // One continuous bitmap even when the order mixes GST and VAT lines - see
+        // BillReceiptRenderer.populate()'s own demarcation between them ("BILL NO:
+        // NA"), each with its own summary, one grand total at the foot of the whole
+        // thing. Not cut apart into two slips - see BillPrinter.copiesFor's comment
+        // on why that is NOT what this does.
         val first = renderer.renderDraftToBitmap(draft, config.paperDots)
             ?: run { toast("Could not render the bill"); return }
 
