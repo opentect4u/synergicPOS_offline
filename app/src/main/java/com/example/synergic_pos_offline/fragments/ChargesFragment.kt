@@ -68,14 +68,19 @@ class ChargesFragment : DataTableFragment() {
     private fun showChargeForm(existing: DataRow?) {
         val current = existing?.id?.toLongOrNull()?.let { id -> dao.getAll().firstOrNull { it.id == id } }
         val currentType = current?.type ?: ChargeDao.Type.PERCENTAGE
-        val isRestaurant = com.example.synergic_pos_offline.utils.SettingsCache.value(requireContext(), "G", "Mode") == "R"
 
-        val fields = mutableListOf(
+        // Field order: Name, Value, Enabled, Type, For
+        val fields = listOf(
             DialogUtils.FormField(label = "Charge Name", value = current?.name.orEmpty()),
             DialogUtils.FormField(
                 label = "Value",
                 value = current?.let { trimPct(it.value) }.orEmpty(),
                 inputType = "decimal"
+            ),
+            DialogUtils.FormField(
+                label = "Enabled",
+                value = if (current?.enabled != false) "Yes" else "No",
+                fieldType = "toggle"
             ),
             DialogUtils.FormField(
                 label = "Type",
@@ -84,48 +89,36 @@ class ChargesFragment : DataTableFragment() {
                 options = listOf("Percentage", "Amount")
             ),
             DialogUtils.FormField(
-                label = "Enabled",
-                value = if (current?.enabled != false) "Yes" else "No",
-                fieldType = "toggle"
+                label = "For",
+                value = when (current?.applicability) {
+                    ChargeDao.Applicability.TAKEAWAY -> "Takeaway"
+                    ChargeDao.Applicability.DINE_IN -> "Dine In"
+                    ChargeDao.Applicability.NONE -> "None"
+                    else -> "Both"
+                },
+                fieldType = "dropdown",
+                options = listOf("Both", "Takeaway", "Dine In", "None")
             )
         )
-
-        // Add applicability field only for restaurant mode
-        if (isRestaurant) {
-            fields.add(
-                DialogUtils.FormField(
-                    label = "Applicable For",
-                    value = when (current?.applicability) {
-                        ChargeDao.Applicability.TAKEAWAY -> "Takeaway"
-                        ChargeDao.Applicability.DINE_IN -> "Dine In"
-                        ChargeDao.Applicability.NONE -> "None"
-                        else -> "Both"
-                    },
-                    fieldType = "dropdown",
-                    options = listOf("Both", "Takeaway", "Dine In", "None")
-                )
-            )
-        }
 
         DialogUtils.showForm(
             context = requireContext(),
             title = if (existing == null) "Add Extra Charge" else "Edit Extra Charge",
             fields = fields,
             positiveText = if (existing == null) "Add" else "Update",
-            mandatoryFields = listOf(0, 1, 2)
+            mandatoryFields = listOf(0, 1, 3)
         ) { values ->
             val name = values.getOrNull(0)?.trim().orEmpty()
             val value = values.getOrNull(1)?.trim()?.toDoubleOrNull()
-            val typeStr = values.getOrNull(2)?.trim()?.uppercase().orEmpty()
+            val enabled = values.getOrNull(2)?.equals("Yes", ignoreCase = true) ?: true
+            val typeStr = values.getOrNull(3)?.trim()?.uppercase().orEmpty()
             val type = try {
                 ChargeDao.Type.valueOf(typeStr)
             } catch (e: Exception) {
                 if (typeStr.startsWith("A")) ChargeDao.Type.AMOUNT else ChargeDao.Type.PERCENTAGE
             }
-            val enabled = values.getOrNull(3)?.equals("Yes", ignoreCase = true) ?: true
 
-            // Parse applicability only if restaurant mode
-            val applicabilityStr = values.getOrNull(if (isRestaurant) 4 else -1)?.trim().orEmpty()
+            val applicabilityStr = values.getOrNull(4)?.trim().orEmpty()
             val applicability = try {
                 ChargeDao.Applicability.valueOf(applicabilityStr.uppercase().replace(" ", "_"))
             } catch (e: Exception) {
