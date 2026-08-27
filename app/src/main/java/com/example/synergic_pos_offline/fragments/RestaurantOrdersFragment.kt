@@ -3480,4 +3480,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun qtyText(v: Double): String =
         if (v % 1.0 == 0.0) v.toLong().toString()
         else String.format(java.util.Locale.US, "%.3f", v).trimEnd('0').trimEnd('.')
+
+    /** Refresh product names when app language changes, without affecting other UI. */
+    fun refreshProductDisplay() {
+        view?.let { root ->
+            root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProductGrid)?.adapter?.notifyDataSetChanged()
+            root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvTables)?.adapter?.notifyDataSetChanged()
+        }
+    }
 }

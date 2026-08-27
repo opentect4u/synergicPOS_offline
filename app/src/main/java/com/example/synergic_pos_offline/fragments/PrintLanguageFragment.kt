@@ -168,17 +168,12 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
             showProductNames(it, now)
         }
         // App language only affects product names in sale screens - do not change other UI labels.
-        // Just update the current fragment if it's a sale screen.
-        (parentFragmentManager.fragments.lastOrNull() as? androidx.fragment.app.Fragment)?.let {
-            when(it) {
-                is com.example.synergic_pos_offline.fragments.PosBillingFragment -> it.view?.let { v ->
-                    parentFragmentManager.beginTransaction().detach(it).attach(it).commit()
-                }
-                is com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment -> {
-                    parentFragmentManager.beginTransaction().detach(it).attach(it).commit()
-                }
-            }
-        }
+        // Notify sale fragments to refresh their product name display without detaching.
+        // This avoids triggering any global language application that would change the entire UI.
+        val fm = parentFragmentManager
+        (fm.findFragmentById(R.id.fragment_container) as? com.example.synergic_pos_offline.fragments.PosBillingFragment)?.refreshProductDisplay()
+        (fm.findFragmentById(R.id.fragment_container) as? com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment)?.refreshProductDisplay()
+
         toast("Product names will be in ${now.englishName}")
     }
 

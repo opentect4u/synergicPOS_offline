@@ -2400,4 +2400,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         override fun getItemCount() = cart.size
     }
+
+    /** Refresh product names when app language changes, without affecting other UI. */
+    fun refreshProductDisplay() {
+        view?.let { root ->
+            root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProducts)?.adapter?.notifyDataSetChanged()
+            root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvCart)?.adapter?.notifyDataSetChanged()
+        }
+    }
 }
