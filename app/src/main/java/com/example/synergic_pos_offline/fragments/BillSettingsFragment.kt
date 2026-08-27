@@ -56,6 +56,14 @@ class BillSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swBillNoChar: SwitchMaterial
     private lateinit var tilPrefix: TextInputLayout
     private lateinit var etPrefix: TextInputEditText
+
+    // Token numbering — the same four controls for the take-away token.
+    private lateinit var etStartTokenNo: TextInputEditText
+    private lateinit var rgTokenReset: RadioGroup
+    private lateinit var swTokenNoChar: SwitchMaterial
+    private lateinit var tilTokenPrefix: TextInputLayout
+    private lateinit var etTokenPrefix: TextInputEditText
+    private lateinit var tvTokenPreview: TextView
     private lateinit var tvPreview: TextView
     private lateinit var actCustomerDetails: MaterialAutoCompleteTextView
     private lateinit var swCustomerAddress: SwitchMaterial
@@ -106,6 +114,12 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         tilPrefix = view.findViewById(R.id.tilPrefix)
         etPrefix = view.findViewById(R.id.etPrefix)
         tvPreview = view.findViewById(R.id.tvBillNoPreview)
+        etStartTokenNo = view.findViewById(R.id.etStartTokenNo)
+        rgTokenReset = view.findViewById(R.id.rgTokenReset)
+        swTokenNoChar = view.findViewById(R.id.swTokenNoChar)
+        tilTokenPrefix = view.findViewById(R.id.tilTokenPrefix)
+        etTokenPrefix = view.findViewById(R.id.etTokenPrefix)
+        tvTokenPreview = view.findViewById(R.id.tvTokenNoPreview)
         actCustomerDetails = view.findViewById(R.id.actCustomerDetails)
         swCustomerAddress = view.findViewById(R.id.swCustomerAddress)
         actTotalFontSize = view.findViewById(R.id.actTotalFontSize)
@@ -139,6 +153,22 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         }
         etStartBillNo.addTextChangedListener(watcher)
         etPrefix.addTextChangedListener(watcher)
+
+        // Token numbering, wired the same way as the bill's above.
+        swTokenNoChar.setOnCheckedChangeListener { _, on ->
+            tilTokenPrefix.isVisible = on
+            updateTokenPreview()
+        }
+        val tokenWatcher = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = updateTokenPreview()
+            override fun afterTextChanged(s: Editable?) {}
+        }
+        etStartTokenNo.addTextChangedListener(tokenWatcher)
+        etTokenPrefix.addTextChangedListener(tokenWatcher)
+        // The reset period changes which tokens count as already issued, so the
+        // preview has to be recomputed when it moves.
+        rgTokenReset.setOnCheckedChangeListener { _, _ -> updateTokenPreview() }
 
         // The UPI fields only mean anything once the QR is switched on.
         swUpiQr.setOnCheckedChangeListener { _, on ->
@@ -189,6 +219,18 @@ class BillSettingsFragment : Fragment(), TitledScreen {
                 ResetMode.CONTINUE -> R.id.rbContinue
             }
         )
+        etStartTokenNo.setText(s.startTokenNo.toString())
+        swTokenNoChar.isChecked = s.tokenNoCharEnabled
+        tilTokenPrefix.isVisible = s.tokenNoCharEnabled
+        etTokenPrefix.setText(s.tokenNoCharPrefix)
+        rgTokenReset.check(
+            when (s.tokenResetMode) {
+                ResetMode.DAILY -> R.id.rbTokenDaily
+                ResetMode.MONTHLY -> R.id.rbTokenMonthly
+                ResetMode.YEARLY -> R.id.rbTokenYearly
+                ResetMode.CONTINUE -> R.id.rbTokenContinue
+            }
+        )
         actCustomerDetails.setText(s.customerDetails.label, false)
         swCustomerAddress.isChecked = s.customerAddressPrinting
         actTotalFontSize.setText(s.totalAmountFontSize.label, false)
@@ -198,6 +240,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         etUpiName.setText(s.upiPayeeName)
         currentFormat = s.billFormat
         updatePreview()
+        updateTokenPreview()
         updateUpiPreview()
     }
 
@@ -215,6 +258,18 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         },
         billNoCharEnabled = swBillNoChar.isChecked,
         billNoCharPrefix = etPrefix.text?.toString()?.trim().orEmpty().take(3),
+        startTokenNo = etStartTokenNo.text?.toString()?.toIntOrNull() ?: 0,
+        // Daily is the fallback here, not Continue: an unreadable radio group should
+        // land on what a counter actually wants, and it is the same answer the stored
+        // default gives - see BillSettings.tokenResetMode.
+        tokenResetMode = when (rgTokenReset.checkedRadioButtonId) {
+            R.id.rbTokenContinue -> ResetMode.CONTINUE
+            R.id.rbTokenMonthly -> ResetMode.MONTHLY
+            R.id.rbTokenYearly -> ResetMode.YEARLY
+            else -> ResetMode.DAILY
+        },
+        tokenNoCharEnabled = swTokenNoChar.isChecked,
+        tokenNoCharPrefix = etTokenPrefix.text?.toString()?.trim().orEmpty().take(3),
         hsnCode = swHsn.isChecked,
         productSerialNumber = swProductSerial.isChecked,
         timeOnBill = swBillTime.isChecked,
@@ -234,6 +289,39 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         val start = etStartBillNo.text?.toString()?.toIntOrNull() ?: 0
         val prefix = if (swBillNoChar.isChecked) etPrefix.text?.toString()?.trim().orEmpty().take(3) else ""
         tvPreview.text = "Next bill no.: $prefix${start + 1}"
+    }
+
+    /**
+     * Shows the token the next take-away order would actually take with the current
+     * inputs - not start + 1.
+     *
+     * The two differ, and only for tokens. Under a reset period the Start No. is not
+     * used at all once a token has been issued in that period: the counter carries on
+     * from the highest one today. A preview that showed start + 1 under Daily would be
+     * telling the operator a number the till will not hand out.
+     */
+    private fun updateTokenPreview() {
+        val start = etStartTokenNo.text?.toString()?.toIntOrNull() ?: 0
+        val prefix = if (swTokenNoChar.isChecked) etTokenPrefix.text?.toString()?.trim().orEmpty().take(3) else ""
+        val mode = when (rgTokenReset.checkedRadioButtonId) {
+            R.id.rbTokenContinue -> ResetMode.CONTINUE
+            R.id.rbTokenMonthly -> ResetMode.MONTHLY
+            R.id.rbTokenYearly -> ResetMode.YEARLY
+            else -> ResetMode.DAILY
+        }
+        // Only the token fields matter to the count; the rest of the record is left at
+        // its defaults rather than read off half-bound controls.
+        val seq = runCatching {
+            com.example.synergic_pos_offline.database.TokenNumberDao(requireContext()).nextSequence(
+                BillSettings(
+                    startTokenNo = start,
+                    tokenResetMode = mode,
+                    tokenNoCharEnabled = swTokenNoChar.isChecked,
+                    tokenNoCharPrefix = prefix
+                )
+            )
+        }.getOrDefault(start + 1)
+        tvTokenPreview.text = "Next token no.: $prefix$seq"
     }
 
     /**

@@ -396,6 +396,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             when {
                 order == null -> toast("Select a table order first")
                 order.items.isEmpty() -> toast("Add items before billing")
+                // A TAKE-AWAY IS SETTLED WHERE IT WAS RUNG UP, not on a screen of its
+                // own. The checkout page earns its place for a table: the bill is
+                // itemised there because a table's bill is read, queried and argued
+                // over before it is paid. A counter order has just been rung up in
+                // front of the person paying for it, so listing it back to them is a
+                // page to get past on the way to taking the money - and it costs the
+                // counter the order it was working on and a trip back.
+                order.type.equals("Take Away", ignoreCase = true) -> showQuickPayment(order)
                 else -> {
                     val names = ArrayList(order.items.map { it.name })
                     val qtys = order.items.map { it.qty }.toDoubleArray()
@@ -751,6 +759,20 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             if (reusable != null) {
                 reusable.phone = phone
                 roDao.setPhone(reusable.dbId, phone)
+                // RENUMBERED to whatever Token Numbering says now.
+                //
+                // An empty token that is reused kept whatever code it was cut with, so
+                // a counter that changed the start number, the prefix or the reset
+                // period saw the old token again and nothing appear to happen. The
+                // number is worked out fresh here, with this order left out of the
+                // count so it is not compared against itself and climbing on every
+                // look. Unchanged settings therefore produce the same code and the
+                // token sits still, which is the point of reusing it.
+                val fresh = nextTakeAwayCode(excludeOrderId = reusable.dbId)
+                if (!fresh.equals(reusable.id, ignoreCase = true)) {
+                    roDao.transferTable(reusable.dbId, fresh)
+                    reusable.id = fresh
+                }
                 selectOrder(reusable)
             } else {
                 openNewOrder(nextTakeAwayCode(), section = "", phone = phone, type = "Take Away")
@@ -994,12 +1016,30 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     /** Next unused take-away token (TA-1, TA-2, …) among the active orders. */
-    private fun nextTakeAwayCode(): String {
-        val active = orders.map { it.id }.toSet()
-        var n = 1
-        while (active.contains("TA-$n")) n++
-        return "TA-$n"
-    }
+    /**
+     * The code the next take-away order takes, under Bill Settings ▸ Token Numbering.
+     *
+     * It used to be the lowest "TA-n" no OPEN order was using, which meant a token was
+     * handed back the moment its order was settled: take token 1, serve it, and the
+     * next customer was token 1 again. Two people at one counter holding the same
+     * number is the one thing a token has to prevent.
+     *
+     * [TokenNumberDao] now answers instead - counting settled orders as used, and
+     * applying the shop's start number, reset period and prefix. Falls back to the old
+     * scan only if that query fails outright, so a counter is never left unable to
+     * start an order because a setting could not be read.
+     */
+    private fun nextTakeAwayCode(excludeOrderId: Long? = null): String =
+        runCatching {
+            com.example.synergic_pos_offline.database.TokenNumberDao(requireContext())
+                .nextCode(excludeOrderId)
+        }
+            .getOrElse {
+                val active = orders.map { it.id }.toSet()
+                var n = 1
+                while (active.contains("TA-$n")) n++
+                "TA-$n"
+            }
 
     /** Persists a new running order, selects it, and starts it with a fresh empty cart. */
     private fun openNewOrder(table: String, section: String, phone: String, type: String) {
@@ -2123,9 +2163,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     /**
-     * Live split parts for the store, grouped by the parent they belong to - keyed
-     * both by the parent's table id and by its code, so a part written either way is
-     * found. Each entry is (sub_code, suffix, status).
+     * Live split parts for the store, grouped by the parent they belong to. Each entry
+     * is (sub_code, suffix, status).
+     *
+     * KEYED UNDER ONE KEY EACH, and that is the whole point of this function. A part
+     * that knows its parent's table id is filed under that id ALONE; only a part with
+     * no id recorded falls back to being filed under the parent's code.
+     *
+     * Filing every part under both keys is what made splitting Ac's table 1 appear to
+     * split table 1 in every other room. Table codes repeat across rooms - Ac, No Ac
+     * and Cabin each have a table 1 - so the code "1" is not a name for one table, and
+     * a No Ac table 1 that found nothing under its own id fell through to the code and
+     * picked up Ac's parts. The rooms then all showed 1 A and 1 B for a split that had
+     * happened in one of them.
      */
     private fun loadSplitParts(
         db: android.database.sqlite.SQLiteDatabase, store: Long?
@@ -2141,10 +2191,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             while (c.moveToNext()) {
                 val sub = c.getString(0)?.takeIf { it.isNotBlank() } ?: continue
                 val row = Triple(sub, c.getString(1).orEmpty(), c.getString(2).orEmpty())
-                if (!c.isNull(4)) byKey.getOrPut(c.getLong(4).toString()) { mutableListOf() }.add(row)
-                c.getString(3)?.takeIf { it.isNotBlank() }?.let {
-                    byKey.getOrPut(it) { mutableListOf() }.add(row)
-                }
+                val key = if (!c.isNull(4)) c.getLong(4).toString()
+                else c.getString(3)?.takeIf { it.isNotBlank() } ?: continue
+                byKey.getOrPut(key) { mutableListOf() }.add(row)
             }
         }
         return byKey
@@ -2721,6 +2770,118 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         )
     }
 
+    /**
+     * Settles a take-away order in place: how it was paid, what was handed over, done.
+     *
+     * The same settlement the checkout screen performs - it ends in [settlePaidOrder]
+     * exactly as the checkout's result listener does, so the bill is written, the
+     * token closed and the stock moved by the one path that has always done it. What
+     * is different is only where the operator stands while answering.
+     *
+     * The itemised list the checkout screen shows is deliberately not repeated. The
+     * order is on the panel behind this dialog, rung up moments ago in front of the
+     * person paying; the two questions worth asking at the counter are how they are
+     * paying and what they handed over.
+     */
+    private fun showQuickPayment(order: OrderCard) {
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
+        val accent = ThemeManager.getThemeColor(ctx)
+        val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_quick_payment, null)
+        val dialog = AlertDialog.Builder(ctx).setView(v).create()
+            .also { it.setCanceledOnTouchOutside(false) }
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val total = computeBill(order.items, serviceRateFor(order.section)).total
+        v.findViewById<TextView>(R.id.tvQpTotal).text = "₹ ${money(total)}"
+        v.findViewById<TextView>(R.id.tvQpSubtitle).text = buildString {
+            append(order.id.replace("TA-", "Token #"))
+            val who = customerNameFor(order.phone)?.takeIf { it.isNotBlank() } ?: order.phone
+            if (who.isNotBlank()) append("  ·  ").append(who)
+        }
+
+        val etTendered = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etQpTendered)
+        val tvChange = v.findViewById<TextView>(R.id.tvQpChange)
+        val llCash = v.findViewById<LinearLayout>(R.id.llQpCash)
+
+        var payMethod = "Cash"
+        val methods = mapOf(
+            R.id.btnQpCash to "Cash", R.id.btnQpCard to "Card", R.id.btnQpOnline to "Online"
+        )
+        fun paintMethods() {
+            methods.forEach { (id, name) ->
+                v.findViewById<com.google.android.material.button.MaterialButton>(id).apply {
+                    val on = name == payMethod
+                    backgroundTintList = ColorStateList.valueOf(if (on) accent else Color.TRANSPARENT)
+                    setTextColor(if (on) Color.WHITE else accent)
+                    strokeColor = ColorStateList.valueOf(accent)
+                    strokeWidth = if (on) 0 else (resources.displayMetrics.density * 1.2f).toInt()
+                }
+            }
+            // Tendered and change belong to cash alone - a card or a UPI transfer is
+            // paid to the penny by the machine, so the box would be asking a question
+            // with only one answer. The QR appears on the same rule, in reverse.
+            llCash.visibility = if (payMethod == "Cash") View.VISIBLE else View.GONE
+            com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(
+                v, total, online = payMethod == "Online"
+            )
+        }
+        methods.forEach { (id, name) ->
+            v.findViewById<com.google.android.material.button.MaterialButton>(id).setOnClickListener {
+                payMethod = name; paintMethods()
+            }
+        }
+
+        // Pre-filled with the exact amount, the way the checkout screen fills it: the
+        // common case is the customer handing over the total, and a counter that has
+        // to retype the figure it was just shown is being asked to do the till's work.
+        etTendered.setText(money(total))
+        etTendered.addTextChangedListener {
+            val tendered = it?.toString()?.toDoubleOrNull()
+            tvChange.text =
+                if (tendered != null && tendered >= total) "₹ ${money(tendered - total)}" else "—"
+        }
+        tvChange.text = "₹ ${money(0.0)}"
+
+        val btnConfirm = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormPositive)
+        val btnCancel = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormNegative)
+        ThemeManager.applyTheme(v)
+        ThemeManager.styleDialogButtons(btnConfirm, btnCancel)
+        paintMethods()
+
+        btnCancel.setOnClickListener { dialog.dismiss() }
+        btnConfirm.setOnClickListener {
+            // Cash short of the total is a mis-key, not a part payment: the counter
+            // does not hand food over for less than the bill, and settling it here
+            // would write a paid bill for money nobody received.
+            val tendered = if (payMethod == "Cash") etTendered.text?.toString()?.toDoubleOrNull() ?: 0.0 else 0.0
+            if (payMethod == "Cash" && tendered < total) {
+                v.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilQpTendered)
+                    .error = "Less than the amount due"
+                return@setOnClickListener
+            }
+            dialog.dismiss()
+            // The one settlement path, shared with the checkout screen's result: saves
+            // the bill, closes the token, frees the table and prints nothing.
+            settlePaidOrder(order, payMethod, tendered)
+            loadProductsFromDb()   // stock has moved
+
+            // STRAIGHT ON TO THE NEXT ONE. A counter does not finish - one customer
+            // pays and the next is already at the till, so the screen a paid take-away
+            // leaves behind should be the next order, not an empty panel waiting to be
+            // told to start one. Settling used to drop the operator on a blank detail
+            // panel, and the first thing they did every time was reach for Take Away.
+            //
+            // The same [openTakeAway] the button runs, so the next order is opened one
+            // way: it asks who it is for, reuses an empty token rather than leaving a
+            // trail of unused ones, and lands on it selected and ready for items.
+            //
+            // Posted, so the settle's own repaint and its toast land before the prompt
+            // comes up over them.
+            view?.post { if (isAdded) openTakeAway() }
+        }
+        dialog.show()
+    }
+
     private fun resolveBillPrinterThenPrint(order: OrderCard) {
         val billPrinters = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
             .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
@@ -2812,11 +2973,20 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * entirely, where "Guest" or "Walk-in" would print a word the customer never gave
      * and make an anonymous sale look like a named one.
      */
-    private fun customerNameFor(phone: String): String? {
+    private fun customerNameFor(phone: String): String? =
+        customerFor(phone)?.name?.takeIf { it.isNotBlank() }
+
+    /**
+     * The customer filed under [phone], or null for a walk-in.
+     *
+     * An order carries only a phone number - that is what identifies a customer - so
+     * everything else the slip prints about them is read back off the customer list
+     * they were filed in when the order was taken.
+     */
+    private fun customerFor(phone: String): com.example.synergic_pos_offline.database.CustomerDao.Customer? {
         if (phone.isBlank()) return null
         return runCatching {
-            com.example.synergic_pos_offline.database.CustomerDao(requireContext())
-                .findByPhone(phone)?.name?.takeIf { it.isNotBlank() }
+            com.example.synergic_pos_offline.database.CustomerDao(requireContext()).findByPhone(phone)
         }.getOrNull()
     }
 
@@ -2857,6 +3027,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
         // The table as the bill's own field - see Draft.table. Carries its section,
         // since a table number repeats in every section.
+        val who = customerFor(order.phone)
         val billTable = if (order.type.equals("Take Away", ignoreCase = true))
             "Take Away ${order.id.replace("TA-", "Token #")}"
         else if (order.section.isBlank()) order.id
@@ -2872,8 +3043,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // only ever show a number, whatever Bill Settings asked for, because the
             // draft had no name in it to print.
             customer = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Customer(
-                name = customerNameFor(order.phone),
+                name = who?.name?.takeIf { it.isNotBlank() },
                 phone = order.phone.takeIf { it.isNotBlank() },
+                // Read once, alongside the name. Without it the slip had no address in
+                // it to print at all, so a take-away - where the address is part of the
+                // order, not a detail about the customer - went out without one.
+                address = who?.address?.takeIf { it.isNotBlank() },
                 outstanding = customerOutstanding(order.phone)
             ),
             table = billTable,

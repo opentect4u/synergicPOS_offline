@@ -69,31 +69,38 @@ class SubTableDao(context: Context) {
     }
 
     /**
-     * Narrows to the parts of ONE physical table. Sub-codes are built from the parent
-     * code ("1 A"), and a parent code repeats across sections, so "1 A" alone names a
-     * part in every room that has a table 1. Where the parent resolves to a master row
-     * the parts are scoped by that row's id, which is unique; a parent with no master
-     * row (or a store with no sections) falls back to the parent code.
+     * Narrows to the parts of ONE physical table.
+     *
+     * Sub-codes are built from the parent code ("1 A"), and a parent code repeats
+     * across sections - Ac, No Ac and Cabin can each have a table 1 - so "1 A" on its
+     * own names a part in every room at once. The table's own row id is what tells
+     * them apart, and it is what the parts are scoped by.
+     *
+     * The code is used ONLY for parts that carry no table id, and only alongside the
+     * id rather than instead of it. Falling back to the bare code whenever the id
+     * matched nothing was what let one room's split reach into another's: a No Ac
+     * table 1 with no parts of its own fell through to "parent_code = 1" and found
+     * Ac's - so setting a status touched the wrong room's part, and clearing a parent
+     * deleted a split that was still being served in the next room.
      */
     private fun parentScope(parentCode: String, section: String): Pair<String, Array<String>> {
         val store = currentStoreId()
         val tableId = tableIdForCode(parentCode, section)
-        val byId = tableId != null && hasRowsFor("table_id = ?", tableId.toString())
-        val where = StringBuilder(if (byId) "table_id = ?" else "parent_code = ?")
-        val args = mutableListOf(if (byId) tableId.toString() else parentCode)
+        val where = StringBuilder()
+        val args = mutableListOf<String>()
+        if (tableId != null) {
+            // This table's parts, plus any written before ids were recorded - those
+            // carry no id at all, so they cannot belong to a different room's table.
+            where.append("(table_id = ? OR (table_id IS NULL AND parent_code = ?))")
+            args.add(tableId.toString()); args.add(parentCode)
+        } else {
+            // No master row to resolve (an unknown code, or a store with no sections):
+            // the code is all there is to go on.
+            where.append("parent_code = ?")
+            args.add(parentCode)
+        }
         if (store != null) { where.append(" AND store_id = ?"); args.add(store.toString()) }
         return where.toString() to args.toTypedArray()
-    }
-
-    /**
-     * Whether any part is already recorded under this scope. Parts split before table
-     * ids were resolved per section carry whichever table row the code first matched,
-     * so scoping them by the right table id would find nothing at all - those fall
-     * back to the parent code, which is how they were written.
-     */
-    private fun hasRowsFor(where: String, arg: String): Boolean {
-        helper.readableDatabase.query(table, arrayOf("id"), where, arrayOf(arg), null, null, null, "1")
-            .use { c -> return c.moveToFirst() }
     }
 
     private fun tableIdForCode(code: String, section: String): Long? {

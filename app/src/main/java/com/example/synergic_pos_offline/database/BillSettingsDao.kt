@@ -94,6 +94,23 @@ class BillSettingsDao(context: Context) {
         val resetMode: ResetMode = ResetMode.CONTINUE,
         val billNoCharEnabled: Boolean = false,
         val billNoCharPrefix: String = "",
+        /**
+         * Take-away token numbering - the same four settings a bill number has, kept
+         * separately because a token is not a bill.
+         *
+         * A bill number is an accounting record: it runs on, it is quoted back months
+         * later, and a shop that resets it daily has decided that on purpose. A token
+         * is a label for food waiting at a counter - it is called out, collected, and
+         * means nothing by the next morning. Three-digit tokens that climb into the
+         * thousands are a number nobody can shout across a counter.
+         *
+         * Hence DAILY by default where the bill defaults to CONTINUE: the token starts
+         * at 1 each morning, which is how a counter actually numbers its orders.
+         */
+        val startTokenNo: Int = 0,
+        val tokenResetMode: ResetMode = ResetMode.DAILY,
+        val tokenNoCharEnabled: Boolean = false,
+        val tokenNoCharPrefix: String = "",
         val hsnCode: Boolean = false,
         /**
          * Whether each line is numbered on the printed bill - the SR.NO down the left
@@ -185,6 +202,10 @@ class BillSettingsDao(context: Context) {
             resetMode = ResetMode.fromCode(map[KEY_RESET_MODE]) ?: d.resetMode,
             billNoCharEnabled = map[KEY_CHAR_ENABLED]?.toBool() ?: d.billNoCharEnabled,
             billNoCharPrefix = map[KEY_CHAR_PREFIX] ?: d.billNoCharPrefix,
+            startTokenNo = map[KEY_TOKEN_START_NO]?.toIntOrNull() ?: d.startTokenNo,
+            tokenResetMode = ResetMode.fromCode(map[KEY_TOKEN_RESET_MODE]) ?: d.tokenResetMode,
+            tokenNoCharEnabled = map[KEY_TOKEN_CHAR_ENABLED]?.toBool() ?: d.tokenNoCharEnabled,
+            tokenNoCharPrefix = map[KEY_TOKEN_CHAR_PREFIX] ?: d.tokenNoCharPrefix,
             hsnCode = map[KEY_HSN_CODE]?.toBool() ?: d.hsnCode,
             productSerialNumber = map[KEY_PRODUCT_SERIAL]?.toBool() ?: d.productSerialNumber,
             timeOnBill = map[KEY_TIME_ON_BILL]?.toBool() ?: d.timeOnBill,
@@ -209,6 +230,10 @@ class BillSettingsDao(context: Context) {
         put(KEY_RESET_MODE, s.resetMode.code)
         put(KEY_CHAR_ENABLED, if (s.billNoCharEnabled) "1" else "0")
         put(KEY_CHAR_PREFIX, s.billNoCharPrefix.take(3))
+        put(KEY_TOKEN_START_NO, s.startTokenNo.toString())
+        put(KEY_TOKEN_RESET_MODE, s.tokenResetMode.code)
+        put(KEY_TOKEN_CHAR_ENABLED, if (s.tokenNoCharEnabled) "1" else "0")
+        put(KEY_TOKEN_CHAR_PREFIX, s.tokenNoCharPrefix.take(3))
         put(KEY_HSN_CODE, if (s.hsnCode) "1" else "0")
         put(KEY_PRODUCT_SERIAL, if (s.productSerialNumber) "1" else "0")
         put(KEY_TIME_ON_BILL, if (s.timeOnBill) "1" else "0")
@@ -362,6 +387,10 @@ class BillSettingsDao(context: Context) {
         private const val KEY_RESET_MODE = "Bill Reset Mode"
         private const val KEY_CHAR_ENABLED = "Bill No Char Enabled"
         private const val KEY_CHAR_PREFIX = "Bill No Char Prefix"
+        private const val KEY_TOKEN_START_NO = "Token Start No"
+        private const val KEY_TOKEN_RESET_MODE = "Token Reset Mode"
+        private const val KEY_TOKEN_CHAR_ENABLED = "Token No Char Enabled"
+        private const val KEY_TOKEN_CHAR_PREFIX = "Token No Char Prefix"
         private const val KEY_HSN_CODE = "Bill Hsn Code"
         private const val KEY_PRODUCT_SERIAL = "Product Serial Number"
         private const val KEY_TIME_ON_BILL = "Time On Bill"

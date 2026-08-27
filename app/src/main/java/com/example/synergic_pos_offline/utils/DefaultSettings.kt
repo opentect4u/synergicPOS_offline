@@ -83,6 +83,14 @@ object DefaultSettings {
         resetMode = BillSettingsDao.ResetMode.CONTINUE,
         billNoCharEnabled = false,
         billNoCharPrefix = "",
+        // The take-away token restarts at 1 each morning, where the bill number runs
+        // on. Stated here rather than left to the data class so "restore defaults"
+        // says what it restores - and so the one line that differs between the two
+        // numbering blocks is visible next to the one it differs from.
+        startTokenNo = 0,
+        tokenResetMode = BillSettingsDao.ResetMode.DAILY,
+        tokenNoCharEnabled = false,
+        tokenNoCharPrefix = "",
         hsnCode = false,
         productSerialNumber = true,
         timeOnBill = true,

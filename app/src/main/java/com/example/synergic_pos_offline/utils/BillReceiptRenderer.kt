@@ -868,7 +868,20 @@ class BillReceiptRenderer(context: Context) {
             setIfPresent(view, R.id.tvCustMobile, if (showMobile) cust.phone?.let { custLine("MOBILE ", "MOBILE", it) } else null)
             setIfPresent(view, R.id.tvName, if (showName) cust.name?.let { custLine("NAME  ", "NAME", it) } else null)
             setIfPresent(view, R.id.tvCustGstin, if (showGstin) cust.gstin?.let { custLine("GSTIN ", "GSTIN", it) } else null)
-            setIfPresent(view, R.id.tvCustAddress, if (customerAddressPrinting) cust.address?.let { custLine("ADDRESS", "ADDRESS", it) } else null)
+            // A TAKE-AWAY ALWAYS CARRIES THE ADDRESS, whatever the setting says.
+            //
+            // On a table bill the address is a detail about the customer, and whether
+            // to print it is a shop's preference - which is what Customer Address
+            // Printing is for. On a take-away it is part of the order: the food leaves
+            // the counter, and the slip that goes with it is what says where to. A
+            // preference that is off by default should not be able to send an order out
+            // without its destination on it.
+            //
+            // Read off the table line rather than a flag on the draft, so a reprint
+            // from Bill history says the same thing as the slip printed on the day -
+            // both know a take-away by its token.
+            val takeAwayBill = tableLine?.startsWith("take", ignoreCase = true) == true
+            setIfPresent(view, R.id.tvCustAddress, if (customerAddressPrinting || takeAwayBill) cust.address?.let { custLine("ADDRESS", "ADDRESS", it) } else null)
             // The customer's outstanding balance is printed beside the totals (in the
             // summary block below), not here in the customer block, so it reads right
             // next to the amount due on every final bill - grocery or restaurant.
