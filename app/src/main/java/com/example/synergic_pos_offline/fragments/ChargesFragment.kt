@@ -79,12 +79,15 @@ class ChargesFragment : DataTableFragment() {
                     inputType = "decimal"
                 ),
                 DialogUtils.FormField(
-                    label = "Type (Percentage / Amount)",
-                    value = if (currentType == ChargeDao.Type.PERCENTAGE) "Percentage" else "Amount"
+                    label = "Type",
+                    value = if (currentType == ChargeDao.Type.PERCENTAGE) "Percentage" else "Amount",
+                    fieldType = "dropdown",
+                    options = listOf("Percentage", "Amount")
                 ),
                 DialogUtils.FormField(
-                    label = "Enabled (Yes / No)",
-                    value = if (current?.enabled != false) "Yes" else "No"
+                    label = "Enabled",
+                    value = if (current?.enabled != false) "Yes" else "No",
+                    fieldType = "toggle"
                 )
             ),
             positiveText = if (existing == null) "Add" else "Update",
@@ -94,11 +97,11 @@ class ChargesFragment : DataTableFragment() {
             val value = values.getOrNull(1)?.trim()?.toDoubleOrNull()
             val typeStr = values.getOrNull(2)?.trim()?.uppercase().orEmpty()
             val type = try {
-                ChargeDao.Type.valueOf(typeStr.replace(" / AMOUNT", "").replace(" / PERCENTAGE", ""))
+                ChargeDao.Type.valueOf(typeStr)
             } catch (e: Exception) {
                 if (typeStr.startsWith("A")) ChargeDao.Type.AMOUNT else ChargeDao.Type.PERCENTAGE
             }
-            val enabled = readYesNo(values.getOrNull(3))
+            val enabled = values.getOrNull(3)?.equals("Yes", ignoreCase = true) ?: true
             when {
                 name.isEmpty() -> { toast("Charge name is required"); return@showForm }
                 value == null || value < 0.0 -> { toast("Enter a valid value"); return@showForm }
