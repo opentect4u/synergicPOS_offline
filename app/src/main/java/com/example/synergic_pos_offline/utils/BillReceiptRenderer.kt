@@ -1029,6 +1029,13 @@ class BillReceiptRenderer(context: Context) {
                 // with no tax on it to check.
                 val summarySp = if (narrow) NARROW_SUMMARY_SP else WIDE_SUMMARY_SP
                 val netSize = if (totalAmountFontSize == BillSettingsDao.FontSize.BIG) 20f else 15f
+                val bigTotal = totalAmountFontSize == BillSettingsDao.FontSize.BIG
+                val grandSp = when {
+                    narrow && bigTotal -> CLASSIC_NARROW_GRAND_TOTAL_BIG_SP
+                    narrow -> CLASSIC_NARROW_GRAND_TOTAL_SP
+                    bigTotal -> CLASSIC_GRAND_TOTAL_BIG_SP
+                    else -> CLASSIC_GRAND_TOTAL_SP
+                }
                 fun sectionSummary(sectionRaws: List<RawLine>) {
                     val (_, secTotals, secTaxSlabs) = loadItems(sectionRaws, inclusive)
                     val secShowDiscount = secTotals.totalDiscount > 0.005
@@ -1057,11 +1064,13 @@ class BillReceiptRenderer(context: Context) {
                         )
                     }
                     llItems.addView(secSummary)
+                    // A section ends the way the whole bill does - its own GRAND TOTAL,
+                    // bold and set apart between two rules - not the plain row the tax
+                    // breakdown above it uses. This is what makes a section read as a
+                    // complete bill of its own rather than a summary block.
+                    llItems.addView(grandTotalRow(money(secTotals.grandTotal), grandSp, narrow))
                 }
                 sectionSummary(partRaws.filter { TaxPart.WITHOUT_VAT.covers(it.vat, it.vatRate) })
-                llItems.addView(
-                    fullWidthLine(PrintType.RULE, headingSp).apply { maxLines = 1 }
-                )
                 // The VAT half, under its own bill number - "10A" to this bill's "10".
                 // A suffix rather than a number of its own: it is the same sale, rung
                 // up at one counter at one moment, and giving it an independent number
@@ -1078,9 +1087,6 @@ class BillReceiptRenderer(context: Context) {
                     )
                 }
                 sectionSummary(partRaws.filter { TaxPart.VAT_ONLY.covers(it.vat, it.vatRate) })
-                llItems.addView(
-                    fullWidthLine(PrintType.RULE, headingSp).apply { maxLines = 1 }
-                )
             }
 
             val totals = lineTotals.copy(discount = discount)
@@ -2437,6 +2443,55 @@ class BillReceiptRenderer(context: Context) {
         ellipsize = android.text.TextUtils.TruncateAt.END
         setTextColor(0xFF222222.toInt())
     }
+
+    /**
+     * A GRAND TOTAL row exactly as the foot of a normal Classic bill styles one -
+     * bold, set apart between two rules - so a split bill's own section can end in
+     * one too. Built by hand rather than through the fixed llGrandTotal view further
+     * down the layout: that one is a single view for the whole bill's own payable
+     * figure, and a section here needs the same look, not that view moved.
+     */
+    private fun grandTotalRow(value: String, sizeSp: Float, narrow: Boolean): View =
+        LinearLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            orientation = LinearLayout.VERTICAL
+            addView(fullWidthLine(PrintType.RULE, sizeSp).apply { maxLines = 1 })
+            addView(
+                LinearLayout(ctx).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    val pad = (4 * ctx.resources.displayMetrics.density).toInt()
+                    setPadding(0, pad, 0, pad)
+                    addView(TextView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                        )
+                        text = "${t("GRAND TOTAL")}:"
+                        typeface = billTypeface
+                        setTypeface(billTypeface, Typeface.BOLD)
+                        textSize = sizeSp
+                        setTextColor(0xFF111111.toInt())
+                    })
+                    addView(TextView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                        )
+                        text = value
+                        gravity = Gravity.END
+                        typeface = billTypeface
+                        setTypeface(billTypeface, Typeface.BOLD)
+                        textSize = sizeSp
+                        setTextColor(0xFF111111.toInt())
+                    })
+                }
+            )
+            addView(fullWidthLine(PrintType.RULE, sizeSp).apply { maxLines = 1 })
+        }
 
     /** A monospace paint at [sizeSp], for measuring what a column has to hold. */
     private fun measure(sizeSp: Float): Paint = Paint().apply {
