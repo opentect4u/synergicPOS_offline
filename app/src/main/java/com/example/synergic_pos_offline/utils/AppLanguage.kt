@@ -49,18 +49,24 @@ object AppLanguage {
     /** What the screens read in until somebody chooses otherwise. */
     val DEFAULT = PrintLanguage.Language.ENGLISH
 
+    /** Settings key for app screen language (independent of print language). */
+    const val SETTING_KEY = "app_language"
+
     /**
-     * The language this till's screens are in - which is the language it prints in.
+     * The language this till's screens are in.
      *
-     * There is one choice, stored once, under [PrintLanguage.SETTING_KEY]. A till is
-     * set up for a place, and the paper and the screen belong to the same place: a
-     * shop that prints Bengali bills is a shop whose staff read Bengali. Two settings
-     * would only be two things to keep in step, and somewhere for them to drift apart.
+     * Separate from [PrintLanguage.SETTING_KEY] so the operator can choose different
+     * languages for screens vs. bills. Both default to English, but changing one does
+     * not affect the other.
      *
      * What differs is not *which* language but how it is written - the bill is
      * translated and the screen is transliterated. See [tr].
      */
-    fun of(context: Context): PrintLanguage.Language = PrintLanguage.of(context)
+    fun of(context: Context): PrintLanguage.Language = runCatching {
+        val code = android.preference.PreferenceManager.getDefaultSharedPreferences(context)
+            .getString(SETTING_KEY, DEFAULT.code)
+        PrintLanguage.Language.values().firstOrNull { it.code == code } ?: DEFAULT
+    }.getOrDefault(DEFAULT)
 
     /**
      * [raw] as this language spells it.

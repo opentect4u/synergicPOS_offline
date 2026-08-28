@@ -32,22 +32,35 @@ class ChargeDao(context: Context) {
     private val helper = DatabaseHelper.getInstance(context)
     private val table = DatabaseHelper.Tables.MD_CHARGES
 
+    enum class Type {
+        PERCENTAGE, AMOUNT
+    }
+
+    enum class Applicability {
+        BOTH, TAKEAWAY, DINE_IN, NONE
+    }
+
     data class Charge(
         val id: Long,
         val name: String,
-        val percentage: Double,
-        val enabled: Boolean
+        val value: Double,  // percentage value (e.g., 5) or amount value (e.g., 50)
+        val type: Type,      // PERCENTAGE or AMOUNT
+        val enabled: Boolean,
+        val applicability: Applicability = Applicability.BOTH  // For restaurants: BOTH, TAKEAWAY, DINE_IN, or NONE
     )
 
     /** One charge worked out against a particular bill. */
-    data class Applied(val name: String, val percentage: Double, val amount: Double)
+    data class Applied(
+        val name: String, val value: Double, val type: Type, val amount: Double,
+        val applicability: Applicability = Applicability.BOTH
+    )
 
     /** Every charge in the master, enabled or not - what the master screen lists. */
     fun getAll(): List<Charge> {
         val list = mutableListOf<Charge>()
         val store = currentStoreId()
         helper.readableDatabase.query(
-            table, arrayOf("id", "charge_name", "percentage", "is_enabled"),
+            table, arrayOf("id", "charge_name", "percentage", "charge_type", "is_enabled", "applicability"),
             (if (store != null) "store_id = ? AND is_active = 1" else "is_active = 1"),
             store?.let { arrayOf(it.toString()) },
             null, null, "id ASC"
@@ -57,8 +70,18 @@ class ChargeDao(context: Context) {
                     Charge(
                         id = c.getLong(0),
                         name = c.getString(1).orEmpty(),
-                        percentage = c.getDouble(2),
-                        enabled = c.getInt(3) != 0
+                        value = c.getDouble(2),
+                        type = try {
+                            Type.valueOf(c.getString(3)?.uppercase() ?: "PERCENTAGE")
+                        } catch (e: Exception) {
+                            Type.PERCENTAGE
+                        },
+                        enabled = c.getInt(4) != 0,
+                        applicability = try {
+                            Applicability.valueOf(c.getString(5)?.uppercase() ?: "BOTH")
+                        } catch (e: Exception) {
+                            Applicability.BOTH
+                        }
                     )
                 )
             }
@@ -69,37 +92,54 @@ class ChargeDao(context: Context) {
     /**
      * The charges that actually apply to a sale: switched on, and worth something.
      *
-     * A charge left at 0% is dropped as well as a disabled one - it would print a line
+     * A charge left at 0 is dropped as well as a disabled one - it would print a line
      * saying nothing was added, which is a line the customer has to read to learn it
      * did not matter.
      */
-    fun enabled(): List<Charge> = getAll().filter { it.enabled && it.percentage > 0.0001 }
+    fun enabled(): List<Charge> = getAll().filter { it.enabled && it.value > 0.0001 }
 
     /**
      * [enabled] charges worked out against [itemsTotal] - the sum of the bill's item
      * lines, before any tax.
      *
-     * Each is a percentage of that same base, never of the running total: charging 5%
-     * and then 10% of the result would make the second charge depend on the first, so
-     * reordering the master would change the bill. Here the order only decides which
-     * line prints first.
+     * Percentage charges are calculated as a percentage of itemsTotal.
+     * Amount charges are fixed amounts added to the bill.
+     *
+     * [orderType] filters by [Applicability]: pass "TAKEAWAY" or "DINE_IN" for a
+     * restaurant order so a TAKEAWAY-only or DINE_IN-only charge only comes back on
+     * the order it was set for. Left null for grocery, where there is no order type -
+     * only a BOTH charge ever applies there. A NONE charge never comes back, whatever
+     * is passed.
      */
-    fun amountsOn(itemsTotal: Double): List<Applied> {
+    fun amountsOn(itemsTotal: Double, orderType: String? = null): List<Applied> {
         if (itemsTotal <= 0.0) return emptyList()
-        return enabled().map {
-            Applied(it.name, it.percentage, round2(itemsTotal * it.percentage / 100.0))
+        return enabled().filter {
+            when (it.applicability) {
+                Applicability.NONE -> false
+                Applicability.TAKEAWAY -> orderType == "TAKEAWAY"
+                Applicability.DINE_IN -> orderType == "DINE_IN"
+                Applicability.BOTH -> true
+            }
+        }.map {
+            val amount = when (it.type) {
+                Type.PERCENTAGE -> round2(itemsTotal * it.value / 100.0)
+                Type.AMOUNT -> round2(it.value)
+            }
+            Applied(it.name, it.value, it.type, amount, it.applicability)
         }
     }
 
     /** What [amountsOn] adds up to - the figure that joins the grand total. */
     fun totalOn(itemsTotal: Double): Double = round2(amountsOn(itemsTotal).sumOf { it.amount })
 
-    fun insert(name: String, percentage: Double, enabled: Boolean): Long {
+    fun insert(name: String, value: Double, type: Type, enabled: Boolean, applicability: Applicability = Applicability.BOTH): Long {
         val v = ContentValues().apply {
             put("store_id", currentStoreId())
             put("charge_name", name)
-            put("percentage", percentage)
+            put("percentage", value)
+            put("charge_type", type.name)
             put("is_enabled", if (enabled) 1 else 0)
+            put("applicability", applicability.name)
             put("is_active", 1)
             put("created_at", now())
             put("created_by", currentUser())
@@ -107,11 +147,13 @@ class ChargeDao(context: Context) {
         return helper.writableDatabase.insert(table, null, v)
     }
 
-    fun update(id: Long, name: String, percentage: Double, enabled: Boolean): Int {
+    fun update(id: Long, name: String, value: Double, type: Type, enabled: Boolean, applicability: Applicability = Applicability.BOTH): Int {
         val v = ContentValues().apply {
             put("charge_name", name)
-            put("percentage", percentage)
+            put("percentage", value)
+            put("charge_type", type.name)
             put("is_enabled", if (enabled) 1 else 0)
+            put("applicability", applicability.name)
             put("modified_at", now())
             put("modified_by", currentUser())
         }

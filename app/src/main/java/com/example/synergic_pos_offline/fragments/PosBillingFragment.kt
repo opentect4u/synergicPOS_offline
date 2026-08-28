@@ -31,11 +31,13 @@ import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.database.StockDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
+import com.example.synergic_pos_offline.utils.AppLanguage
 import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.ImageUtils
+import com.example.synergic_pos_offline.utils.ProductName
 import com.example.synergic_pos_offline.utils.SearchSuggestions
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.SettingsCache
@@ -145,22 +147,19 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * something that is out has to say so before it is tapped, not after - and it is
      * the reason this mapping is not shared with the restaurant's.
      */
-    private fun suggestionOf(p: Product) = SearchSuggestions.Item(
-        id = p.id,
-        name = p.name,
-        meta = listOfNotNull(
-            p.category.takeIf { it.isNotBlank() },
-            p.sku.takeIf { it.isNotBlank() }?.let { "#$it" },
-            // Shown, not only searched. A row matched on its HSN has nothing
-            // highlighted in its name, so without the code on the line the operator is
-            // left to take on trust that it belongs in the results.
-            SearchSuggestions.realHsn(p.hsn)?.let { "HSN $it" }
-        ).joinToString("  ·  "),
+    private fun suggestionOf(p: Product): SearchSuggestions.Item {
+        val language = AppLanguage.of(requireContext())
+        return SearchSuggestions.Item(
+            id = p.id,
+            name = ProductName.inAppLanguage(language, p.name),
+            meta = listOfNotNull(
+                p.category.takeIf { it.isNotBlank() },
+                p.sku.takeIf { it.isNotBlank() }?.let { "#$it" }
+            ).joinToString("  ·  "),
         price = money(p.price),
         codes = listOfNotNull(
             p.sku.takeIf { it.isNotBlank() },
-            p.barcode.takeIf { it.isNotBlank() },
-            SearchSuggestions.realHsn(p.hsn)
+            p.barcode.takeIf { it.isNotBlank() }
         ),
         barcode = p.barcode,
         // Only ever the warning states, and only while stock is tracked: a badge on
@@ -173,7 +172,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
         },
         badgeColor = if (p.stock == "out") 0xFFDC2626.toInt() else 0xFFF59E0B.toInt(),
         bitmap = photoCache[p.id]
-    )
+        )
+    }
 
     private data class CartLine(val product: Product, var qty: Double)
     private fun CartLine.toSessionLine() = CheckoutSession.Line(
@@ -896,13 +896,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         filteredProducts.clear()
         filteredProducts.addAll(menu.filter { p ->
             (activeCategory == "All" || p.categoryId == activeCategoryId) &&
-                // Name, then the three codes a product can be asked for by: its SKU,
-                // its barcode, and its HSN - which is how a shop looks up "everything
-                // I sell under 1006" when a tax question is being answered at the
-                // counter. Placeholder HSNs are not searched; see realHsn.
+                // Name, SKU (serial number), and barcode only - no HSN.
                 (query.isEmpty() || p.name.contains(query, true) ||
-                    p.sku.contains(query) || p.barcode.contains(query) ||
-                    SearchSuggestions.realHsn(p.hsn)?.contains(query, true) == true)
+                    p.sku.contains(query) || p.barcode.contains(query))
         })
         // Only the first page reaches the adapter; the rest arrives as the grid is
         // scrolled. The empty state still asks the WHOLE filtered result, so "no
@@ -1187,7 +1183,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // Direct Add to Cart (App Settings): tapping a product adds one straight to the
         // cart with its default rate - no popup. Each tap adds one more. Only for a
         // fresh add; editing an existing cart line still opens the dialog.
-        if (!editing && SettingsCache.value(requireContext(), "A", "Direct Add to Cart") == "1") {
+        // Exception: if the product has a fractional unit, always show the dialog so the
+        // operator can enter the fractional quantity (e.g., 0.5 kg).
+        if (!editing && !p.allowFraction && SettingsCache.value(requireContext(), "A", "Direct Add to Cart") == "1") {
             val before = cart.sumOf { it.qty }
             addToCart(p, 1.0, p.price)
             // Only announce when the tap actually added (not blocked by stock), and
@@ -1950,18 +1948,22 @@ class PosBillingFragment : Fragment(), TitledScreen {
     /** What [extraCharges] adds to the bill. */
     private fun extraChargesTotal(): Double = BillRounding.toPaise(extraCharges().sumOf { it.amount })
 
-    private fun hasFractionalQty(): Boolean = cart.any { it.qty % 1.0 != 0.0 }
+    /** Bill Settings' own switch - the one and only say in whether a bill rounds. */
+    private fun roundOffOn(): Boolean =
+        runCatching {
+            com.example.synergic_pos_offline.database.BillSettingsDao(requireContext()).load().roundOff
+        }.getOrDefault(false)
 
     private fun roundOffAmt(): Double =
-        if (hasFractionalQty()) 0.0 else BillRounding.roundOff(taxedTotal())
+        if (roundOffOn()) BillRounding.roundOff(taxedTotal()) else 0.0
 
     /**
-     * What checkout will charge: rounded to whole rupees, unless a line was measured -
-     * see [hasFractionalQty] - in which case the exact taxed total stands.
+     * What checkout will charge: rounded to whole rupees whenever Bill Settings'
+     * Round Off is on - a measured line (0.700 kg, 1.5 L) is not an exception, the
+     * setting is the only thing that decides this.
      */
     private fun computeTotal(): Double =
-        if (hasFractionalQty()) BillRounding.toPaise(taxedTotal())
-        else BillRounding.payable(taxedTotal())
+        if (roundOffOn()) BillRounding.payable(taxedTotal()) else BillRounding.toPaise(taxedTotal())
 
     /**
      * A line's taxable value, tax and (for item-wise discount only) the further
@@ -2331,7 +2333,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         override fun onBindViewHolder(holder: VH, position: Int) {
             val p = shownProducts[position]
-            holder.name.text = p.name
+            val language = AppLanguage.of(holder.itemView.context)
+            holder.name.text = ProductName.inAppLanguage(language, p.name)
             holder.price.text = money(p.price)
             holder.sku.text = p.sku
 
@@ -2374,8 +2377,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         override fun onBindViewHolder(holder: VH, position: Int) {
             val line = cart[position]
             val accent = ThemeManager.getThemeColor(holder.itemView.context)
-            
-            holder.name.text = line.product.name
+            val language = AppLanguage.of(holder.itemView.context)
+
+            holder.name.text = ProductName.inAppLanguage(language, line.product.name)
             holder.each.text = "${money(line.product.price)} each"
             holder.qty.text = qtyText(line.qty)
             holder.total.text = money(lineSalePrice(line))
@@ -2398,5 +2402,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
         }
 
         override fun getItemCount() = cart.size
+    }
+
+    /** Refresh product names when app language changes, without affecting other UI. */
+    fun refreshProductDisplay() {
+        view?.let { root ->
+            root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProducts)?.adapter?.notifyDataSetChanged()
+            root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvCart)?.adapter?.notifyDataSetChanged()
+        }
     }
 }

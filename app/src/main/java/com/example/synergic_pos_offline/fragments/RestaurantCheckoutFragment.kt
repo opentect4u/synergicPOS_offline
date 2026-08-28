@@ -10,6 +10,7 @@ import android.widget.TextView
 import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
@@ -22,7 +23,10 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Checkout"
 
-    private data class Line(val name: String, val qty: Double, val rate: Double, val cgstRate: Double, val sgstRate: Double)
+    private data class Line(
+        val name: String, val qty: Double, val rate: Double, val cgstRate: Double, val sgstRate: Double,
+        val hsn: String? = null, val vatRate: Double = 0.0
+    )
 
     // The selected order's items, passed in from the Orders screen.
     private val lines: List<Line> by lazy {
@@ -31,9 +35,15 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         val rates = arguments?.getDoubleArray(ARG_RATES) ?: DoubleArray(0)
         val cgsts = arguments?.getDoubleArray(ARG_CGSTS) ?: DoubleArray(0)
         val sgsts = arguments?.getDoubleArray(ARG_SGSTS) ?: DoubleArray(0)
+        val vats = arguments?.getDoubleArray(ARG_VATS)
+        val hsns = arguments?.getStringArrayList(ARG_HSNS)
         names.mapIndexed { i, n ->
-            Line(n, qtys.getOrElse(i) { 1.0 }, rates.getOrElse(i) { 0.0 },
-                cgsts.getOrElse(i) { 0.0 }, sgsts.getOrElse(i) { 0.0 })
+            Line(
+                n, qtys.getOrElse(i) { 1.0 }, rates.getOrElse(i) { 0.0 },
+                cgsts.getOrElse(i) { 0.0 }, sgsts.getOrElse(i) { 0.0 },
+                hsns?.getOrNull(i)?.takeIf { it.isNotBlank() },
+                vats?.getOrElse(i) { 0.0 } ?: 0.0
+            )
         }
     }
 
@@ -55,7 +65,16 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     private val customer get() = arguments?.getString(ARG_CUSTOMER)?.ifBlank { "Walk-in" } ?: "Walk-in"
     private val serviceRate get() = arguments?.getDouble(ARG_SERVICE_RATE) ?: 0.0
     private val gstEnabled get() = arguments?.getBoolean(ARG_GST_ON) ?: true
+    private val vatEnabled get() = arguments?.getBoolean(ARG_VAT_ON) ?: false
     private val taxInclusive get() = arguments?.getBoolean(ARG_INCLUSIVE) ?: false
+
+    /**
+     * Which of a line's own CGST/SGST or VAT rate is actually charged - see
+     * BillPricing.price. A line is taxed under whichever it carries a rate for,
+     * regardless of this; the regime only gates whether ANY tax applies at all,
+     * off when both GST and VAT are switched off.
+     */
+    private val taxRegime get() = com.example.synergic_pos_offline.utils.GstCalculator.regimeFor(gstEnabled, vatEnabled)
 
     private var total = 0.0
 
@@ -146,18 +165,19 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     /** Renders the bill in the grocery format and shows it in a scrollable dialog. */
     private fun showReceiptPreview() {
         val ctx = requireContext()
-        val regime = if (gstEnabled) com.example.synergic_pos_offline.utils.GstCalculator.TaxRegime.GST
-        else com.example.synergic_pos_offline.utils.GstCalculator.TaxRegime.NONE
-        var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0
+        var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
         lines.forEach { l ->
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
-                l.rate, l.qty, l.cgstRate, l.sgstRate, 0.0, 0.0, regime, taxInclusive, false
+                l.rate, l.qty, l.cgstRate, l.sgstRate, l.vatRate, 0.0, taxRegime, taxInclusive, false
             )
-            subtotal += l.qty * l.rate; cgst += p.cgst; sgst += p.sgst
+            subtotal += l.qty * l.rate; cgst += p.cgst; sgst += p.sgst; vat += p.vat
         }
         // Flat section service charge (₹), applied only to a non-empty order.
         val service = if (subtotal > 0.0) serviceRate else 0.0
-        val netTotal = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
+        val netTotal = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst + vat
+        val roundOffOn = runCatching {
+            com.example.synergic_pos_offline.database.BillSettingsDao(ctx).load().roundOff
+        }.getOrDefault(false)
 
         // The table as the bill's own field - see Draft.table - rather than smuggled
         // in as the customer's name, which the Customer Details setting could switch
@@ -174,16 +194,24 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             table = receiptTable,
             items = lines.map {
                 com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
-                    it.name, it.qty.toDouble(), it.rate, it.cgstRate, it.sgstRate
+                    name = it.name, quantity = it.qty.toDouble(), rate = it.rate,
+                    cgstRate = it.cgstRate, sgstRate = it.sgstRate, vatRate = it.vatRate, hsn = it.hsn
                 )
             },
-            discount = 0.0, roundOff = 0.0, netAmount = netTotal,
+            // Bill Settings' Round Off is the only say in whether this rounds - on,
+            // it rounds every total regardless of what is in the cart; off, the exact
+            // taxed figure stands.
+            discount = 0.0,
+            roundOff = if (roundOffOn) BillRounding.roundOff(netTotal) else 0.0,
+            netAmount = if (roundOffOn) BillRounding.payable(netTotal) else BillRounding.toPaise(netTotal),
             paymentModes = listOf(payMethod.uppercase(java.util.Locale.US)),
             serviceCharge = service,
+            orderType = if (tableNo.startsWith("TA-", ignoreCase = true)) "TAKEAWAY" else "DINE_IN",
             returnAmount = run {
                 val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
                     ?.text?.toString()?.toDoubleOrNull() ?: 0.0
-                (tendered - netTotal).coerceAtLeast(0.0)
+                val payable = if (roundOffOn) BillRounding.payable(netTotal) else BillRounding.toPaise(netTotal)
+                (tendered - payable).coerceAtLeast(0.0)
             }
         )
         val paperDots = com.example.synergic_pos_offline.database.OperatingPrinterDao(ctx).getAll()
@@ -249,9 +277,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     private fun populateItems(root: View) {
         val container = root.findViewById<LinearLayout>(R.id.llCheckoutItems)
         val inflater = LayoutInflater.from(requireContext())
-        val regime = if (gstEnabled) com.example.synergic_pos_offline.utils.GstCalculator.TaxRegime.GST
-        else com.example.synergic_pos_offline.utils.GstCalculator.TaxRegime.NONE
-        var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0
+        var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
         lines.forEach { l ->
             val row = inflater.inflate(R.layout.item_rest_checkout_line, container, false)
             row.findViewById<TextView>(R.id.tvLineName).text = l.name
@@ -259,16 +285,28 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             row.findViewById<TextView>(R.id.tvLineRate).text = money(l.rate)
             row.findViewById<TextView>(R.id.tvLineAmount).text = money(l.qty * l.rate)
             container.addView(row)
-            // Per-product GST honouring the store Tax Settings (GST on/off, inclusive).
+            // Per-line CGST/SGST or VAT, honouring the store Tax Settings (GST/VAT
+            // on/off, inclusive) - see [taxRegime]. Which of the two a line actually
+            // carries a rate for is the line's own business, not the till's.
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
-                l.rate, l.qty, l.cgstRate, l.sgstRate, 0.0, 0.0, regime, taxInclusive, false
+                l.rate, l.qty, l.cgstRate, l.sgstRate, l.vatRate, 0.0, taxRegime, taxInclusive, false
             )
             subtotal += l.qty * l.rate
             cgst += p.cgst
             sgst += p.sgst
+            vat += p.vat
         }
         val service = subtotal * serviceRate / 100.0   // section-wise service charge
-        total = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst
+        val exactTotal = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst + vat
+        // Bill Settings' Round Off is the only say in whether this rounds - see
+        // RestaurantOrdersFragment.roundOffOn(). Applied here, on the class field
+        // that everything below (the total shown, the Confirm button, the tendered
+        // validation, the QR amount, and ARG_TENDERED handed back to the Orders
+        // screen) reads from, so all of it agrees on the one payable figure.
+        val roundOffOn = runCatching {
+            com.example.synergic_pos_offline.database.BillSettingsDao(requireContext()).load().roundOff
+        }.getOrDefault(false)
+        total = if (roundOffOn) BillRounding.payable(exactTotal) else BillRounding.toPaise(exactTotal)
         root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(subtotal)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(service)}"
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(cgst)}"
@@ -330,20 +368,29 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_RATES = "rates"
         private const val ARG_CGSTS = "cgsts"
         private const val ARG_SGSTS = "sgsts"
+        private const val ARG_VATS = "vats"
+        private const val ARG_HSNS = "hsns"
         private const val ARG_SERVICE_RATE = "service_rate"
         private const val ARG_GST_ON = "gst_on"
+        private const val ARG_VAT_ON = "vat_on"
         private const val ARG_INCLUSIVE = "inclusive"
 
         /**
          * Builds a checkout for the running order [orderId] on [table] in [section],
          * carrying its items and tax. The order id travels with it so the paid result
          * settles this order rather than the same-numbered table in another section.
+         *
+         * [hsns] and [vats] are optional and default to empty - a caller that has not
+         * looked them up (or a build predating these parameters) still gets a working
+         * screen, just without HSN or VAT on it. Empty/zero in a slot means "this item
+         * has none". [vatEnabled] defaults off for the same reason.
          */
         fun newInstance(
             orderId: Long, table: String, section: String, customer: String,
             names: ArrayList<String>, qtys: DoubleArray, rates: DoubleArray,
             cgsts: DoubleArray, sgsts: DoubleArray, serviceRate: Double,
-            gstEnabled: Boolean, inclusive: Boolean
+            gstEnabled: Boolean, inclusive: Boolean, hsns: ArrayList<String> = arrayListOf(),
+            vats: DoubleArray = DoubleArray(0), vatEnabled: Boolean = false
         ): RestaurantCheckoutFragment = RestaurantCheckoutFragment().apply {
             arguments = android.os.Bundle().apply {
                 putLong(ARG_ORDER_ID, orderId)
@@ -355,8 +402,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putDoubleArray(ARG_RATES, rates)
                 putDoubleArray(ARG_CGSTS, cgsts)
                 putDoubleArray(ARG_SGSTS, sgsts)
+                putDoubleArray(ARG_VATS, vats)
+                putStringArrayList(ARG_HSNS, hsns)
                 putDouble(ARG_SERVICE_RATE, serviceRate)
                 putBoolean(ARG_GST_ON, gstEnabled)
+                putBoolean(ARG_VAT_ON, vatEnabled)
                 putBoolean(ARG_INCLUSIVE, inclusive)
             }
         }

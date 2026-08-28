@@ -339,7 +339,9 @@ object DialogUtils {
         val isTextArea: Boolean = false,
         val spanColumns: Int = 1,
         val inputType: String = "text",
-        val maxLength: Int = -1
+        val maxLength: Int = -1,
+        val fieldType: String = "text", // "text", "dropdown", "toggle"
+        val options: List<String> = emptyList() // For dropdown type
     )
 
     /** Shows a reusable form dialog for Adding or Editing records. */
@@ -390,6 +392,7 @@ object DialogUtils {
         btnNegative.visibility = if (showNegative) android.view.View.VISIBLE else android.view.View.GONE
 
         val inputs = ArrayList<TextInputEditText>(fields.size)
+        val toggles = HashMap<Int, Boolean>() // For toggle fields: index -> value
         val density = context.resources.displayMetrics.density
         val margin = (8 * density).toInt()
 
@@ -398,9 +401,6 @@ object DialogUtils {
         val colsPerRow = 2
 
         fields.forEachIndexed { index, field ->
-            val til = inflater.inflate(R.layout.item_form_field, grid, false) as TextInputLayout
-            til.hint = field.label
-            
             val params = GridLayout.LayoutParams()
 
             // Determine column span. An explicit spanColumns wins; otherwise keep the
@@ -418,39 +418,100 @@ object DialogUtils {
             params.height = ViewGroup.LayoutParams.WRAP_CONTENT
             params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, span, 1f)
             params.setMargins(margin, 0, margin, margin)
-            til.layoutParams = params
 
-            val et = til.findViewById<TextInputEditText>(R.id.etField)
-            et.setText(field.value)
+            when (field.fieldType) {
+                "toggle" -> {
+                    // Create a toggle switch
+                    val container = android.widget.LinearLayout(ctx).apply {
+                        layoutParams = params
+                        orientation = android.widget.LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.CENTER_VERTICAL
+                        setPadding(margin, 0, 0, margin)
+                    }
+                    val label = android.widget.TextView(ctx).apply {
+                        text = field.label
+                        layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        textSize = 14f
+                        setTextColor(context.resources.getColor(android.R.color.black, null))
+                    }
+                    val toggle = android.widget.Switch(ctx).apply {
+                        isChecked = field.value.lowercase() in listOf("yes", "true", "enabled", "on", "1")
+                        layoutParams = android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+                    }
+                    container.addView(label)
+                    container.addView(toggle)
+                    grid.addView(container, params)
+                    toggles[index] = toggle.isChecked
+                    toggle.setOnCheckedChangeListener { _, isChecked -> toggles[index] = isChecked }
+                    // Add empty EditText to inputs list for consistency
+                    inputs.add(TextInputEditText(ctx).apply { visibility = android.view.View.GONE })
+                }
+                "dropdown" -> {
+                    // Create a dropdown using dialog selection
+                    val til = inflater.inflate(R.layout.item_form_field, grid, false) as TextInputLayout
+                    til.hint = field.label
+                    til.layoutParams = params
 
-            // Apply input type
-            when (field.inputType) {
-                "phone" -> et.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-                "number" -> et.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-                "email" -> et.inputType = android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
-                else -> et.inputType = android.text.InputType.TYPE_CLASS_TEXT
+                    val et = til.findViewById<TextInputEditText>(R.id.etField)
+                    et.setText(field.value)
+                    et.inputType = android.text.InputType.TYPE_NULL
+                    et.isFocusable = false
+                    et.isClickable = true
+                    et.isCursorVisible = false
+
+                    // Show selection dialog on click
+                    et.setOnClickListener {
+                        AlertDialog.Builder(ctx)
+                            .setTitle(field.label)
+                            .setItems(field.options.toTypedArray()) { _, which ->
+                                et.setText(field.options[which])
+                            }
+                            .show()
+                    }
+
+                    grid.addView(til, params)
+                    inputs.add(et)
+                }
+                else -> {
+                    // Regular text field
+                    val til = inflater.inflate(R.layout.item_form_field, grid, false) as TextInputLayout
+                    til.hint = field.label
+                    til.layoutParams = params
+
+                    val et = til.findViewById<TextInputEditText>(R.id.etField)
+                    et.setText(field.value)
+
+                    // Apply input type
+                    when (field.inputType) {
+                        "phone" -> et.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                        "number" -> et.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                        "email" -> et.inputType = android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+                        "decimal" -> et.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                        else -> et.inputType = android.text.InputType.TYPE_CLASS_TEXT
+                    }
+
+                    // Cap the field length. An explicit maxLength wins; otherwise a sensible
+                    // default keeps every form field bounded (text areas get more room),
+                    // so no input can grow without limit.
+                    val cap = if (field.maxLength > 0) field.maxLength else when {
+                        field.isTextArea -> InputLimits.TEXT_AREA
+                        field.inputType == "phone" -> InputLimits.PHONE
+                        field.inputType == "number" -> InputLimits.NUMBER
+                        else -> InputLimits.TEXT
+                    }
+                    et.filters = arrayOf(android.text.InputFilter.LengthFilter(cap))
+
+                    // Set textarea properties if needed
+                    if (field.isTextArea) {
+                        et.minLines = 3
+                        et.maxLines = 5
+                        et.isSingleLine = false
+                    }
+
+                    grid.addView(til, params)
+                    inputs.add(et)
+                }
             }
-
-            // Cap the field length. An explicit maxLength wins; otherwise a sensible
-            // default keeps every form field bounded (text areas get more room),
-            // so no input can grow without limit.
-            val cap = if (field.maxLength > 0) field.maxLength else when {
-                field.isTextArea -> InputLimits.TEXT_AREA
-                field.inputType == "phone" -> InputLimits.PHONE
-                field.inputType == "number" -> InputLimits.NUMBER
-                else -> InputLimits.TEXT
-            }
-            et.filters = arrayOf(android.text.InputFilter.LengthFilter(cap))
-
-            // Set textarea properties if needed
-            if (field.isTextArea) {
-                et.minLines = 3
-                et.maxLines = 5
-                et.isSingleLine = false
-            }
-
-            grid.addView(til, params)
-            inputs.add(et)
 
             // Update position for next field
             currentColumn += field.spanColumns
@@ -464,11 +525,17 @@ object DialogUtils {
         ThemeManager.styleDialogButtons(btnPositive, btnNegative)
 
         btnPositive.setOnClickListener {
-            val values = inputs.map { it.text?.toString()?.trim().orEmpty() }
+            // Collect values from both text inputs and toggle fields
+            val values = fields.mapIndexed { index, field ->
+                when (field.fieldType) {
+                    "toggle" -> if (toggles[index] == true) "Yes" else "No"
+                    else -> inputs.getOrNull(index)?.text?.toString()?.trim().orEmpty()
+                }
+            }
 
-            // Validate mandatory fields
+            // Validate mandatory fields (skip for toggle fields, they're always filled)
             val missingFields = mandatoryFields.filter { index ->
-                index < values.size && values[index].isEmpty()
+                index < values.size && values[index].isEmpty() && fields[index].fieldType != "toggle"
             }
 
             if (missingFields.isNotEmpty()) {
@@ -517,11 +584,9 @@ object DialogUtils {
         dialog.window?.apply {
             setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.CENTER)
-            // A dialog is its own window, so the pass that relabels the activity does
-            // not reach it. Done here rather than in each show* method because every
-            // one of them ends up through here, and a dialog added later should not
-            // have to remember.
-            AppLanguage.apply(decorView)
+            // NOTE: App language is NOT applied to dialogs. It only affects product
+            // names in sale screens - every dialog, including product/customer/charge
+            // forms, stays in English regardless of the app language setting.
         }
     }
 

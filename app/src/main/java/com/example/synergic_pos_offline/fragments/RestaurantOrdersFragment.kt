@@ -17,9 +17,12 @@ import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.TableDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
+import com.example.synergic_pos_offline.utils.AppLanguage
+import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.CartDensity
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
+import com.example.synergic_pos_offline.utils.ProductName
 import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 
@@ -144,7 +147,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             roDao.itemsFor(ro.id).filter { it.qty > 0.0 }.forEach { ri ->
                 card.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate))
             }
-            card.amount = "₹ ${money(computeBill(card.items, serviceRateFor(card.section)).total)}"
+            card.amount = "₹ ${money(payableTotal(computeBill(card.items, serviceRateFor(card.section), card.type).total))}"
             orders.add(card)
         }
     }
@@ -191,7 +194,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * uses — and adds the section's service charge as a flat rupee amount. For an
      * inclusive regime the tax is already within the rate, so it isn't added again.
      */
-    private fun computeBill(items: List<CartItem>, serviceChargeAmt: Double): BillBreakdown {
+    private fun computeBill(items: List<CartItem>, serviceChargeAmt: Double, orderType: String? = null): BillBreakdown {
         var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0
         items.forEach {
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
@@ -209,8 +212,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // the same rule the grocery till uses, so a 5% charge on 300 of food is 15
         // whichever screen rang it up. Worked out on the gross subtotal, not on the
         // service charge, which is itself an addition rather than something sold.
+        //
+        // Filtered by applicability against this order's TAKEAWAY/DINE_IN type - see
+        // ChargeDao.Applicability. A charge set to "None" never comes back here.
+        val chargeOrderType = if (orderType?.equals("Take Away", ignoreCase = true) == true) "TAKEAWAY" else "DINE_IN"
         val charges = runCatching {
-            com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal)
+            com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal, chargeOrderType)
         }.getOrDefault(emptyList())
         val chargesTotal = charges.sumOf { it.amount }
         // Inclusive: tax is already inside the gross subtotal, so don't add it again.
@@ -218,6 +225,25 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             chargesTotal
         return BillBreakdown(subtotal, service, cgst, sgst, total, charges)
     }
+
+    /**
+     * Bill Settings' Round Off switch - the one and only say in whether a restaurant
+     * bill rounds. On, every payable total is rounded to the whole rupee regardless
+     * of what is in the order; off, the exact taxed total stands. Read live rather
+     * than cached, same as the grocery till, so a setting changed mid-shift takes
+     * effect on the next bill without a restart.
+     */
+    private fun roundOffOn(): Boolean = runCatching {
+        com.example.synergic_pos_offline.database.BillSettingsDao(requireContext()).load().roundOff
+    }.getOrDefault(false)
+
+    /** [total] as the customer actually pays - see [roundOffOn]. */
+    private fun payableTotal(total: Double): Double =
+        if (roundOffOn()) BillRounding.payable(total) else BillRounding.toPaise(total)
+
+    /** The adjustment [payableTotal] applied to reach the rounded figure - 0 when off. */
+    private fun roundOffAmount(total: Double): Double =
+        if (roundOffOn()) BillRounding.roundOff(total) else 0.0
 
     // Tax configuration, resolved the same way the grocery billing screen does.
     private val taxSettings by lazy { TaxSettingsDao(requireContext()).load() }
@@ -411,6 +437,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     val rates = order.items.map { it.rate }.toDoubleArray()
                     val cgsts = order.items.map { it.cgstRate }.toDoubleArray()
                     val sgsts = order.items.map { it.sgstRate }.toDoubleArray()
+                    val vats = order.items.map { it.vatRate }.toDoubleArray()
+                    // Off the catalogue, same as buildBillDraft() - a cart line does not
+                    // carry its own HSN, the product it was sold from does.
+                    val hsns = ArrayList(order.items.map { line ->
+                        allProducts.firstOrNull { it.product.id == line.productId.toString() }
+                            ?.product?.hsn.orEmpty()
+                    })
                     requireActivity().supportFragmentManager.beginTransaction()
                         .replace(
                             R.id.fragment_container,
@@ -418,7 +451,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 order.dbId, order.id, order.section,
                                 order.phone.ifBlank { "Walk-in" }, names, qtys, rates,
                                 cgsts, sgsts, serviceRateFor(order.section),
-                                gstEnabled = taxSettings.gstEnabled, inclusive = taxInclusive
+                                gstEnabled = taxSettings.gstEnabled, inclusive = taxInclusive,
+                                hsns = hsns, vats = vats, vatEnabled = taxSettings.vatEnabled
                             )
                         )
                         .addToBackStack(null)
@@ -1477,10 +1511,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * being a restaurant's own question, and the reason this mapping is not shared
      * with the grocery screen's.
      */
-    private fun suggestionOf(gp: GridProduct) = com.example.synergic_pos_offline.utils.SearchSuggestions.Item(
-        id = gp.product.id,
-        name = gp.product.name,
-        meta = listOfNotNull(
+    private fun suggestionOf(gp: GridProduct): com.example.synergic_pos_offline.utils.SearchSuggestions.Item {
+        val language = AppLanguage.of(requireContext())
+        return com.example.synergic_pos_offline.utils.SearchSuggestions.Item(
+            id = gp.product.id,
+            name = ProductName.inAppLanguage(language, gp.product.name),
+            meta = listOfNotNull(
             gp.product.category.takeIf { it.isNotBlank() },
             gp.prepTime.takeIf { it.isNotBlank() }?.let { t -> if (t.contains("min", true)) t else "$t min" },
             gp.product.sku.takeIf { it.isNotBlank() }?.let { "#$it" },
@@ -1492,12 +1528,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         price = "₹ ${money(gp.product.price)}",
         codes = listOfNotNull(
             gp.product.sku.takeIf { it.isNotBlank() },
-            gp.barcode.takeIf { it.isNotBlank() },
-            com.example.synergic_pos_offline.utils.SearchSuggestions.realHsn(gp.product.hsn)
+            gp.barcode.takeIf { it.isNotBlank() }
         ),
         barcode = gp.barcode,
         image = gp.image
-    )
+        )
+    }
 
     private data class GridProduct(
         val product: ProductEntryDialog.Product, val foodType: String, val spice: String,
@@ -1747,13 +1783,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val q = query.trim().lowercase()
             pager.set(allProducts.filter {
                 (selectedCat == "All" || it.product.category == selectedCat) &&
-                    // Name, then the three codes a dish can be asked for by: its SKU,
-                    // its barcode, and its HSN. Placeholder HSNs are not searched -
-                    // see SearchSuggestions.realHsn.
+                    // Name, SKU (serial number), and barcode only - no HSN.
                     (q.isEmpty() || it.product.name.lowercase().contains(q) ||
-                        it.product.sku.contains(q) || it.barcode.contains(q) ||
-                        com.example.synergic_pos_offline.utils.SearchSuggestions
-                            .realHsn(it.product.hsn)?.contains(q, true) == true)
+                        it.product.sku.contains(q) || it.barcode.contains(q))
             })
         }
 
@@ -1811,6 +1843,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * A product tapped on the grid. Refuses politely when there is no order to put it
      * on, or the table is already billed; otherwise honours App Settings' Direct Add to
      * Cart - straight in at its default rate, or through the quantity popup.
+     * Exception: if the product has a fractional unit, always show the dialog so the
+     * operator can enter the fractional quantity.
      */
     private fun onProductPicked(picked: ProductEntryDialog.Product, onAdded: () -> Unit) {
         val order = currentOrder()
@@ -1818,7 +1852,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             order == null -> { toast("Create or select a table order first"); return }
             order.completed -> { toast("Table already billed — cannot add items"); return }
         }
-        if (directAddToCart) {
+        if (directAddToCart && !picked.allowFraction) {
             val before = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
             addToCart(picked, 1.0, picked.price)
             val after = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
@@ -2428,7 +2462,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         override fun onBindViewHolder(holder: VH, position: Int) {
             val gp = items[position]
             val p = gp.product
-            holder.itemView.findViewById<TextView>(R.id.tvName).text = p.name
+            val language = AppLanguage.of(holder.itemView.context)
+            holder.itemView.findViewById<TextView>(R.id.tvName).text = ProductName.inAppLanguage(language, p.name)
             holder.itemView.findViewById<TextView>(R.id.tvPrice).text = "₹ ${money(p.price)}"
             holder.itemView.findViewById<TextView>(R.id.tvSku).text = p.sku
 
@@ -2942,7 +2977,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             .also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
-        val total = computeBill(order.items, serviceRateFor(order.section)).total
+        // Rounded here rather than at settlement, so what the operator reads, what
+        // gets validated against the cash handed over, and what persistBill() later
+        // charges are all the one figure - not the exact total with the rounding
+        // sprung on the counter only once the bill is saved.
+        val total = payableTotal(computeBill(order.items, serviceRateFor(order.section), order.type).total)
         v.findViewById<TextView>(R.id.tvQpTotal).text = "₹ ${money(total)}"
         v.findViewById<TextView>(R.id.tvQpSubtitle).text = buildString {
             append(order.id.replace("TA-", "Token #"))
@@ -3134,6 +3173,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             ?: run { toast("Bill printer '${printer.printerName}' is not fully configured"); return }
         val draft = buildBillDraft(order, billNumber, payment, tendered)
         val renderer = com.example.synergic_pos_offline.utils.BillReceiptRenderer(requireContext())
+        // One continuous bitmap even when the order mixes GST and VAT lines - see
+        // BillReceiptRenderer.populate()'s own demarcation between them ("BILL NO:
+        // NA"), each with its own summary, one grand total at the foot of the whole
+        // thing. Not cut apart into two slips - see BillPrinter.copiesFor's comment
+        // on why that is NOT what this does.
         val first = renderer.renderDraftToBitmap(draft, config.paperDots)
             ?: run { toast("Could not render the bill"); return }
 
@@ -3229,7 +3273,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun buildBillDraft(
         order: OrderCard, billNumber: String, payment: String, tendered: Double = 0.0
     ): com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft {
-        val b = computeBill(order.items, serviceRateFor(order.section))
+        val b = computeBill(order.items, serviceRateFor(order.section), order.type)
+        val chargeOrderType = if (order.type.equals("Take Away", ignoreCase = true)) "TAKEAWAY" else "DINE_IN"
         val items = order.items.map { line ->
             // HSN comes off the catalogue, because a cart line does not carry one: the
             // order stores what was sold and at what price, and the tax code belongs to
@@ -3278,13 +3323,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             ),
             table = billTable,
             items = items,
-            discount = 0.0, roundOff = 0.0, netAmount = b.total,
+            discount = 0.0, roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
             paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),
             serviceCharge = b.service,   // shown as its own totals line, not an item
             // The figures already quoted on the order panel, handed to the slip rather
             // than worked out again - so what prints is what the customer was told.
             charges = b.charges.map { it.name to it.amount },
-            returnAmount = (tendered - b.total).coerceAtLeast(0.0)   // cash to hand back
+            chargeTypes = b.charges.map { it.type.name },
+            chargeApplicabilities = b.charges.map { it.applicability.name },
+            orderType = chargeOrderType,
+            returnAmount = (tendered - payableTotal(b.total)).coerceAtLeast(0.0)   // cash to hand back
         )
     }
 
@@ -3356,15 +3404,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         order: OrderCard, payMethod: String, tendered: Double = 0.0
     ): com.example.synergic_pos_offline.database.BillDao.Result? {
         val billDao = com.example.synergic_pos_offline.database.BillDao(requireContext())
-        val b = computeBill(order.items, serviceRateFor(order.section))
+        val b = computeBill(order.items, serviceRateFor(order.section), order.type)
 
         val billType = when (payMethod.lowercase(java.util.Locale.US)) {
             "card" -> "CARD"; "online" -> "ONLINE"; else -> "CASH"
         }
+        // What the customer actually owes, Round Off applied the same way it is
+        // everywhere else on this bill - the DB record has to agree with the slip
+        // that was printed from the same order.
+        val payable = payableTotal(b.total)
         // Cash handed over more than the bill → book the change and record what was
         // actually tendered; otherwise the payment settles exactly the total.
-        val change = (tendered - b.total).coerceAtLeast(0.0)
-        val amountPaid = if (tendered > b.total) tendered else b.total
+        val change = (tendered - payable).coerceAtLeast(0.0)
+        val amountPaid = if (tendered > payable) tendered else payable
         val custId = billDao.findCustomerIdByPhone(order.phone.takeIf { it.isNotBlank() })
         val waiterId = roDao.findByTable(order.id, order.section)?.waiterId
 
@@ -3395,7 +3447,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     discountPercentage = 0.0,
                     cgstAmount = b.cgst,
                     sgstAmount = b.sgst,
-                    netAmount = b.total,
+                    netAmount = payable,
+                    roundOffAmount = roundOffAmount(b.total),
                     otherChargesAmount = b.service,   // so net reconciles with stored components
                     waiterId = waiterId,
                     tableNumber = order.id,
@@ -3621,21 +3674,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun updateTotals() {
         val root = view ?: return
         val order = currentOrder()
-        val b = computeBill(order?.items ?: emptyList(), serviceRateFor(order?.section.orEmpty()))
+        val b = computeBill(order?.items ?: emptyList(), serviceRateFor(order?.section.orEmpty()), order?.type)
+        val payable = payableTotal(b.total)
         root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(b.subtotal)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(b.service)}"
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(b.cgst)}"
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(b.sgst)}"
-        root.findViewById<TextView>(R.id.tvOrderTotal).text = "₹ ${money(b.total)}"
+        root.findViewById<TextView>(R.id.tvOrderTotal).text = "₹ ${money(payable)}"
         // The same figure on the fold's handle, for while the fold is shut.
-        root.findViewById<TextView>(R.id.tvTotalBar).text = "₹ ${money(b.total)}"
+        root.findViewById<TextView>(R.id.tvTotalBar).text = "₹ ${money(payable)}"
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).text =
+            "Settlement  ( ₹ ${money(payable)} )"
             settlementLabel(order, b.total)
         // Reflect the running total on the active order card. Only that one figure
         // moves as items go on, so the card is patched where it stands - rebuilding
         // the whole list meant inflating a card per open table on every tap.
         order?.let {
-            it.amount = "₹ ${money(b.total)}"
+            it.amount = "₹ ${money(payable)}"
             if (!updateOrderCardAmount(root, it)) {
                 populateOrders(root, ThemeManager.getThemeColor(requireContext()))
             }
@@ -3721,4 +3776,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun qtyText(v: Double): String =
         if (v % 1.0 == 0.0) v.toLong().toString()
         else String.format(java.util.Locale.US, "%.3f", v).trimEnd('0').trimEnd('.')
+
+    /** Refresh product names when app language changes, without affecting other UI. */
+    fun refreshProductDisplay() {
+        view?.let { root ->
+            root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProductGrid)?.adapter?.notifyDataSetChanged()
+            root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvTables)?.adapter?.notifyDataSetChanged()
+        }
+    }
 }

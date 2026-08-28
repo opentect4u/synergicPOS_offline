@@ -576,13 +576,18 @@ class BillReceiptRenderer(context: Context) {
         /** Restaurant service charge — shown as its own totals line, added to the net. */
         val serviceCharge: Double = 0.0,
         /**
-         * The shop's extra charges for this bill, already worked out - name to amount.
+         * The shop's extra charges for this bill, already worked out - (name, value, type, amount).
+         * type is "PERCENTAGE" or "AMOUNT", value is the original percentage/amount, amount is calculated.
          *
          * Carried on the draft rather than recomputed here because the screen that
          * built it has already charged them: recomputing would let a slip disagree
          * with the total the customer was quoted if the master were edited in between.
          */
         val charges: List<Pair<String, Double>> = emptyList(),
+        val chargeTypes: List<String> = emptyList(), // PERCENTAGE or AMOUNT for each charge
+        val chargeApplicabilities: List<String> = emptyList(), // BOTH, TAKEAWAY, DINE_IN, or NONE
+        /** Order type for filtering charges: "TAKEAWAY" or "DINE_IN", null for grocery */
+        val orderType: String? = null,
         /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
         val returnAmount: Double = 0.0
     ) {
@@ -995,9 +1000,12 @@ class BillReceiptRenderer(context: Context) {
             // A shop can sell taxed two ways at once - groceries under GST, liquor
             // under VAT - and the two cannot be added up in one column, because the
             // tax lines under them are answering different authorities. So a bill
-            // carrying both prints as two tables: the GST items under this bill's own
-            // number, then the VAT items under the same number suffixed "A", then one
-            // grand total over both.
+            // carrying both prints as one continuous slip with two tables on it: the
+            // GST items under this bill's own number, each with its own summary, then
+            // the VAT items under the same number suffixed "A", with a summary of its
+            // own too, then one grand total over both at the foot of the whole thing.
+            // Not cut apart into two pieces of paper - it is one sale, rung up at one
+            // counter at one moment, and "NA" says so.
             //
             // Split by the LINE, not by the till's setting. Each line already records
             // the rates it was sold at, so a line with VAT on it is a VAT line whatever
@@ -1014,13 +1022,55 @@ class BillReceiptRenderer(context: Context) {
                 )
             }
             if (split) {
-                // The GST half's own total, so the section stands on its own before the
-                // second one starts - without it the reader has to work out which of
-                // the figures below belongs to which table.
-                llItems.addView(sectionTotalLine(t("TOTAL"), gstItems, headingSp))
-                llItems.addView(
-                    fullWidthLine(PrintType.RULE, headingSp).apply { maxLines = 1 }
-                )
+                // A section's own summary - item count/qty/gross, its own tax rates,
+                // its own TOTAL - built the exact way the whole bill's summary below
+                // is, just scoped to this section's raw lines rather than all of them.
+                // So a section reads as a complete bill in miniature, not a bare figure
+                // with no tax on it to check.
+                val summarySp = if (narrow) NARROW_SUMMARY_SP else WIDE_SUMMARY_SP
+                val netSize = if (totalAmountFontSize == BillSettingsDao.FontSize.BIG) 20f else 15f
+                val bigTotal = totalAmountFontSize == BillSettingsDao.FontSize.BIG
+                val grandSp = when {
+                    narrow && bigTotal -> CLASSIC_NARROW_GRAND_TOTAL_BIG_SP
+                    narrow -> CLASSIC_NARROW_GRAND_TOTAL_SP
+                    bigTotal -> CLASSIC_GRAND_TOTAL_BIG_SP
+                    else -> CLASSIC_GRAND_TOTAL_SP
+                }
+                fun sectionSummary(sectionRaws: List<RawLine>) {
+                    val (_, secTotals, secTaxSlabs) = loadItems(sectionRaws, inclusive)
+                    val secShowDiscount = secTotals.totalDiscount > 0.005
+                    val secSummary = LinearLayout(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                        )
+                        orientation = LinearLayout.VERTICAL
+                    }
+                    // Round off, service charge and extra charges belong to the sale as
+                    // a whole, not to either half of it - they stay off a section's own
+                    // summary and join the GRAND TOTAL below instead.
+                    if (classic) {
+                        renderClassicSummary(
+                            secSummary, secTotals, secTaxSlabs, summarySp,
+                            showTotalTax = true, showDiscount = secShowDiscount,
+                            discountPreTax = discountPreTax, roundOff = 0.0, showRoundOff = false,
+                            narrow = narrow
+                        )
+                    } else {
+                        renderStandardSummary(
+                            secSummary, secTotals, secTaxSlabs, summarySp, netSize,
+                            showDiscount = secShowDiscount, discountPreTax = discountPreTax,
+                            roundOff = 0.0, showRoundOff = false, payable = secTotals.grandTotal,
+                            narrow = narrow
+                        )
+                    }
+                    llItems.addView(secSummary)
+                    // A section ends the way the whole bill does - its own GRAND TOTAL,
+                    // bold and set apart between two rules - not the plain row the tax
+                    // breakdown above it uses. This is what makes a section read as a
+                    // complete bill of its own rather than a summary block.
+                    llItems.addView(grandTotalRow(money(secTotals.grandTotal), grandSp, narrow))
+                }
+                sectionSummary(partRaws.filter { TaxPart.WITHOUT_VAT.covers(it.vat, it.vatRate) })
                 // The VAT half, under its own bill number - "10A" to this bill's "10".
                 // A suffix rather than a number of its own: it is the same sale, rung
                 // up at one counter at one moment, and giving it an independent number
@@ -1031,12 +1081,21 @@ class BillReceiptRenderer(context: Context) {
                         setTypeface(billTypeface, Typeface.BOLD)
                     }
                 )
+                // The column headings again - SR.NO ITEM / QTY / PRICE / AMOUNT - the
+                // same row the top of the bill has above the GST items, ruled off
+                // above and below it the same way. Bill 10 reads them once and
+                // carries them down; a reader who has turned straight to 10A has
+                // nothing above these rows to say what the figures are, so it gets
+                // its own copy of the same heading.
+                llItems.addView(fullWidthLine(PrintType.RULE, headingSp).apply { maxLines = 1 })
+                llItems.addView(itemHeadingRow(view, showDisc, headingSp, columnPx, narrow))
+                llItems.addView(fullWidthLine(PrintType.RULE, headingSp).apply { maxLines = 1 })
                 vatItems.forEach {
                     llItems.addView(
                         buildClassicItemRow(it, showDisc, headingSp, columnPx, narrow, showSerial)
                     )
                 }
-                llItems.addView(sectionTotalLine(t("TOTAL"), vatItems, headingSp))
+                sectionSummary(partRaws.filter { TaxPart.VAT_ONLY.covers(it.vat, it.vatRate) })
             }
 
             val totals = lineTotals.copy(discount = discount)
@@ -1056,14 +1115,44 @@ class BillReceiptRenderer(context: Context) {
             // is a percentage of.
             //
             // Only enabled charges ever come back; a disabled one has no line and no
-            // amount. See ChargeDao.
-            val chargeLines: List<Pair<String, Double>> = draft?.charges?.takeIf { it.isNotEmpty() }
-                ?: runCatching {
-                    ChargeDao(ctx).amountsOn(totals.itemsSubtotal).map { it.name to it.amount }
-                }.getOrDefault(emptyList())
+            // amount. See ChargeDao. Applicability further filters by order type:
+            // a TAKEAWAY-only charge is dropped on a DINE_IN bill and vice versa, and
+            // a NONE charge is dropped from every bill regardless of order type.
+            val orderType = draft?.orderType
+            val rawChargeLines: List<Pair<String, Double>>
+            val rawChargeTypes: List<String>
+            val rawChargeApplicabilities: List<String>
+            if (draft?.charges?.isNotEmpty() == true) {
+                rawChargeLines = draft.charges
+                rawChargeTypes = draft.chargeTypes
+                rawChargeApplicabilities = draft.chargeApplicabilities
+            } else {
+                val applied = runCatching { ChargeDao(ctx).amountsOn(totals.itemsSubtotal, orderType) }.getOrDefault(emptyList())
+                rawChargeLines = applied.map { it.name to it.amount }
+                rawChargeTypes = applied.map { it.type.name }
+                rawChargeApplicabilities = applied.map { it.applicability.name }
+            }
+            val keepIndices = rawChargeLines.indices.filter { i ->
+                when (rawChargeApplicabilities.getOrNull(i) ?: "BOTH") {
+                    "NONE" -> false
+                    "TAKEAWAY" -> orderType == "TAKEAWAY"
+                    "DINE_IN" -> orderType == "DINE_IN"
+                    else -> true // BOTH - always applies, grocery or restaurant, any order type
+                }
+            }
+            val chargeLines = keepIndices.map { rawChargeLines[it] }
+            val chargeTypes = keepIndices.map { rawChargeTypes.getOrNull(it) ?: "PERCENTAGE" }
             val chargesTotal = BillRounding.toPaise(chargeLines.sumOf { it.second })
-            // Printed as label / amount, the name as the shop typed it.
-            val chargeRows = chargeLines.map { (name, amount) -> name.uppercase() to money(amount) }
+            // Printed as label / amount, the name as the shop typed it, with type indicator
+            val chargeRows = chargeLines.mapIndexed { index, (name, amount) ->
+                val typeIndicator = when (chargeTypes.getOrNull(index)) {
+                    "PERCENTAGE" -> "(% amount)"
+                    "AMOUNT" -> "(fixed)"
+                    else -> ""
+                }
+                val displayName = if (typeIndicator.isNotEmpty()) "$name $typeIndicator" else name
+                displayName.uppercase() to money(amount)
+            }
 
             // Round off is whatever the bill recorded, not something worked out here:
             // the printed total has to match the amount that was actually charged.
@@ -1162,7 +1251,7 @@ class BillReceiptRenderer(context: Context) {
 
             val modes = draft?.paymentModes ?: paymentModes(db, receiptNo, billType)
             renderPayment(view, modes, narrow)
-            renderUpiQr(view, modes, payable, billNumber)
+            renderUpiQr(view, modes, payable, billNumber, isRestaurant = tableLine != null)
 
             renderFixedLines(
                 db, view, R.id.llBillFooterLines,
@@ -2091,17 +2180,23 @@ class BillReceiptRenderer(context: Context) {
      *
      * Printed on a bill settled over UPI rails, and on one not settled at all - the
      * provisional slip a restaurant puts on the table before the guest pays, where a
-     * code is the point rather than an afterthought. NOT on a bill that names cash or
-     * a card: there the money is already in, and a code would be an invitation to pay
-     * a second time. Nor on every bill regardless, which would be 150dp of paper per
-     * sale for a code nobody scans.
+     * code is the point rather than an afterthought. NOT on a restaurant bill that
+     * names cash or a card there: the money is already in, and a code would be an
+     * invitation to pay a second time.
+     *
+     * On a GROCERY bill, though, once a QR is saved in Bill Settings ([Applied.upiQrEnabled])
+     * it prints regardless of payment mode - cash, card or credit included. A grocery
+     * sale is settled once, at the counter, in front of the customer; the code is not
+     * a second invitation to pay, it is simply the shop's UPI code the way it would be
+     * stuck to the counter, and printing it costs no more paper on a cash bill than on
+     * any other.
      *
      * Read from the live settings rather than the bill's snapshot, deliberately: the
      * snapshot exists so a reprint *reads* as it did on the day, but a payment
      * address is not a matter of how the slip looked - it is where the money goes,
      * and money owed today goes to the account the shop banks with today.
      */
-    private fun renderUpiQr(view: View, modes: List<String>, payable: Double, billNumber: String) {
+    private fun renderUpiQr(view: View, modes: List<String>, payable: Double, billNumber: String, isRestaurant: Boolean) {
         val container = view.findViewById<LinearLayout>(R.id.llUpiQr) ?: return
         container.visibility = View.GONE
 
@@ -2114,21 +2209,28 @@ class BillReceiptRenderer(context: Context) {
         // the total, scans, and pays without the floor coming back. It is also the one
         // case where a code cannot be "an invitation to pay a second time", because
         // nothing has been paid a first time.
-        //
-        // Distinct from a CASH or CARD bill, which carries a mode saying the money is
-        // already in - those still print no code, as before.
         val unpaid = modes.isEmpty()
-        if (!online && !upi && !unpaid) return
 
         val settings = runCatching { BillSettingsDao(ctx).load() }.getOrNull() ?: return
+        if (!UpiQr.isValidVpa(settings.upiId)) return
+
         // ONLINE prints the code whether or not the setting is on. Choosing it at
         // checkout says the customer is paying from their phone and has nothing else
         // to pay against - no card machine, no cash drawer - so a bill without a code
-        // leaves them keying an address and a figure in by hand. UPI is the case the
-        // setting is really about: the shop may already have a code stuck to the
-        // counter, and printing a second one on every slip is only paper.
-        if (!online && !settings.upiQrEnabled) return
-        if (!UpiQr.isValidVpa(settings.upiId)) return
+        // leaves them keying an address and a figure in by hand.
+        //
+        // Otherwise, a GROCERY bill prints once the QR is saved (the toggle is on),
+        // whatever the mode - cash, card, credit, UPI or unpaid all qualify. A
+        // RESTAURANT bill keeps to UPI or unpaid only, cash/card still printing
+        // nothing: the floor has already been paid, and a second code invites a
+        // second payment.
+        val shouldPrint = when {
+            online -> true
+            !settings.upiQrEnabled -> false
+            isRestaurant -> upi || unpaid
+            else -> true
+        }
+        if (!shouldPrint) return
 
         val uri = UpiQr.payUri(
             settings.upiId, settings.upiPayeeName, payable,
@@ -2190,6 +2292,37 @@ class BillReceiptRenderer(context: Context) {
     }
 
     /**
+     * The column headings - SR.NO ITEM / QTY / PRICE / DISC / AMOUNT - as their own
+     * row within [llItems], for a split bill's "NA" section: the top of the bill has
+     * this row once, above the GST items, but a reader turned straight to the VAT
+     * half has nothing above its rows to say what the figures are.
+     *
+     * Reads the text straight off the fixed heading views ([R.id.tvColSrItem] and
+     * the rest) rather than re-deriving it, so this row is always exactly what the
+     * top of the bill settled on - translated, and already shortened to
+     * [CLASSIC_NARROW_ITEM_HEADING] where the full label would not fit.
+     */
+    private fun itemHeadingRow(
+        root: View, showDisc: Boolean, sizeSp: Float, columnPx: IntArray, narrow: Boolean
+    ): View {
+        val row = classicRow(narrow)
+        row.addView(
+            nameCell(root.findViewById<TextView>(R.id.tvColSrItem).text?.toString().orEmpty(), columnPx[0], sizeSp)
+        )
+        val labels = mapOf(
+            QTY_COLUMN to R.id.tvColQty, PRICE_COLUMN to R.id.tvColPrice,
+            DISC_COLUMN to R.id.tvColDisc, NET_COLUMN to R.id.tvColNet
+        )
+        ITEM_FIGURE_COLUMNS.filter { showDisc || it != DISC_COLUMN }.forEach { i ->
+            val text = root.findViewById<TextView>(labels.getValue(i)).text?.toString().orEmpty()
+            row.addView(
+                figureCell(text, columnPx[i], if (i == QTY_COLUMN) Gravity.CENTER else Gravity.END, sizeSp)
+            )
+        }
+        return row
+    }
+
+    /**
      * A line item: serial and name, the quantity with its unit, the unit price and
      * the amount, on one row under the headings - or on two, where the name is too
      * long for one.
@@ -2239,18 +2372,19 @@ class BillReceiptRenderer(context: Context) {
         // with the figures; anything longer takes a line of its own - and so does a
         // shorter name that still will not fit the column on this paper. See
         // [CLASSIC_NAME_MAX_CHARS] and [CLASSIC_NARROW_NAME_MAX_CHARS].
+        //
+        // An HSN code forces the two-line layout even for a name that would
+        // otherwise fit the single-line row: the code needs its own line under the
+        // name, sharing THAT line with the figures instead - a name-only row has
+        // nowhere left to put it.
         val maxNameChars =
             if (narrow) CLASSIC_NARROW_NAME_MAX_CHARS else CLASSIC_NAME_MAX_CHARS
-        val sharesTheLine = item.name.length <= maxNameChars &&
+        val sharesTheLine = item.hsn == null && item.name.length <= maxNameChars &&
             measure(sizeSp).measureText(heading) <= columnPx[0]
 
         if (sharesTheLine) {
             val row = classicRow(narrow)
-            val name = buildString {
-                append(heading)
-                if (item.hsn != null) append("\nHSN: ${item.hsn}")
-            }
-            row.addView(nameCell(name, columnPx[0], sizeSp))
+            row.addView(nameCell(heading, columnPx[0], sizeSp))
             addFigures(row)
             return row
         }
@@ -2267,17 +2401,17 @@ class BillReceiptRenderer(context: Context) {
             setPadding(0, gap, 0, gap)
 
             addView(fullWidthLine(heading, sizeSp))
-            if (item.hsn != null) addView(fullWidthLine("HSN: ${item.hsn}", sizeSp))
 
+            // HSN and figures on the same line if HSN exists
             addView(
                 LinearLayout(ctx).apply {
                     layoutParams = LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                     )
                     orientation = LinearLayout.HORIZONTAL
-                    // The name column is held open and empty, so the figures stay
-                    // under the headings instead of sliding left into its place.
-                    addView(nameCell("", columnPx[0], sizeSp))
+                    // HSN in the name column (left), figures on the right
+                    val hsnText = if (item.hsn != null) "HSN: ${item.hsn}" else ""
+                    addView(nameCell(hsnText, columnPx[0], sizeSp))
                     addFigures(this)
                 }
             )
@@ -2287,10 +2421,13 @@ class BillReceiptRenderer(context: Context) {
     /**
      * A figure cell of the item table, at the width [itemColumnWidths] settled on.
      *
-     * Held to one line. The width was measured to hold the value, so there is nothing
+     * Held to one line by default. The width was measured to hold the value, so there is nothing
      * to wrap - and if a figure ever did outrun its column, breaking it across two
      * lines is the one thing it must not do: a quantity split as "1.0" over "0" reads
      * as a different quantity.
+     *
+     * When HSN is prepended to the quantity, it may span two lines (HSN on line 1,
+     * quantity on line 2).
      *
      * One line is set with [TextView.setMaxLines], never `isSingleLine`. They read as
      * the same instruction and are not: `isSingleLine` also turns on horizontal
@@ -2299,14 +2436,14 @@ class BillReceiptRenderer(context: Context) {
      * cell. Every figure on the bill printed blank, in a cell of exactly the right
      * width, holding exactly the right text.
      */
-    private fun figureCell(text: String, widthPx: Int, gravity: Int, sizeSp: Float): TextView =
+    private fun figureCell(text: String, widthPx: Int, gravity: Int, sizeSp: Float, maxLines: Int = 1): TextView =
         TextView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
             this.text = text
             this.gravity = gravity
             typeface = billTypeface
             textSize = sizeSp
-            maxLines = 1
+            this.maxLines = maxLines
             setTextColor(0xFF222222.toInt())
         }
 
@@ -2333,46 +2470,6 @@ class BillReceiptRenderer(context: Context) {
      * that it stops being broken up, so it is cut at the edge rather than wrapped if
      * it somehow outruns the whole roll as well.
      */
-    /**
-     * "GST TOTAL              1500.00" - one section of a split bill, added up.
-     *
-     * Summed from the rows' own [BillItem.amount] rather than re-derived from the
-     * cart, so the figure printed under a table is the sum of the figures printed in
-     * it. A total worked out separately is a total that can disagree with what is
-     * above it, and on a tax document that disagreement is the whole problem.
-     *
-     * Laid out as label-left / figure-right on one line, which is what the summary
-     * block below does, so the two read as the same kind of row.
-     */
-    private fun sectionTotalLine(label: String, rows: List<BillItem>, sizeSp: Float): View {
-        val total = BillRounding.toPaise(rows.sumOf { it.amount })
-        return LinearLayout(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            orientation = LinearLayout.HORIZONTAL
-            addView(TextView(ctx).apply {
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                text = "$label:"
-                gravity = Gravity.END
-                typeface = billTypeface
-                setTypeface(billTypeface, Typeface.BOLD)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
-                setTextColor(0xFF111111.toInt())
-            })
-            addView(TextView(ctx).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).also { it.marginStart = (6 * ctx.resources.displayMetrics.density).toInt() }
-                text = money(total)
-                gravity = Gravity.END
-                setTypeface(billTypeface, Typeface.BOLD)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
-                setTextColor(0xFF111111.toInt())
-            })
-        }
-    }
-
     private fun fullWidthLine(text: String, sizeSp: Float): TextView = TextView(ctx).apply {
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -2386,6 +2483,55 @@ class BillReceiptRenderer(context: Context) {
         ellipsize = android.text.TextUtils.TruncateAt.END
         setTextColor(0xFF222222.toInt())
     }
+
+    /**
+     * A GRAND TOTAL row exactly as the foot of a normal Classic bill styles one -
+     * bold, set apart between two rules - so a split bill's own section can end in
+     * one too. Built by hand rather than through the fixed llGrandTotal view further
+     * down the layout: that one is a single view for the whole bill's own payable
+     * figure, and a section here needs the same look, not that view moved.
+     */
+    private fun grandTotalRow(value: String, sizeSp: Float, narrow: Boolean): View =
+        LinearLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            orientation = LinearLayout.VERTICAL
+            addView(fullWidthLine(PrintType.RULE, sizeSp).apply { maxLines = 1 })
+            addView(
+                LinearLayout(ctx).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    val pad = (4 * ctx.resources.displayMetrics.density).toInt()
+                    setPadding(0, pad, 0, pad)
+                    addView(TextView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                        )
+                        text = "${t("GRAND TOTAL")}:"
+                        typeface = billTypeface
+                        setTypeface(billTypeface, Typeface.BOLD)
+                        textSize = sizeSp
+                        setTextColor(0xFF111111.toInt())
+                    })
+                    addView(TextView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                        )
+                        text = value
+                        gravity = Gravity.END
+                        typeface = billTypeface
+                        setTypeface(billTypeface, Typeface.BOLD)
+                        textSize = sizeSp
+                        setTextColor(0xFF111111.toInt())
+                    })
+                }
+            )
+            addView(fullWidthLine(PrintType.RULE, sizeSp).apply { maxLines = 1 })
+        }
 
     /** A monospace paint at [sizeSp], for measuring what a column has to hold. */
     private fun measure(sizeSp: Float): Paint = Paint().apply {
@@ -2654,32 +2800,6 @@ class BillReceiptRenderer(context: Context) {
             return if (room.isEmpty()) "TABLE : ${no.uppercase()}"
             else "TABLE : ${no.uppercase()} (${room.uppercase()})"
         }
-
-        /**
-         * Whether [receiptNo] carries both VAT-rated and non-VAT lines.
-         *
-         * Asked of the sold lines, not of Tax Settings: the split is about what the
-         * products carry, and a shop that has switched VAT off still has to account
-         * for stock that was rated under it. A bill that is all one or all the other
-         * needs no splitting and prints as it always did.
-         */
-        fun isMixedTax(context: Context, receiptNo: Long): Boolean = runCatching {
-            val db = DatabaseHelper.getInstance(context).readableDatabase
-            var vat = 0
-            var other = 0
-            db.rawQuery(
-                """
-                SELECT COALESCE(vat_amount, 0), COALESCE(vat_rate, 0)
-                FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} WHERE bill_id = ?
-                """.trimIndent(),
-                arrayOf(receiptNo.toString())
-            ).use { c ->
-                while (c.moveToNext()) {
-                    if (c.getDouble(0) > 0.005 || c.getDouble(1) > 0.0) vat++ else other++
-                }
-            }
-            vat > 0 && other > 0
-        }.getOrDefault(false)
 
         fun layoutFor(format: BillSettingsDao.BillFormat): Int = when (format) {
             BillSettingsDao.BillFormat.CLASSIC -> R.layout.fragment_bill_classic

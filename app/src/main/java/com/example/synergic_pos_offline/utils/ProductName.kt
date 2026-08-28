@@ -55,6 +55,21 @@ object ProductName {
         return Transliterator.to(language, translated)
     }
 
+    /**
+     * [raw] as it appears on app screens in [language].
+     *
+     * Unlike [inPrintLanguage], this is *only* transliteration - respelling in the
+     * local script without translation. A product name on a sale screen is respelled,
+     * not translated, because the operator reads the screen in the language they were
+     * trained on this till in, and a translated name is an English name in a foreign
+     * tongue rather than the actual name of what they are selling.
+     */
+    fun inAppLanguage(language: PrintLanguage.Language, raw: String?): String {
+        val name = raw ?: return ""
+        if (language == PrintLanguage.Language.ENGLISH || name.isBlank()) return name
+        return Transliterator.to(language, name)
+    }
+
     /** Whether names are touched at all in [language] - false for English. */
     fun applies(language: PrintLanguage.Language): Boolean =
         language != PrintLanguage.Language.ENGLISH

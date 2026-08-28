@@ -721,6 +721,12 @@ class DatabaseHelper private constructor(context: Context) :
             db.execSQL(SQL_CREATE_TD_BILLS_DELETE)
             db.execSQL(SQL_CREATE_TD_BILL_ITEMS_DELETE)
         }
+        if (oldVersion < 18) {
+            addColumnIfMissing(db, Tables.MD_CHARGES, "charge_type", "TEXT DEFAULT 'PERCENTAGE'")
+        }
+        if (oldVersion < 19) {
+            addColumnIfMissing(db, Tables.MD_CHARGES, "applicability", "TEXT DEFAULT 'BOTH'")
+        }
         // gst_rate is dropped in onOpen via a portable table rebuild (see
         // dropProductGstRateIfPresent), which works on every SQLite version.
     }
@@ -1279,7 +1285,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 17
+        private const val DATABASE_VERSION = 19
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of

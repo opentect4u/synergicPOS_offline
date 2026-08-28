@@ -60,7 +60,7 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
 
         group.setOnCheckedChangeListener { _, checkedId ->
             if (applying) return@setOnCheckedChangeListener
-            PrintLanguage.Language.values().getOrNull(checkedId - 1)?.let { choose(it) }
+            PrintLanguage.Language.values().getOrNull(checkedId - 1)?.let { choosePrintLanguage(it) }
         }
 
         // The app's own screens, chosen separately from the paper. Its radio ids are
@@ -69,10 +69,10 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
         PrintLanguage.Language.values().forEach { language ->
             appGroup.addView(radioFor(language, accent).also { it.id = appIdOf(language) })
         }
-        appGroup.check(appIdOf(current))
+        appGroup.check(appIdOf(com.example.synergic_pos_offline.utils.AppLanguage.of(requireContext())))
         appGroup.setOnCheckedChangeListener { _, checkedId ->
             if (applying) return@setOnCheckedChangeListener
-            PrintLanguage.Language.values().getOrNull(checkedId - APP_ID_BASE)?.let { choose(it) }
+            PrintLanguage.Language.values().getOrNull(checkedId - APP_ID_BASE)?.let { chooseAppLanguage(it) }
         }
 
         showProductNames(view, current)
@@ -124,28 +124,18 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
      * itself the proof: an operator who picks Hindi should see this page turn, and
      * one who picked it by accident should be able to read their way back out.
      */
-    /**
-     * Stores the choice, then puts the whole screen - both lists - onto it.
-     *
-     * The two lists are two ways into one setting, not two settings. Whichever is
-     * tapped, the other moves with it, because a till prints and reads in the same
-     * language and there is only one value stored for both.
-     */
-    private fun choose(language: PrintLanguage.Language) {
+    private fun choosePrintLanguage(language: PrintLanguage.Language) {
         val stored = runCatching {
             GeneralSettingsDao(requireContext()).savePrintLanguage(language.code)
             true
         }.getOrElse { error ->
-            android.util.Log.e(TAG, "Could not store the language", error)
+            android.util.Log.e(TAG, "Could not store print language", error)
             false
         }
 
-        // Put both radios back on what is actually stored rather than leaving the
-        // screen claiming a language nothing will use.
         val now = if (stored) language else PrintLanguage.of(requireContext())
         applying = true
         group.check(idOf(now))
-        appGroup.check(appIdOf(now))
         applying = false
 
         if (!stored) {
@@ -156,8 +146,35 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
             showProductNames(it, now)
             showScope(it, now)
         }
-        (activity as? com.example.synergic_pos_offline.MainActivity)?.applyLanguageEverywhere()
-        toast("The app and its bills will be in ${now.englishName}")
+        toast("Bills will print in ${now.englishName}")
+    }
+
+    private fun chooseAppLanguage(language: PrintLanguage.Language) {
+        val stored = runCatching {
+            android.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
+                .edit().putString(com.example.synergic_pos_offline.utils.AppLanguage.SETTING_KEY, language.code).commit()
+        }.getOrDefault(false)
+
+        val now = if (stored) language else com.example.synergic_pos_offline.utils.AppLanguage.of(requireContext())
+        applying = true
+        appGroup.check(appIdOf(now))
+        applying = false
+
+        if (!stored) {
+            toast("Could not save the language")
+            return
+        }
+        view?.let {
+            showProductNames(it, now)
+        }
+        // App language only affects product names in sale screens - do not change other UI labels.
+        // Notify sale fragments to refresh their product name display without detaching.
+        // This avoids triggering any global language application that would change the entire UI.
+        val fm = parentFragmentManager
+        (fm.findFragmentById(R.id.fragment_container) as? com.example.synergic_pos_offline.fragments.PosBillingFragment)?.refreshProductDisplay()
+        (fm.findFragmentById(R.id.fragment_container) as? com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment)?.refreshProductDisplay()
+
+        toast("Product names will be in ${now.englishName}")
     }
 
     /**
