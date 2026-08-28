@@ -25,7 +25,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
     private data class Line(
         val name: String, val qty: Double, val rate: Double, val cgstRate: Double, val sgstRate: Double,
-        val hsn: String? = null, val vatRate: Double = 0.0
+        val hsn: String? = null, val vatRate: Double = 0.0, val unit: String? = null
     )
 
     // The selected order's items, passed in from the Orders screen.
@@ -37,12 +37,14 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         val sgsts = arguments?.getDoubleArray(ARG_SGSTS) ?: DoubleArray(0)
         val vats = arguments?.getDoubleArray(ARG_VATS)
         val hsns = arguments?.getStringArrayList(ARG_HSNS)
+        val units = arguments?.getStringArrayList(ARG_UNITS)
         names.mapIndexed { i, n ->
             Line(
                 n, qtys.getOrElse(i) { 1.0 }, rates.getOrElse(i) { 0.0 },
                 cgsts.getOrElse(i) { 0.0 }, sgsts.getOrElse(i) { 0.0 },
                 hsns?.getOrNull(i)?.takeIf { it.isNotBlank() },
-                vats?.getOrElse(i) { 0.0 } ?: 0.0
+                vats?.getOrElse(i) { 0.0 } ?: 0.0,
+                units?.getOrNull(i)?.takeIf { it.isNotBlank() }
             )
         }
     }
@@ -195,7 +197,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             items = lines.map {
                 com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
                     name = it.name, quantity = it.qty.toDouble(), rate = it.rate,
-                    cgstRate = it.cgstRate, sgstRate = it.sgstRate, vatRate = it.vatRate, hsn = it.hsn
+                    cgstRate = it.cgstRate, sgstRate = it.sgstRate, vatRate = it.vatRate, hsn = it.hsn,
+                    unit = it.unit
                 )
             },
             // Bill Settings' Round Off is the only say in whether this rounds - on,
@@ -370,6 +373,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_SGSTS = "sgsts"
         private const val ARG_VATS = "vats"
         private const val ARG_HSNS = "hsns"
+        private const val ARG_UNITS = "units"
         private const val ARG_SERVICE_RATE = "service_rate"
         private const val ARG_GST_ON = "gst_on"
         private const val ARG_VAT_ON = "vat_on"
@@ -380,17 +384,18 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
          * carrying its items and tax. The order id travels with it so the paid result
          * settles this order rather than the same-numbered table in another section.
          *
-         * [hsns] and [vats] are optional and default to empty - a caller that has not
-         * looked them up (or a build predating these parameters) still gets a working
-         * screen, just without HSN or VAT on it. Empty/zero in a slot means "this item
-         * has none". [vatEnabled] defaults off for the same reason.
+         * [hsns], [vats] and [units] are optional and default to empty - a caller that
+         * has not looked them up (or a build predating these parameters) still gets a
+         * working screen, just without HSN, VAT or a unit on it. Empty/zero in a slot
+         * means "this item has none". [vatEnabled] defaults off for the same reason.
          */
         fun newInstance(
             orderId: Long, table: String, section: String, customer: String,
             names: ArrayList<String>, qtys: DoubleArray, rates: DoubleArray,
             cgsts: DoubleArray, sgsts: DoubleArray, serviceRate: Double,
             gstEnabled: Boolean, inclusive: Boolean, hsns: ArrayList<String> = arrayListOf(),
-            vats: DoubleArray = DoubleArray(0), vatEnabled: Boolean = false
+            vats: DoubleArray = DoubleArray(0), vatEnabled: Boolean = false,
+            units: ArrayList<String> = arrayListOf()
         ): RestaurantCheckoutFragment = RestaurantCheckoutFragment().apply {
             arguments = android.os.Bundle().apply {
                 putLong(ARG_ORDER_ID, orderId)
@@ -404,6 +409,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putDoubleArray(ARG_SGSTS, sgsts)
                 putDoubleArray(ARG_VATS, vats)
                 putStringArrayList(ARG_HSNS, hsns)
+                putStringArrayList(ARG_UNITS, units)
                 putDouble(ARG_SERVICE_RATE, serviceRate)
                 putBoolean(ARG_GST_ON, gstEnabled)
                 putBoolean(ARG_VAT_ON, vatEnabled)

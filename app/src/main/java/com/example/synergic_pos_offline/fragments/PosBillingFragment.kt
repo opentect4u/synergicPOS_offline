@@ -840,7 +840,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
                         cgst = cgst,
                         sgst = sgst,
                         vat = vat,
-                        unit = unitSymbol.ifBlank { "pcs" },
+                        unit = unitSymbol,
                         allowFraction = allowFraction,
                         discValue = discValue,
                         discType = discType,

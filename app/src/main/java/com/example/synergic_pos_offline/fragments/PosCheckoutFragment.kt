@@ -362,13 +362,20 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                 """
                 SELECT p.id, p.product_name, p.bar_code, p.hsn_code,
                        c.category_name, r.rate, r.cgst_rate, r.sgst_rate, r.vat_rate,
-                       r.discount, r.discount_type
+                       r.discount, r.discount_type,
+                       -- The unit as it prints: its short name, or the first three
+                       -- characters of its name where the shop left the short one
+                       -- blank - see UnitDao.shortNameOf. Blank when the rate carries
+                       -- no unit at all, so the line prints with none rather than a
+                       -- fabricated one.
+                       COALESCE(NULLIF(TRIM(u.unit_symbol), ''), SUBSTR(TRIM(u.unit_name), 1, 3))
                 FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
                 LEFT JOIN ${DatabaseHelper.Tables.MD_CATEGORY} c ON c.id = p.category_id
                 LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r ON r.id = (
                     SELECT id FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES}
                     WHERE product_id = p.id ORDER BY "default" DESC, id ASC LIMIT 1
                 )
+                LEFT JOIN ${DatabaseHelper.Tables.MD_UNITS} u ON u.id = r.unit_id
                 ORDER BY p.product_name COLLATE NOCASE
                 """.trimIndent(),
                 null
@@ -386,7 +393,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                             sgst = if (c.isNull(7)) 0.0 else c.getDouble(7),
                             vat = if (c.isNull(8)) 0.0 else c.getDouble(8),
                             discValue = if (c.isNull(9)) 0.0 else c.getDouble(9),
-                            discType = c.getString(10)
+                            discType = c.getString(10),
+                            unit = c.getString(11).orEmpty()
                         )
                     )
                 }

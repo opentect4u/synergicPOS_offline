@@ -543,10 +543,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     val sgsts = order.items.map { it.sgstRate }.toDoubleArray()
                     val vats = order.items.map { it.vatRate }.toDoubleArray()
                     // Off the catalogue, same as buildBillDraft() - a cart line does not
-                    // carry its own HSN, the product it was sold from does.
+                    // carry its own HSN or unit, the product it was sold from does.
                     val hsns = ArrayList(order.items.map { line ->
                         allProducts.firstOrNull { it.product.id == line.productId.toString() }
                             ?.product?.hsn.orEmpty()
+                    })
+                    val units = ArrayList(order.items.map { line ->
+                        allProducts.firstOrNull { it.product.id == line.productId.toString() }
+                            ?.product?.unit.orEmpty()
                     })
                     requireActivity().supportFragmentManager.beginTransaction()
                         .replace(
@@ -556,7 +560,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 order.phone.ifBlank { "Walk-in" }, names, qtys, rates,
                                 cgsts, sgsts, serviceRateFor(order.section),
                                 gstEnabled = taxSettings.gstEnabled, inclusive = taxInclusive,
-                                hsns = hsns, vats = vats, vatEnabled = taxSettings.vatEnabled
+                                hsns = hsns, vats = vats, vatEnabled = taxSettings.vatEnabled,
+                                units = units
                             )
                         )
                         .addToBackStack(null)
