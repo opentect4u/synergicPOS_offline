@@ -1519,11 +1519,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             meta = listOfNotNull(
             gp.product.category.takeIf { it.isNotBlank() },
             gp.prepTime.takeIf { it.isNotBlank() }?.let { t -> if (t.contains("min", true)) t else "$t min" },
-            gp.product.sku.takeIf { it.isNotBlank() }?.let { "#$it" },
-            // Shown, not only searched: a row matched on its HSN has nothing
-            // highlighted in its name to say why it is in the results.
-            com.example.synergic_pos_offline.utils.SearchSuggestions
-                .realHsn(gp.product.hsn)?.let { "HSN $it" }
+            gp.product.sku.takeIf { it.isNotBlank() }?.let { "#$it" }
+            // HSN deliberately left out - SearchSuggestions.rank() matches against
+            // meta too, so anything printed here is also searchable by it. Search is
+            // name / serial no. / barcode only, the same as grocery - see [codes].
         ).joinToString("  ·  "),
         price = "₹ ${money(gp.product.price)}",
         codes = listOfNotNull(
