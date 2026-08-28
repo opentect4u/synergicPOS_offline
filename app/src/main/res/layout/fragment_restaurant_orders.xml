@@ -669,6 +669,21 @@
                                 <TextView style="@style/OrderSummaryLabel" android:text="VAT" />
                                 <TextView android:id="@+id/tvOrderVat" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                             </LinearLayout>
+
+                            <!-- The shop's own charges - Extra Charges and the Parcel
+                                 Charge - one row each, by name, filled in by
+                                 updateTotals. They were being added to the Total and
+                                 shown nowhere, so a bill quietly came to more than the
+                                 lines above it added up to.
+
+                                 Last in the breakdown because that is where they join
+                                 the sum: on top of the taxed goods, being the shop's
+                                 own additions rather than part of what was sold. -->
+                            <LinearLayout
+                                android:id="@+id/llOrderCharges"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical" />
                         </LinearLayout>
 
                         <!-- The Total closes the breakdown it is the sum of, which is
