@@ -429,7 +429,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 // front of the person paying for it, so listing it back to them is a
                 // page to get past on the way to taking the money - and it costs the
                 // counter the order it was working on and a trip back.
-                order.type.equals("Take Away", ignoreCase = true) -> showQuickPayment(order)
+                order.type.equals("Take Away", ignoreCase = true) ->
+                    withCustomerIfTakeAway(order) { showQuickPayment(order) }
                 else -> {
                     val names = ArrayList(order.items.map { it.name })
                     val qtys = order.items.map { it.qty }.toDoubleArray()
@@ -495,6 +496,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun appSettingOn(key: String): Boolean =
         SettingsCache.value(requireContext(), "A", key) == "1"
 
+    /**
+     * Whether this till collects customer details - General Settings ▸ Customer Info.
+     *
+     * Read on each use rather than cached on the fragment: it is a General Settings
+     * trip away, and unlike the App Settings flags above it is asked once per order
+     * rather than once per tap, so there is nothing to save by holding it.
+     */
+    private fun customerInfoOn(): Boolean =
+        com.example.synergic_pos_offline.database.GeneralSettingsDao
+            .isCustomerInfoEnabled(requireContext())
+
     override fun onDestroyView() {
         // A ListPopupWindow is a window, not a child of this view: left showing, it
         // would float over whatever replaces this screen.
@@ -519,6 +531,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun restyle(view: View, accent: Int) {
         applyAccents(view, accent)
         styleSeg(view, accent)
+        // The accent pass repaints these two by name, which is what a returning theme
+        // pass does on every resume - so the lock is re-stated after it. Without this
+        // a billed table came back from Settings or a rotation with both buttons lit
+        // again, and the panel disagreed with the order.
+        setBilledLock(view, billed = currentOrder()?.completed == true)
     }
 
     /**
@@ -641,6 +658,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             text = if (takeAway) "Take Away" else order.id; setTextColor(accent)
         }
         root.findViewById<TextView>(R.id.tvDetailCustomer).text = order.phone.ifBlank { "Walk-in" }
+        // TAKE AWAY HAS ONE BUTTON, NOT TWO. A table is billed and paid as two acts,
+        // minutes apart: the bill goes out, the guests read it, and they settle when
+        // they are ready - so Print Bill and Settlement are two controls because they
+        // happen at two moments. At a counter they are one moment. The customer is
+        // standing there paying, and the slip they are handed is the receipt for the
+        // payment just taken, so asking the counter to press two buttons in a row is
+        // asking it to split an act that is not divided.
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPrint)
+            .visibility = if (takeAway) View.GONE else View.VISIBLE
         root.findViewById<TextView>(R.id.tvDetailGuests).text =
             if (takeAway) order.id.replace("TA-", "Token #")
             else if (order.section.isNotBlank()) "${order.section}  ·  ${order.type}" else order.type
@@ -650,6 +676,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Take Away has no table to transfer, merge or split; those fold away. It does
         // have food to cook, so Print KOT stays available - see setDineInActionsEnabled.
         setDineInActionsEnabled(root, !order.type.equals("Take Away", ignoreCase = true))
+        // After the type rule, so a billed order stays locked whatever type it is.
+        setBilledLock(root, order.completed)
     }
 
     /**
@@ -836,8 +864,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * Skip is the way past it: a counter with a queue must be able to take an order
      * without an interrogation, and a walk-in has no customer to record. Skipping
      * starts the order with nobody attached and writes nothing to the customer list.
+     *
+     * ASKED ONLY WHERE THE TILL COLLECTS CUSTOMERS AT ALL. With General Settings ▸
+     * Customer Info off the shop keeps no customer list, so there is nothing for an
+     * answer to be filed in and nothing later reads it - the prompt is skipped and the
+     * order runs with nobody attached, exactly as pressing Skip would leave it.
      */
     private fun askTakeAwayCustomer(onDone: (name: String, phone: String) -> Unit) {
+        if (!customerInfoOn()) return onDone("", "")
         com.example.synergic_pos_offline.utils.CustomerPrompt.showDetails(
             context = requireContext(),
             title = "Take Away — customer",
@@ -888,6 +922,32 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
     }
 
+    /**
+     * Greys Print KOT and Print Bill once the order has been billed.
+     *
+     * A billed order is closed to changes - completeTable locks it, and the cart's
+     * steppers go with it - so neither button has anything left to do. Print KOT would
+     * be a ticket for food already cooked, served and charged for; Print Bill would be
+     * a second copy of a bill the customer is holding, cut from an order that can no
+     * longer change. Both used to sit there fully lit and refuse on the tap, which
+     * tells the operator only after they have tried.
+     *
+     * Settlement stays live. It is the one thing a billed order is still waiting for.
+     *
+     * MUST BE APPLIED AFTER [setDineInActionsEnabled], which lights Print KOT
+     * unconditionally for every order type - a take-away has food to cook like any
+     * other. That rule is about the TYPE of order; this one is about its STATE, and
+     * the state has the last word.
+     */
+    private fun setBilledLock(root: View, billed: Boolean) {
+        listOf(R.id.btnPrintKot, R.id.btnBillPrint).forEach { id ->
+            root.findViewById<com.google.android.material.button.MaterialButton>(id)?.apply {
+                isEnabled = !billed
+                alpha = if (billed) 0.4f else 1f
+            }
+        }
+    }
+
     /** Sets the order-note field without triggering the persist watcher. */
     private fun setNoteField(root: View, note: String) {
         suppressNoteWatcher = true
@@ -903,6 +963,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvDetailGuests).text = "—"
         root.findViewById<TextView>(R.id.tvDetailOrderTime).text = "Order Time: —"
         setDineInActionsEnabled(root, true)   // neutral state: actions available again
+        setBilledLock(root, billed = false)   // nothing selected → nothing locked
         setNoteField(root, "")
         root.findViewById<LinearLayout>(R.id.llOrderItems).removeAllViews()
         val zero = "₹ ${money(0.0)}"
@@ -914,6 +975,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvTotalBar).text = zero
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).text =
             "Settlement  ( $zero )"
+        // Back to the two-button layout: with nothing selected the panel shows what a
+        // table order offers, which is what the next selection most often is.
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPrint)
+            .visibility = View.VISIBLE
+    }
+
+    /**
+     * What the settlement button says. A take-away's does both jobs, and says so - the
+     * counter should not have to know that the button which takes the money also cuts
+     * the slip.
+     */
+    private fun settlementLabel(order: OrderCard?, total: Double): String {
+        val what = if (order?.type.equals("Take Away", ignoreCase = true)) "Print & Settlement"
+        else "Settlement"
+        return "$what  ( ₹ ${money(total)} )"
     }
 
     /** Accent the filled buttons, headers and the active tab (avoids ThemeManager's name rules). */
@@ -2585,7 +2661,33 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val accent = ThemeManager.getThemeColor(requireContext())
         val order = currentOrder()
         val locked = order?.completed == true      // billed → read-only
-        val cart = order?.items ?: emptyList<CartItem>()
+        val all = order?.items ?: emptyList<CartItem>()
+
+        // THE PANEL SHOWS WHAT HAS NOT GONE TO THE KITCHEN YET.
+        //
+        // Once a round is sent, the cart becomes the NEXT round. A waiter standing at
+        // a table that has already ordered is taking what comes after it, and a list
+        // that keeps every course already cooking pushes the two or three lines they
+        // are actually working on off the bottom of a narrow panel.
+        //
+        // One rule covers both states rather than a flag: a line shows while it has
+        // quantity that has not been sent. Before any KOT every line qualifies, so a
+        // fresh order builds up exactly as it always did; after one, only what was
+        // added since. A line whose quantity was raised after its KOT still shows,
+        // because part of it is still waiting to go.
+        //
+        // NOTHING IS HIDDEN FROM THE BILL. The totals below, the KOT, the printed bill
+        // and the More popup all read order.items - the whole order - and only this
+        // list is narrowed. See updateTotals and showOrderItemsDialog.
+        val cart = if (locked) all else all.filter { it.pending > 0.0 }
+        val sentOnly = all.size - cart.size
+
+        // Says where the rest of the order is, on the header and in the list's own
+        // empty space, so a short list under a busy table never reads as lost items.
+        root.findViewById<TextView>(R.id.tvOrderItemsHeader).text =
+            if (sentOnly > 0) "ORDER ITEMS  ·  $sentOnly SENT" else "ORDER ITEMS"
+        root.findViewById<TextView>(R.id.tvCartAllSent).visibility =
+            if (cart.isEmpty() && all.isNotEmpty() && !locked) View.VISIBLE else View.GONE
 
         // Rows are re-bound in place rather than thrown away and inflated again. Every
         // tap on the menu redraws this list, and inflating each line afresh - each one
@@ -2599,7 +2701,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val row = container.getChildAt(index) ?: newOrderRow(
                 inflater, container, R.layout.item_order_line_compact
             ).also { container.addView(it) }
-            bindOrderRow(row, item, locked, accent) { renderCart() }
+            // showPending only while the order is live. A billed one has no next round
+            // to build, so its panel states the whole line the bill was made from.
+            bindOrderRow(row, item, locked, accent, showPending = !locked) { renderCart() }
         }
         updateTotals()
     }
@@ -2620,7 +2724,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         accent: Int,
         onChanged: () -> Unit
     ): View = newOrderRow(inflater, parent, layoutRes)
-        .also { bindOrderRow(it, item, locked, accent, onChanged) }
+        // No showPending: this builds the More popup's rows, which state the whole
+        // order because that is what the bill is made from.
+        .also { bindOrderRow(it, item, locked, accent, onChanged = onChanged) }
 
     /**
      * An empty row of [layoutRes], themed once. A row's colours come from the theme
@@ -2642,17 +2748,42 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         item: CartItem,
         locked: Boolean,
         accent: Int,
+        /**
+         * Whether this row states the line's PENDING quantity rather than its total.
+         *
+         * True on the order panel, which is the next round to go to the kitchen: send
+         * one biryani, add another, and the panel says 1 - the one still to go - not 2.
+         * Two would be counting the plate already on the pass, and a waiter reading the
+         * panel to see what the kitchen still owes them would send it again.
+         *
+         * False in the More popup, which is the WHOLE order and has to add up to the
+         * bill. The same line reads 2 there, marked as one sent and one new.
+         */
+        showPending: Boolean = false,
         onChanged: () -> Unit
     ) {
         val order = currentOrder()
+        // What this row is about: the outstanding part on the panel, the whole line
+        // everywhere else. The amount follows the quantity, so a line always reads as
+        // its own qty × rate rather than quoting a total for a quantity not shown.
+        val shownQty = if (showPending) item.pending else item.qty
         row.findViewById<TextView>(R.id.tvLineName).text = item.name
-        row.findViewById<TextView>(R.id.tvLineQty).text = qtyText(item.qty)
+        row.findViewById<TextView>(R.id.tvLineQty).text = qtyText(shownQty)
         row.findViewById<TextView>(R.id.tvLineRate).text = money(item.rate)
-        row.findViewById<TextView>(R.id.tvLineAmount).text = money(item.qty * item.rate)
-        // KOT status: any quantity not yet sent shows NEW ×n (accent); else ✓ Sent.
+        row.findViewById<TextView>(R.id.tvLineAmount).text = money(shownQty * item.rate)
         row.findViewById<TextView>(R.id.tvLineNote).apply {
-            if (item.pending > 0.0) { text = "NEW ×${qtyText(item.pending)}"; setTextColor(accent) }
-            else { text = "✓ Sent"; setTextColor(0xFF9AA0A6.toInt()) }
+            when {
+                // On the panel the quantity IS the pending count, so "NEW ×n" would
+                // say it twice. What it cannot show is the part already gone, and on a
+                // line that was topped up that is the thing worth knowing.
+                showPending && item.kotQty > 0.0 -> {
+                    text = "${qtyText(item.kotQty)} sent"; setTextColor(0xFF9AA0A6.toInt())
+                }
+                showPending -> { text = "NEW"; setTextColor(accent) }
+                // In the popup the quantity is the whole line, so the split is spelled out.
+                item.pending > 0.0 -> { text = "NEW ×${qtyText(item.pending)}"; setTextColor(accent) }
+                else -> { text = "✓ Sent"; setTextColor(0xFF9AA0A6.toInt()) }
+            }
         }
         val btnPlus = row.findViewById<ImageButton>(R.id.btnPlus)
         val btnMinus = row.findViewById<ImageButton>(R.id.btnMinus)
@@ -2672,11 +2803,26 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 roDao.setItemQty(item.dbItemId, item.qty + 1.0); order?.let { reloadItems(it) }; onChanged()
             }
             btnMinus.setOnClickListener {
-                roDao.setItemQty(item.dbItemId, (item.qty - 1.0).coerceAtLeast(0.0))
+                // The panel steps down only as far as what has been sent. Below that
+                // it would start cancelling food the kitchen is already cooking, and
+                // the panel is where the NEXT round is built - cancelling a sent dish
+                // is a deliberate act that belongs in the More popup.
+                val floor = if (showPending) item.kotQty else 0.0
+                roDao.setItemQty(item.dbItemId, (item.qty - 1.0).coerceAtLeast(floor))
                 order?.let { reloadItems(it) }; onChanged()
             }
             btnRemove.setOnClickListener {
-                roDao.removeItem(item.dbItemId); order?.let { reloadItems(it) }; onChanged()
+                if (showPending) {
+                    // Drops what has not gone yet and leaves what has. On a wholly new
+                    // line that is a quantity of zero, which deletes the row outright -
+                    // so one call covers both without asking which kind this is.
+                    roDao.setItemQty(item.dbItemId, item.kotQty)
+                } else {
+                    // The popup removes the line entirely, sent quantity included, and
+                    // keeps it at zero so the cancellation can be printed.
+                    roDao.removeItem(item.dbItemId)
+                }
+                order?.let { reloadItems(it) }; onChanged()
             }
         }
     }
@@ -2781,6 +2927,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * means, and it is said out loud rather than silently doing nothing.
      */
     private fun withCustomerIfTakeAway(order: OrderCard, then: () -> Unit) {
+        // Nothing to require where the till keeps no customers. With General Settings ▸
+        // Customer Info off there is no customer list to look anybody up in, so
+        // insisting on details before a bill would be refusing to print over a record
+        // the shop has chosen not to keep.
+        if (!customerInfoOn()) return then()
         if (!order.type.equals("Take Away", ignoreCase = true) || order.phone.isNotBlank()) {
             return then()
         }
@@ -2873,13 +3024,26 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Pre-filled with the exact amount, the way the checkout screen fills it: the
         // common case is the customer handing over the total, and a counter that has
         // to retype the figure it was just shown is being asked to do the till's work.
-        etTendered.setText(money(total))
-        etTendered.addTextChangedListener {
-            val tendered = it?.toString()?.toDoubleOrNull()
+        // UNGROUPED. money() puts a thousands comma in - "1,491.00" - which is right
+        // for a figure being read and wrong for one that has to be read BACK: the
+        // parse stopped at the comma, came back null, fell through to 0, and told a
+        // counter that the exact total it had just been shown was less than the amount
+        // due. Anything over ₹999 was unsettleable. See Amounts.
+        val tilTendered = v.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilQpTendered)
+        fun showChange() {
+            val tendered = com.example.synergic_pos_offline.utils.Amounts.parse(etTendered.text?.toString())
             tvChange.text =
                 if (tendered != null && tendered >= total) "₹ ${money(tendered - total)}" else "—"
         }
-        tvChange.text = "₹ ${money(0.0)}"
+        etTendered.setText(com.example.synergic_pos_offline.utils.Amounts.editable(total))
+        etTendered.addTextChangedListener {
+            tilTendered.error = null   // clear the complaint as soon as it is being answered
+            showChange()
+        }
+        // Driven by the same function as every later edit, rather than a fixed string:
+        // the pre-filled amount is a real entry and its change is worked out like any
+        // other. It was hard-coded to zero, which was right only by coincidence.
+        showChange()
 
         val btnConfirm = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormPositive)
         val btnCancel = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormNegative)
@@ -2892,33 +3056,94 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // Cash short of the total is a mis-key, not a part payment: the counter
             // does not hand food over for less than the bill, and settling it here
             // would write a paid bill for money nobody received.
-            val tendered = if (payMethod == "Cash") etTendered.text?.toString()?.toDoubleOrNull() ?: 0.0 else 0.0
+            val tendered = if (payMethod == "Cash")
+                com.example.synergic_pos_offline.utils.Amounts.parse(etTendered.text?.toString()) ?: 0.0
+            else 0.0
             if (payMethod == "Cash" && tendered < total) {
-                v.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilQpTendered)
-                    .error = "Less than the amount due"
+                tilTendered.error = "Less than the amount due"
                 return@setOnClickListener
             }
             dialog.dismiss()
-            // The one settlement path, shared with the checkout screen's result: saves
-            // the bill, closes the token, frees the table and prints nothing.
-            settlePaidOrder(order, payMethod, tendered)
-            loadProductsFromDb()   // stock has moved
+            // Print, then settle - the two halves of "Print & Settlement", in that
+            // order. The slip is cut first so it carries the mode that was just
+            // chosen; settling second because it is what closes the token and takes
+            // the stock off.
+            printThenSettle(order, payMethod, tendered)
 
-            // STRAIGHT ON TO THE NEXT ONE. A counter does not finish - one customer
-            // pays and the next is already at the till, so the screen a paid take-away
-            // leaves behind should be the next order, not an empty panel waiting to be
-            // told to start one. Settling used to drop the operator on a blank detail
-            // panel, and the first thing they did every time was reach for Take Away.
+            // BACK TO THE FLOOR PLAN, not into another take-away.
             //
-            // The same [openTakeAway] the button runs, so the next order is opened one
-            // way: it asks who it is for, reuses an empty token rather than leaving a
-            // trail of unused ones, and lands on it selected and ready for items.
+            // A settled order leaves the operator needing to be somewhere, and the
+            // table picker is the one screen every next order starts from - the same
+            // place Print KOT returns to, and the same place the screen opens on. It
+            // does not assume what comes next: the next customer may be a table, and
+            // cutting a fresh token for them would have been an order nobody asked for
+            // and a number spent before anyone stood at the counter.
             //
-            // Posted, so the settle's own repaint and its toast land before the prompt
+            // Take Away is still one tap from here - closing the picker without
+            // choosing a table opens a counter order, which is exactly the case this
+            // used to force.
+            //
+            // Posted, so the settle's own repaint and its toast land before the picker
             // comes up over them.
-            view?.post { if (isAdded) openTakeAway() }
+            view?.post { if (isAdded) showChooseTableDialog() }
         }
         dialog.show()
+    }
+
+    /**
+     * The take-away "Print & Settlement": cuts the bill, then settles the order.
+     *
+     * NEITHER HALF IS THE TABLE FLOW'S. [doPrintBill] exists for a table, where the
+     * bill goes out before the money comes in - so it carries no payment mode, takes
+     * the stock off on the spot and locks the order to wait for payment. None of that
+     * fits a counter: the mode is known (it was just chosen), and settling immediately
+     * afterwards is what takes the stock off and closes the token. Reusing it here
+     * would deduct the stock twice over and lock an order a line later.
+     *
+     * Settling happens whether or not the slip could be printed. The customer has paid
+     * and walked off with the food; a till that refused to record that because no
+     * printer was configured would be holding an order open for a sale that is over.
+     */
+    private fun printThenSettle(order: OrderCard, payMethod: String, tendered: Double) {
+        val printers = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
+            .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
+        val settle = {
+            settlePaidOrder(order, payMethod, tendered)
+            loadProductsFromDb()   // stock has moved
+        }
+        val default = printers.firstOrNull { it.isDefault }
+        when {
+            printers.isEmpty() -> {
+                toast("No bill printer set up — payment saved without a printed bill")
+                settle()
+            }
+            default != null -> { printSettledBill(order, default, payMethod, tendered); settle() }
+            // Settling waits for the choice, so the printed slip and the saved bill
+            // are the same sale rather than two things racing each other.
+            else -> showPrinterChooser(printers, "Select bill printer") { p ->
+                printSettledBill(order, p, payMethod, tendered); settle()
+            }
+        }
+    }
+
+    /**
+     * The counter's receipt: this order, on [printer], carrying the mode it was paid
+     * by and the cash handed over. Numbered with the bill number the settlement is
+     * about to write, so the slip in the customer's hand and the row in Bill history
+     * agree.
+     */
+    private fun printSettledBill(
+        order: OrderCard,
+        printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter,
+        payMethod: String,
+        tendered: Double
+    ) {
+        // Reserved the same way the table bill reserves it. The settlement follows a
+        // line later, so the window is small - but it is not zero, and a second till
+        // ringing up at the same moment is exactly the case a counter has.
+        val next = com.example.synergic_pos_offline.database.BillDao(requireContext()).nextNumber()
+        roDao.setBillSeq(order.dbId, next.seq)
+        printGroceryStyleBill(order, printer, billNumber = next.number, payment = payMethod, tendered = tendered)
     }
 
     private fun resolveBillPrinterThenPrint(order: OrderCard) {
@@ -3116,11 +3341,25 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         order: OrderCard,
         printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter
     ) {
-        val nextNo = com.example.synergic_pos_offline.database.BillDao(requireContext()).nextBillNumber()
+        // THE NUMBER IS RESERVED HERE, not asked for again at settlement.
+        //
+        // A table bill is printed minutes before it is paid, and the bill row is only
+        // written when it is. Nothing used to hold the number across that gap: it was
+        // worked out at print, worked out again at save, and both readings came off a
+        // table that only changes when a bill is SAVED. So every table printed the
+        // same number until one of them settled, and a table settled after another had
+        // gone through was booked under a different number from the slip its customer
+        // was holding.
+        //
+        // Written to the running order, which does two things at once: the settlement
+        // reads it back so the books match the slip, and BillDao counts it as taken so
+        // the next table to print gets the number after it.
+        val next = com.example.synergic_pos_offline.database.BillDao(requireContext()).nextNumber()
+        roDao.setBillSeq(order.dbId, next.seq)
         // This is the provisional table bill, printed before payment - so it carries no
         // payment mode. The mode is only known and printed on the paid receipt, after
         // Settlement -> Confirm (see settlePaidOrder -> printGroceryStyleBill with payMethod).
-        printGroceryStyleBill(order, printer, billNumber = nextNo, payment = "")
+        printGroceryStyleBill(order, printer, billNumber = next.number, payment = "")
         // What was served has left the shelf, and this is the moment it did: the
         // kitchen has cooked the order, the bill is on the table and completeTable
         // below locks it, so no item can be added, changed or removed afterwards.
@@ -3225,7 +3464,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     // order. Hard-coding true would mean that sale moved no stock at
                     // all, which is the same bug as deducting twice pointing the other
                     // way. Printed -> deducted there; not printed -> deducted here.
-                    stockAlreadyMoved = order.completed
+                    stockAlreadyMoved = order.completed,
+                    // The number the slip was printed under, where one was printed.
+                    // Null when the order is being settled without a bill ever having
+                    // been cut, and then the sale takes the next number as normal.
+                    reservedBillSeq = roDao.billSeqOf(order.dbId)
                 )
             )
         }.getOrNull()
@@ -3351,6 +3594,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         renderCart()   // re-render locked (steppers hidden)
+        // Grey KOT and Print Bill here rather than waiting for the order to be
+        // re-selected: this IS the moment it was billed, and the operator is looking
+        // at the panel when it happens.
+        setBilledLock(root, billed = true)
         toast("Table ${order.id} billed — locked. Use Bill & Pay to settle.")
     }
 
@@ -3438,6 +3685,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvTotalBar).text = "₹ ${money(payable)}"
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).text =
             "Settlement  ( ₹ ${money(payable)} )"
+            settlementLabel(order, b.total)
         // Reflect the running total on the active order card. Only that one figure
         // moves as items go on, so the card is patched where it stands - rebuilding
         // the whole list meant inflating a card per open table on every tap.

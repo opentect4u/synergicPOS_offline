@@ -145,6 +145,15 @@ class DatabaseHelper private constructor(context: Context) :
         runCatching { db.execSQL(SQL_CREATE_TD_RUNNING_ORDER_ITEMS) }
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "order_note", "TEXT")
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "merged_tables", "TEXT")
+        // The bill number RESERVED for this order when its bill was printed.
+        //
+        // A restaurant prints the bill before it is paid, and the bill row is only
+        // written at settlement - so between the two there was nothing anywhere
+        // holding the number. Every table printed the same one until somebody settled,
+        // and a table settled after another had gone through saved a different number
+        // from the slip in the customer's hand. Reserving it here makes the printed
+        // number the number, and makes it taken as far as the next table is concerned.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "bill_seq_no", "INTEGER")
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "kot_qty", "REAL DEFAULT 0")
         // Per-item GST captured at order time, so the bill taxes each product dynamically.
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "cgst_rate", "REAL DEFAULT 0")
