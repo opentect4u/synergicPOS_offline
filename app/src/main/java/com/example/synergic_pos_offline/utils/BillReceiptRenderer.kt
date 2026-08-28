@@ -1081,6 +1081,15 @@ class BillReceiptRenderer(context: Context) {
                         setTypeface(billTypeface, Typeface.BOLD)
                     }
                 )
+                // The column headings again - SR.NO ITEM / QTY / PRICE / AMOUNT - the
+                // same row the top of the bill has above the GST items, ruled off
+                // above and below it the same way. Bill 10 reads them once and
+                // carries them down; a reader who has turned straight to 10A has
+                // nothing above these rows to say what the figures are, so it gets
+                // its own copy of the same heading.
+                llItems.addView(fullWidthLine(PrintType.RULE, headingSp).apply { maxLines = 1 })
+                llItems.addView(itemHeadingRow(view, showDisc, headingSp, columnPx, narrow))
+                llItems.addView(fullWidthLine(PrintType.RULE, headingSp).apply { maxLines = 1 })
                 vatItems.forEach {
                     llItems.addView(
                         buildClassicItemRow(it, showDisc, headingSp, columnPx, narrow, showSerial)
@@ -2280,6 +2289,37 @@ class BillReceiptRenderer(context: Context) {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, gap.toInt(), 0, gap.toInt())
         }
+    }
+
+    /**
+     * The column headings - SR.NO ITEM / QTY / PRICE / DISC / AMOUNT - as their own
+     * row within [llItems], for a split bill's "NA" section: the top of the bill has
+     * this row once, above the GST items, but a reader turned straight to the VAT
+     * half has nothing above its rows to say what the figures are.
+     *
+     * Reads the text straight off the fixed heading views ([R.id.tvColSrItem] and
+     * the rest) rather than re-deriving it, so this row is always exactly what the
+     * top of the bill settled on - translated, and already shortened to
+     * [CLASSIC_NARROW_ITEM_HEADING] where the full label would not fit.
+     */
+    private fun itemHeadingRow(
+        root: View, showDisc: Boolean, sizeSp: Float, columnPx: IntArray, narrow: Boolean
+    ): View {
+        val row = classicRow(narrow)
+        row.addView(
+            nameCell(root.findViewById<TextView>(R.id.tvColSrItem).text?.toString().orEmpty(), columnPx[0], sizeSp)
+        )
+        val labels = mapOf(
+            QTY_COLUMN to R.id.tvColQty, PRICE_COLUMN to R.id.tvColPrice,
+            DISC_COLUMN to R.id.tvColDisc, NET_COLUMN to R.id.tvColNet
+        )
+        ITEM_FIGURE_COLUMNS.filter { showDisc || it != DISC_COLUMN }.forEach { i ->
+            val text = root.findViewById<TextView>(labels.getValue(i)).text?.toString().orEmpty()
+            row.addView(
+                figureCell(text, columnPx[i], if (i == QTY_COLUMN) Gravity.CENTER else Gravity.END, sizeSp)
+            )
+        }
+        return row
     }
 
     /**
