@@ -21,6 +21,14 @@ class AppSettingsDao(context: Context) {
         val cashReception: Boolean = false,
         val paymentMode: Boolean = false,
         val otherCharges: Boolean = false,
+        /**
+         * Whether the Extra Charges master shows its Parcel Charge tab.
+         *
+         * Off by default, and off means the tab is not there to open - it does not
+         * touch whether a Parcel Charge already defined still applies; that is the
+         * row's own Enabled switch, same as any Extra Charge. See ChargeDao.Kind.
+         */
+        val parcelCharge: Boolean = false,
         /** Tap an item to add it straight to the cart (skip the quantity popup). */
         val directAddToCart: Boolean = false,
         /**
@@ -56,6 +64,7 @@ class AppSettingsDao(context: Context) {
             cashReception = m[KEY_CASH_RECEPTION]?.toBool() ?: false,
             paymentMode = m[KEY_PAYMENT_MODE]?.toBool() ?: false,
             otherCharges = m[KEY_OTHER_CHARGES]?.toBool() ?: false,
+            parcelCharge = m[KEY_PARCEL_CHARGE]?.toBool() ?: false,
             directAddToCart = m[KEY_DIRECT_ADD_TO_CART]?.toBool() ?: false,
             biometricLogin = m[KEY_BIOMETRIC_LOGIN]?.toBool() ?: false,
             shift = m[KEY_SHIFT]?.toBool() ?: false,
@@ -72,6 +81,7 @@ class AppSettingsDao(context: Context) {
         upsertAppSetting(KEY_CASH_RECEPTION, s.cashReception.b())
         upsertAppSetting(KEY_PAYMENT_MODE, s.paymentMode.b())
         upsertAppSetting(KEY_OTHER_CHARGES, s.otherCharges.b())
+        upsertAppSetting(KEY_PARCEL_CHARGE, s.parcelCharge.b())
         upsertAppSetting(KEY_DIRECT_ADD_TO_CART, s.directAddToCart.b())
         upsertAppSetting(KEY_BIOMETRIC_LOGIN, s.biometricLogin.b())
         upsertAppSetting(KEY_SHIFT, s.shift.b())
@@ -188,6 +198,7 @@ class AppSettingsDao(context: Context) {
         const val KEY_CASH_RECEPTION = "Cash Reception"
         const val KEY_PAYMENT_MODE = "Payment Mode"
         const val KEY_OTHER_CHARGES = "Other Charges"
+        const val KEY_PARCEL_CHARGE = "Parcel Charge"
         const val KEY_DIRECT_ADD_TO_CART = "Direct Add to Cart"
         const val KEY_BIOMETRIC_LOGIN = "Biometric Login"
         const val KEY_SHIFT = "Shift"

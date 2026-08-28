@@ -107,6 +107,18 @@
 
                 <View style="@style/BillSettingDivider" />
 
+                <!-- Parcel Charge -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Parcel Charge" />
+                        <TextView style="@style/BillSettingSub" android:text="Shows the Parcel Charge tab in Extra Charges (restaurant only)" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swParcelCharge" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
                 <!-- Direct Add to Cart -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">

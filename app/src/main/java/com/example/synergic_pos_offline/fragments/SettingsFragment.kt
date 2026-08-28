@@ -96,6 +96,7 @@ class SettingsFragment : Fragment() {
             e("Manual Rate", "App Settings", app),
             e("Cash Reception", "App Settings", app),
             e("Other Charges", "App Settings", app),
+            e("Parcel Charge", "App Settings", app),
             e("Payment Mode", "App Settings", app),
             e("Biometric Login", "App Settings", app),
             e("Shift", "App Settings", app),

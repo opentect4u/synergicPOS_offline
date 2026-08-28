@@ -137,6 +137,7 @@ object DefaultSettings {
         cashReception = false,
         paymentMode = false,
         otherCharges = false,
+        parcelCharge = false,
         directAddToCart = false,
         biometricLogin = false,
         shift = false,

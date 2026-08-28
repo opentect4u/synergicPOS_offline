@@ -733,6 +733,12 @@ class DatabaseHelper private constructor(context: Context) :
         if (oldVersion < 19) {
             addColumnIfMissing(db, Tables.MD_CHARGES, "applicability", "TEXT DEFAULT 'BOTH'")
         }
+        if (oldVersion < 20) {
+            // Parcel Charge lives in the same table as Extra Charges, told apart by
+            // this flag - see ChargeDao.Kind. Every existing row predates the
+            // feature and is an extra charge.
+            addColumnIfMissing(db, Tables.MD_CHARGES, "charge_kind", "TEXT DEFAULT 'EXTRA'")
+        }
         // gst_rate is dropped in onOpen via a portable table rebuild (see
         // dropProductGstRateIfPresent), which works on every SQLite version.
     }
@@ -1291,7 +1297,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 19
+        private const val DATABASE_VERSION = 20
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of

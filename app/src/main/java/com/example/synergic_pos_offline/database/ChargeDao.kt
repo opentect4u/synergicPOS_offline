@@ -40,19 +40,33 @@ class ChargeDao(context: Context) {
         BOTH, TAKEAWAY, DINE_IN, NONE
     }
 
+    /**
+     * Which of the two masters a row belongs to - the same table holds both, told
+     * apart by this flag rather than split into a second table, since a charge is a
+     * charge either way: a name, a value, a type, a switch, an audience.
+     *
+     * [PARCEL] is a shop's single Parcel Charge - see [ChargesFragment] for where its
+     * name is fixed rather than typed, and why it can only ever be a [TAKEAWAY] or
+     * [DINE_IN] audience, never [BOTH]: it never reaches a grocery bill.
+     */
+    enum class Kind {
+        EXTRA, PARCEL
+    }
+
     data class Charge(
         val id: Long,
         val name: String,
         val value: Double,  // percentage value (e.g., 5) or amount value (e.g., 50)
         val type: Type,      // PERCENTAGE or AMOUNT
         val enabled: Boolean,
-        val applicability: Applicability = Applicability.BOTH  // For restaurants: BOTH, TAKEAWAY, DINE_IN, or NONE
+        val applicability: Applicability = Applicability.BOTH,  // For restaurants: BOTH, TAKEAWAY, DINE_IN, or NONE
+        val kind: Kind = Kind.EXTRA
     )
 
     /** One charge worked out against a particular bill. */
     data class Applied(
         val name: String, val value: Double, val type: Type, val amount: Double,
-        val applicability: Applicability = Applicability.BOTH
+        val applicability: Applicability = Applicability.BOTH, val kind: Kind = Kind.EXTRA
     )
 
     /** Every charge in the master, enabled or not - what the master screen lists. */
@@ -60,7 +74,8 @@ class ChargeDao(context: Context) {
         val list = mutableListOf<Charge>()
         val store = currentStoreId()
         helper.readableDatabase.query(
-            table, arrayOf("id", "charge_name", "percentage", "charge_type", "is_enabled", "applicability"),
+            table,
+            arrayOf("id", "charge_name", "percentage", "charge_type", "is_enabled", "applicability", "charge_kind"),
             (if (store != null) "store_id = ? AND is_active = 1" else "is_active = 1"),
             store?.let { arrayOf(it.toString()) },
             null, null, "id ASC"
@@ -81,6 +96,11 @@ class ChargeDao(context: Context) {
                             Applicability.valueOf(c.getString(5)?.uppercase() ?: "BOTH")
                         } catch (e: Exception) {
                             Applicability.BOTH
+                        },
+                        kind = try {
+                            Kind.valueOf(c.getString(6)?.uppercase() ?: "EXTRA")
+                        } catch (e: Exception) {
+                            Kind.EXTRA
                         }
                     )
                 )
@@ -125,14 +145,17 @@ class ChargeDao(context: Context) {
                 Type.PERCENTAGE -> round2(itemsTotal * it.value / 100.0)
                 Type.AMOUNT -> round2(it.value)
             }
-            Applied(it.name, it.value, it.type, amount, it.applicability)
+            Applied(it.name, it.value, it.type, amount, it.applicability, it.kind)
         }
     }
 
     /** What [amountsOn] adds up to - the figure that joins the grand total. */
     fun totalOn(itemsTotal: Double): Double = round2(amountsOn(itemsTotal).sumOf { it.amount })
 
-    fun insert(name: String, value: Double, type: Type, enabled: Boolean, applicability: Applicability = Applicability.BOTH): Long {
+    fun insert(
+        name: String, value: Double, type: Type, enabled: Boolean,
+        applicability: Applicability = Applicability.BOTH, kind: Kind = Kind.EXTRA
+    ): Long {
         val v = ContentValues().apply {
             put("store_id", currentStoreId())
             put("charge_name", name)
@@ -140,6 +163,7 @@ class ChargeDao(context: Context) {
             put("charge_type", type.name)
             put("is_enabled", if (enabled) 1 else 0)
             put("applicability", applicability.name)
+            put("charge_kind", kind.name)
             put("is_active", 1)
             put("created_at", now())
             put("created_by", currentUser())
@@ -147,13 +171,17 @@ class ChargeDao(context: Context) {
         return helper.writableDatabase.insert(table, null, v)
     }
 
-    fun update(id: Long, name: String, value: Double, type: Type, enabled: Boolean, applicability: Applicability = Applicability.BOTH): Int {
+    fun update(
+        id: Long, name: String, value: Double, type: Type, enabled: Boolean,
+        applicability: Applicability = Applicability.BOTH, kind: Kind = Kind.EXTRA
+    ): Int {
         val v = ContentValues().apply {
             put("charge_name", name)
             put("percentage", value)
             put("charge_type", type.name)
             put("is_enabled", if (enabled) 1 else 0)
             put("applicability", applicability.name)
+            put("charge_kind", kind.name)
             put("modified_at", now())
             put("modified_by", currentUser())
         }

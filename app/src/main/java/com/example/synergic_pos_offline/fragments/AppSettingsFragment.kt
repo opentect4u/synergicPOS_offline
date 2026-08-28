@@ -30,6 +30,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swCashReception: SwitchMaterial
     private lateinit var swPaymentMode: SwitchMaterial
     private lateinit var swOtherCharges: SwitchMaterial
+    private lateinit var swParcelCharge: SwitchMaterial
     private lateinit var swDirectAddToCart: SwitchMaterial
     private lateinit var swBiometricLogin: SwitchMaterial
     private lateinit var swShift: SwitchMaterial
@@ -52,6 +53,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         swCashReception = view.findViewById(R.id.swCashReception)
         swPaymentMode = view.findViewById(R.id.swPaymentMode)
         swOtherCharges = view.findViewById(R.id.swOtherCharges)
+        swParcelCharge = view.findViewById(R.id.swParcelCharge)
         swDirectAddToCart = view.findViewById(R.id.swDirectAddToCart)
         swBiometricLogin = view.findViewById(R.id.swBiometricLogin)
         swShift = view.findViewById(R.id.swShift)
@@ -83,6 +85,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         swCashReception.isChecked = s.cashReception
         swPaymentMode.isChecked = s.paymentMode
         swOtherCharges.isChecked = s.otherCharges
+        swParcelCharge.isChecked = s.parcelCharge
         swDirectAddToCart.isChecked = s.directAddToCart
         swBiometricLogin.isChecked = s.biometricLogin
         swShift.isChecked = s.shift
@@ -98,6 +101,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         cashReception = swCashReception.isChecked,
         paymentMode = swPaymentMode.isChecked,
         otherCharges = swOtherCharges.isChecked,
+        parcelCharge = swParcelCharge.isChecked,
         directAddToCart = swDirectAddToCart.isChecked,
         biometricLogin = swBiometricLogin.isChecked,
         shift = swShift.isChecked,

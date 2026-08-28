@@ -341,7 +341,9 @@ object DialogUtils {
         val inputType: String = "text",
         val maxLength: Int = -1,
         val fieldType: String = "text", // "text", "dropdown", "toggle"
-        val options: List<String> = emptyList() // For dropdown type
+        val options: List<String> = emptyList(), // For dropdown type
+        /** A "text" field shown but not editable - its [value] is fixed. */
+        val locked: Boolean = false
     )
 
     /** Shows a reusable form dialog for Adding or Editing records. */
@@ -507,6 +509,10 @@ object DialogUtils {
                         et.maxLines = 5
                         et.isSingleLine = false
                     }
+
+                    // Shown, not editable - the value is fixed (e.g. Parcel Charge's
+                    // name), so there is nothing here for the operator to type into.
+                    if (field.locked) et.isEnabled = false
 
                     grid.addView(til, params)
                     inputs.add(et)

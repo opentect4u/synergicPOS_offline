@@ -12,6 +12,15 @@
         android:orientation="vertical"
         android:padding="12dp">
 
+        <!-- Empty and gone unless a subclass has something to put here (e.g. a
+             tab strip) - see DataTableFragment.buildHeaderExtra(). Every other
+             master ignores it entirely. -->
+        <FrameLayout
+            android:id="@+id/flHeaderExtra"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone" />
+
         <!-- Search row (Always visible).
 
              The free-text box shares the row with a filter dropdown that screens

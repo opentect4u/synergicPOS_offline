@@ -19,6 +19,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.CheckBox
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -100,6 +101,14 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     /** Initial rows to display; each row's cells must align with [columns]. */
     abstract fun loadRows(): MutableList<DataRow>
+
+    /**
+     * A chance to add something above the search row - a tab strip, say - into
+     * [container], which starts empty and GONE. A subclass that adds anything to it
+     * is responsible for making it VISIBLE; one that does not is unaffected, which is
+     * every master but the one that needs this.
+     */
+    open fun buildHeaderExtra(container: FrameLayout) {}
 
     /** Column index (into [columns]) rendered as an image thumbnail, if any. */
     open val thumbnailColumn: Int? = null
@@ -210,6 +219,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        buildHeaderExtra(view.findViewById(R.id.flHeaderExtra))
 
         tvSelectionCount = view.findViewById(R.id.tvSelectionCount)
         btnGlobalPrint = view.findViewById(R.id.btnGlobalPrint)
