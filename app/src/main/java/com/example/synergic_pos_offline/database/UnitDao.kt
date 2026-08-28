@@ -60,7 +60,7 @@ class UnitDao(context: Context) {
         val values = ContentValues().apply {
             put("store_id", currentStoreId())
             put("unit_name", name)
-            put("unit_symbol", symbol)
+            put("unit_symbol", symbol.take(SHORT_NAME_MAX))
             put("fraction_flag", if (fraction) 1 else 0)
             put("created_by", currentUser())
         }
@@ -71,7 +71,7 @@ class UnitDao(context: Context) {
     fun update(id: Long, name: String, symbol: String, fraction: Boolean): Int {
         val values = ContentValues().apply {
             put("unit_name", name)
-            put("unit_symbol", symbol)
+            put("unit_symbol", symbol.take(SHORT_NAME_MAX))
             put("fraction_flag", if (fraction) 1 else 0)
             put("modified_at", now())
             put("modified_by", currentUser())
@@ -124,6 +124,34 @@ class UnitDao(context: Context) {
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
     companion object {
+        /**
+         * How long a unit's short name may be.
+         *
+         * Three. It is printed beside a quantity on a slip and shown on a cart line,
+         * where there is room for an abbreviation and not for a word - "1.5 Ltr", not
+         * "1.5 Litres". Named here rather than typed into the field, the save and the
+         * seed separately, so the three places that enforce it cannot drift apart.
+         */
+        const val SHORT_NAME_MAX = 3
+
+        /**
+         * What to print beside a quantity for a unit: its short name, or - when the
+         * shop never gave it one - the first [SHORT_NAME_MAX] characters of its name.
+         *
+         * The short name is optional, so a unit can perfectly well be "Litres" with
+         * nothing in the short box. Printing nothing there leaves a bare number on the
+         * slip, which is worse than an abbreviation nobody chose: "1.5 Lit" is read
+         * correctly by anyone holding the bill, "1.5" is not.
+         *
+         * Derived rather than written back into the row. The blank is the shop's own
+         * choice and quietly filling it in would take that choice away - and would
+         * fix today's guess in place if the unit were renamed tomorrow.
+         */
+        fun shortNameOf(shortName: String?, unitName: String?): String {
+            shortName?.trim()?.takeIf { it.isNotEmpty() }?.let { return it.take(SHORT_NAME_MAX) }
+            return unitName?.trim()?.take(SHORT_NAME_MAX).orEmpty()
+        }
+
         /** Renders a stable unit code from a row id, e.g. 7 -> "UNIT007". */
         fun formatCode(id: Long): String = "UNIT" + id.toString().padStart(3, '0')
     }

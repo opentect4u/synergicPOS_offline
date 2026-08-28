@@ -49,7 +49,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
          * the bill rated at nothing and was charged nothing - see BillPricing, which
          * charges whatever rates the line actually has.
          */
-        val vatRate: Double = 0.0
+        val vatRate: Double = 0.0,
+        /**
+         * The product's own discount, snapshotted when the line was added - Tax
+         * Settings' item-wise discount. Snapshotted for the same reason the rates
+         * beside it are: a table sits open across a price change, and the bill has to
+         * be the one that was sold.
+         */
+        val discValue: Double = 0.0,
+        /** "A" for a flat amount, otherwise a percentage; null when there is none. */
+        val discType: String? = null
     ) {
         /** Quantity not yet sent to the kitchen. */
         val pending: Double get() = (qty - kotQty).coerceAtLeast(0.0)
@@ -145,7 +154,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             )
             // qty 0 lines are removed items awaiting a cancellation KOT — hide from the cart.
             roDao.itemsFor(ro.id).filter { it.qty > 0.0 }.forEach { ri ->
-                card.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate))
+                card.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate, ri.discValue, ri.discType))
             }
             card.amount = "₹ ${money(payableTotal(computeBill(card.items, serviceRateFor(card.section), card.type).total))}"
             orders.add(card)
@@ -156,7 +165,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun reloadItems(order: OrderCard) {
         order.items.clear()
         roDao.itemsFor(order.dbId).filter { it.qty > 0.0 }.forEach { ri ->
-            order.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate))
+            order.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate, ri.discValue, ri.discType))
         }
     }
 
@@ -165,6 +174,20 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /** A bill breakdown computed from per-product GST plus the section's service charge. */
     private data class BillBreakdown(
         val subtotal: Double, val service: Double, val cgst: Double, val sgst: Double, val total: Double,
+        /** VAT, where a line carries a VAT rate - see CartMath. */
+        val vat: Double = 0.0,
+        /** What tax was charged on, once any pre-tax discount came off. */
+        val taxable: Double = 0.0,
+        /**
+         * The discount taken off this order - the bill-wise figure typed on the cart
+         * page, or the sum of the lines' own under item-wise discount. One number
+         * whichever way it was arrived at, because that is what the slip prints and
+         * what the bill stores.
+         */
+        val discount: Double = 0.0,
+        /** How that discount was entered, for the record written to the bill. */
+        val discountIsPercent: Boolean = true,
+        val discountPercent: Double = 0.0,
         /**
          * The shop's own extra charges for this order - see the Extra Charges master.
          *
@@ -195,17 +218,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * inclusive regime the tax is already within the rate, so it isn't added again.
      */
     private fun computeBill(items: List<CartItem>, serviceChargeAmt: Double, orderType: String? = null): BillBreakdown {
-        var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0
-        items.forEach {
-            val p = com.example.synergic_pos_offline.utils.BillPricing.price(
-                rate = it.rate, quantity = it.qty,
-                cgstRate = it.cgstRate, sgstRate = it.sgstRate, vatRate = it.vatRate,
-                discountAmount = 0.0, regime = taxRegime, inclusive = taxInclusive, discountPreTax = discountPreTax
-            )
-            subtotal += it.qty * it.rate     // gross (as listed) — what the Subtotal line shows
-            cgst += p.cgst
-            sgst += p.sgst
-        }
+        val lines = items.map { it.toMathLine() }
+        val subtotal = com.example.synergic_pos_offline.utils.CartMath.subtotal(lines)
         // Flat section service charge, applied only to a non-empty order.
         val service = if (subtotal > 0.0) serviceChargeAmt else 0.0
         // The shop's extra charges, on the ITEM LINES before tax - the same base and
@@ -219,11 +233,77 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val charges = runCatching {
             com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal, chargeOrderType)
         }.getOrDefault(emptyList())
-        val chargesTotal = charges.sumOf { it.amount }
-        // Inclusive: tax is already inside the gross subtotal, so don't add it again.
-        val total = (if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst) +
-            chargesTotal
-        return BillBreakdown(subtotal, service, cgst, sgst, total, charges)
+        // THE WHOLE CALCULATION, in the one place that does it - see CartMath, which
+        // is the grocery till's arithmetic restated so both modules bill alike.
+        //
+        // It replaces a sum that could only ever do one of the eight cases: it priced
+        // every line with discountAmount = 0, then added tax unless the till was
+        // inclusive. Nothing here knew about a discount at all, so item-wise
+        // discounts configured on the products were ignored, a bill-wise discount had
+        // nowhere to be entered, and the pre-tax/post-tax choice changed nothing.
+        val totals = com.example.synergic_pos_offline.utils.CartMath.totals(
+            lines = lines,
+            cfg = cartConfig(),
+            mode = discountMode,
+            value = discountValue,
+            service = service,
+            charges = charges
+        )
+        return BillBreakdown(
+            subtotal = totals.subtotal,
+            service = totals.service,
+            cgst = totals.cgst,
+            sgst = totals.sgst,
+            total = totals.total,
+            vat = totals.vat,
+            taxable = totals.taxable,
+            // Under item-wise the figure shown is what the lines' own discounts came
+            // to, which is the only discount there is; under bill-wise it is the one
+            // that was typed.
+            discount = if (itemwiseDiscountActive) itemwiseDiscountTotal(lines) else totals.discount,
+            discountIsPercent = discountMode == com.example.synergic_pos_offline.utils.GstCalculator.DiscountMode.PERCENT,
+            discountPercent = com.example.synergic_pos_offline.utils.CartMath
+                .discountPercent(lines, cartConfig(), totals.discount),
+            charges = charges
+        )
+    }
+
+    /** This cart line, in the shape the calculation takes it. */
+    private fun CartItem.toMathLine() = com.example.synergic_pos_offline.utils.CartMath.Line(
+        qty = qty, rate = rate,
+        cgstRate = cgstRate, sgstRate = sgstRate, vatRate = vatRate,
+        discValue = discValue, discType = discType
+    )
+
+    /** Tax Settings as the calculation needs them. */
+    private fun cartConfig() = com.example.synergic_pos_offline.utils.CartMath.Config(
+        regime = taxRegime,
+        inclusive = taxInclusive,
+        discountPreTax = discountPreTax,
+        itemwiseDiscount = itemwiseDiscountActive,
+        billwiseDiscount = billwiseDiscountActive
+    )
+
+    /**
+     * What the lines' own discounts came to, for the Discount line on the panel and
+     * the slip. Read back as the gap between the full taxed line and what it actually
+     * sells for, so it reports the same number under all four pre/post x incl/excl
+     * rules rather than re-deriving each.
+     */
+    private fun itemwiseDiscountTotal(lines: List<com.example.synergic_pos_offline.utils.CartMath.Line>): Double {
+        val cfg = cartConfig()
+        val sub = com.example.synergic_pos_offline.utils.CartMath.subtotal(lines)
+        val undiscounted = lines.sumOf { l ->
+            val p = com.example.synergic_pos_offline.utils.CartMath.priceLine(
+                l.copy(discValue = 0.0, discType = null), cfg, sub, 0.0
+            )
+            p.itemTotal
+        }
+        val actual = lines.sumOf {
+            com.example.synergic_pos_offline.utils.CartMath.priceLine(it, cfg, sub, 0.0).itemTotal
+        }
+        return com.example.synergic_pos_offline.utils.BillRounding
+            .toPaise((undiscounted - actual).coerceAtLeast(0.0))
     }
 
     /**
@@ -251,6 +331,28 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private val itemwiseDiscountActive by lazy {
         taxSettings.discountEnabled && taxSettings.discountType == TaxSettingsDao.DiscountType.ITEM_WISE
     }
+
+    /**
+     * Whether the cart takes a whole-bill discount - Tax Settings' Discount on and set
+     * to Bill wise. Mutually exclusive with [itemwiseDiscountActive]: a product's own
+     * discount and a figure typed against the bill are two answers to one question.
+     */
+    private val billwiseDiscountActive by lazy {
+        taxSettings.discountEnabled && taxSettings.discountType == TaxSettingsDao.DiscountType.BILL_WISE
+    }
+
+    /** How the typed discount is read - a percentage of the bill, or a flat amount. */
+    private var discountMode = com.example.synergic_pos_offline.utils.GstCalculator.DiscountMode.PERCENT
+
+    /**
+     * The figure typed in the discount box.
+     *
+     * Held on the SCREEN rather than on the order, and cleared as orders are switched:
+     * a discount is agreed with the person paying, at the till, at the moment of
+     * settling. Carrying it silently onto the next table would apply one guest's
+     * arrangement to another's bill.
+     */
+    private var discountValue = 0.0
     private val taxRegime by lazy { GstCalculator.regimeFor(taxSettings.gstEnabled, taxSettings.vatEnabled) }
     private val taxInclusive by lazy {
         when (taxRegime) {
@@ -334,6 +436,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // More → the whole order in a roomy popup, since this panel is narrow.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnMoreItems)
             .setOnClickListener { showOrderItemsDialog() }
+
+        setUpDiscountBox(view)
 
         // The note + tax rows fold away and pull back up.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnToggleSummary)
@@ -650,6 +754,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /** Updates the detail-panel header for the given order. */
     private fun showOrderDetail(order: OrderCard) {
         val root = view ?: return
+        clearDiscountEntry()
         val accent = ThemeManager.getThemeColor(requireContext())
         val takeAway = order.type.equals("Take Away", ignoreCase = true)
         // Take Away has no table — show it as a take-away token, not "Table: …".
@@ -1656,9 +1761,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /** A unit's symbol and whether it allows fractional quantities (fraction_flag). */
     private fun unitInfo(db: android.database.sqlite.SQLiteDatabase, unitId: Long?): Pair<String, Boolean> {
         if (unitId == null) return "" to false
-        db.query("md_units", arrayOf("unit_symbol", "fraction_flag"),
+        db.query("md_units", arrayOf("unit_symbol", "fraction_flag", "unit_name"),
             "id = ?", arrayOf(unitId.toString()), null, null, null, "1").use { c ->
-            if (c.moveToFirst()) return (c.getString(0).orEmpty() to (c.getInt(1) == 1))
+            // Resolved the way the printed bill resolves it, so the screen and the
+            // slip never name the same unit differently.
+            if (c.moveToFirst()) return (
+                com.example.synergic_pos_offline.database.UnitDao
+                    .shortNameOf(c.getString(0), c.getString(2)) to (c.getInt(1) == 1)
+                )
         }
         return "" to false
     }
@@ -2600,7 +2710,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (exceedsStock(p.id, qty)) return
         // The VAT rate goes on with the GST ones. Without it a VAT-rated dish was
         // stored on the order rated at zero, and no later step could recover it.
-        roDao.addItem(order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate, p.cgst, p.sgst, p.vat)
+        // The product's own discount goes on with the rates, for the same reason: an
+        // item-wise discount is a fact about what was sold, and reading it off the
+        // master at billing time would bill a table at a discount it never had.
+        roDao.addItem(
+            order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate,
+            p.cgst, p.sgst, p.vat, p.discValue, p.discType
+        )
         // ADDING AN ITEM NO LONGER TAKES THE TABLE.
         //
         // It used to mark the table Occupied on its first item. The moment is now the
@@ -3291,7 +3407,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 name = line.name, quantity = line.qty, rate = line.rate,
                 cgstRate = line.cgstRate, sgstRate = line.sgstRate,
                 vatRate = line.vatRate,
-                hsn = product?.hsn
+                hsn = product?.hsn,
+                // The unit, already resolved to its short name or the first three
+                // characters of its name - see UnitDao.shortNameOf, applied where the
+                // menu is loaded. The draft never carried one, so the table bill
+                // printed a bare quantity while the same sale reprinted from Bill
+                // History (which reads the unit off the database) showed it.
+                unit = product?.unit
             )
         }
         // The table as the bill's own field - see Draft.table. Carries its section,
@@ -3322,7 +3444,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             ),
             table = billTable,
             items = items,
-            discount = 0.0, roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
+            // The slip shows what came off, whichever way it was arrived at.
+            discount = b.discount, roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
             paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),
             serviceCharge = b.service,   // shown as its own totals line, not an item
             // The figures already quoted on the order panel, handed to the slip rather
@@ -3372,6 +3495,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // BillDao does not take the same items off again.
         deductStockForOrder(order)
         completeTable(order)   // billed → locked (stays until paid)
+
+        // BACK TO THE FLOOR PLAN. The bill is on the table and the order is locked, so
+        // there is nothing further to do to it here - it is waiting on the guests, not
+        // on the till. Leaving the screen sitting on a table that can no longer be
+        // changed means the next order starts by clearing it off first.
+        //
+        // The same move Print KOT makes, for the same reason: the waiter has finished
+        // with this table for now. It stays in Active Orders as Completed - Billed, so
+        // Settlement is one tap away when the guests are ready.
+        view?.post { if (isAdded) showChooseTableDialog() }
     }
 
     /**
@@ -3434,7 +3567,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                             sgstRate = it.sgstRate,
                             // Saved with the line, so a reprint from Bill History
                             // charges the same VAT the original slip did.
-                            vatRate = it.vatRate
+                            vatRate = it.vatRate,
+                            // The share of the discount this line carries, in the same
+                            // shape td_bill_items stores it - against the line's raw
+                            // pre-tax base. BillDao prices the line from this, so the
+                            // stored bill reproduces exactly what the panel quoted.
+                            discountAmount = com.example.synergic_pos_offline.utils.CartMath.lineDiscount(
+                                it.toMathLine(), cartConfig(),
+                                com.example.synergic_pos_offline.utils.CartMath
+                                    .subtotal(order.items.map { l -> l.toMathLine() }),
+                                b.discount
+                            )
                         )
                     },
                     payment = com.example.synergic_pos_offline.database.BillDao.Payment(
@@ -3442,8 +3585,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                         custPhone = order.phone.takeIf { it.isNotBlank() }, custId = custId
                     ),
                     totalPrice = b.subtotal,
-                    discountAmount = 0.0,
-                    discountPercentage = 0.0,
+                    discountAmount = b.discount,
+                    discountPercentage = b.discountPercent,
+                    discountIsPercent = b.discountIsPercent,
                     cgstAmount = b.cgst,
                     sgstAmount = b.sgst,
                     netAmount = payable,
@@ -3661,13 +3805,70 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // clear off it first. Posted, so the toast and the cart redraw above land before
         // the picker comes up over them.
         //
-        // DINE-IN ONLY. A take-away has no next table to go to - the counter stays on
-        // the order it just sent, because Settlement is what happens to it next. Now
-        // that Print KOT works for take-away, without this the floor plan would open
-        // over a counter order that is nowhere near finished.
-        if (!order.type.equals("Take Away", ignoreCase = true)) {
-            view?.post { if (isAdded) showChooseTableDialog() }
+        // EVERY ORDER TYPE, take-away included. It used to be dine-in only, on the
+        // reasoning that a counter order has nowhere to go next because Settlement is
+        // what happens to it. That reads the wrong way round: sending the ticket is
+        // the end of TAKING the order, and what a counter does next is take the next
+        // one - it does not stand at the till watching food cook. The token stays open
+        // in Active Orders and is one tap away when it is time to settle it.
+        view?.post { if (isAdded) showChooseTableDialog() }
+    }
+
+    /**
+     * The whole-bill discount box, wired the way the grocery cart wires it.
+     *
+     * Hidden outright unless Tax Settings has Discount on and set to Bill wise. Under
+     * item-wise each product carries its own and the total already reflects it, so a
+     * box here could only mislead; with discount off there is nothing to enter.
+     */
+    private fun setUpDiscountBox(root: View) {
+        val section = root.findViewById<View>(R.id.sectionOrderDiscount)
+        section.visibility = if (billwiseDiscountActive) View.VISIBLE else View.GONE
+        if (!billwiseDiscountActive) return
+
+        val et = root.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etOrderDiscount)
+        val rg = root.findViewById<android.widget.RadioGroup>(R.id.rgOrderDiscountMode)
+        applyDiscountHint(root)
+
+        et.addTextChangedListener { text ->
+            val typed = text?.toString().orEmpty()
+            discountValue = when (discountMode) {
+                // A percentage is capped at 100 as it is typed: past that the figure
+                // stops meaning anything, and the cap is easier to understand on the
+                // box than as a total that refuses to go below zero.
+                com.example.synergic_pos_offline.utils.GstCalculator.DiscountMode.PERCENT ->
+                    (com.example.synergic_pos_offline.utils.Amounts.parse(typed) ?: 0.0).coerceIn(0.0, 100.0)
+                com.example.synergic_pos_offline.utils.GstCalculator.DiscountMode.AMOUNT ->
+                    (com.example.synergic_pos_offline.utils.Amounts.parse(typed) ?: 0.0).coerceAtLeast(0.0)
+            }
+            updateTotals()
         }
+        rg.setOnCheckedChangeListener { _, checked ->
+            discountMode = if (checked == R.id.rbOrderDiscountAmount)
+                com.example.synergic_pos_offline.utils.GstCalculator.DiscountMode.AMOUNT
+            else com.example.synergic_pos_offline.utils.GstCalculator.DiscountMode.PERCENT
+            // Cleared on a switch: "10" means two different things either side of it,
+            // and carrying the number across would quietly change the bill.
+            applyDiscountHint(root)
+            et.setText("")
+            discountValue = 0.0
+            updateTotals()
+        }
+    }
+
+    /** The box says which of the two it is taking, so the number in it is unambiguous. */
+    private fun applyDiscountHint(root: View) {
+        root.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilOrderDiscount).hint =
+            if (discountMode == com.example.synergic_pos_offline.utils.GstCalculator.DiscountMode.AMOUNT)
+                "Discount (₹)" else "Discount (%)"
+    }
+
+    /** Empties the discount box - see [discountValue] for why it does not travel. */
+    private fun clearDiscountEntry() {
+        if (discountValue == 0.0) return
+        discountValue = 0.0
+        view?.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etOrderDiscount)
+            ?.setText("")
     }
 
     private fun updateTotals() {
@@ -3679,12 +3880,29 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(b.service)}"
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(b.cgst)}"
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(b.sgst)}"
+
+        // The discount line, shown only when there is one - under bill-wise the figure
+        // typed here, under item-wise what the products' own discounts came to. Signed
+        // so it reads as a deduction among lines that all add.
+        root.findViewById<View>(R.id.rowOrderDiscount).visibility =
+            if (b.discount > 0.0) View.VISIBLE else View.GONE
+        root.findViewById<TextView>(R.id.tvOrderDiscountLabel).text =
+            if (itemwiseDiscountActive) "Discount (item-wise)" else "Discount"
+        root.findViewById<TextView>(R.id.tvOrderDiscountAmt).text = "- ₹ ${money(b.discount)}"
+        // VAT only where a line actually carries it.
+        root.findViewById<View>(R.id.rowOrderVat).visibility =
+            if (b.vat > 0.0) View.VISIBLE else View.GONE
+        root.findViewById<TextView>(R.id.tvOrderVat).text = "₹ ${money(b.vat)}"
+
         root.findViewById<TextView>(R.id.tvOrderTotal).text = "₹ ${money(payable)}"
         // The same figure on the fold's handle, for while the fold is shut.
         root.findViewById<TextView>(R.id.tvTotalBar).text = "₹ ${money(payable)}"
+        // One assignment, not two. This read `text = "Settlement ( … )"` with a bare
+        // settlementLabel(...) call stranded on the line under it - so the take-away
+        // button had quietly gone back to saying "Settlement" instead of "Print &
+        // Settlement", and the label function was being evaluated and thrown away.
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).text =
-            "Settlement  ( ₹ ${money(payable)} )"
-            settlementLabel(order, b.total)
+            settlementLabel(order, payable)
         // Reflect the running total on the active order card. Only that one figure
         // moves as items go on, so the card is patched where it stands - rebuilding
         // the whole list meant inflating a card per open table on every tap.

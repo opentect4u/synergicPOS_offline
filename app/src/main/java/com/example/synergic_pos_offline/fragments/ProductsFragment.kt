@@ -480,13 +480,25 @@ class ProductsFragment : DataTableFragment() {
             }
         }
 
-        // Tax settings (local cache, type 'T') decide the CALCULATION only - which
-        // of a rate's own GST or VAT figure the sell price (and later, the bill) is
-        // worked out from. They do not decide what can be typed into the master: a
-        // shop with VAT switched off can still carry a VAT rate against a product it
-        // may sell under GST tomorrow, and the field stays open to it. See
-        // syncGstVatFields below for what DOES gate these fields against each other -
-        // the values themselves, not the setting.
+        // Tax settings (local cache, type 'T') decide two things here: which of a
+        // rate's own GST or VAT figure the sell price is worked out from, and - since
+        // this change - which of those figures the form ASKS FOR at all.
+        //
+        // It used to ask for all four on every product whatever the settings said, on
+        // the reasoning that a shop with VAT off might still want to carry a VAT rate
+        // against the day it sells under VAT. That is a real case, and the cost of it
+        // was a VAT-only shop being asked for three GST figures it does not use and a
+        // no-tax shop being asked for four. The form now follows what the till
+        // charges.
+        //
+        // THE CASE IT WOULD HAVE BROKEN IS KEPT: a field is hidden only when its tax
+        // is off AND this rate carries no figure for it. A rate already holding VAT
+        // still shows VAT on a VAT-off till, so nothing that was configured
+        // disappears, and nothing already behind a bill becomes invisible.
+        //
+        // What gates these fields against EACH OTHER is unchanged and is not about
+        // the settings at all - see syncTaxFields: a rate is taxed one way or the
+        // other, never both.
         val gstOn = SettingsCache.value(requireContext(), "T", "GST") == "1"
         val vatOn = SettingsCache.value(requireContext(), "T", "VAT") == "1"
         val gstInclusive = SettingsCache.value(requireContext(), "T", "GST Type") == "I"
@@ -525,13 +537,49 @@ class ProductsFragment : DataTableFragment() {
             // edit still gives a rate that can be configured: a genuinely different
             // tax or discount is a different rate, and that is how one is made.
             val etVat = row.findViewById<TextInputEditText>(R.id.etRateVat)
-            val savedRate = prefill != null
-            etCgst.isEnabled = !savedRate
-            etSgst.isEnabled = !savedRate
-            etIgst.isEnabled = !savedRate
-            etVat.isEnabled = !savedRate
-            etDiscount.isEnabled = itemWiseDiscount && !savedRate
-            actDiscType.isEnabled = itemWiseDiscount && !savedRate
+
+            // GONE, not greyed. A disabled box reads as a figure this product is
+            // expected to have and simply cannot be typed yet; an absent one says the
+            // till does not charge that tax, which is the truth.
+            //
+            // "OR it already has one" is what keeps a switched-off tax from hiding
+            // data: a rate carrying VAT still shows its VAT box on a VAT-off till, so
+            // a figure that is already behind bills stays visible and stays saved.
+            // Nothing is lost either way - collectRate reads the fields whether or not
+            // they are on screen - but a figure nobody can see is a figure nobody can
+            // correct.
+            fun show(id: Int, visible: Boolean) {
+                row.findViewById<android.view.View>(id)?.visibility =
+                    if (visible) android.view.View.VISIBLE else android.view.View.GONE
+            }
+            fun has(v: String?) = (v?.toDoubleOrNull() ?: 0.0) > 0.0
+            val keepGst = gstOn || has(prefill?.cgst) || has(prefill?.sgst)
+            val keepIgst = gstOn || has(prefill?.igst)
+            val keepVat = vatOn || has(prefill?.vat)
+            val keepDiscount = itemWiseDiscount || has(prefill?.discount)
+            show(R.id.rowRateGst, keepGst)
+            show(R.id.tilRateIgst, keepIgst)
+            show(R.id.tilRateVat, keepVat)
+            // The row goes only once both halves of it have.
+            show(R.id.rowRateIgstVat, keepIgst || keepVat)
+            show(R.id.rowRateDiscount, keepDiscount)
+
+            // A SAVED RATE'S TAX AND DISCOUNT ARE EDITABLE.
+            //
+            // They were locked, on the reasoning that these figures sit behind every
+            // bill the rate has been sold on and editing them here would make the
+            // master disagree with the books. That reasoning does not hold: a bill
+            // stores its OWN cgst_rate, sgst_rate and vat_rate against every line it
+            // writes (see BillDao), and a running order snapshots them too. Nothing
+            // already sold reads its tax from the master, so nothing already sold
+            // changes. What the master says is what the NEXT sale will charge.
+            //
+            // And a shop's rates do change - a slab moves, a product is reclassified,
+            // a figure is simply typed wrong. With this locked the only way to correct
+            // one was to add a second rate beside it and leave the wrong one in place,
+            // which leaves the master less true, not more.
+            etDiscount.isEnabled = itemWiseDiscount
+            actDiscType.isEnabled = itemWiseDiscount
 
             // Prefill from an existing rate (edit). The name is fixed by position
             // (set in renumberRates), so it is not restored from the saved value.
@@ -558,27 +606,39 @@ class ProductsFragment : DataTableFragment() {
             // with VAT off can still carry a VAT rate here against the day it sells
             // this product under VAT instead.
             //
-            // Not wired on a saved rate: this rule decides which fields are
-            // enabled, and on a saved rate none of them are. Left in, it would
-            // re-enable whichever half of the split was blank the moment the row
-            // was laid out.
-            if (!savedRate) {
-                fun syncTaxFields() {
-                    val vatFilled = !etVat.text.isNullOrBlank()
-                    val cgstSgstFilled = !etCgst.text.isNullOrBlank() || !etSgst.text.isNullOrBlank()
-                    val igstFilled = !etIgst.text.isNullOrBlank()
-                    val gstFilled = cgstSgstFilled || igstFilled
-                    etVat.isEnabled = !gstFilled
-                    etIgst.isEnabled = !vatFilled && !cgstSgstFilled
-                    etCgst.isEnabled = !vatFilled && !igstFilled
-                    etSgst.isEnabled = !vatFilled && !igstFilled
-                }
-                etCgst.addTextChangedListener { syncTaxFields() }
-                etSgst.addTextChangedListener { syncTaxFields() }
-                etIgst.addTextChangedListener { syncTaxFields() }
-                etVat.addTextChangedListener { syncTaxFields() }
-                syncTaxFields()
+            // Wired on a saved rate as well as a new one, now that a saved rate can be
+            // edited at all. It used to be skipped there because none of these fields
+            // were enabled and running it would have re-enabled whichever half of the
+            // split was blank - the opposite of what was wanted. With editing allowed
+            // it is exactly what is wanted: clear the VAT box on a saved rate and the
+            // GST boxes open up, which is how a rate is moved from one tax to the
+            // other.
+            //
+            // A blank counts as unfilled, so a figure of 0 does not lock out the other
+            // side - the rule is about which tax this rate is under, not about zero.
+            fun syncTaxFields() {
+                val vatFilled = !etVat.text.isNullOrBlank()
+                val cgstSgstFilled = !etCgst.text.isNullOrBlank() || !etSgst.text.isNullOrBlank()
+                val igstFilled = !etIgst.text.isNullOrBlank()
+                val gstFilled = cgstSgstFilled || igstFilled
+                etVat.isEnabled = !gstFilled
+                etIgst.isEnabled = !vatFilled && !cgstSgstFilled
+                etCgst.isEnabled = !vatFilled && !igstFilled
+                etSgst.isEnabled = !vatFilled && !igstFilled
             }
+            etCgst.addTextChangedListener { syncTaxFields() }
+            etSgst.addTextChangedListener { syncTaxFields() }
+            etIgst.addTextChangedListener { syncTaxFields() }
+            etVat.addTextChangedListener { syncTaxFields() }
+            // RUN IT ONCE, HERE. The listeners only fire on a change, and an edit
+            // arrives with its figures already in the boxes - put there by the prefill
+            // above, which happens before this. Without this call a saved rate opened
+            // with both sides enabled and stayed that way until something was typed,
+            // so a VAT-rated product let CGST and SGST be filled in beside its VAT.
+            //
+            // After the prefill by necessity: run before it and there is nothing in
+            // the fields to lock anything out.
+            syncTaxFields()
 
             // Sell price is always derived and read-only. GST and VAT are mutually
             // exclusive, so one effective tax %/inclusive flag drives everything.

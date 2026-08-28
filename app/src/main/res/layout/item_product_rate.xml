@@ -65,8 +65,9 @@
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
 
-        <!-- Row: CGST | SGST -->
-        <LinearLayout style="@style/ProductFormRow">
+        <!-- Row: CGST | SGST. Hidden outright where the till does not charge GST -
+             see ProductsFragment.applyTaxVisibility. -->
+        <LinearLayout android:id="@+id/rowRateGst" style="@style/ProductFormRow">
             <com.google.android.material.textfield.TextInputLayout
                 style="@style/ProductFormField" android:layout_marginEnd="6dp" android:hint="CGST (%)">
                 <com.google.android.material.textfield.TextInputEditText
@@ -81,15 +82,19 @@
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
 
-        <!-- Row: IGST | VAT -->
-        <LinearLayout style="@style/ProductFormRow">
+        <!-- Row: IGST | VAT. The two are gated separately - IGST belongs to GST, VAT
+             is its own switch - so each hides on its own and the row goes only when
+             both have. -->
+        <LinearLayout android:id="@+id/rowRateIgstVat" style="@style/ProductFormRow">
             <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilRateIgst"
                 style="@style/ProductFormField" android:layout_marginEnd="6dp" android:hint="IGST (%)">
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etRateIgst" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:inputType="numberDecimal" android:maxLength="6" android:maxLines="1" />
             </com.google.android.material.textfield.TextInputLayout>
             <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilRateVat"
                 style="@style/ProductFormField" android:layout_marginStart="6dp" android:hint="VAT (%)">
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etRateVat" android:layout_width="match_parent"
@@ -97,8 +102,10 @@
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
 
-        <!-- Row: Discount | Discount Type -->
-        <LinearLayout style="@style/ProductFormRow">
+        <!-- Row: Discount | Discount Type. Only where Tax Settings has Discount on
+             AND set to Item wise - a bill-wise discount is typed on the sale screen,
+             not configured per product. -->
+        <LinearLayout android:id="@+id/rowRateDiscount" style="@style/ProductFormRow">
             <com.google.android.material.textfield.TextInputLayout
                 style="@style/ProductFormField" android:layout_marginEnd="6dp" android:hint="Discount">
                 <com.google.android.material.textfield.TextInputEditText

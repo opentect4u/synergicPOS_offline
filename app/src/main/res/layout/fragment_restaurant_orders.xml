@@ -545,6 +545,85 @@
                                 android:textSize="14sp" />
                         </com.google.android.material.textfield.TextInputLayout>
 
+                        <!-- The whole-bill discount, exactly as the grocery cart takes
+                             it: a figure and a choice of what the figure means. Shown
+                             only when Tax Settings has Discount on and set to Bill
+                             wise - item-wise prices each product's own discount into
+                             its line, leaving nothing for a bill figure to add, and a
+                             box that cannot change the total is worse than no box. -->
+                        <LinearLayout
+                            android:id="@+id/sectionOrderDiscount"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:paddingHorizontal="20dp"
+                            android:paddingTop="10dp"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="DISCOUNT"
+                                android:textSize="11sp"
+                                android:letterSpacing="0.08"
+                                android:textStyle="bold"
+                                android:textColor="@color/text_secondary" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical"
+                                android:layout_marginTop="6dp">
+
+                                <com.google.android.material.textfield.TextInputLayout
+                                    android:id="@+id/tilOrderDiscount"
+                                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:hint="Discount"
+                                    app:boxCornerRadiusTopStart="10dp"
+                                    app:boxCornerRadiusTopEnd="10dp"
+                                    app:boxCornerRadiusBottomStart="10dp"
+                                    app:boxCornerRadiusBottomEnd="10dp">
+
+                                    <com.google.android.material.textfield.TextInputEditText
+                                        android:id="@+id/etOrderDiscount"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:inputType="numberDecimal"
+                                        android:maxLines="1"
+                                        android:textSize="15sp" />
+                                </com.google.android.material.textfield.TextInputLayout>
+
+                                <RadioGroup
+                                    android:id="@+id/rgOrderDiscountMode"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginStart="10dp"
+                                    android:orientation="vertical">
+
+                                    <RadioButton
+                                        android:id="@+id/rbOrderDiscountPercent"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:minHeight="0dp"
+                                        android:checked="true"
+                                        android:text="%"
+                                        android:textSize="13sp" />
+
+                                    <RadioButton
+                                        android:id="@+id/rbOrderDiscountAmount"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:minHeight="0dp"
+                                        android:text="₹"
+                                        android:textSize="13sp" />
+                                </RadioGroup>
+                            </LinearLayout>
+                        </LinearLayout>
+
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -555,6 +634,16 @@
                             <LinearLayout style="@style/OrderSummaryRow">
                                 <TextView style="@style/OrderSummaryLabel" android:text="Subtotal" />
                                 <TextView android:id="@+id/tvSubtotal" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                            </LinearLayout>
+
+                            <!-- Hidden while there is no discount, either because none
+                                 is configured or because none has been entered: a line
+                                 reading "- ₹ 0.00" on every bill is noise. -->
+                            <LinearLayout android:id="@+id/rowOrderDiscount" style="@style/OrderSummaryRow"
+                                android:visibility="gone">
+                                <TextView android:id="@+id/tvOrderDiscountLabel"
+                                    style="@style/OrderSummaryLabel" android:text="Discount" />
+                                <TextView android:id="@+id/tvOrderDiscountAmt" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                             </LinearLayout>
 
                             <LinearLayout style="@style/OrderSummaryRow">
@@ -570,6 +659,15 @@
                             <LinearLayout style="@style/OrderSummaryRow">
                                 <TextView style="@style/OrderSummaryLabel" android:text="SGST" />
                                 <TextView android:id="@+id/tvSgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                            </LinearLayout>
+
+                            <!-- Only on a bill that actually carries VAT. A GST till
+                                 showing an empty VAT line invites the question of why
+                                 it is there. -->
+                            <LinearLayout android:id="@+id/rowOrderVat" style="@style/OrderSummaryRow"
+                                android:visibility="gone">
+                                <TextView style="@style/OrderSummaryLabel" android:text="VAT" />
+                                <TextView android:id="@+id/tvOrderVat" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                             </LinearLayout>
                         </LinearLayout>
 

@@ -855,9 +855,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
     /** A unit's symbol and whether it allows fractional quantities (fraction_flag). */
     private fun unitInfo(db: android.database.sqlite.SQLiteDatabase, unitId: Long?): Pair<String, Boolean> {
         if (unitId == null) return "" to false
-        db.query("md_units", arrayOf("unit_symbol", "fraction_flag"),
+        db.query("md_units", arrayOf("unit_symbol", "fraction_flag", "unit_name"),
             "id = ?", arrayOf(unitId.toString()), null, null, null, "1").use { c ->
-            if (c.moveToFirst()) return (c.getString(0).orEmpty() to (c.getInt(1) == 1))
+            // Resolved the way the printed bill resolves it, so the screen and the
+            // slip never name the same unit differently.
+            if (c.moveToFirst()) return (
+                com.example.synergic_pos_offline.database.UnitDao
+                    .shortNameOf(c.getString(0), c.getString(2)) to (c.getInt(1) == 1)
+                )
         }
         return "" to false
     }

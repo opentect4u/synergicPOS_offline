@@ -1622,10 +1622,17 @@ class BillReceiptRenderer(context: Context) {
             SELECT i.product_id, i.quantity, i.rate, i.item_subtotal, i.item_total, p.product_name,
                    i.discount_amount, i.cgst_amount, i.sgst_amount, i.igst_amount, i.vat_amount, p.hsn_code,
                    i.cgst_rate, i.sgst_rate, i.vat_rate,
+                   -- The unit as it prints: its short name, or the first three
+                   -- characters of its name where the shop left the short one blank.
+                   -- The same rule UnitDao.shortNameOf applies on screen, written in
+                   -- SQL because the whole line list is read in one query. A bare
+                   -- quantity with no unit beside it is what this avoids.
                    COALESCE(
-                       (SELECT u.unit_symbol FROM ${DatabaseHelper.Tables.MD_UNITS} u
+                       (SELECT COALESCE(NULLIF(TRIM(u.unit_symbol), ''), SUBSTR(TRIM(u.unit_name), 1, 3))
+                          FROM ${DatabaseHelper.Tables.MD_UNITS} u
                          WHERE u.id = i.unit_id),
-                       (SELECT u.unit_symbol FROM ${DatabaseHelper.Tables.MD_UNITS} u
+                       (SELECT COALESCE(NULLIF(TRIM(u.unit_symbol), ''), SUBSTR(TRIM(u.unit_name), 1, 3))
+                          FROM ${DatabaseHelper.Tables.MD_UNITS} u
                           JOIN ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r ON r.unit_id = u.id
                          WHERE r.product_id = i.product_id
                          ORDER BY r.id ASC LIMIT 1)

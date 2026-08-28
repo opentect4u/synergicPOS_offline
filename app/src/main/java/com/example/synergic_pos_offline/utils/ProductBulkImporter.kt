@@ -363,8 +363,12 @@ object ProductBulkImporter {
 
         val values = ContentValues().apply {
             if (storeId != null) put("store_id", storeId) else putNull("store_id")
+            // The full text becomes the unit's NAME; the short name is cut to the
+            // three characters a slip has room for - see UnitDao.SHORT_NAME_MAX. A
+            // sheet saying "Litres" makes a unit named Litres, short name "Lit",
+            // rather than a short name too long to print beside a quantity.
             put("unit_name", symbol)
-            put("unit_symbol", symbol)
+            put("unit_symbol", symbol.take(com.example.synergic_pos_offline.database.UnitDao.SHORT_NAME_MAX))
             put("fraction_flag", 0)
             put("created_by", currentUserId())
         }

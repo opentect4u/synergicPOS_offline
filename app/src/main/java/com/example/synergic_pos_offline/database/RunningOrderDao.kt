@@ -32,7 +32,16 @@ class RunningOrderDao(context: Context) {
         var qty: Double, var rate: Double, val kotQty: Double,
         val cgstRate: Double = 0.0, val sgstRate: Double = 0.0,
         /** Carried so a VAT-rated dish is still VAT-rated when the bill is priced. */
-        val vatRate: Double = 0.0
+        val vatRate: Double = 0.0,
+        /**
+         * The product's own discount, as configured on its rate row, snapshotted when
+         * the line was added - Tax Settings' item-wise discount. Carried for the same
+         * reason the tax rates above are: a table open across a price change is billed
+         * at what it was sold at.
+         */
+        val discValue: Double = 0.0,
+        /** "A" for a flat amount, otherwise a percentage. Null when the line has none. */
+        val discType: String? = null
     ) {
         /** Quantity newly added, not yet sent to the kitchen. */
         val pending: Double get() = (qty - kotQty).coerceAtLeast(0.0)
@@ -302,7 +311,8 @@ class RunningOrderDao(context: Context) {
      */
     fun addItem(
         orderId: Long, productId: Long, name: String, qty: Double, rate: Double,
-        cgstRate: Double = 0.0, sgstRate: Double = 0.0, vatRate: Double = 0.0
+        cgstRate: Double = 0.0, sgstRate: Double = 0.0, vatRate: Double = 0.0,
+        discValue: Double = 0.0, discType: String? = null
     ): Long {
         val db = helper.writableDatabase
         val lineId = db.query(
@@ -326,6 +336,8 @@ class RunningOrderDao(context: Context) {
                     put("cgst_rate", cgstRate)
                     put("sgst_rate", sgstRate)
                     put("vat_rate", vatRate)
+                    put("discount", discValue)
+                    if (discType.isNullOrBlank()) putNull("discount_type") else put("discount_type", discType)
                     put("kot_printed", 0)
                     put("kot_qty", 0)
                 })
@@ -342,7 +354,7 @@ class RunningOrderDao(context: Context) {
         helper.readableDatabase.query(
             items, arrayOf(
                 "id", "product_id", "product_name", "quantity", "rate", "kot_qty",
-                "cgst_rate", "sgst_rate", "vat_rate"
+                "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type"
             ),
             "running_order_id = ?", arrayOf(orderId.toString()), null, null, "id ASC"
         ).use { c ->
@@ -357,7 +369,9 @@ class RunningOrderDao(context: Context) {
                         kotQty = c.getDouble(5),
                         cgstRate = c.getDouble(6),
                         sgstRate = c.getDouble(7),
-                        vatRate = c.getDouble(8)
+                        vatRate = c.getDouble(8),
+                        discValue = if (c.isNull(9)) 0.0 else c.getDouble(9),
+                        discType = c.getString(10)?.takeIf { it.isNotBlank() }
                     )
                 )
             }

@@ -162,6 +162,12 @@ class DatabaseHelper private constructor(context: Context) :
         // lost its rate the moment it went on a table - and the bill printed from
         // that order could not charge a tax it no longer knew about.
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "vat_rate", "REAL DEFAULT 0")
+        // The product own discount, snapshotted when the line was added - Tax
+        // Settings item-wise discount. Held on the line rather than looked up at
+        // billing time so a table open across a price change is billed at what it was
+        // sold at, the same reason the tax rates above are snapshotted here.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "discount", "REAL DEFAULT 0")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "discount_type", "TEXT")
         // KOT lifecycle: link a KOT to its running order, and allow the CLOSED /
         // COMPLETE statuses the restaurant flow sets (see [ensureKotStatusSchema]).
         ensureKotStatusSchema(db)
