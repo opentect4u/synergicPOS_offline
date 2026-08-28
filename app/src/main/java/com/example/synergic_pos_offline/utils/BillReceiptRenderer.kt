@@ -1012,9 +1012,19 @@ class BillReceiptRenderer(context: Context) {
             // the shop's general regime is - which is what makes one bill able to carry
             // both. A bill of one kind only takes the untouched path below and prints
             // exactly as it always has.
+            //
+            // Except when NEITHER is on. Tax Settings' GST and VAT switched off
+            // together means the till is charging no tax at all - BillPricing.price
+            // zeroes every line's tax whatever rate it carries (taxed = regime !=
+            // NONE) - so a line's stored rate is a leftover figure, not a live one,
+            // and splitting on it would demarcate two untaxed sections that print
+            // 0% either side of a divider for no reason. One of the two switched on
+            // is enough: that IS the shop's regime, and a line rated the other way
+            // still means something under it.
             val vatItems = items.filter { it.vat }
             val gstItems = items.filter { !it.vat }
-            val split = vatItems.isNotEmpty() && gstItems.isNotEmpty()
+            val split = taxRegime != GstCalculator.TaxRegime.NONE &&
+                vatItems.isNotEmpty() && gstItems.isNotEmpty()
 
             (if (split) gstItems else items).forEach {
                 llItems.addView(
