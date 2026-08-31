@@ -397,6 +397,34 @@ class RunningOrderDao(context: Context) {
         orderId?.let { syncPendingKot(it) }
     }
 
+    /**
+     * Sets a line's quantity AND its rate together - what the product popup returns
+     * when a cart line is opened and changed.
+     *
+     * The rate matters as much as the quantity: the popup can price a line manually
+     * (App Settings' Manual Rate), and writing the quantity back while leaving the old
+     * rate would charge the table something nobody agreed. Re-adding the item instead
+     * would not do either - addItem matches on product AND rate, so a re-rated line
+     * becomes a second row beside the first rather than a correction of it.
+     *
+     * Quantity follows the same rule as [setItemQty]: a line only disappears when
+     * nothing of it was ever sent to the kitchen, otherwise it stays at zero so the
+     * cancellation can be printed.
+     */
+    fun setItemLine(itemId: Long, qty: Double, rate: Double) {
+        val orderId = orderIdOfItem(itemId)
+        val kotQty = kotQtyOf(itemId)
+        if (qty <= 0 && kotQty <= 0.0) {
+            helper.writableDatabase.delete(items, "id = ?", arrayOf(itemId.toString()))
+        } else {
+            helper.writableDatabase.execSQL(
+                "UPDATE $items SET quantity = ?, rate = ? WHERE id = ?",
+                arrayOf<Any>(qty.coerceAtLeast(0.0), rate, itemId)
+            )
+        }
+        orderId?.let { syncPendingKot(it) }
+    }
+
     fun removeItem(itemId: Long) {
         val orderId = orderIdOfItem(itemId)
         if (kotQtyOf(itemId) > 0.0) {

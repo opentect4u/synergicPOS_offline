@@ -1188,9 +1188,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // Direct Add to Cart (App Settings): tapping a product adds one straight to the
         // cart with its default rate - no popup. Each tap adds one more. Only for a
         // fresh add; editing an existing cart line still opens the dialog.
-        // Exception: if the product has a fractional unit, always show the dialog so the
-        // operator can enter the fractional quantity (e.g., 0.5 kg).
-        if (!editing && !p.allowFraction && SettingsCache.value(requireContext(), "A", "Direct Add to Cart") == "1") {
+        //
+        // NO FRACTION EXCEPTION. A fractional unit used to force the popup open here
+        // too, so the one setting whose purpose is "do not stop and ask" stopped and
+        // asked - on exactly the products a busy till rings up most. A weighed item
+        // goes on as 1 and is corrected by tapping its cart line, where the quantity
+        // opens for a fractional unit whatever Enter Quantity says. That is also the
+        // order the work happens in: rung up first, weighed second.
+        if (!editing && SettingsCache.value(requireContext(), "A", "Direct Add to Cart") == "1") {
             val before = cart.sumOf { it.qty }
             addToCart(p, 1.0, p.price)
             // Only announce when the tap actually added (not blocked by stock), and
@@ -1199,14 +1204,23 @@ class PosBillingFragment : Fragment(), TitledScreen {
             return
         }
 
-        // "Quantity Status" ON: a new item opens with quantity 0 and the cursor on
-        // the quantity field so the operator must enter it. OFF: defaults to 1.
+        // "Enter Quantity" (General Settings) decides whether the quantity can be
+        // TYPED here:
+        //
+        //   on  - the box is open, and a fresh add opens on 1 with that 1 selected, so
+        //         typing replaces it and confirming untouched still adds one.
+        //   off - the box is fixed. Quantity is moved with the cart line's steppers.
+        //
+        // It used to open a fresh add on 0 with the box always typeable, which made
+        // the setting decide where the cursor went rather than whether a figure could
+        // be entered at all, and made an untouched confirm add nothing.
+        //
+        // A FRACTIONAL UNIT OPENS THE BOX ON AN EDIT, whatever the setting says: 0.750
+        // kg cannot be reached by stepping from 1, so a weighed line has to be typeable
+        // somewhere. Only on the edit - the add stays quick, see the Direct Add note.
         val quantityStatusOn = SettingsCache.value(requireContext(), "G", "Quantity Status") == "1"
-        val startQty = when {
-            editing -> cart[editIndex].qty
-            quantityStatusOn -> 0.0
-            else -> 1.0
-        }
+        val qtyEditable = quantityStatusOn || (editing && p.allowFraction)
+        val startQty = if (editing) cart[editIndex].qty else 1.0
 
         // Manual Rate off (App Settings): the rate field is read-only.
         val manualRateOn = SettingsCache.value(requireContext(), "A", "Manual Rate") == "1"
@@ -1218,7 +1232,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
             startRate = if (editing) cart[editIndex].product.price else p.price,
             startQty = startQty,
             confirmLabel = if (editing) "Update" else "Add to cart",
-            focusQty = !editing && quantityStatusOn,
+            qtyEditable = qtyEditable,
+            // Cursor in the quantity with its value selected, so the first key typed
+            // replaces it rather than appending to it.
+            focusQty = qtyEditable,
             focusRate = !editing && manualRateOn,
             rateEditable = manualRateOn,
             taxRegime = taxRegime,
