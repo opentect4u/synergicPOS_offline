@@ -3895,20 +3895,6 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val payable = payableTotal(b.total)
         root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(b.subtotal)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(b.service)}"
-
-        // The shop's own extra charges - Parcel Charge among them - one row per
-        // charge that actually applies, built fresh each time rather than toggling
-        // fixed rows: a shop may have none, one, or up to ChargeDao.MAX_CHARGES of
-        // them, and which ones apply depends on this order's own type.
-        val llCharges = root.findViewById<LinearLayout>(R.id.llOrderCharges)
-        llCharges.removeAllViews()
-        b.charges.forEach { charge ->
-            val row = layoutInflater.inflate(R.layout.row_order_charge, llCharges, false)
-            row.findViewById<TextView>(R.id.tvChargeLabel).text = charge.name
-            row.findViewById<TextView>(R.id.tvChargeValue).text = "₹ ${money(charge.amount)}"
-            llCharges.addView(row)
-        }
-
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(b.cgst)}"
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(b.sgst)}"
 
