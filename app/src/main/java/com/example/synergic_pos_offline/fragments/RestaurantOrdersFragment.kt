@@ -70,6 +70,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val dbId: Long, var id: String, val type: String, val section: String, var phone: String,
         val time: String, var amount: String, val cashier: String,
         var status: String, var selected: Boolean, var note: String = "",
+        /**
+         * Tables folded into this bill by a merge. A var because a merge adds to it
+         * while the screen is open, and the name shown for the table has to follow.
+         */
+        var merged: List<String> = emptyList(),
         // Each order keeps its own cart, so switching tables shows its own items.
         val items: MutableList<CartItem> = mutableListOf()
     ) {
@@ -139,6 +144,32 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         order.id.equals(code, ignoreCase = true) &&
             (section.isBlank() || order.section.equals(section, ignoreCase = true))
 
+    /**
+     * The order a merged-away table is now billed on, or null when it is not merged.
+     *
+     * Merge leaves no order against the table itself - the items moved - and records
+     * the code on the kept order's merged_tables instead, which is where this looks.
+     */
+    private fun orderMergedInto(code: String): OrderCard? = orders.firstOrNull { o ->
+        runCatching { roDao.mergedTablesOf(o.dbId) }.getOrDefault(emptyList())
+            .any { it.equals(code, ignoreCase = true) }
+    }
+
+    /**
+     * What this order's table is CALLED once tables have been merged into it.
+     *
+     * A merged bill is not table 1 any more, it is tables 1 and 3 A - and the guests
+     * are sitting at both. Naming it after the kept table alone left the other one
+     * with nothing to say it was part of anything, so a waiter reading either the
+     * panel or the order list could not tell that the two were one bill.
+     *
+     * The kept table comes first, because that is the one the bill is filed under
+     * everywhere else - the KOT, the printed slip, Bill History.
+     */
+    private fun tableDisplayName(order: OrderCard): String =
+        if (order.merged.isEmpty()) order.id
+        else (listOf(order.id) + order.merged).joinToString(" + ")
+
     /** The active order on one table, or null when it is free. */
     private fun orderFor(code: String, section: String): OrderCard? =
         orders.firstOrNull { sameTable(it, code, section) }
@@ -150,7 +181,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val card = OrderCard(
                 dbId = ro.id, id = ro.tableCode, type = ro.orderType, section = ro.section,
                 phone = ro.phone, time = ro.time, amount = "₹ ${money(0.0)}",
-                cashier = ro.cashier, status = ro.status, selected = false, note = ro.note
+                cashier = ro.cashier, status = ro.status, selected = false, note = ro.note,
+                merged = ro.mergedTables
             )
             // qty 0 lines are removed items awaiting a cancellation KOT — hide from the cart.
             roDao.itemsFor(ro.id).filter { it.qty > 0.0 }.forEach { ri ->
@@ -556,7 +588,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     // out and filtered by this order's type right here, the same call
                     // the fold-out panel and the printed bill both use, so Checkout
                     // shows and charges exactly what they do.
-                    val charges = computeBill(order.items, serviceRateFor(order.section), order.type).charges
+                    // The one calculation, read once: its charges AND its discount both
+                    // travel to the checkout so that screen shows the same money.
+                    val b = computeBill(order.items, serviceRateFor(order.section), order.type)
+                    val charges = b.charges
                     requireActivity().supportFragmentManager.beginTransaction()
                         .replace(
                             R.id.fragment_container,
@@ -569,7 +604,24 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 units = units,
                                 chargeNames = ArrayList(charges.map { it.name }),
                                 chargeAmounts = charges.map { it.amount }.toDoubleArray(),
-                                chargeTypes = ArrayList(charges.map { it.type.name })
+                                chargeTypes = ArrayList(charges.map { it.type.name }),
+                                // Tax Settings' discount, worked out ONCE here and
+                                // carried across. The checkout used to price every
+                                // line with no discount and a hard-coded post-tax
+                                // flag, so a discounted table was quoted one total on
+                                // the cart page and charged another at the till - and
+                                // the pre-tax / post-tax choice did nothing on the
+                                // screen the customer actually pays from.
+                                discount = b.discount,
+                                lineDiscounts = order.items.map { line ->
+                                    com.example.synergic_pos_offline.utils.CartMath.lineDiscount(
+                                        line.toMathLine(), cartConfig(),
+                                        com.example.synergic_pos_offline.utils.CartMath
+                                            .subtotal(order.items.map { it.toMathLine() }),
+                                        b.discount
+                                    )
+                                }.toDoubleArray(),
+                                discountPreTax = discountPreTax
                             )
                         )
                         .addToBackStack(null)
@@ -715,7 +767,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     as com.google.android.material.card.MaterialCardView
             val takeAway = o.type.equals("Take Away", ignoreCase = true)
             card.findViewById<TextView>(R.id.tvOrderId).apply {
-                text = if (takeAway) o.id.replace("TA-", "Token #") else o.id; setTextColor(accent)
+                text = if (takeAway) o.id.replace("TA-", "Token #") else tableDisplayName(o)
+                setTextColor(accent)
             }
             card.findViewById<TextView>(R.id.tvOrderType).text = o.type
             card.findViewById<TextView>(R.id.tvOrderGuests).text =
@@ -773,7 +826,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Take Away has no table — show it as a take-away token, not "Table: …".
         root.findViewById<TextView>(R.id.tvDetailTableLabel).visibility = if (takeAway) View.GONE else View.VISIBLE
         root.findViewById<TextView>(R.id.tvDetailTable).apply {
-            text = if (takeAway) "Take Away" else order.id; setTextColor(accent)
+            text = if (takeAway) "Take Away" else tableDisplayName(order); setTextColor(accent)
         }
         root.findViewById<TextView>(R.id.tvDetailCustomer).text = order.phone.ifBlank { "Walk-in" }
         // TAKE AWAY HAS ONE BUTTON, NOT TWO. A table is billed and paid as two acts,
@@ -850,7 +903,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         menu.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 MENU_TRANSFER -> onTransfer()
-                MENU_MERGE -> showMergeDialog()
+                MENU_MERGE -> onMerge()
                 MENU_SPLIT -> onSplit()
                 MENU_CANCEL -> onCancelOrder()
                 else -> return@setOnMenuItemClickListener false
@@ -868,6 +921,22 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             return toast("Not available for Take Away")
         if (order.completed) return toast("Table already billed — cannot transfer")
         showTransferDialog(order)
+    }
+
+    /**
+     * Merge: fold other tables of this room into the selected table's bill.
+     *
+     * Guarded the way Transfer and Split are, and for the same reason - the dialog now
+     * opens with the selected table already in it, so what can be merged FROM has to
+     * be settled before it opens rather than discovered inside it.
+     */
+    private fun onMerge() {
+        if (!tableMergeOn) return toast("Table Merge is switched off in App Settings")
+        val order = currentOrder() ?: return toast("Select a table order first")
+        if (order.type.equals("Take Away", ignoreCase = true))
+            return toast("Not available for Take Away")
+        if (order.completed) return toast("Table already billed — cannot merge")
+        showMergeDialog()
     }
 
     /** Split: break the selected table into sub-tables (101 A, 101 B, …). */
@@ -1063,6 +1132,42 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 isEnabled = !billed
                 alpha = if (billed) 0.4f else 1f
             }
+        }
+        setSettlementEnabled(root, currentOrder())
+    }
+
+    /**
+     * Settlement is only live once a DINE-IN order has been through the two steps that
+     * come before it: the ticket to the kitchen, and the bill to the table.
+     *
+     * A table is settled last, not first. Money is taken after the food has been
+     * ordered and after the guests have been given the bill and read it - so a
+     * Settlement that is live on an untouched table is a button that can only be
+     * pressed by mistake, and pressing it closes the table and writes a paid bill for
+     * an order the kitchen never saw.
+     *
+     * THE KITCHEN COMES FIRST FOR BOTH. Nothing is settled before the ticket has gone
+     * to the pass - taking money for food nobody has been told to cook is the one
+     * order of events a counter cannot recover from.
+     *
+     * The printed bill is required for DINE-IN ONLY. A take-away's button IS the bill
+     * - "Print & Settlement" prints and settles in one press (see printThenSettle) -
+     * so requiring a printed bill first would require the button to have been pressed
+     * before it can be pressed.
+     *
+     * Greyed rather than hidden: unlike a control that never applies, this one is
+     * coming - it is the next thing that happens to this table - and a gap where it
+     * sits would read as the screen having lost it.
+     */
+    private fun setSettlementEnabled(root: View, order: OrderCard?) {
+        val takeAway = order?.type.equals("Take Away", ignoreCase = true)
+        // Sent, not merely typed: kotQty is what actually went to the pass.
+        val kotSent = order?.items?.any { it.kotQty > 0.0 } == true
+        val ready = order != null && order.items.isNotEmpty() &&
+            kotSent && (takeAway || order.completed)
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay)?.apply {
+            isEnabled = ready
+            alpha = if (ready) 1f else 0.4f
         }
     }
 
@@ -1402,7 +1507,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Every active DINE-IN table (running, not billed) is a candidate at first.
         // Take Away orders have no table to merge.
         val activeTables = orders.filter { !it.completed && !it.type.equals("Take Away", ignoreCase = true) }
-        if (activeTables.size < 2) { toast("Need at least two active dine-in tables to merge"); return }
+        // No "two active tables" check any more: a free table can be merged in now, so
+        // one running order and an empty table beside it is a perfectly good merge -
+        // and is the case this is most often wanted for.
+        if (activeTables.isEmpty()) { toast("No active dine-in table to merge"); return }
 
         val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_merge_table, null)
         val dialog = AlertDialog.Builder(ctx).setView(v).create().also { it.setCanceledOnTouchOutside(false) }
@@ -1416,20 +1524,48 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val btnSave = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormPositive)
         val btnCancel = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormNegative)
 
-        // Queued orders, not queued table codes: two sections can both have a table 1
-        // and the dropdown may well offer both, so each entry has to say which order
-        // it stands for.
-        val added = mutableListOf<OrderCard>()   // first = kept
+        // Queued candidates, not queued table codes: two sections can both have a
+        // table 1 and the dropdown may well offer both, so each entry has to say which
+        // table in which room it stands for.
+        val added = mutableListOf<MergeCandidate>()   // first = kept
 
         // A table reads as "1 (AC)" here, since the number alone no longer identifies
         // it once a second section has the same number.
-        fun label(o: OrderCard) = if (o.section.isBlank()) o.id else "${o.id} (${o.section})"
+        fun label(c: MergeCandidate) = if (c.section.isBlank()) c.code else "${c.code} (${c.section})"
 
-        // Candidates: before any add — all active tables; after — same section as the first.
-        fun candidates(): List<OrderCard> {
-            val base = if (added.isEmpty()) activeTables
-            else activeTables.filter { it.section.equals(added.first().section, ignoreCase = true) }
-            return base.filter { cand -> added.none { it.dbId == cand.dbId } }
+        /**
+         * What may be added, and it is not only tables that already have an order.
+         *
+         * FIRST PICK: an active order. It is the one that is kept, and a bill has to be
+         * kept - an empty table has nothing for the others to fold into.
+         *
+         * AFTER THAT: everything else in the same room, free tables included. A party
+         * grows and takes the empty table beside it, and that table has to be able to
+         * join the bill; the dropdown offering only tables that had already ordered
+         * meant the one case a merge is most often wanted for could not be done at all.
+         * A free table brings no items - it just joins, and is held and released with
+         * the bill it joined.
+         *
+         * Still one room. Merging across sections would put one bill on two floors.
+         */
+        fun candidates(): List<MergeCandidate> {
+            if (added.isEmpty()) return activeTables.map { MergeCandidate(it.id, it.section, it) }
+            val room = added.first().section
+            val busy = activeTables
+                .filter { it.section.equals(room, ignoreCase = true) }
+                .map { MergeCandidate(it.id, it.section, it) }
+            // Free tables of the same room, straight off the floor plan - which is
+            // also where a split's parts come from, so "5 B" can join a bill like any
+            // other table.
+            val free = runCatching { loadTables() }.getOrDefault(emptyList())
+                .filter {
+                    it.section.equals(room, ignoreCase = true) &&
+                        it.status.equals("Available", ignoreCase = true)
+                }
+                .map { MergeCandidate(it.code, it.section, null) }
+            return (busy + free).filter { cand ->
+                added.none { it.code.equals(cand.code, ignoreCase = true) && it.section.equals(cand.section, ignoreCase = true) }
+            }
         }
         fun refreshDropdown() {
             actWith.setAdapter(
@@ -1447,10 +1583,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 val row = LayoutInflater.from(ctx).inflate(R.layout.item_merge_table, llTables, false)
                 row.findViewById<TextView>(R.id.tvMergeTableName).text =
                     if (index == 0) "Table ${label(o)}  (Kept)" else "Table ${label(o)}"
-                val count = o.items.size
-                row.findViewById<TextView>(R.id.tvMergeTableInfo).text = "$count item${if (count == 1) "" else "s"}"
+                val count = o.order?.items?.size ?: 0
+                row.findViewById<TextView>(R.id.tvMergeTableInfo).text =
+                    if (o.order == null) "Free — joins the bill"
+                    else "$count item${if (count == 1) "" else "s"}"
                 row.findViewById<android.widget.ImageView>(R.id.btnRemoveMergeTable).setOnClickListener {
-                    added.removeAll { it.dbId == o.dbId }; renderAdded(); refreshDropdown()
+                    added.removeAll {
+                        it.code.equals(o.code, true) && it.section.equals(o.section, true)
+                    }
+                    renderAdded(); refreshDropdown()
                 }
                 llTables.addView(row)
             }
@@ -1462,7 +1603,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val picked = candidates().firstOrNull { label(it) == pick }
             when {
                 pick.isEmpty() -> actWith.error = "Select a table"
-                picked == null -> actWith.error = "Not an active table in this section"
+                picked == null -> actWith.error = "Not a table in this section"
                 else -> { added.add(picked); renderAdded(); refreshDropdown() }
             }
         }
@@ -1472,6 +1613,26 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         btnSave.backgroundTintList = ColorStateList.valueOf(accent); btnSave.setTextColor(Color.WHITE)
         btnCancel.setTextColor(accent); btnCancel.strokeColor = ColorStateList.valueOf(accent)
 
+        // THE TABLE THE MERGE WAS STARTED FROM IS ALREADY IN THE LIST.
+        //
+        // Table Actions acts on the selected table, so choosing table 3 and pressing
+        // Merge has already said which table this is about - asking for it again as
+        // the first of two picks is asking a question that was just answered, and it
+        // let the operator start from a different table than the one they had open.
+        //
+        // Seeded as the KEPT table, which is what starting from it means: its bill is
+        // the one the others join. With the room settled by that first entry, the
+        // dropdown below opens on the rest of that room - see candidates().
+        //
+        // Removable, like any other row: taking it out empties the list and the dialog
+        // falls back to asking for a first table, which is what it did before.
+        val startFrom = currentOrder()
+        if (startFrom != null && !startFrom.completed &&
+            !startFrom.type.equals("Take Away", ignoreCase = true)
+        ) {
+            added.add(MergeCandidate(startFrom.id, startFrom.section, startFrom))
+        }
+
         refreshDropdown()
         renderAdded()
 
@@ -1479,7 +1640,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         btnSave.setOnClickListener {
             if (added.size < 2) { toast("Add at least two tables to merge"); return@setOnClickListener }
             dialog.dismiss()
-            performMerge(added.first(), added.drop(1))
+            val keep = added.first().order
+            if (keep == null) { toast("The kept table must have an order"); return@setOnClickListener }
+            performMerge(keep, added.drop(1))
         }
         dialog.show()
     }
@@ -1487,11 +1650,24 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /** Applies the merge: fold each source table's items into the kept table. The
      *  merged tables stay Occupied (part of the merge) and are freed only when the
      *  kept order is settled. */
-    private fun performMerge(target: OrderCard, sources: List<OrderCard>) {
+    private fun performMerge(target: OrderCard, sources: List<MergeCandidate>) {
         sources.forEach { source ->
-            roDao.mergeOrders(target.dbId, source.dbId)   // records the merged table + keeps it Occupied
-            orders.removeAll { it.dbId == source.dbId }   // its own order card is gone (shares the kept bill)
+            val order = source.order
+            if (order != null) {
+                roDao.mergeOrders(target.dbId, order.dbId)   // records the merged table + keeps it Occupied
+                orders.removeAll { it.dbId == order.dbId }   // its own card is gone (shares the kept bill)
+            } else {
+                // A free table joining the party: nothing to move, so it is only
+                // recorded against the kept bill and taken off the floor. It is
+                // released when that bill settles, exactly like a table that did
+                // bring items with it.
+                roDao.attachTable(target.dbId, source.code)
+                updateTableStatus(source.code, source.section, "Occupied")
+            }
         }
+        // The kept card learns what it now covers, so the panel and the order list
+        // name the merged group without waiting for a reload.
+        target.merged = runCatching { roDao.mergedTablesOf(target.dbId) }.getOrDefault(target.merged)
         reloadItems(target)                                       // pull the combined items
         orders.forEach { it.selected = it.dbId == target.dbId }   // focus the kept table
         val root = view ?: return
@@ -1608,11 +1784,67 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             it.id.startsWith("$parent ") &&
                 (section.isBlank() || it.section.equals(section, ignoreCase = true))
         }
-        if (parts.isEmpty()) {
+        // A PART MERGED INTO ANOTHER TABLE IS STILL IN USE, even though it no longer
+        // has an order of its own.
+        //
+        // Merge moves the items across and closes the source order, so 5 A vanishes
+        // from this list the moment it is merged into table 10 - and if 5 B happened
+        // to be empty, the split would be torn down underneath a part whose guests are
+        // sitting there on table 10's bill. Table 5 would read Available while it was
+        // being served, and the release recorded against table 10 (merged_tables)
+        // would later have nothing left to release.
+        //
+        // So a parent is only given back once none of its parts is carried on any live
+        // order either.
+        val merged = mergedPartsInUse()
+        val partMerged = merged.any { it.startsWith("$parent ", ignoreCase = true) }
+
+        // THE SPLIT COLLAPSES ONCE NOTHING IS ON ANY PART.
+        //
+        // Either there are no parts left at all, or the ones left are empty - no
+        // items, so nothing ordered, nothing owed, nothing waiting on the kitchen.
+        // A table whose parts are all free is not really split any more, and leaving
+        // 3 A and 3 B sitting on the floor plan means the next party of four cannot be
+        // given table 3 without somebody first taking the split apart by hand.
+        //
+        // EMPTY, not merely Available. That distinction is what keeps the earlier
+        // fault fixed: a part with items on it survives, whatever its status, so
+        // billing two parts of a four-way split can never again close the two that
+        // are still being served. What goes is only what is holding nothing.
+        //
+        // A part merged onto another bill is not empty in that sense either - its
+        // items moved, and it is released when that bill settles.
+        val allFree = parts.isNotEmpty() && parts.all { it.items.isEmpty() }
+        if (!partMerged && (parts.isEmpty() || allFree)) {
+            // Close the empty parts before dropping their sub-tables, or their orders
+            // would be left pointing at tables that no longer exist.
+            val partIds = parts.map { it.dbId }.toSet()
+            parts.forEach { roDao.close(it.dbId) }
+            orders.removeAll { it.dbId in partIds }
             updateTableStatus(parent, section, "Available")
             subTableDao.clearForParent(parent, section)
         }
     }
+
+    /**
+     * Every table code currently carried on some other order's bill through a merge.
+     *
+     * These are tables with no order of their own that are nonetheless occupied: their
+     * items were moved onto the table they were merged with, and they are released when
+     * THAT order is settled - see settlePaidOrder.
+     */
+    private fun mergedPartsInUse(): Set<String> =
+        orders.flatMap { runCatching { roDao.mergedTablesOf(it.dbId) }.getOrDefault(emptyList()) }
+            .filter { it.isNotBlank() }
+            .toSet()
+
+    /**
+     * One table queued in the merge dialog.
+     *
+     * [order] is null for a table that is free - it brings no items and only joins the
+     * kept bill, which is why the merge cannot simply be a list of orders.
+     */
+    private data class MergeCandidate(val code: String, val section: String, val order: OrderCard?)
 
     /** A grid entry: the popup product plus its restaurant attributes (food type + spice). */
     /**
@@ -2052,13 +2284,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val adapter = TableAdapter(accent) { t ->
             pickedATable = true
             dialog.dismiss()
-            val existing = orderFor(t.code, t.section)
+            // A MERGED TABLE OPENS THE BILL IT WAS MERGED INTO.
+            //
+            // Merging moves the items onto the kept table and closes this one's order,
+            // so the table still reads Occupied - its guests are being served - while
+            // having no order of its own. Tapping it used to answer "Table 5 A is
+            // Occupied" and stop there, which is true and useless: the one thing an
+            // occupied table is tapped for is the bill it is on.
+            val existing = orderFor(t.code, t.section) ?: orderMergedInto(t.code)
             // Named with its room in every message: the number on its own belongs to
             // one table per section.
             val named = if (t.section.isBlank()) t.code else "${t.code} (${t.section})"
             if (existing != null) {
                 selectOrder(existing)
-                toast("Table $named selected")
+                toast(
+                    if (existing.id.equals(t.code, ignoreCase = true)) "Table $named selected"
+                    else "Table $named is merged into ${existing.id} — showing that bill"
+                )
             } else {
                 // Only a free table can start a new order; an occupied/billing one is
                 // busy on an order this table picker cannot reach.
@@ -3537,6 +3779,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 cgstRate = line.cgstRate, sgstRate = line.sgstRate,
                 vatRate = line.vatRate,
                 hsn = product?.hsn,
+                // This line's share of the discount, in the shape BillPricing takes -
+                // against the line's raw pre-tax base. Without it the slip priced every
+                // line at full and then showed a discounted total, so the printed lines
+                // did not add up to the figure at the foot of the bill.
+                discountAmount = com.example.synergic_pos_offline.utils.CartMath.lineDiscount(
+                    line.toMathLine(), cartConfig(),
+                    com.example.synergic_pos_offline.utils.CartMath
+                        .subtotal(order.items.map { it.toMathLine() }),
+                    b.discount
+                ),
                 // The unit, already resolved to its short name or the first three
                 // characters of its name - see UnitDao.shortNameOf, applied where the
                 // menu is loaded. The draft never carried one, so the table bill
@@ -3798,6 +4050,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Merged tables are same-section by construction, so they free with it.
         mergedTables.forEach { updateTableStatus(it, order.section, "Available") }
         orders.removeAll { it.dbId == order.dbId }
+        // A merged SPLIT PART goes back to its parent here too - see settlePaidOrder.
+        mergedTables.forEach { freeParentIfSplitDone(it, order.section) }
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         clearDetail(root)
         toast("Order cleared")
@@ -3824,6 +4078,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         orders.removeAll { it.dbId == order.dbId }
         // free the parent once all parts are done
         freeParentIfSplitDone(order.id, order.section)
+        // AND THE PARENT OF ANY SPLIT PART THAT WAS MERGED INTO THIS ORDER.
+        //
+        // Merge 5 A into table 10 and the split lives on inside 10's bill: 5 A has no
+        // order of its own any more, so settling 10 is the moment it is finished with.
+        // Only its status was being restored, which left table 5 split for good - a
+        // parent holding parts that nothing owned, unable to be seated as one table
+        // again. Run after the removal above, so the list this reads no longer counts
+        // the order just settled.
+        mergedTables.forEach { freeParentIfSplitDone(it, order.section) }
         view?.let { root ->
             populateOrders(root, ThemeManager.getThemeColor(requireContext()))
             clearDetail(root)
@@ -4055,6 +4318,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Settlement", and the label function was being evaluated and thrown away.
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay).text =
             settlementLabel(order, payable)
+        // Re-checked on every cart redraw, which is what happens when the first item
+        // goes on and when the KOT is cut - the two moments the answer changes.
+        setSettlementEnabled(root, order)
         // Reflect the running total on the active order card. Only that one figure
         // moves as items go on, so the card is patched where it stands - rebuilding
         // the whole list meant inflating a card per open table on every tap.

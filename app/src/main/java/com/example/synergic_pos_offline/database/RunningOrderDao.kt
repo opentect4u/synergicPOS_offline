@@ -24,7 +24,15 @@ class RunningOrderDao(context: Context) {
     data class RunningOrder(
         val id: Long, val tableCode: String, val section: String, val waiterId: Long?,
         val orderType: String, val phone: String, val cashier: String,
-        val time: String, val total: Double, val note: String, val status: String
+        val time: String, val total: Double, val note: String, val status: String,
+        /**
+         * Tables folded into this bill by a merge, in the order they joined.
+         *
+         * Read with the order rather than looked up per card: the sale screen names
+         * every open table on every redraw, and a query behind each name would be a
+         * query per table per tap.
+         */
+        val mergedTables: List<String> = emptyList()
     )
 
     data class RunningItem(
@@ -99,7 +107,7 @@ class RunningOrderDao(context: Context) {
         val args = if (store != null) arrayOf(store.toString()) else null
         helper.readableDatabase.query(
             orders,
-            arrayOf("id", "table_code", "section", "waiter_id", "order_type", "customer_phone", "cashier", "created_at", "order_note", "status"),
+            arrayOf("id", "table_code", "section", "waiter_id", "order_type", "customer_phone", "cashier", "created_at", "order_note", "status", "merged_tables"),
             where, args, null, null, "id DESC"
         ).use { c ->
             while (c.moveToNext()) {
@@ -116,7 +124,9 @@ class RunningOrderDao(context: Context) {
                         time = formatTime(c.getString(7)),
                         total = totalOf(id),
                         note = c.getString(8).orEmpty(),
-                        status = c.getString(9)?.ifBlank { "RUNNING" } ?: "RUNNING"
+                        status = c.getString(9)?.ifBlank { "RUNNING" } ?: "RUNNING",
+                        mergedTables = c.getString(10).orEmpty()
+                            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
                     )
                 )
             }
@@ -161,6 +171,28 @@ class RunningOrderDao(context: Context) {
      * KOT. The target's PENDING KOT is refreshed so only not-yet-sent items remain
      * to send. Section/waiter of the target are kept (same-section merge).
      */
+    /**
+     * Joins a table that has NO order of its own onto [targetId]'s bill.
+     *
+     * The case [mergeOrders] cannot cover: a party grows and takes the empty table
+     * beside it. There is nothing to move - the table has no items - so all that
+     * happens is that the code is recorded against the kept order, which is what makes
+     * it occupied for as long as that order lives and frees it when the order settles.
+     *
+     * Idempotent: joining a table already on the bill changes nothing, so a double tap
+     * cannot record it twice and leave it half-freed later.
+     */
+    fun attachTable(targetId: Long, tableCode: String) {
+        if (tableCode.isBlank()) return
+        val merged = (mergedTablesOf(targetId) + tableCode)
+            .distinctBy { it.lowercase() }
+            .joinToString(",")
+        helper.writableDatabase.update(
+            orders, ContentValues().apply { put("merged_tables", merged) },
+            "id = ?", arrayOf(targetId.toString())
+        )
+    }
+
     fun mergeOrders(targetId: Long, sourceId: Long) {
         val sourceItems = itemsFor(sourceId)
         // The source table (and any tables it had itself absorbed) now belong to the target.
@@ -194,6 +226,15 @@ class RunningOrderDao(context: Context) {
                         put("cgst_rate", src.cgstRate)
                         put("sgst_rate", src.sgstRate)
                         put("vat_rate", src.vatRate)
+                        // The line's own discount travels with it. Left behind, a
+                        // merged line arrived on the other table priced at full while
+                        // the same line on the table it came from had been discounted -
+                        // so merging quietly changed what the food cost. Everything
+                        // else that prices a line is copied here; this was missed when
+                        // the item-wise discount was added.
+                        put("discount", src.discValue)
+                        if (src.discType.isNullOrBlank()) putNull("discount_type")
+                        else put("discount_type", src.discType)
                         put("kot_qty", src.kotQty)
                         put("kot_printed", if (src.kotQty > 0) 1 else 0)
                     })

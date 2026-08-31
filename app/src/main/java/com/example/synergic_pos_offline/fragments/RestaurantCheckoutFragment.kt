@@ -85,6 +85,26 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     private val taxInclusive get() = arguments?.getBoolean(ARG_INCLUSIVE) ?: false
 
     /**
+     * Tax Settings' discount, as the Orders screen worked it out - see CartMath.
+     *
+     * Not recomputed here, for the same reason the charges above are not: the figure
+     * the operator was quoted on the cart page is the figure that has to be paid, and
+     * a screen that works it out a second time can only ever agree by coincidence.
+     *
+     * [billDiscount] is the whole-bill amount; [lineDiscounts] is each line's share of
+     * it against that line's raw pre-tax base. Which of the two does the work depends
+     * on [discountPreTax]: pre-tax, the per-line shares reduce the taxable value, and
+     * the bill figure is already inside them; post-tax, the lines are taxed in full
+     * and the bill figure comes off once, after tax.
+     */
+    private val billDiscount get() = arguments?.getDouble(ARG_DISCOUNT) ?: 0.0
+    private val lineDiscounts: DoubleArray get() = arguments?.getDoubleArray(ARG_LINE_DISCOUNTS) ?: DoubleArray(0)
+    private val discountPreTax get() = arguments?.getBoolean(ARG_DISCOUNT_PRE_TAX) ?: true
+
+    /** This line's share of the discount, or 0 where none was passed. */
+    private fun discountFor(index: Int): Double = lineDiscounts.getOrElse(index) { 0.0 }
+
+    /**
      * Which of a line's own CGST/SGST or VAT rate is actually charged - see
      * BillPricing.price. A line is taxed under whichever it carries a rate for,
      * regardless of this; the regime only gates whether ANY tax applies at all,
@@ -181,18 +201,30 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     /** Renders the bill in the grocery format and shows it in a scrollable dialog. */
     private fun showReceiptPreview() {
         val ctx = requireContext()
-        var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
-        lines.forEach { l ->
+        var subtotal = 0.0; var taxable = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
+        lines.forEachIndexed { i, l ->
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
-                l.rate, l.qty, l.cgstRate, l.sgstRate, l.vatRate, 0.0, taxRegime, taxInclusive, false
+                l.rate, l.qty, l.cgstRate, l.sgstRate, l.vatRate,
+                discountFor(i), taxRegime, taxInclusive, discountPreTax
             )
-            subtotal += l.qty * l.rate; cgst += p.cgst; sgst += p.sgst; vat += p.vat
+            subtotal += l.qty * l.rate; taxable += p.taxable; cgst += p.cgst; sgst += p.sgst; vat += p.vat
         }
         // Flat section service charge (₹), applied only to a non-empty order.
         val service = if (subtotal > 0.0) serviceRate else 0.0
         val chargesTotal = charges.sumOf { it.second }
-        val netTotal = if (taxInclusive) subtotal + service + chargesTotal
-        else subtotal + service + chargesTotal + cgst + sgst + vat
+        // A POST-TAX discount comes off here, once, after tax - pre-tax it is already
+        // inside each line's taxable value above and must not be taken twice. This is
+        // CartMath.totals' own rule; the two have to match or the slip and the screen
+        // that printed it would quote different money.
+        // FROM THE TAXABLE VALUE, not the gross subtotal. Under a PRE-TAX discount the
+        // reduction lives inside each line's taxable value, so a total built on the
+        // listed subtotal adds the discount straight back on - which is what this did,
+        // quoting a pre-tax discounted table its full undiscounted price. Taxable + tax
+        // is the same figure the inclusive shortcut used to give when there was no
+        // discount, and the right one when there is. Matches CartMath.totals.
+        val goods = taxable + cgst + sgst + vat
+        val netTotal = (goods - (if (discountPreTax) 0.0 else billDiscount)).coerceAtLeast(0.0) +
+            service + chargesTotal
         val roundOffOn = runCatching {
             com.example.synergic_pos_offline.database.BillSettingsDao(ctx).load().roundOff
         }.getOrDefault(false)
@@ -210,17 +242,21 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 phone = customer.takeIf { it != "Walk-in" && it.isNotBlank() }
             ),
             table = receiptTable,
-            items = lines.map {
+            items = lines.mapIndexed { i, it ->
                 com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
                     name = it.name, quantity = it.qty.toDouble(), rate = it.rate,
                     cgstRate = it.cgstRate, sgstRate = it.sgstRate, vatRate = it.vatRate, hsn = it.hsn,
-                    unit = it.unit
+                    unit = it.unit,
+                    // The share the Orders screen worked out for this line. The preview
+                    // priced every line at full while showing a discounted total, so
+                    // the lines on it did not add up to its own foot.
+                    discountAmount = discountFor(i)
                 )
             },
             // Bill Settings' Round Off is the only say in whether this rounds - on,
             // it rounds every total regardless of what is in the cart; off, the exact
             // taxed figure stands.
-            discount = 0.0,
+            discount = billDiscount,
             roundOff = if (roundOffOn) BillRounding.roundOff(netTotal) else 0.0,
             netAmount = if (roundOffOn) BillRounding.payable(netTotal) else BillRounding.toPaise(netTotal),
             paymentModes = listOf(payMethod.uppercase(java.util.Locale.US)),
@@ -301,8 +337,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     private fun populateItems(root: View) {
         val container = root.findViewById<LinearLayout>(R.id.llCheckoutItems)
         val inflater = LayoutInflater.from(requireContext())
-        var subtotal = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
-        lines.forEach { l ->
+        var subtotal = 0.0; var taxable = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
+        lines.forEachIndexed { index, l ->
             val row = inflater.inflate(R.layout.item_rest_checkout_line, container, false)
             row.findViewById<TextView>(R.id.tvLineName).text = l.name
             row.findViewById<TextView>(R.id.tvLineQty).text = qtyText(l.qty)
@@ -313,9 +349,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             // on/off, inclusive) - see [taxRegime]. Which of the two a line actually
             // carries a rate for is the line's own business, not the till's.
             val p = com.example.synergic_pos_offline.utils.BillPricing.price(
-                l.rate, l.qty, l.cgstRate, l.sgstRate, l.vatRate, 0.0, taxRegime, taxInclusive, false
+                l.rate, l.qty, l.cgstRate, l.sgstRate, l.vatRate,
+                discountFor(index), taxRegime, taxInclusive, discountPreTax
             )
             subtotal += l.qty * l.rate
+            taxable += p.taxable
             cgst += p.cgst
             sgst += p.sgst
             vat += p.vat
@@ -329,8 +367,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         // out and filtered by order type on the Orders screen; joined last, on top of
         // the taxed goods, same as CartMath.Totals.total does for every other screen.
         val chargesTotal = charges.sumOf { it.second }
-        val exactTotal = if (taxInclusive) subtotal + service + chargesTotal
-        else subtotal + service + chargesTotal + cgst + sgst + vat
+        // See showReceiptPreview: from the taxable value, and the discount only comes
+        // off here when it is post-tax.
+        val goods = taxable + cgst + sgst + vat
+        val exactTotal = (goods - (if (discountPreTax) 0.0 else billDiscount)).coerceAtLeast(0.0) +
+            service + chargesTotal
         // Bill Settings' Round Off is the only say in whether this rounds - see
         // RestaurantOrdersFragment.roundOffOn(). Applied here, on the class field
         // that everything below (the total shown, the Confirm button, the tendered
@@ -421,6 +462,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_CHARGE_NAMES = "charge_names"
         private const val ARG_CHARGE_AMOUNTS = "charge_amounts"
         private const val ARG_CHARGE_TYPES = "charge_types"
+        private const val ARG_DISCOUNT = "discount"
+        private const val ARG_LINE_DISCOUNTS = "line_discounts"
+        private const val ARG_DISCOUNT_PRE_TAX = "discount_pre_tax"
 
         /**
          * Builds a checkout for the running order [orderId] on [table] in [section],
@@ -437,6 +481,14 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
          * type on the Orders screen (see RestaurantOrdersFragment.computeBill). Empty
          * by default so a caller that has not looked them up still gets a working
          * screen, just without a charges line.
+         *
+         * [discount], [lineDiscounts] and [discountPreTax] carry Tax Settings' discount
+         * across, worked out once on the Orders screen by CartMath rather than a second
+         * time here. [lineDiscounts] is each line's share against its raw pre-tax base -
+         * the shape BillPricing takes - and is what makes a PRE-TAX discount reduce the
+         * taxable value line by line; [discount] is the whole-bill figure a POST-TAX one
+         * comes off after tax. Zero by default, which prices exactly as this screen did
+         * before it knew about discounts at all.
          */
         fun newInstance(
             orderId: Long, table: String, section: String, customer: String,
@@ -447,7 +499,10 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             units: ArrayList<String> = arrayListOf(),
             chargeNames: ArrayList<String> = arrayListOf(),
             chargeAmounts: DoubleArray = DoubleArray(0),
-            chargeTypes: ArrayList<String> = arrayListOf()
+            chargeTypes: ArrayList<String> = arrayListOf(),
+            discount: Double = 0.0,
+            lineDiscounts: DoubleArray = DoubleArray(0),
+            discountPreTax: Boolean = true
         ): RestaurantCheckoutFragment = RestaurantCheckoutFragment().apply {
             arguments = android.os.Bundle().apply {
                 putLong(ARG_ORDER_ID, orderId)
@@ -469,6 +524,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putStringArrayList(ARG_CHARGE_NAMES, chargeNames)
                 putDoubleArray(ARG_CHARGE_AMOUNTS, chargeAmounts)
                 putStringArrayList(ARG_CHARGE_TYPES, chargeTypes)
+                putDouble(ARG_DISCOUNT, discount)
+                putDoubleArray(ARG_LINE_DISCOUNTS, lineDiscounts)
+                putBoolean(ARG_DISCOUNT_PRE_TAX, discountPreTax)
             }
         }
     }

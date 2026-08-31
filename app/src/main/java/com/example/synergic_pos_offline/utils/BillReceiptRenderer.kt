@@ -694,6 +694,14 @@ class BillReceiptRenderer(context: Context) {
             var storedNetAmount = 0.0
             var roundOff = 0.0
             var serviceCharge = 0.0
+            /**
+             * The extra charges this bill actually carried, off its own row.
+             *
+             * Null for a draft, which has not been saved and carries its charges on
+             * the draft itself. -1 is never a real total, so a saved bill that somehow
+             * has no column reads as "nothing stored" rather than "zero charged".
+             */
+            var storedCharges = -1.0
             // Cash handed back to the customer when they tendered more than the payable.
             var returnAmount = 0.0
             var settingsSnapshotJson: String? = null
@@ -716,13 +724,15 @@ class BillReceiptRenderer(context: Context) {
                 SELECT bill_number, bill_date_time, bill_date, customer_id,
                        tot_discount_amount, net_amount, operator_id, created_by, bill_type,
                        tot_round_off_amount, amount_in_words, settings_snapshot,
-                       COALESCE(service_charge_amount, 0)
+                       COALESCE(service_charge_amount, 0),
+                       COALESCE(tot_other_charges_amount, 0)
                 FROM ${billsTableFor(db, receiptNo)} WHERE receipt_no = ?
                 """.trimIndent(),
                 arrayOf(receiptNo.toString())
             ).use { c ->
                 if (!c.moveToFirst()) return
                 serviceCharge = c.getDouble(12)
+                storedCharges = c.getDouble(13)
                 billNumber = c.getString(0) ?: receiptNo.toString()
                 dateTime = c.getString(1) ?: c.getString(2) ?: ""
                 customerId = if (c.isNull(3)) null else c.getLong(3)
@@ -1161,9 +1171,39 @@ class BillReceiptRenderer(context: Context) {
                     else -> true // BOTH - always applies, grocery or restaurant, any order type
                 }
             }
-            val chargeLines = keepIndices.map { rawChargeLines[it] }
-            val chargeTypes = keepIndices.map { rawChargeTypes.getOrNull(it) ?: "PERCENTAGE" }
-            val chargesTotal = BillRounding.toPaise(chargeLines.sumOf { it.second })
+            val recomputed = keepIndices.map { rawChargeLines[it] }
+            val recomputedTypes = keepIndices.map { rawChargeTypes.getOrNull(it) ?: "PERCENTAGE" }
+            val recomputedTotal = BillRounding.toPaise(recomputed.sumOf { it.second })
+
+            // A SAVED BILL CARRIES ITS OWN CHARGE TOTAL, and that is what is printed.
+            //
+            // The names above are worked out from the Extra Charges master as it
+            // stands TODAY, which is fine for a draft - the sale is being made now -
+            // and wrong for a reprint. The master moves: a percentage is edited, a
+            // charge is switched off, its applicability changes from take-away to
+            // dine-in. A bill reprinted after any of that showed a different total
+            // from the one the customer paid.
+            //
+            // It was also being recomputed against the wrong base. A charge is levied
+            // on the GROSS item lines, and totals.itemsSubtotal is the taxable value -
+            // the same figure less any discount - so a discounted bill re-derived a
+            // smaller charge than it had been billed for. That is the 221.50 stored
+            // against a 220.50 preview.
+            //
+            // The named breakdown is kept when it still adds up to what was charged,
+            // because a reader can then see which charge was which; when it does not,
+            // one honest line stands in for it rather than a list that contradicts the
+            // total beside it.
+            val useStored = storedCharges >= 0.0 && draft == null
+            val chargesTotal = if (useStored) BillRounding.toPaise(storedCharges) else recomputedTotal
+            val breakdownAgrees = kotlin.math.abs(recomputedTotal - chargesTotal) < 0.01
+            val chargeLines: List<Pair<String, Double>> = when {
+                !useStored || breakdownAgrees -> recomputed
+                chargesTotal > 0.0 -> listOf("OTHER CHARGES" to chargesTotal)
+                else -> emptyList()
+            }
+            val chargeTypes = if (!useStored || breakdownAgrees) recomputedTypes
+            else chargeLines.map { "AMOUNT" }
             // Printed as label / amount, the name as the shop typed it, with type indicator
             val chargeRows = chargeLines.mapIndexed { index, (name, amount) ->
                 val typeIndicator = when (chargeTypes.getOrNull(index)) {
@@ -1175,9 +1215,19 @@ class BillReceiptRenderer(context: Context) {
                 displayName.uppercase() to money(amount)
             }
 
-            // Round off is whatever the bill recorded, not something worked out here:
-            // the printed total has to match the amount that was actually charged.
-            val payable = if (items.isEmpty()) storedNetAmount
+            // WHAT WAS CHARGED, for anything already saved.
+            //
+            // A draft is being priced now, so its payable is worked out from its own
+            // parts. A SAVED bill is not being priced - it was priced when it was
+            // rung up, net_amount is that figure, and it is the number in Bill
+            // History, in every report, and on the money the customer handed over.
+            // Re-deriving it here could only ever agree by luck, and did not: the
+            // Extra Charges master had moved since, and older bills were written with
+            // the service charge duplicated into tot_other_charges_amount, so the same
+            // sum came out different again for them.
+            //
+            // Round off is likewise read, never recomputed.
+            val payable = if (draft == null) storedNetAmount
             else totals.grandTotal + roundOff + serviceCharge + chargesTotal
 
             // Bill summary: item count / qty / gross, each tax rate on its own line,
