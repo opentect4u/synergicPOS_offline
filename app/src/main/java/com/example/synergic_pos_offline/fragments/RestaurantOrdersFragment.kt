@@ -3925,6 +3925,27 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             if (b.vat > 0.0) View.VISIBLE else View.GONE
         root.findViewById<TextView>(R.id.tvOrderVat).text = "₹ ${money(b.vat)}"
 
+        // A row per charge that actually applies to THIS order - the Extra Charges and
+        // the Parcel Charge, each under its own name. Built here rather than declared
+        // in the layout because how many there are, and which of them apply, is not
+        // known until the order type is: a TAKEAWAY-only Parcel Charge is on a counter
+        // order's bill and not on a table's. See ChargeDao.amountsOn.
+        val llCharges = root.findViewById<LinearLayout>(R.id.llOrderCharges)
+        llCharges.removeAllViews()
+        b.charges.forEach { applied ->
+            val row = LayoutInflater.from(requireContext())
+                .inflate(R.layout.item_order_summary_line, llCharges, false)
+            // The rate is put beside the name, because a percentage charge that only
+            // shows its rupee amount cannot be checked against the master by anyone
+            // reading the screen.
+            row.findViewById<TextView>(R.id.tvSummaryLabel).text =
+                if (applied.type == com.example.synergic_pos_offline.database.ChargeDao.Type.PERCENTAGE)
+                    "${applied.name} (${qtyText(applied.value)}%)"
+                else applied.name
+            row.findViewById<TextView>(R.id.tvSummaryValue).text = "₹ ${money(applied.amount)}"
+            llCharges.addView(row)
+        }
+
         root.findViewById<TextView>(R.id.tvOrderTotal).text = "₹ ${money(payable)}"
         // The same figure on the fold's handle, for while the fold is shut.
         root.findViewById<TextView>(R.id.tvTotalBar).text = "₹ ${money(payable)}"
