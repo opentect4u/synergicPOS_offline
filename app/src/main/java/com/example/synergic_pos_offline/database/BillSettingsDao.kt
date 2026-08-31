@@ -293,21 +293,34 @@ class BillSettingsDao(context: Context) {
     /**
      * Deletes every bill and its related rows. Required when the start bill number
      * is changed while bills already exist, so numbering can restart cleanly.
+     *
+     * Sale returns and the customer ledger deliberately survive this (see
+     * [com.example.synergic_pos_offline.utils.BillErase]) and keep their
+     * `original_bill_id` / `bill_id` pointing at the bill this deletes - a dangling
+     * reference on purpose, so a credit sale's ledger entry still says which bill
+     * incurred it even after the bill itself is gone. Both columns are a hard
+     * FOREIGN KEY onto `td_bills(receipt_no)` with no `ON DELETE` action, so that
+     * dangling reference is exactly what the constraint exists to forbid - foreign
+     * keys are toggled off around the delete, as SQLite requires for this.
      */
     fun clearAllBills() {
-        helper.writableDatabase.apply {
-            beginTransaction()
+        val db = helper.writableDatabase
+        db.setForeignKeyConstraintsEnabled(false)
+        try {
+            db.beginTransaction()
             try {
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_PRINTS}")
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_PAYMENTS}")
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT_ITEMS}")
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT}")
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS}")
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILLS}")
-                setTransactionSuccessful()
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_PRINTS}")
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_PAYMENTS}")
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT_ITEMS}")
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT}")
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS}")
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILLS}")
+                db.setTransactionSuccessful()
             } finally {
-                endTransaction()
+                db.endTransaction()
             }
+        } finally {
+            db.setForeignKeyConstraintsEnabled(true)
         }
     }
 

@@ -63,10 +63,30 @@ object ProductName {
      * not translated, because the operator reads the screen in the language they were
      * trained on this till in, and a translated name is an English name in a foreign
      * tongue rather than the actual name of what they are selling.
+     *
+     * Hindi and Marathi are the one exception. Both are written in Devanagari, so
+     * respelling alone reads identically in either - a till set to Marathi would show
+     * exactly what a Hindi till shows, which defeats the point of the setting. The
+     * word lookup already carries the two languages' vocabulary separately (see
+     * [WORDS]/[PHRASES], used otherwise only by [inPrintLanguage]), so it is applied
+     * here too for this pair - the only way to tell the two apart on screen.
+     *
+     * Unlike [inPrintLanguage] this does not require the *whole* name to be known
+     * words - see [translatePartial]. Most real names are BRAND + commodity (TATA
+     * SALT), and gating on the whole name being recognised would mean the brand word
+     * alone is enough to fall back to plain respelling, which is identical either way
+     * and defeats the point just as completely. Here the commodity word (SALT) is
+     * translated - and so differs between Hindi and Marathi - while the brand (TATA)
+     * is left to be respelled the same in both, which is the correct outcome for a
+     * name with no translation to begin with.
      */
     fun inAppLanguage(language: PrintLanguage.Language, raw: String?): String {
         val name = raw ?: return ""
         if (language == PrintLanguage.Language.ENGLISH || name.isBlank()) return name
+        if (language == PrintLanguage.Language.HINDI || language == PrintLanguage.Language.MARATHI) {
+            val translated = runCatching { translatePartial(language, name) }.getOrDefault(name)
+            return Transliterator.to(language, translated)
+        }
         return Transliterator.to(language, name)
     }
 
@@ -90,10 +110,27 @@ object ProductName {
      */
     private fun translateWords(language: PrintLanguage.Language, name: String): String {
         val segments = segment(name)
-        val out = StringBuilder()
-        var i = 0
         // All of it or none of it - see [translatesWhole] for why.
         if (!translatesWhole(language, segments)) return name
+        return substituteKnownWords(language, segments)
+    }
+
+    /**
+     * Translates whatever words of [name] this file knows and leaves the rest -
+     * brand names included - exactly as typed, for [Transliterator] to respell
+     * afterwards.
+     *
+     * Where [translateWords] requires the whole name to be recognised before it
+     * touches any of it, this does not: it is used only by [inAppLanguage], where a
+     * partial answer (the commodity word translated, the brand respelled) is the
+     * point rather than the fault it would be on a printed bill.
+     */
+    private fun translatePartial(language: PrintLanguage.Language, name: String): String =
+        substituteKnownWords(language, segment(name))
+
+    private fun substituteKnownWords(language: PrintLanguage.Language, segments: List<Segment>): String {
+        val out = StringBuilder()
+        var i = 0
         while (i < segments.size) {
             val segment = segments[i]
             if (!segment.isWord) {

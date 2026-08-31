@@ -23,6 +23,7 @@ import androidx.core.view.isVisible
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.ItemRate
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.LandingScreen
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.Mode
+import com.example.synergic_pos_offline.database.GeneralSettingsDao.ProductSort
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.ReturnMode
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
@@ -50,6 +51,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swQuantityStatus: SwitchMaterial
     private lateinit var swCustomerInfo: SwitchMaterial
     private lateinit var rgItemRate: RadioGroup
+    private lateinit var actProductSort: MaterialAutoCompleteTextView
     private lateinit var rgLandingScreen: RadioGroup
     private lateinit var swStockFlag: SwitchMaterial
     private lateinit var llStockAlert: View
@@ -76,6 +78,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         swQuantityStatus = view.findViewById(R.id.swQuantityStatus)
         swCustomerInfo = view.findViewById(R.id.swCustomerInfo)
         rgItemRate = view.findViewById(R.id.rgItemRate)
+        actProductSort = view.findViewById(R.id.actProductSort)
         rgLandingScreen = view.findViewById(R.id.rgLandingScreen)
         swStockFlag = view.findViewById(R.id.swStockFlag)
         llStockAlert = view.findViewById(R.id.llStockAlert)
@@ -99,6 +102,11 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         // Mode dropdown (always shows every option). Displays labels; stores G / R.
         actMode.setAdapter(NoFilterAdapter(requireContext(), Mode.entries.map { it.label }))
         actMode.setText(s.mode.label, false)
+
+        // Product Sorting dropdown (always shows every option). Displays labels;
+        // stores the short code.
+        actProductSort.setAdapter(NoFilterAdapter(requireContext(), ProductSort.entries.map { it.label }))
+        actProductSort.setText(s.productSort.label, false)
 
         swSaleReturn.isChecked = s.saleReturn
         rgReturnMode.check(
@@ -161,6 +169,9 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             
             val isMultipleRate = rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple
             val itemRateVal = if (isMultipleRate) ItemRate.MULTIPLE else ItemRate.SINGLE
+
+            val productSortVal = ProductSort.fromStored(actProductSort.text?.toString())
+                ?: ProductSort.SERIAL_ASC
             
             val isLandingHome = rgLandingScreen.checkedRadioButtonId == R.id.rbLandingHome
             val landingScreenVal = if (isLandingHome) LandingScreen.HOME else LandingScreen.SALE
@@ -177,6 +188,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 lastBillStatus = swLastBillStatus.isChecked,
                 quantityStatus = swQuantityStatus.isChecked,
                 itemRate = itemRateVal,
+                productSort = productSortVal,
                 customerInfo = swCustomerInfo.isChecked,
                 landingScreen = landingScreenVal,
                 stockFlag = swStockFlag.isChecked,

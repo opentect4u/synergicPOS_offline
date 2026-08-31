@@ -68,6 +68,24 @@ class GeneralSettingsDao(context: Context) {
     }
 
     /**
+     * How the sale-page product grid orders its tiles. Persisted as a short
+     * [code]. Serial No. means the product's own id - the order it was added to
+     * the catalogue in, since there is no separate ordering column on a product.
+     */
+    enum class ProductSort(val code: String, val label: String, val orderBy: String) {
+        SERIAL_ASC("SA", "Serial No. (Ascending)", "id ASC"),
+        SERIAL_DESC("SD", "Serial No. (Descending)", "id DESC"),
+        NAME_ASC("NA", "Name (A-Z)", "product_name ASC"),
+        NAME_DESC("ND", "Name (Z-A)", "product_name DESC");
+        companion object {
+            /** Accepts the stored code or the display label. */
+            fun fromStored(value: String?): ProductSort? = value?.let { v ->
+                values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
+            }
+        }
+    }
+
+    /**
      * Where the app lands once a user logs in. Persisted as a single-letter [code]
      * (S / H).
      *
@@ -96,6 +114,8 @@ class GeneralSettingsDao(context: Context) {
         val lastBillStatus: Boolean = false,
         val quantityStatus: Boolean = false,
         val itemRate: ItemRate = ItemRate.SINGLE,
+        /** How the sale-page product grid is ordered - see [ProductSort]. */
+        val productSort: ProductSort = ProductSort.SERIAL_ASC,
         /**
          * Whether a sale captures the customer at all.
          *
@@ -152,6 +172,7 @@ class GeneralSettingsDao(context: Context) {
             lastBillStatus = m[KEY_LAST_BILL_STATUS]?.toBool() ?: d.lastBillStatus,
             quantityStatus = m[KEY_QUANTITY_STATUS]?.toBool() ?: d.quantityStatus,
             itemRate = ItemRate.fromStored(m[KEY_ITEM_RATE]) ?: d.itemRate,
+            productSort = ProductSort.fromStored(m[KEY_PRODUCT_SORT]) ?: d.productSort,
             customerInfo = m[KEY_CUSTOMER_INFO]?.toBool() ?: d.customerInfo,
             landingScreen = LandingScreen.fromStored(m[KEY_LANDING_SCREEN]) ?: d.landingScreen,
             stockFlag = m[KEY_STOCK_FLAG]?.toBool() ?: d.stockFlag,
@@ -176,6 +197,7 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_LAST_BILL_STATUS, s.lastBillStatus.b())
         put(KEY_QUANTITY_STATUS, s.quantityStatus.b())
         put(KEY_ITEM_RATE, s.itemRate.code)
+        put(KEY_PRODUCT_SORT, s.productSort.code)
         put(KEY_CUSTOMER_INFO, s.customerInfo.b())
         put(KEY_LANDING_SCREEN, s.landingScreen.code)
         // Stock cascades: no stock tracking means no alert, and no alert means no
@@ -289,6 +311,7 @@ class GeneralSettingsDao(context: Context) {
         private const val KEY_LAST_BILL_STATUS = "Last Bill Status"
         private const val KEY_QUANTITY_STATUS = "Quantity Status"
         private const val KEY_ITEM_RATE = "Item Rate"
+        private const val KEY_PRODUCT_SORT = "Product Sorting"
         private const val KEY_CUSTOMER_INFO = "Customer Info"
         private const val KEY_LANDING_SCREEN = "Landing Screen"
         private const val KEY_STOCK_FLAG = "Stock Flag"
@@ -361,6 +384,20 @@ class GeneralSettingsDao(context: Context) {
                 .value(context, "G", KEY_CUSTOMER_INFO)
             if (!cached.isNullOrBlank()) return cached == "1" || cached.equals("true", true)
             return GeneralSettingsDao(context).load().customerInfo
+        }
+
+        /**
+         * How the sale-page product grid should be ordered - General Settings ▸
+         * Product Sorting.
+         *
+         * Read the same way as the stock flag: the login cache first, the database
+         * only when the cache has no answer.
+         */
+        fun productSort(context: Context): ProductSort {
+            val cached = com.example.synergic_pos_offline.utils.SettingsCache
+                .value(context, "G", KEY_PRODUCT_SORT)
+            ProductSort.fromStored(cached)?.let { return it }
+            return GeneralSettingsDao(context).load().productSort
         }
     }
 }

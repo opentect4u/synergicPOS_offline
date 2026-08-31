@@ -552,6 +552,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                         allProducts.firstOrNull { it.product.id == line.productId.toString() }
                             ?.product?.unit.orEmpty()
                     })
+                    // The shop's own extra charges - Parcel Charge among them - worked
+                    // out and filtered by this order's type right here, the same call
+                    // the fold-out panel and the printed bill both use, so Checkout
+                    // shows and charges exactly what they do.
+                    val charges = computeBill(order.items, serviceRateFor(order.section), order.type).charges
                     requireActivity().supportFragmentManager.beginTransaction()
                         .replace(
                             R.id.fragment_container,
@@ -561,7 +566,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 cgsts, sgsts, serviceRateFor(order.section),
                                 gstEnabled = taxSettings.gstEnabled, inclusive = taxInclusive,
                                 hsns = hsns, vats = vats, vatEnabled = taxSettings.vatEnabled,
-                                units = units
+                                units = units,
+                                chargeNames = ArrayList(charges.map { it.name }),
+                                chargeAmounts = charges.map { it.amount }.toDoubleArray(),
+                                chargeTypes = ArrayList(charges.map { it.type.name })
                             )
                         )
                         .addToBackStack(null)
@@ -1673,13 +1681,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 .levels(store?.toInt() ?: 0)
         } else emptyMap()
 
+        val productSort = com.example.synergic_pos_offline.database.GeneralSettingsDao
+            .productSort(requireContext())
         val out = mutableListOf<GridProduct>()
         db.query(
             "md_products",
             arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id", "food_type", "spice_level", "availability", "prep_time", "product_image"),
             (if (store != null) "store_id = ?" else null),
             store?.let { arrayOf(it.toString()) },
-            null, null, "product_name ASC"
+            null, null, productSort.orderBy
         ).use { c ->
             while (c.moveToNext()) {
                 // Only sellable items reach the Add Item grid: a product explicitly set
@@ -3597,7 +3607,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     sgstAmount = b.sgst,
                     netAmount = payable,
                     roundOffAmount = roundOffAmount(b.total),
-                    otherChargesAmount = b.service,   // so net reconciles with stored components
+                    // The shop's own extra charges (Parcel Charge among them) - not the
+                    // service charge, which has its own column just below.
+                    otherChargesAmount = b.chargesTotal,
                     waiterId = waiterId,
                     tableNumber = order.id,
                     tableSection = order.section,
@@ -3883,6 +3895,20 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val payable = payableTotal(b.total)
         root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(b.subtotal)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(b.service)}"
+
+        // The shop's own extra charges - Parcel Charge among them - one row per
+        // charge that actually applies, built fresh each time rather than toggling
+        // fixed rows: a shop may have none, one, or up to ChargeDao.MAX_CHARGES of
+        // them, and which ones apply depends on this order's own type.
+        val llCharges = root.findViewById<LinearLayout>(R.id.llOrderCharges)
+        llCharges.removeAllViews()
+        b.charges.forEach { charge ->
+            val row = layoutInflater.inflate(R.layout.row_order_charge, llCharges, false)
+            row.findViewById<TextView>(R.id.tvChargeLabel).text = charge.name
+            row.findViewById<TextView>(R.id.tvChargeValue).text = "₹ ${money(charge.amount)}"
+            llCharges.addView(row)
+        }
+
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(b.cgst)}"
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(b.sgst)}"
 

@@ -59,6 +59,7 @@ class SettingsFragment : Fragment() {
             e("Last Bill Status", "General Settings", general),
             e("Enter Quantity Status", "General Settings", general),
             e("Item Rate", "General Settings", general),
+            e("Product Sorting", "General Settings", general),
             e("After Login", "General Settings", general),
             e("Landing Screen", "General Settings", general, match = "After Login"),
             e("Stock", "General Settings", general),

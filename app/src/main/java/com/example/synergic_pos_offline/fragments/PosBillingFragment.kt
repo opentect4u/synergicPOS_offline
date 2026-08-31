@@ -763,13 +763,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val stockOn = GeneralSettingsDao.isStockEnabled(requireContext())
         stockTrackingOn = stockOn
         val levels = if (stockOn) StockDao(requireContext()).levels(store?.toInt() ?: 0) else emptyMap()
+        val productSort = GeneralSettingsDao.productSort(requireContext())
         db.query(
             "md_products",
             arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id",
                 "product_image"),
             (if (store != null) "store_id = ?" else null),
             store?.let { arrayOf(it.toString()) },
-            null, null, "product_name ASC"
+            null, null, productSort.orderBy
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 val productId = cursor.getLong(0).toString()

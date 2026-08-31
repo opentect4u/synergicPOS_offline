@@ -699,6 +699,8 @@ class BillReceiptRenderer(context: Context) {
             var settingsSnapshotJson: String? = null
             /** "TABLE : 5 (AC)" - blank on a bill with no table, i.e. every grocery one. */
             var tableLine: String? = null
+            /** The order type this bill was actually billed under - see the reprint read below. */
+            var storedOrderType: String? = null
             if (draft != null) {
                 billNumber = draft.billNumber
                 dateTime = draft.dateTime
@@ -738,12 +740,15 @@ class BillReceiptRenderer(context: Context) {
             }
 
             // A reprint is a bill too: the table it was served on is read back off the
-            // saved row, so a duplicate says what the original said.
+            // saved row, so a duplicate says what the original said. The order type
+            // comes back with it - a reprint that lost it would filter every
+            // Takeaway/Dine-In-only charge (Parcel Charge included) out of a bill that
+            // was actually charged one, understating both the charge list and the total.
             //
             // Read on its own and guarded, not folded into the query above: these are
             // columns added to the bill over time, and a database old enough to be
-            // missing one must still print its bills. The table line is what is lost
-            // then, not the bill.
+            // missing one must still print its bills. The table line and order type
+            // are what is lost then, not the bill.
             if (draft == null) runCatching {
                 db.rawQuery(
                     "SELECT table_number, table_section, order_type " +
@@ -752,6 +757,12 @@ class BillReceiptRenderer(context: Context) {
                 ).use { c ->
                     if (c.moveToFirst()) {
                         tableLine = tableLabel(c.getString(0), c.getString(1), c.getString(2))
+                        // td_bills.order_type is stored as the raw label the Orders
+                        // screen uses ("Take Away" / "Dine In"), not the normalised
+                        // "TAKEAWAY"/"DINE_IN" token the charge filter below compares
+                        // against - normalised here so a saved bill's Parcel Charge
+                        // (Applicability.TAKEAWAY) survives being viewed or reprinted.
+                        storedOrderType = normalizeOrderType(c.getString(2))
                     }
                 }
             }
@@ -1128,7 +1139,7 @@ class BillReceiptRenderer(context: Context) {
             // amount. See ChargeDao. Applicability further filters by order type:
             // a TAKEAWAY-only charge is dropped on a DINE_IN bill and vice versa, and
             // a NONE charge is dropped from every bill regardless of order type.
-            val orderType = draft?.orderType
+            val orderType = draft?.orderType ?: storedOrderType
             val rawChargeLines: List<Pair<String, Double>>
             val rawChargeTypes: List<String>
             val rawChargeApplicabilities: List<String>
@@ -2807,6 +2818,18 @@ class BillReceiptRenderer(context: Context) {
          * one of the same number, which section it was in. A take-away order carries
          * a token rather than a table and says so.
          */
+        /**
+         * `td_bills.order_type` as ChargeDao.Applicability filtering expects it -
+         * "TAKEAWAY" or "DINE_IN" - from whatever the Orders screen actually stored,
+         * which is the raw label ("Take Away" / "Dine In"), not that token. Null stays
+         * null: that is a grocery bill, which has no order type and where only a BOTH
+         * charge ever applies - see ChargeDao.amountsOn.
+         */
+        private fun normalizeOrderType(raw: String?): String? {
+            if (raw.isNullOrBlank()) return null
+            return if (raw.startsWith("take", ignoreCase = true)) "TAKEAWAY" else "DINE_IN"
+        }
+
         private fun tableLabel(number: String?, section: String?, orderType: String?): String? {
             val no = number?.trim().orEmpty()
             if (no.isEmpty()) return null

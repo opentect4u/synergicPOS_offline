@@ -180,6 +180,16 @@
                         <TextView android:id="@+id/tvService" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                     </LinearLayout>
 
+                    <!-- The shop's own extra charges - Parcel Charge among them - one
+                         row per charge handed in from the Orders screen, which already
+                         worked out which ones apply to this order. Empty and takes no
+                         height when none apply. -->
+                    <LinearLayout
+                        android:id="@+id/llCheckoutCharges"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+
                     <LinearLayout style="@style/OrderSummaryRow">
                         <TextView style="@style/OrderSummaryLabel" android:text="CGST" />
                         <TextView android:id="@+id/tvCgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />

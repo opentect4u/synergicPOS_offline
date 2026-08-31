@@ -57,6 +57,7 @@ object DefaultSettings {
         lastBillStatus = false,
         quantityStatus = false,
         itemRate = GeneralSettingsDao.ItemRate.SINGLE,
+        productSort = GeneralSettingsDao.ProductSort.SERIAL_ASC,
         customerInfo = false,
         landingScreen = GeneralSettingsDao.LandingScreen.SALE,
         stockFlag = false,

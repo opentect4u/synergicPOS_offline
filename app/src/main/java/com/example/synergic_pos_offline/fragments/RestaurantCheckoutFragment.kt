@@ -17,7 +17,8 @@ import com.google.android.material.textfield.TextInputEditText
 
 /**
  * Restaurant checkout — order review + payment panel. Opened from the Orders
- * screen's "Bill & Pay". Design pass with placeholder data; wired later.
+ * screen's "Bill & Pay" for a table order (a take-away settles through its own
+ * quick-payment dialog instead - see RestaurantOrdersFragment.showQuickPayment).
  */
 class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
@@ -47,6 +48,19 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 units?.getOrNull(i)?.takeIf { it.isNotBlank() }
             )
         }
+    }
+
+    /**
+     * The shop's own extra charges (Parcel Charge among them) that apply to this
+     * order - already worked out and filtered by order type on the Orders screen
+     * (see RestaurantOrdersFragment.computeBill), so this screen only has to total
+     * and show them, not recompute or re-filter anything.
+     */
+    private val charges: List<Triple<String, Double, String>> by lazy {
+        val names = arguments?.getStringArrayList(ARG_CHARGE_NAMES) ?: arrayListOf()
+        val amounts = arguments?.getDoubleArray(ARG_CHARGE_AMOUNTS) ?: DoubleArray(0)
+        val types = arguments?.getStringArrayList(ARG_CHARGE_TYPES) ?: arrayListOf()
+        names.mapIndexed { i, n -> Triple(n, amounts.getOrElse(i) { 0.0 }, types.getOrNull(i) ?: "AMOUNT") }
     }
 
     private val orderId get() = arguments?.getLong(ARG_ORDER_ID) ?: -1L
@@ -176,7 +190,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         }
         // Flat section service charge (₹), applied only to a non-empty order.
         val service = if (subtotal > 0.0) serviceRate else 0.0
-        val netTotal = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst + vat
+        val chargesTotal = charges.sumOf { it.second }
+        val netTotal = if (taxInclusive) subtotal + service + chargesTotal
+        else subtotal + service + chargesTotal + cgst + sgst + vat
         val roundOffOn = runCatching {
             com.example.synergic_pos_offline.database.BillSettingsDao(ctx).load().roundOff
         }.getOrDefault(false)
@@ -209,6 +225,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             netAmount = if (roundOffOn) BillRounding.payable(netTotal) else BillRounding.toPaise(netTotal),
             paymentModes = listOf(payMethod.uppercase(java.util.Locale.US)),
             serviceCharge = service,
+            // Already worked out and filtered by order type on the Orders screen -
+            // "BOTH" here just means "keep it", since that decision was already made.
+            charges = charges.map { it.first to it.second },
+            chargeTypes = charges.map { it.third },
+            chargeApplicabilities = charges.map { "BOTH" },
             orderType = if (tableNo.startsWith("TA-", ignoreCase = true)) "TAKEAWAY" else "DINE_IN",
             returnAmount = run {
                 val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
@@ -299,8 +320,17 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             sgst += p.sgst
             vat += p.vat
         }
-        val service = subtotal * serviceRate / 100.0   // section-wise service charge
-        val exactTotal = if (taxInclusive) subtotal + service else subtotal + service + cgst + sgst + vat
+        // Flat section service charge (₹), applied only to a non-empty order - the
+        // same flat figure RestaurantOrdersFragment.computeBill() and this screen's
+        // own showReceiptPreview() use. This used to be worked out as a PERCENTAGE of
+        // subtotal instead, which is not what the section's service charge is.
+        val service = if (subtotal > 0.0) serviceRate else 0.0
+        // The shop's own extra charges - Parcel Charge among them - already worked
+        // out and filtered by order type on the Orders screen; joined last, on top of
+        // the taxed goods, same as CartMath.Totals.total does for every other screen.
+        val chargesTotal = charges.sumOf { it.second }
+        val exactTotal = if (taxInclusive) subtotal + service + chargesTotal
+        else subtotal + service + chargesTotal + cgst + sgst + vat
         // Bill Settings' Round Off is the only say in whether this rounds - see
         // RestaurantOrdersFragment.roundOffOn(). Applied here, on the class field
         // that everything below (the total shown, the Confirm button, the tendered
@@ -312,6 +342,16 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         total = if (roundOffOn) BillRounding.payable(exactTotal) else BillRounding.toPaise(exactTotal)
         root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(subtotal)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(service)}"
+
+        val llCharges = root.findViewById<LinearLayout>(R.id.llCheckoutCharges)
+        llCharges.removeAllViews()
+        charges.forEach { (name, amount, _) ->
+            val row = inflater.inflate(R.layout.row_order_charge, llCharges, false)
+            row.findViewById<TextView>(R.id.tvChargeLabel).text = name
+            row.findViewById<TextView>(R.id.tvChargeValue).text = "₹ ${money(amount)}"
+            llCharges.addView(row)
+        }
+
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(cgst)}"
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(sgst)}"
         root.findViewById<TextView>(R.id.tvTotalAmount).text = "₹ ${money(total)}"
@@ -378,6 +418,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_GST_ON = "gst_on"
         private const val ARG_VAT_ON = "vat_on"
         private const val ARG_INCLUSIVE = "inclusive"
+        private const val ARG_CHARGE_NAMES = "charge_names"
+        private const val ARG_CHARGE_AMOUNTS = "charge_amounts"
+        private const val ARG_CHARGE_TYPES = "charge_types"
 
         /**
          * Builds a checkout for the running order [orderId] on [table] in [section],
@@ -388,6 +431,12 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
          * has not looked them up (or a build predating these parameters) still gets a
          * working screen, just without HSN, VAT or a unit on it. Empty/zero in a slot
          * means "this item has none". [vatEnabled] defaults off for the same reason.
+         *
+         * [chargeNames]/[chargeAmounts]/[chargeTypes] are the shop's own extra charges
+         * - Parcel Charge among them - already worked out and filtered by this order's
+         * type on the Orders screen (see RestaurantOrdersFragment.computeBill). Empty
+         * by default so a caller that has not looked them up still gets a working
+         * screen, just without a charges line.
          */
         fun newInstance(
             orderId: Long, table: String, section: String, customer: String,
@@ -395,7 +444,10 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             cgsts: DoubleArray, sgsts: DoubleArray, serviceRate: Double,
             gstEnabled: Boolean, inclusive: Boolean, hsns: ArrayList<String> = arrayListOf(),
             vats: DoubleArray = DoubleArray(0), vatEnabled: Boolean = false,
-            units: ArrayList<String> = arrayListOf()
+            units: ArrayList<String> = arrayListOf(),
+            chargeNames: ArrayList<String> = arrayListOf(),
+            chargeAmounts: DoubleArray = DoubleArray(0),
+            chargeTypes: ArrayList<String> = arrayListOf()
         ): RestaurantCheckoutFragment = RestaurantCheckoutFragment().apply {
             arguments = android.os.Bundle().apply {
                 putLong(ARG_ORDER_ID, orderId)
@@ -414,6 +466,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putBoolean(ARG_GST_ON, gstEnabled)
                 putBoolean(ARG_VAT_ON, vatEnabled)
                 putBoolean(ARG_INCLUSIVE, inclusive)
+                putStringArrayList(ARG_CHARGE_NAMES, chargeNames)
+                putDoubleArray(ARG_CHARGE_AMOUNTS, chargeAmounts)
+                putStringArrayList(ARG_CHARGE_TYPES, chargeTypes)
             }
         }
     }
