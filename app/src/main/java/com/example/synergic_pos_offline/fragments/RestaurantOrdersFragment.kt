@@ -1967,8 +1967,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * A product tapped on the grid. Refuses politely when there is no order to put it
      * on, or the table is already billed; otherwise honours App Settings' Direct Add to
      * Cart - straight in at its default rate, or through the quantity popup.
-     * Exception: if the product has a fractional unit, always show the dialog so the
-     * operator can enter the fractional quantity.
+     *
+     * NO FRACTION EXCEPTION. A fractional unit used to force the popup open even with
+     * Direct Add on, so the one setting whose whole purpose is "do not stop and ask"
+     * stopped and asked - on exactly the products a busy counter taps most.
+     *
+     * A weighed item goes on as 1 like anything else and is corrected by tapping its
+     * line in the cart, where the quantity box opens for a fractional unit whatever
+     * Enter Quantity says (see editCartLine). That is also the order the work happens
+     * in: the dish is rung up, then it is weighed.
      */
     private fun onProductPicked(picked: ProductEntryDialog.Product, onAdded: () -> Unit) {
         val order = currentOrder()
@@ -1976,7 +1983,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             order == null -> { toast("Create or select a table order first"); return }
             order.completed -> { toast("Table already billed — cannot add items"); return }
         }
-        if (directAddToCart && !picked.allowFraction) {
+        if (directAddToCart) {
             val before = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
             addToCart(picked, 1.0, picked.price)
             val after = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
@@ -2673,18 +2680,47 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** Opens the shared grocery product popup; on confirm the item joins the cart. */
     private fun showProductEntry(p: ProductEntryDialog.Product, onAdded: (() -> Unit)? = null) {
-        // "Enter Quantity" general setting: on lets the quantity be typed in the popup,
-        // off fixes it to 1 (the default add). Off when the setting was never saved.
-        val qtyEditable = com.example.synergic_pos_offline.utils.SettingsCache
+        // "Enter Quantity" (General Settings) decides whether the quantity can be
+        // TYPED on this popup:
+        //
+        //   on  - the box is open, and opens on 1 with that 1 selected, so typing a
+        //         figure replaces it and confirming without typing still adds one.
+        //   off - the box is fixed at 1. The dish goes on as a single, and quantity is
+        //         adjusted afterwards with the cart line's own steppers.
+        //
+        // NO FRACTION EXCEPTION HERE. Adding from the menu puts the dish on as a
+        // single and nothing more; a fractional unit is weighed afterwards, by tapping
+        // the line in the cart and typing the figure there - see editCartLine, which
+        // does carry the exception.
+        //
+        // Splitting it that way keeps the menu grid quick. Ordering is mostly tapping
+        // tiles, and a popup that stops for a decimal on every dish priced by weight
+        // would slow the common case down for the sake of the uncommon one - the more
+        // so with Enter Quantity deliberately switched off, which is a shop saying it
+        // does not want to be asked.
+        val quantityStatusOn = com.example.synergic_pos_offline.utils.SettingsCache
             .value(requireContext(), "G", "Quantity Status") == "1"
+        val qtyEditable = quantityStatusOn
+        // Manual Rate (App Settings) governs the rate box the same way it does in
+        // grocery. It was not being passed at all, so the restaurant let a rate be
+        // re-typed on every dish whatever the shop had set.
+        val manualRateOn = com.example.synergic_pos_offline.utils.SettingsCache
+            .value(requireContext(), "A", "Manual Rate") == "1"
         ProductEntryDialog.show(
             context = requireContext(),
             inflater = layoutInflater,
             product = p,
             startRate = p.price,
+            // Always 1, never 0. Opening at zero makes an untouched confirm add
+            // nothing, and the common case at a counter is one of something.
             startQty = 1.0,
             confirmLabel = "Add to cart",
             qtyEditable = qtyEditable,
+            // Cursor in the quantity with the 1 selected, so the first key typed
+            // replaces it rather than making 11.
+            focusQty = qtyEditable,
+            focusRate = manualRateOn,
+            rateEditable = manualRateOn,
             taxRegime = taxRegime,
             taxInclusive = taxInclusive,
             itemwiseDiscountActive = itemwiseDiscountActive,
@@ -2692,6 +2728,71 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         ) { qty, rate ->
             addToCart(p, qty, rate)
             onAdded?.invoke()
+        }
+    }
+
+    /**
+     * Reopens a cart line in the product popup so its quantity or rate can be changed.
+     *
+     * [pendingOnly] follows the list the tap came from. The order panel shows the round
+     * that has NOT gone to the kitchen, and states that round's quantity - so the popup
+     * opens on the same figure the row showed, and what comes back is added to what was
+     * already sent rather than replacing it. The More popup lists whole lines, so there
+     * it is the whole line that opens.
+     *
+     * Without that, tapping a line reading "1" on a table that had already been sent 2
+     * would open on 3 and, on confirm, silently cancel two plates the kitchen was
+     * cooking.
+     */
+    private fun editCartLine(item: CartItem, pendingOnly: Boolean) {
+        val order = currentOrder() ?: return
+        if (order.completed) return toast("Table already billed")
+        // The popup is built from the MENU entry, which carries the photo, the unit,
+        // the fraction rule and the tax rates it needs. A line whose dish has since
+        // been removed from the menu has no such entry - the line stays on the order
+        // and stays billable, it just cannot be reopened here.
+        val p = allProducts.firstOrNull { it.product.id == item.productId.toString() }?.product
+            ?: return toast("${item.name} is no longer on the menu")
+
+        val quantityStatusOn = com.example.synergic_pos_offline.utils.SettingsCache
+            .value(requireContext(), "G", "Quantity Status") == "1"
+        val shown = if (pendingOnly) item.pending else item.qty
+        ProductEntryDialog.show(
+            context = requireContext(),
+            inflater = layoutInflater,
+            product = p,
+            startRate = item.rate,
+            startQty = shown,
+            confirmLabel = "Update",
+            // THE SAME RULE AS THE ADD POPUP. "Enter Quantity" is about whether a
+            // quantity is ever typed on this till, not about which popup is open - so
+            // with it off the box is fixed here too, and the cart line's steppers are
+            // how a quantity moves. Left open, this popup was a way round the setting:
+            // tap the line, type anything.
+            //
+            // A fractional unit still opens it, for the reason it does on the add.
+            qtyEditable = quantityStatusOn || p.allowFraction,
+            focusQty = quantityStatusOn || p.allowFraction,
+            // Manual Rate still governs the rate, the same as on the add above - a
+            // line's price is no more re-typeable after the fact than it was when the
+            // dish went on.
+            rateEditable = com.example.synergic_pos_offline.utils.SettingsCache
+                .value(requireContext(), "A", "Manual Rate") == "1",
+            taxRegime = taxRegime,
+            taxInclusive = taxInclusive,
+            itemwiseDiscountActive = itemwiseDiscountActive,
+            discountPreTax = discountPreTax
+        ) { qty, rate ->
+            // Back to a whole-line quantity: on the panel the figure typed is the new
+            // pending round, and what the kitchen already has stays on top of it.
+            val newQty = if (pendingOnly) item.kotQty + qty else qty
+            if (newQty > item.qty && exceedsStock(item.productId.toString(), newQty, item.dbItemId)) {
+                return@show
+            }
+            roDao.setItemLine(item.dbItemId, newQty, rate)
+            reloadItems(order)
+            renderCart()
+            fillAgain()   // the More popup, if it is the one open behind this
         }
     }
 
@@ -2924,6 +3025,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         btnPlus.visibility = editing
         btnMinus.visibility = editing
         btnRemove.visibility = editing
+        // TAP THE LINE TO OPEN IT, the way the grocery cart does. The steppers move a
+        // quantity by one; this is for the rest - a quantity typed rather than tapped
+        // to, and a rate priced by hand where App Settings allows it. Same popup the
+        // menu tile opens, so a line is corrected in the screen it was created in.
+        //
+        // Off on a billed order, which is read-only, and off on the row's own controls:
+        // the stepper and the bin sit inside the row, and a tap on either must not also
+        // open the popup behind it.
+        row.setOnClickListener(if (locked) null else View.OnClickListener {
+            editCartLine(item, showPending)
+        })
+        row.isClickable = !locked
+
         if (!locked) {
             btnPlus.setOnClickListener {
                 // Only a step up can outrun the shelf; stepping down never can.
