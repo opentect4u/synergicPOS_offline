@@ -538,31 +538,28 @@ class ProductsFragment : DataTableFragment() {
             // tax or discount is a different rate, and that is how one is made.
             val etVat = row.findViewById<TextInputEditText>(R.id.etRateVat)
 
-            // GONE, not greyed. A disabled box reads as a figure this product is
-            // expected to have and simply cannot be typed yet; an absent one says the
-            // till does not charge that tax, which is the truth.
+            // ALL FOUR TAX BOXES ARE ALWAYS ON SCREEN AND ALWAYS EDITABLE. Tax
+            // Settings has no say here.
             //
-            // "OR it already has one" is what keeps a switched-off tax from hiding
-            // data: a rate carrying VAT still shows its VAT box on a VAT-off till, so
-            // a figure that is already behind bills stays visible and stays saved.
-            // Nothing is lost either way - collectRate reads the fields whether or not
-            // they are on screen - but a figure nobody can see is a figure nobody can
-            // correct.
+            // They used to be GONE where the till did not charge that tax, which meant
+            // the same product opened on a GST till and on a VAT one was two different
+            // forms with nothing on either to say why. The master records what a
+            // product IS taxed at; which of those taxes a till happens to charge today
+            // is the billing screens' question, and they read the setting for
+            // themselves. A shop can therefore carry a VAT figure against the day it
+            // sells under VAT, without switching a setting to type it.
+            //
+            // The only rule left is the one below, and it is about the product rather
+            // than the till: a rate is under VAT or under GST, never both.
             fun show(id: Int, visible: Boolean) {
                 row.findViewById<android.view.View>(id)?.visibility =
                     if (visible) android.view.View.VISIBLE else android.view.View.GONE
             }
             fun has(v: String?) = (v?.toDoubleOrNull() ?: 0.0) > 0.0
-            val keepGst = gstOn || has(prefill?.cgst) || has(prefill?.sgst)
-            val keepIgst = gstOn || has(prefill?.igst)
-            val keepVat = vatOn || has(prefill?.vat)
-            val keepDiscount = itemWiseDiscount || has(prefill?.discount)
-            show(R.id.rowRateGst, keepGst)
-            show(R.id.tilRateIgst, keepIgst)
-            show(R.id.tilRateVat, keepVat)
-            // The row goes only once both halves of it have.
-            show(R.id.rowRateIgstVat, keepIgst || keepVat)
-            show(R.id.rowRateDiscount, keepDiscount)
+            // The discount row is a different question - not which tax this rate
+            // carries but whether the till discounts per item at all - so it keeps the
+            // hide-when-it-does-not-apply rule.
+            show(R.id.rowRateDiscount, itemWiseDiscount || has(prefill?.discount))
 
             // A SAVED RATE'S TAX AND DISCOUNT ARE EDITABLE.
             //
@@ -616,6 +613,21 @@ class ProductsFragment : DataTableFragment() {
             //
             // A blank counts as unfilled, so a figure of 0 does not lock out the other
             // side - the rule is about which tax this rate is under, not about zero.
+            //
+            // THE ONE RULE: a rate is under VAT or under GST, never both.
+            //
+            //   VAT typed              -> CGST, SGST and IGST go grey.
+            //   CGST, SGST or IGST typed -> VAT goes grey.
+            //
+            // And inside GST the same exclusion again, because CGST+SGST is an
+            // intra-state sale and IGST an inter-state one, and a line is one or the
+            // other: filling either side greys the opposite one.
+            //
+            // Nothing here reads Tax Settings. Which tax the till charges is a
+            // question for the screens that price a bill; this form records what the
+            // product is taxed at, and every box on it stays open until the rule above
+            // closes one. Clearing a box is what re-opens the other side, which is how
+            // a rate is moved from one tax to the other.
             fun syncTaxFields() {
                 val vatFilled = !etVat.text.isNullOrBlank()
                 val cgstSgstFilled = !etCgst.text.isNullOrBlank() || !etSgst.text.isNullOrBlank()

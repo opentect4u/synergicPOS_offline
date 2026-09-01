@@ -382,6 +382,17 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         }.getOrDefault(false)
         total = if (roundOffOn) BillRounding.payable(exactTotal) else BillRounding.toPaise(exactTotal)
         root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(subtotal)}"
+        // The discount, said out loud. It has always been taken off the total here -
+        // pre-tax inside each line's taxable value, post-tax off `goods` above - but
+        // the breakup never carried a line for it, so the page showed a subtotal of
+        // 220 and a total of 210 with nothing to account for the difference. The
+        // figure is the Orders screen's own (see billDiscount), so this row and the
+        // panel's Note & tax details row are the same number by construction.
+        //
+        // Signed, and hidden at zero, exactly as the panel does it.
+        root.findViewById<View>(R.id.rowCheckoutDiscount).visibility =
+            if (billDiscount > 0.0) View.VISIBLE else View.GONE
+        root.findViewById<TextView>(R.id.tvCheckoutDiscount).text = "- ₹ ${money(billDiscount)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(service)}"
 
         val llCharges = root.findViewById<LinearLayout>(R.id.llCheckoutCharges)

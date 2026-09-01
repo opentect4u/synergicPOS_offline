@@ -154,6 +154,18 @@ class DatabaseHelper private constructor(context: Context) :
         // from the slip in the customer's hand. Reserving it here makes the printed
         // number the number, and makes it taken as far as the next table is concerned.
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "bill_seq_no", "INTEGER")
+        // The WHOLE-BILL discount typed against this table, and how to read it
+        // ("A" for a flat amount, otherwise a percentage - the same convention the
+        // item rows use).
+        //
+        // On the order for the same reason bill_seq_no is: a restaurant prints the
+        // bill and settles it later, with other tables served in between, so anything
+        // the printed slip says has to survive the operator walking away from this
+        // table and coming back. Held on the screen instead, it was wiped the moment
+        // another table was opened - the slip in the guest's hand said 5% off and the
+        // settlement charged full price, with nothing on either screen looking wrong.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "bill_discount", "REAL DEFAULT 0")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "bill_discount_type", "TEXT")
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "kot_qty", "REAL DEFAULT 0")
         // Per-item GST captured at order time, so the bill taxes each product dynamically.
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "cgst_rate", "REAL DEFAULT 0")

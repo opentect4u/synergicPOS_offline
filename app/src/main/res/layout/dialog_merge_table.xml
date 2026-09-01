@@ -31,7 +31,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Add active tables in the same section. The first table is kept; the rest merge into it."
+            android:text="Add tables from the same section that have sent their KOT. The first table is kept; the rest merge into it."
             android:textSize="13sp"
             android:textColor="@color/text_secondary" />
 
@@ -74,7 +74,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:layout_marginEnd="10dp"
-                android:hint="Select Table (Active)"
+                android:hint="Select Table"
                 app:boxCornerRadiusTopStart="12dp"
                 app:boxCornerRadiusTopEnd="12dp"
                 app:boxCornerRadiusBottomStart="12dp"

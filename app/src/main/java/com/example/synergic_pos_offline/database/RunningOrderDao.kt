@@ -32,7 +32,17 @@ class RunningOrderDao(context: Context) {
          * every open table on every redraw, and a query behind each name would be a
          * query per table per tap.
          */
-        val mergedTables: List<String> = emptyList()
+        val mergedTables: List<String> = emptyList(),
+        /**
+         * The whole-bill discount typed against this table, with [discountType] saying
+         * how to read it - "A" for a flat amount, anything else a percentage.
+         *
+         * Read with the order rather than held on the screen, because a restaurant
+         * prints the bill and settles it later with other tables served in between.
+         * See the note on the column in DatabaseHelper.
+         */
+        val discount: Double = 0.0,
+        val discountType: String? = null
     )
 
     data class RunningItem(
@@ -107,7 +117,11 @@ class RunningOrderDao(context: Context) {
         val args = if (store != null) arrayOf(store.toString()) else null
         helper.readableDatabase.query(
             orders,
-            arrayOf("id", "table_code", "section", "waiter_id", "order_type", "customer_phone", "cashier", "created_at", "order_note", "status", "merged_tables"),
+            arrayOf(
+                "id", "table_code", "section", "waiter_id", "order_type", "customer_phone",
+                "cashier", "created_at", "order_note", "status", "merged_tables",
+                "bill_discount", "bill_discount_type"
+            ),
             where, args, null, null, "id DESC"
         ).use { c ->
             while (c.moveToNext()) {
@@ -126,7 +140,9 @@ class RunningOrderDao(context: Context) {
                         note = c.getString(8).orEmpty(),
                         status = c.getString(9)?.ifBlank { "RUNNING" } ?: "RUNNING",
                         mergedTables = c.getString(10).orEmpty()
-                            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                            .split(",").map { it.trim() }.filter { it.isNotEmpty() },
+                        discount = if (c.isNull(11)) 0.0 else c.getDouble(11),
+                        discountType = c.getString(12)?.takeIf { it.isNotBlank() }
                     )
                 )
             }
@@ -291,6 +307,28 @@ class RunningOrderDao(context: Context) {
     fun setPhone(orderId: Long, phone: String) {
         helper.writableDatabase.update(
             orders, ContentValues().apply { put("customer_phone", phone.ifBlank { null }) },
+            "id = ?", arrayOf(orderId.toString())
+        )
+    }
+
+    /**
+     * Holds the whole-bill discount typed against this table, until it settles.
+     *
+     * The counterpart of [setBillSeq], and there for the same reason: what the printed
+     * slip says has to survive the operator serving another table and coming back. A
+     * discount that lived only on the screen was cleared by the next table opened, so
+     * the guest held a slip saying 5% off and the settlement charged the full amount.
+     *
+     * [type] is "A" for a flat rupee amount, anything else a percentage - the
+     * convention the item rows already use for their own discounts.
+     */
+    fun setDiscount(orderId: Long, value: Double, type: String?) {
+        helper.writableDatabase.update(
+            orders,
+            ContentValues().apply {
+                put("bill_discount", value)
+                if (type.isNullOrBlank()) putNull("bill_discount_type") else put("bill_discount_type", type)
+            },
             "id = ?", arrayOf(orderId.toString())
         )
     }
