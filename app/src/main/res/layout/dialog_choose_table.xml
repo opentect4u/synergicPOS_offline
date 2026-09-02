@@ -197,6 +197,38 @@
                     android:textSize="14sp"
                     android:textColor="@color/text_secondary" />
 
+                <!-- Cleaning and Blocked. Both are statuses the Table master sets, so
+                     both DO appear on the grid - they were the two colours on the
+                     floor plan with nothing here to name them, which is the half of a
+                     legend that sends the eye back to the cards guessing. -->
+                <View
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:background="@drawable/bg_legend_dot"
+                    android:backgroundTint="#F59E0B" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="7dp"
+                    android:layout_marginEnd="18dp"
+                    android:text="Cleaning"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary" />
+
+                <View
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:background="@drawable/bg_legend_dot"
+                    android:backgroundTint="#475569" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="7dp"
+                    android:layout_marginEnd="22dp"
+                    android:text="Blocked"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary" />
+
                 <!-- No KOT keys. The cards no longer take a kitchen colour, so a
                      purple and a teal key here would name two colours that never
                      appear on the floor plan - and a legend listing colours the grid

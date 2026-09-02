@@ -571,6 +571,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             resolveKotPrinterThenPrint(order)
         }
 
+        // Add / Edit Customer → attach somebody to the open take-away token.
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAddCustomer)
+            .setOnClickListener { onAddCustomer() }
+
         // Table Actions → Transfer, Merge, Split and Cancel Order, behind one control.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnTableActions)
             .setOnClickListener { showTableActionsMenu(it) }
@@ -585,7 +589,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 // button is not tappable in this state, but the rule is what matters
                 // and it should not live only in a view's enabled flag.
                 !kotSent(order) -> toast("Send the KOT first — the bill goes to the table after the kitchen has the order")
-                else -> withCustomerIfTakeAway(order) { resolveBillPrinterThenPrint(order) }
+                else -> resolveBillPrinterThenPrint(order)
             }
         }
 
@@ -636,7 +640,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 // page to get past on the way to taking the money - and it costs the
                 // counter the order it was working on and a trip back.
                 order.type.equals("Take Away", ignoreCase = true) ->
-                    withCustomerIfTakeAway(order) { showQuickPayment(order) }
+                    showQuickPayment(order)
                 else -> {
                     val names = ArrayList(order.items.map { it.name })
                     val qtys = order.items.map { it.qty }.toDoubleArray()
@@ -741,17 +745,6 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private fun appSettingOn(key: String): Boolean =
         SettingsCache.value(requireContext(), "A", key) == "1"
-
-    /**
-     * Whether this till collects customer details - General Settings ▸ Customer Info.
-     *
-     * Read on each use rather than cached on the fragment: it is a General Settings
-     * trip away, and unlike the App Settings flags above it is asked once per order
-     * rather than once per tap, so there is nothing to save by holding it.
-     */
-    private fun customerInfoOn(): Boolean =
-        com.example.synergic_pos_offline.database.GeneralSettingsDao
-            .isCustomerInfoEnabled(requireContext())
 
     override fun onDestroyView() {
         // A ListPopupWindow is a window, not a child of this view: left showing, it
@@ -914,6 +907,31 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             text = if (takeAway) "Take Away" else tableDisplayName(order); setTextColor(accent)
         }
         root.findViewById<TextView>(R.id.tvDetailCustomer).text = order.phone.ifBlank { "Walk-in" }
+        // THE ONLY WAY A TAKE-AWAY GETS A CUSTOMER, and it is optional. Beside the tag
+        // it edits, because reading "Walk-in" is what prompts the change.
+        //
+        // Take-away only: a table order is identified by its table, and only a counter
+        // order's bill carries a name and number.
+        //
+        // One button, two states. "Add Customer" while the tag reads Walk-in, "Edit"
+        // once somebody is on the order, so a number taken down wrongly at the counter
+        // can be corrected instead of the order having to be cancelled.
+        //
+        // GENERAL SETTINGS' CUSTOMER INFO DOES NOT GATE THIS, and briefly did.
+        //
+        // That setting belongs to the grocery till, where it decides whether the sale
+        // screen stops to ask for a customer before a bill. Nothing here stops to ask:
+        // this button is the only route, and pressing it is already the operator
+        // saying they want one. Reading the setting only meant a counter that had
+        // switched off the grocery prompt found the restaurant's button missing too,
+        // with nothing on either screen connecting the two.
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAddCustomer)
+            .apply {
+                visibility = if (takeAway) View.VISIBLE else View.GONE
+                val none = order.phone.isBlank()
+                text = if (none) "Add Customer" else "Edit"
+                setIconResource(if (none) R.drawable.ic_plus else R.drawable.ic_edit)
+            }
         // TAKE AWAY HAS ONE BUTTON, NOT TWO. A table is billed and paid as two acts,
         // minutes apart: the bill goes out, the guests read it, and they settle when
         // they are ready - so Print Bill and Settlement are two controls because they
@@ -1031,6 +1049,52 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         menu.show()
     }
 
+    /**
+     * Puts a customer on the open take-away token, or changes the one on it.
+     *
+     * The counter could only be asked for a customer at two moments: as the token was
+     * opened, where Skip is offered because a queue does not wait for an address, and
+     * again at the bill, where it is insisted on. Between those two there was nowhere
+     * to put a name - a customer who gave their number after ordering had to be held
+     * in the operator's head until the bill, and one whose number was taken down wrong
+     * could not be corrected at all.
+     *
+     * The same prompt either way, so the counter answers one form wherever it is
+     * reached from. It is the customer master's own picker, so an existing customer is
+     * looked up rather than re-typed, and a new one is created once.
+     */
+    private fun onAddCustomer() {
+        val order = currentOrder() ?: return toast("Select an order first")
+        if (!order.type.equals("Take Away", ignoreCase = true))
+            return toast("Only a take-away carries a customer — a table order is its table")
+        // A printed bill already carries the customer it was printed with. Changing it
+        // now would leave the slip in the customer's hand naming somebody else.
+        if (order.completed) return toast("Order already billed — the customer cannot be changed")
+
+        val none = order.phone.isBlank()
+        com.example.synergic_pos_offline.utils.CustomerPrompt.showDetails(
+            context = requireContext(),
+            title = if (none) "Customer details" else "Change customer",
+            positiveText = "Save",
+            // No skip: this form was ASKED for. Skip is offered where the prompt
+            // interrupts something - the order being started - and here it is the
+            // errand itself, so backing out is the back press, which lands on nothing.
+            showSkip = false,
+            // Edit opens on the customer already on the order, so the form arrives
+            // filled in - their number, and their name and address off the master.
+            phone = order.phone,
+            onPicked = { c ->
+                // Kept on the running order, not just in memory: the bill is written
+                // from the order, reprints read it back, and the number has to survive
+                // the screen being left and come back with the order.
+                order.phone = c.phone
+                roDao.setPhone(order.dbId, c.phone)
+                showOrderDetail(order)          // the tag and this button's label follow
+                toast(if (c.phone.isBlank()) "Customer removed" else "Customer saved")
+            }
+        )
+    }
+
     /** Transfer: move this order to another available table in the same section. */
     private fun onTransfer() {
         if (!tableShiftOn) return toast("Table Shift is switched off in App Settings")
@@ -1143,91 +1207,47 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val root = view ?: return
         root.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
             .check(R.id.btnTakeAway)
-        // THE PROMPT ALWAYS SHOWS.
+        // NO CUSTOMER PROMPT. The order starts, and the customer is added afterwards
+        // if there is one - see [onAddCustomer], the Add Customer button beside the
+        // token on the panel.
         //
-        // It used to return here when any take-away was already running - "no duplicate
-        // token" - which meant that once one counter order was open, Take Away silently
-        // re-selected it and the customer was never asked for again. A counter serves
-        // one customer after another, and each of them is their own order with their
-        // own name on it.
-        askTakeAwayCustomer { name, phone ->
-            // An EMPTY take-away already open is reused rather than adding a second
-            // token beside it. That is the case the old guard was really protecting
-            // against: tapping Take Away twice, or skipping the prompt and coming back,
-            // should not leave a trail of TA-1, TA-2, TA-3 with nothing on any of them.
-            // One with items on it is a real order being served and is left alone.
-            val reusable = orders.firstOrNull {
-                it.type.equals("Take Away", ignoreCase = true) && !it.completed && it.items.isEmpty()
-            }
-            if (reusable != null) {
-                reusable.phone = phone
-                roDao.setPhone(reusable.dbId, phone)
-                // RENUMBERED to whatever Token Numbering says now.
-                //
-                // An empty token that is reused kept whatever code it was cut with, so
-                // a counter that changed the start number, the prefix or the reset
-                // period saw the old token again and nothing appear to happen. The
-                // number is worked out fresh here, with this order left out of the
-                // count so it is not compared against itself and climbing on every
-                // look. Unchanged settings therefore produce the same code and the
-                // token sits still, which is the point of reusing it.
-                val fresh = nextTakeAwayCode(excludeOrderId = reusable.dbId)
-                if (!fresh.equals(reusable.id, ignoreCase = true)) {
-                    roDao.transferTable(reusable.dbId, fresh)
-                    reusable.id = fresh
-                }
-                selectOrder(reusable)
-            } else {
-                openNewOrder(nextTakeAwayCode(), section = "", phone = phone, type = "Take Away")
-            }
-            toast(
-                if (name.isBlank()) "Take-away order started — add items, then Settlement"
-                else "Take-away order for $name — add items, then Settlement"
-            )
+        // A form used to stand between Take Away and the order, with Skip on it. That
+        // is the wrong way round for a counter: most orders have no customer to record,
+        // so the usual answer was Skip, and a question whose usual answer is "no" is a
+        // tap charged to every order to catch the few that say yes. Asking afterwards
+        // costs nothing on the orders that have nobody, and the ones that do can be
+        // filled in while the food is being made rather than with a queue waiting.
+        //
+        // An EMPTY take-away already open is reused rather than adding a second token
+        // beside it - tapping Take Away twice should not leave a trail of TA-1, TA-2,
+        // TA-3 with nothing on any of them. One with items on it is a real order being
+        // served and is left alone.
+        val reusable = orders.firstOrNull {
+            it.type.equals("Take Away", ignoreCase = true) && !it.completed && it.items.isEmpty()
         }
-    }
-
-    /**
-     * Asks who the take-away is for - the SAME prompt the grocery till uses.
-     *
-     * A dine-in order has a table to be known by: the floor calls out "table 7" and
-     * everyone knows which order that is. A take-away has only a token number, so the
-     * customer is part of the order rather than an extra on it, and is asked for
-     * first.
-     *
-     * What it asks, and what it writes, is CustomerPrompt's business rather than this
-     * screen's - one phone number, found or created in md_customers, never a
-     * duplicate. This screen only decides WHEN to ask and what to do with the answer.
-     * Written out twice the two would drift, and a shop's address book collecting two
-     * records for one phone because two screens disagreed about what counts as the
-     * same customer is a fault nobody notices until the list is unusable.
-     *
-     * Skip is the way past it: a counter with a queue must be able to take an order
-     * without an interrogation, and a walk-in has no customer to record. Skipping
-     * starts the order with nobody attached and writes nothing to the customer list.
-     *
-     * ASKED ONLY WHERE THE TILL COLLECTS CUSTOMERS AT ALL. With General Settings ▸
-     * Customer Info off the shop keeps no customer list, so there is nothing for an
-     * answer to be filed in and nothing later reads it - the prompt is skipped and the
-     * order runs with nobody attached, exactly as pressing Skip would leave it.
-     */
-    private fun askTakeAwayCustomer(onDone: (name: String, phone: String) -> Unit) {
-        if (!customerInfoOn()) return onDone("", "")
-        com.example.synergic_pos_offline.utils.CustomerPrompt.showDetails(
-            context = requireContext(),
-            title = "Take Away — customer",
-            positiveText = "Start Order",
-            // Skip is offered. A counter with a queue has to be able to take an order
-            // without an interrogation, and a walk-in paying cash for a coffee has no
-            // customer to record - so there is a way past the form that does not
-            // require knowing the back press does the same thing.
-            showSkip = true,
-            skipText = "Skip",
-            // Skip and the back press mean the same thing: start the order with nobody
-            // attached. Neither writes to the customer list.
-            onCancel = { onDone("", "") },
-            onPicked = { c -> onDone(c.name, c.phone) }
-        )
+        if (reusable != null) {
+            // RENUMBERED to whatever Token Numbering says now.
+            //
+            // An empty token that is reused kept whatever code it was cut with, so
+            // a counter that changed the start number, the prefix or the reset
+            // period saw the old token again and nothing appear to happen. The
+            // number is worked out fresh here, with this order left out of the
+            // count so it is not compared against itself and climbing on every
+            // look. Unchanged settings therefore produce the same code and the
+            // token sits still, which is the point of reusing it.
+            val fresh = nextTakeAwayCode(excludeOrderId = reusable.dbId)
+            if (!fresh.equals(reusable.id, ignoreCase = true)) {
+                roDao.transferTable(reusable.dbId, fresh)
+                reusable.id = fresh
+            }
+            // Its customer is left alone. A token reused is the same token, and
+            // clearing whoever was put on it would undo an Add Customer done a moment
+            // before by tapping the button that opened it.
+            selectOrder(reusable)
+        } else {
+            openNewOrder(nextTakeAwayCode(), section = "", phone = "", type = "Take Away")
+        }
+        toast("Take-away order started — add items, then Settlement")
     }
 
     /** Choose Table, greyed out the same way the other dine-in-only actions are. */
@@ -1411,6 +1431,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvDetailTableLabel).visibility = View.VISIBLE
         root.findViewById<TextView>(R.id.tvDetailTable).text = "—"
         root.findViewById<TextView>(R.id.tvDetailCustomer).text = "Walk-in"
+        // Nothing selected, so there is no order to put a customer on.
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAddCustomer)
+            .visibility = View.GONE
         root.findViewById<TextView>(R.id.tvDetailGuests).text = "—"
         root.findViewById<TextView>(R.id.tvDetailOrderTime).text = "Order Time: —"
         setDineInActionsEnabled(root, true)   // neutral state: actions available again
@@ -1470,7 +1493,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             rippleColor = ColorStateList.valueOf(ColorUtils.setAlphaComponent(accent, 0x1A))
         }
         filled(R.id.btnBillPay)
-        textOnly(R.id.btnToggleSummary)
+        textOnly(R.id.btnToggleSummary); textOnly(R.id.btnAddCustomer)
         outlined(R.id.btnPrintKot); outlined(R.id.btnChooseTable)
         outlined(R.id.btnToggleOrders)
         outlined(R.id.btnTableActions); outlined(R.id.btnBillPrint)
@@ -2199,7 +2222,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * THAT order is settled - see settlePaidOrder.
      */
     private fun mergedPartsInUse(): Set<String> =
-        orders.flatMap { runCatching { roDao.mergedTablesOf(it.dbId) }.getOrDefault(emptyList()) }
+        orders.flatMap { o ->
+            runCatching { roDao.mergedTablesOf(o.dbId) }.getOrDefault(emptyList())
+                // A code that has since picked up an order of ITS OWN is not being
+                // carried by this bill any more. Merged tables are handed back to the
+                // floor as the merge happens, so one of them can be seated again while
+                // the bill it used to be on is still open - and it stays on that bill's
+                // merged_tables for ever, because that is what keeps the bill named
+                // "1 + 2". Counting it here would hold a split open on the strength of
+                // a part that has moved on, and no later settlement would release it.
+                .filter { code -> orderFor(code, o.section) == null }
+        }
             .filter { it.isNotBlank() }
             .toSet()
 
@@ -2658,42 +2691,96 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // on nothing. See the dismiss listener below for the one case it does not.
         var pickedATable = false
 
+        // A CLEANING OR BLOCKED TABLE KEEPS THE PLAN OPEN. Every other tap closes it,
+        // as it always has.
+        //
+        // Those two are the states a table passes THROUGH rather than sits in: a table
+        // being wiped down or taken out of service is one the operator will pick a
+        // different table instead of, there and then. Dismissing on the refusal shut
+        // the floor plan and dropped them on the sale screen, so choosing the next
+        // table meant opening the plan again.
+        //
+        // Reserved and Occupied are left exactly as they were. They are answers about a
+        // table that is somebody's, and the operator's next move after one of those is
+        // not necessarily another table on this plan.
         val adapter = TableAdapter(accent) { t ->
-            pickedATable = true
-            dialog.dismiss()
-            // A MERGED TABLE OPENS THE BILL IT WAS MERGED INTO.
-            //
-            // Merging moves the items onto the kept table and closes this one's order,
-            // so the table still reads Occupied - its guests are being served - while
-            // having no order of its own. Tapping it used to answer "Table 5 A is
-            // Occupied" and stop there, which is true and useless: the one thing an
-            // occupied table is tapped for is the bill it is on.
-            val existing = orderFor(t.code, t.section) ?: orderMergedInto(t.code)
             // Named with its room in every message: the number on its own belongs to
             // one table per section.
             val named = if (t.section.isBlank()) t.code else "${t.code} (${t.section})"
+
+            // A SPLIT PART reads its status off the tile. Its status lives in
+            // md_subtable, not md_table, so asking TableDao about "4 B" comes back
+            // with nothing - which read as "no status recorded", i.e. free, and let
+            // a part that was already taken start a second order on itself.
+            val status = if (t.code.contains(" ")) t.status
+            else TableDao(requireContext()).statusOf(t.code, t.section)
+            val free = status.isNullOrBlank() || status.equals("Available", ignoreCase = true)
+
+            // A FREE TABLE IS A FREE TABLE, even one that was merged away earlier.
+            //
+            // [performMerge] hands the merged-away tables straight back to the floor, so
+            // table 2 is empty and seatable the moment its food moved onto table 1's
+            // bill. But the kept order goes on naming it in merged_tables - that is how
+            // the bill still reads "1 + 2" - and tapping table 2 followed that record
+            // and re-opened table 1's bill. New guests at table 2 got the previous
+            // party's bill, and their first dish went onto it.
+            //
+            // The floor status decides, not the record: free means a new order on this
+            // table, and from there it is an ordinary separate table with its own KOT,
+            // its own bill and nothing to do with the merge it used to be part of.
+            val own = orderFor(t.code, t.section)
+            if (own == null && free) {
+                pickedATable = true
+                dialog.dismiss()
+                openNewOrder(t.code, t.section, "", "Dine In")
+                toast("Order created for table $named")
+                return@TableAdapter
+            }
+
+            // A MERGED TABLE THAT IS STILL HELD OPENS THE BILL IT WAS MERGED INTO.
+            //
+            // Merges made before tables were freed at merge time keep theirs Occupied
+            // with no order of their own, and the one thing such a table is tapped for
+            // is the bill its guests are on. Answering "Table 5 A is Occupied" is true
+            // and useless.
+            val existing = own ?: orderMergedInto(t.code)
             if (existing != null) {
+                pickedATable = true
+                dialog.dismiss()
                 selectOrder(existing)
                 toast(
                     if (existing.id.equals(t.code, ignoreCase = true)) "Table $named selected"
                     else "Table $named is merged into ${existing.id} — showing that bill"
                 )
             } else {
-                // Only a free table can start a new order; an occupied/billing one is
-                // busy on an order this table picker cannot reach.
+                // No bill to open and no order to start. Cleaning and Blocked hold the
+                // plan up so the next table can be picked straight away; anything else
+                // closes it, which is what every refusal used to do. See the note on
+                // the adapter above.
                 //
-                // A SPLIT PART reads its status off the tile. Its status lives in
-                // md_subtable, not md_table, so asking TableDao about "4 B" comes back
-                // with nothing - which read as "no status recorded", i.e. free, and let
-                // a part that was already taken start a second order on itself.
-                val status = if (t.code.contains(" ")) t.status
-                else TableDao(requireContext()).statusOf(t.code, t.section)
-                if (!status.isNullOrBlank() && !status.equals("Available", ignoreCase = true)) {
-                    toast("Table $named is $status")
-                } else {
-                    openNewOrder(t.code, t.section, "", "Dine In")
-                    toast("Order created for table $named")
+                // Each of the two says what the state MEANS and what to do about it,
+                // rather than reading the status field back. "Table 4 is Cleaning" is
+                // the database's sentence, not an answer: it leaves the operator to
+                // work out whether they are being told to wait, to pick another table,
+                // or to go and change something.
+                val cleaning = status.equals("Cleaning", ignoreCase = true)
+                val blocked = status.equals("Blocked", ignoreCase = true)
+                if (!cleaning && !blocked) {
+                    pickedATable = true
+                    dialog.dismiss()
                 }
+                toast(
+                    when {
+                        cleaning ->
+                            "Table $named is being cleaned — pick another table, or take it once it is ready"
+                        blocked ->
+                            "Table $named is blocked and cannot take an order — change its status in the Table master"
+                        else -> "Table $named is $status"
+                    },
+                    // The floor plan is still up behind these two, so the message has
+                    // the room to be read without holding anything up.
+                    long = cleaning || blocked
+                )
             }
         }
         // Eight across: a floor is read as a plan, and eight to a row fits a whole
@@ -2870,7 +2957,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // In the order the legend lists them, so the two read the same way round.
         // Reserved is not among them, and is not in the legend either: no table can
         // be set to it any more (see TableFragment's status list).
-        listOf("Available", "Occupied", "Bill Pending").forEach { label ->
+        //
+        // Cleaning and Blocked ARE, because the Table master still sets both - a floor
+        // with two tables out of service should say so in the tally, not leave them to
+        // be found by counting cards.
+        listOf("Available", "Occupied", "Bill Pending", "Cleaning", "Blocked").forEach { label ->
             val n = shown.count { lookOf(it.status).label == label }
             if (n > 0) boxes.add(Triple(label, n, lookOf(statusFor(label)).color))
         }
@@ -2932,12 +3023,28 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // and neither the tally nor the legend carries it. Reading it back honestly
         // is still better than showing a table that was held as one that is free;
         // editing its section in the Table master settles it to Available.
-        "reserved" -> StatusLook("Reserved", 0xFFF59E0B.toInt())
+        //
+        // Violet rather than the amber it used to be: amber now says Cleaning, and two
+        // statuses sharing a colour is the fault being fixed below.
+        "reserved" -> StatusLook("Reserved", 0xFF7C3AED.toInt())
         "billing" -> StatusLook("Bill Pending", 0xFF2563EB.toInt())
-        "cleaning" -> StatusLook("Cleaning", 0xFF0891B2.toInt())
-        "blocked" -> StatusLook("Blocked", 0xFF6B7280.toInt())
+        // CLEANING AND BLOCKED USED TO READ AS ONE COLOUR.
+        //
+        // Cleaning was a muted cyan (#0891B2) and Blocked a slate grey (#6B7280).
+        // Different values, but at the size of a floor-plan card, under a gradient and
+        // at a glance across a room, a desaturated cyan and a grey are the same colour -
+        // and the cyan sat close to Bill Pending's blue as well, so three of the six
+        // keys were competing in the same corner of the wheel.
+        //
+        // They are now at opposite ends of it, and each says something about the state:
+        // amber is a table being turned around and about to come back, dark slate is
+        // one deliberately out of service. Amber also matches how the rest of the app
+        // marks something to wait for.
+        "cleaning" -> StatusLook("Cleaning", 0xFFF59E0B.toInt())
+        "blocked" -> StatusLook("Blocked", 0xFF475569.toInt())
         // Never fall back to Available: a status this does not know is still not proof
         // the table is free, and showing a taken table as free is the costly mistake.
+        // A lighter grey than Blocked, so an unknown status does not pass for one.
         else -> StatusLook(status, 0xFF6B7280.toInt())
     }
 
@@ -3772,53 +3879,6 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * Picks the bill (BILL) printer from the Operating Printer master (print_flag = 'B'):
      * a default one prints straight away; otherwise the operator chooses one.
      */
-    /**
-     * Runs [then] once a TAKE-AWAY order has a customer on it, asking for one first if
-     * it has none. Any other order type goes straight through.
-     *
-     * A take-away bill carries the customer's name and number (see [buildBillDraft]),
-     * and a slip printed without them is a slip nobody can be matched to when they
-     * come back to the counter to collect - which is the whole reason the counter
-     * takes a name. So the bill is where the details stop being optional.
-     *
-     * NOT at the start of the order. Skip is offered there on purpose - a queue does
-     * not wait for an address, and the order still has to be able to be taken. Asking
-     * again here, once, is what makes both true: the order starts immediately, and the
-     * bill still goes out with a customer on it.
-     *
-     * Nothing prints if the prompt is turned down. That is what "no details, no bill"
-     * means, and it is said out loud rather than silently doing nothing.
-     */
-    private fun withCustomerIfTakeAway(order: OrderCard, then: () -> Unit) {
-        // Nothing to require where the till keeps no customers. With General Settings ▸
-        // Customer Info off there is no customer list to look anybody up in, so
-        // insisting on details before a bill would be refusing to print over a record
-        // the shop has chosen not to keep.
-        if (!customerInfoOn()) return then()
-        if (!order.type.equals("Take Away", ignoreCase = true) || order.phone.isNotBlank()) {
-            return then()
-        }
-        com.example.synergic_pos_offline.utils.CustomerPrompt.showDetails(
-            context = requireContext(),
-            title = "Customer details — needed for the bill",
-            positiveText = "Save & Print",
-            // NO SKIP HERE, unlike the prompt that starts the order. There is nothing
-            // for a skip to mean at this point: the operator has asked for a bill, and
-            // a take-away bill without a customer is the thing being prevented.
-            showSkip = false,
-            onCancel = { toast("Bill not printed — a take-away bill needs customer details") },
-            onPicked = { c ->
-                // Kept on the running order, not just in memory: the bill is written
-                // from the order, reprints read it back, and the number has to survive
-                // the screen being left and come back with the order.
-                order.phone = c.phone
-                roDao.setPhone(order.dbId, c.phone)
-                showOrderDetail(order)   // the header stops saying "Walk-in"
-                then()
-            }
-        )
-    }
-
     /**
      * Settles a take-away order in place: how it was paid, what was handed over, done.
      *
@@ -4839,10 +4899,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * long after the taps are over.
      */
     private var liveToast: android.widget.Toast? = null
-    private fun toast(msg: String) {
+    /**
+     * [long] for a message that says more than what happened - a refusal that also
+     * names what to do about it. The default stays SHORT, which is right for the
+     * confirmations that make up nearly every call here: a short one read twice is
+     * better than a long one still on screen over the next tap.
+     */
+    private fun toast(msg: String, long: Boolean = false) {
         liveToast?.cancel()
         liveToast = android.widget.Toast
-            .makeText(requireContext(), msg, android.widget.Toast.LENGTH_SHORT)
+            .makeText(
+                requireContext(), msg,
+                if (long) android.widget.Toast.LENGTH_LONG else android.widget.Toast.LENGTH_SHORT
+            )
             .also { it.show() }
     }
 

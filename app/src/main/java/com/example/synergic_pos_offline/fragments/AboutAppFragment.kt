@@ -814,6 +814,9 @@ class AboutAppFragment : Fragment(), TitledScreen {
                 "on the ledger and on the customer, with the bill it came from gone." +
                 "\n\n• Stock stays sold. The goods left the shop, so the quantities are " +
                 "not put back." +
+                "\n\n• The floor is cleared too. Tables still open lose their orders, any " +
+                "split is undone, and every table goes back to Available - including any " +
+                "you had blocked, which must be blocked again in the Table master." +
                 "\n\nProducts, customers and every setting are left as they are.",
             positiveText = "Erase Bills",
             negativeText = "Cancel",
@@ -834,11 +837,29 @@ class AboutAppFragment : Fragment(), TitledScreen {
                 title = "Bills erased",
                 message = "${outcome.bills} bill(s) erased. The next bill will be " +
                     "numbered ${outcome.nextNumber}." +
+                    // Said only when there was a floor to clear, so a grocery till is
+                    // not told about tables it does not have.
+                    floorNote(outcome) +
                     "\n\nThe till as it was is saved to $backup. It leaves out this " +
                     "device's users and store registration, so restoring it brings the " +
                     "bills back without changing who can sign in."
             )
         }
+    }
+
+    /**
+     * What the erase did to the floor, or nothing at all where there is no floor.
+     *
+     * A grocery till has no tables, so both figures are zero and it is told about
+     * bills alone rather than about a part of the app it does not run.
+     */
+    private fun floorNote(outcome: BillErase.Outcome): String {
+        if (outcome.openTables == 0 && outcome.tablesFreed == 0) return ""
+        val open = outcome.openTables.takeIf { it > 0 }
+            ?.let { "$it open table order(s) cleared" }
+        val freed = outcome.tablesFreed.takeIf { it > 0 }
+            ?.let { "$it table(s) back to Available" }
+        return "\n\n" + listOfNotNull(open, freed).joinToString(", ") + "."
     }
 
     // ---- The master tables on their own ---------------------------------------

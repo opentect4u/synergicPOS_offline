@@ -187,6 +187,32 @@
                     android:textSize="13sp"
                     android:textColor="@color/primary_blue" />
 
+                <!-- Customer details for a TAKE-AWAY, on demand.
+                     Beside the customer tag it edits, because that tag is the thing
+                     being changed and reading "Walk-in" is what prompts the change.
+                     A take-away's customer could only be entered as the token was
+                     opened, or refused at Print Bill; a counter that took a name after
+                     the order had started had nowhere to put it.
+                     Shown for take-away only - a table's customer is the table. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAddCustomer"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="10dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="Add Customer"
+                    android:textSize="13sp"
+                    android:textAllCaps="false"
+                    android:visibility="gone"
+                    app:icon="@drawable/ic_plus"
+                    app:iconSize="14dp"
+                    app:iconPadding="4dp"
+                    app:cornerRadius="10dp" />
+
                 <TextView
                     android:id="@+id/tvDetailGuests"
                     android:layout_width="wrap_content"
