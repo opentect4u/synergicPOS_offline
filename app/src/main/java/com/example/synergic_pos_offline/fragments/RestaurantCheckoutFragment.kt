@@ -63,6 +63,26 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         names.mapIndexed { i, n -> Triple(n, amounts.getOrElse(i) { 0.0 }, types.getOrNull(i) ?: "AMOUNT") }
     }
 
+    /** Each charge's rate, for the ones that are a percentage - see [chargeLabel]. */
+    private val chargeValues: DoubleArray by lazy {
+        arguments?.getDoubleArray(ARG_CHARGE_VALUES) ?: DoubleArray(0)
+    }
+
+    /**
+     * A charge as the Orders panel writes it: "Packing (5%)" for a percentage charge,
+     * the bare name for a flat one.
+     *
+     * The rate is put beside the name for the reason given there - a percentage charge
+     * showing only its rupee amount cannot be checked against the master by anyone
+     * reading the screen. This screen showed the bare name either way, so the same
+     * charge read differently on the two pages of one bill.
+     */
+    private fun chargeLabel(index: Int, name: String, type: String): String {
+        val rate = chargeValues.getOrElse(index) { 0.0 }
+        return if (type.equals("PERCENTAGE", ignoreCase = true) && rate > 0.0)
+            "$name (${qtyText(rate)}%)" else name
+    }
+
     private val orderId get() = arguments?.getLong(ARG_ORDER_ID) ?: -1L
     private val tableNo get() = arguments?.getString(ARG_TABLE).orEmpty()
     private val section get() = arguments?.getString(ARG_SECTION).orEmpty()
@@ -100,6 +120,22 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     private val billDiscount get() = arguments?.getDouble(ARG_DISCOUNT) ?: 0.0
     private val lineDiscounts: DoubleArray get() = arguments?.getDoubleArray(ARG_LINE_DISCOUNTS) ?: DoubleArray(0)
     private val discountPreTax get() = arguments?.getBoolean(ARG_DISCOUNT_PRE_TAX) ?: true
+
+    /** Whether the discount is the item-wise one - see [billDiscountOffTotal]. */
+    private val itemwiseDiscount get() = arguments?.getBoolean(ARG_ITEMWISE_DISCOUNT) ?: false
+
+    /**
+     * How much of [billDiscount] still has to come off the taxed total.
+     *
+     * Nothing, unless the discount is BILL-WISE and POST-TAX. A pre-tax bill discount
+     * is already inside each line's taxable value through [lineDiscounts]; an ITEM-WISE
+     * discount is likewise already inside each line, and [billDiscount] is then only
+     * the sum of those shares reported for display. Subtracting it here as well took
+     * an item-wise discount off twice, so this screen quoted less than the panel that
+     * sent the order to it - and less than the slip that had been printed.
+     */
+    private val billDiscountOffTotal: Double
+        get() = if (discountPreTax || itemwiseDiscount) 0.0 else billDiscount
 
     /** This line's share of the discount, or 0 where none was passed. */
     private fun discountFor(index: Int): Double = lineDiscounts.getOrElse(index) { 0.0 }
@@ -223,7 +259,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         // is the same figure the inclusive shortcut used to give when there was no
         // discount, and the right one when there is. Matches CartMath.totals.
         val goods = taxable + cgst + sgst + vat
-        val netTotal = (goods - (if (discountPreTax) 0.0 else billDiscount)).coerceAtLeast(0.0) +
+        val netTotal = (goods - billDiscountOffTotal).coerceAtLeast(0.0) +
             service + chargesTotal
         val roundOffOn = runCatching {
             com.example.synergic_pos_offline.database.BillSettingsDao(ctx).load().roundOff
@@ -370,7 +406,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         // See showReceiptPreview: from the taxable value, and the discount only comes
         // off here when it is post-tax.
         val goods = taxable + cgst + sgst + vat
-        val exactTotal = (goods - (if (discountPreTax) 0.0 else billDiscount)).coerceAtLeast(0.0) +
+        val exactTotal = (goods - billDiscountOffTotal).coerceAtLeast(0.0) +
             service + chargesTotal
         // Bill Settings' Round Off is the only say in whether this rounds - see
         // RestaurantOrdersFragment.roundOffOn(). Applied here, on the class field
@@ -392,20 +428,31 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         // Signed, and hidden at zero, exactly as the panel does it.
         root.findViewById<View>(R.id.rowCheckoutDiscount).visibility =
             if (billDiscount > 0.0) View.VISIBLE else View.GONE
+        root.findViewById<TextView>(R.id.tvCheckoutDiscountLabel).text =
+            if (itemwiseDiscount) "Discount (item-wise)" else "Discount"
         root.findViewById<TextView>(R.id.tvCheckoutDiscount).text = "- ₹ ${money(billDiscount)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(service)}"
-
-        val llCharges = root.findViewById<LinearLayout>(R.id.llCheckoutCharges)
-        llCharges.removeAllViews()
-        charges.forEach { (name, amount, _) ->
-            val row = inflater.inflate(R.layout.row_order_charge, llCharges, false)
-            row.findViewById<TextView>(R.id.tvChargeLabel).text = name
-            row.findViewById<TextView>(R.id.tvChargeValue).text = "₹ ${money(amount)}"
-            llCharges.addView(row)
-        }
-
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(cgst)}"
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(sgst)}"
+        // VAT only where a line actually carries it, as the Orders panel does it. The
+        // figure was already in the total and on no row, so a VAT bill's rows did not
+        // add up to its own foot.
+        root.findViewById<View>(R.id.rowCheckoutVat).visibility =
+            if (vat > 0.0) View.VISIBLE else View.GONE
+        root.findViewById<TextView>(R.id.tvCheckoutVat).text = "₹ ${money(vat)}"
+
+        // Last, after the tax, because that is where they join the sum - and because
+        // that is where the Orders panel puts them. Inflated from the panel's own row
+        // layout rather than a second one of this screen's: two layouts doing one job
+        // is how the two breakups drifted apart in the first place.
+        val llCharges = root.findViewById<LinearLayout>(R.id.llCheckoutCharges)
+        llCharges.removeAllViews()
+        charges.forEachIndexed { i, (name, amount, type) ->
+            val row = inflater.inflate(R.layout.item_order_summary_line, llCharges, false)
+            row.findViewById<TextView>(R.id.tvSummaryLabel).text = chargeLabel(i, name, type)
+            row.findViewById<TextView>(R.id.tvSummaryValue).text = "₹ ${money(amount)}"
+            llCharges.addView(row)
+        }
         root.findViewById<TextView>(R.id.tvTotalAmount).text = "₹ ${money(total)}"
         root.findViewById<MaterialButton>(R.id.btnConfirmPay).text = "Confirm Payment  ( ₹ ${money(total)} )"
         fillTenderedWithTotal(root)
@@ -473,6 +520,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_CHARGE_NAMES = "charge_names"
         private const val ARG_CHARGE_AMOUNTS = "charge_amounts"
         private const val ARG_CHARGE_TYPES = "charge_types"
+        private const val ARG_CHARGE_VALUES = "charge_values"
+        private const val ARG_ITEMWISE_DISCOUNT = "itemwise_discount"
         private const val ARG_DISCOUNT = "discount"
         private const val ARG_LINE_DISCOUNTS = "line_discounts"
         private const val ARG_DISCOUNT_PRE_TAX = "discount_pre_tax"
@@ -511,6 +560,17 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             chargeNames: ArrayList<String> = arrayListOf(),
             chargeAmounts: DoubleArray = DoubleArray(0),
             chargeTypes: ArrayList<String> = arrayListOf(),
+            // The RATE behind a percentage charge - 5.0 for a 5% packing charge. Only
+            // the rupee amount used to come across, so this screen could name the
+            // charge but not say what it was a percentage OF, while the Orders panel
+            // beside it did. Empty for a caller that has not looked them up, which
+            // simply leaves the names bare as before.
+            chargeValues: DoubleArray = DoubleArray(0),
+            // Whether the discount is Tax Settings' ITEM-WISE one. It changes both what
+            // the row is called and, more importantly, whether [discount] may be taken
+            // off the total at all - under item-wise it is only the SUM of the line
+            // shares, and those have already come off inside each line.
+            itemwiseDiscount: Boolean = false,
             discount: Double = 0.0,
             lineDiscounts: DoubleArray = DoubleArray(0),
             discountPreTax: Boolean = true
@@ -535,6 +595,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putStringArrayList(ARG_CHARGE_NAMES, chargeNames)
                 putDoubleArray(ARG_CHARGE_AMOUNTS, chargeAmounts)
                 putStringArrayList(ARG_CHARGE_TYPES, chargeTypes)
+                putDoubleArray(ARG_CHARGE_VALUES, chargeValues)
+                putBoolean(ARG_ITEMWISE_DISCOUNT, itemwiseDiscount)
                 putDouble(ARG_DISCOUNT, discount)
                 putDoubleArray(ARG_LINE_DISCOUNTS, lineDiscounts)
                 putBoolean(ARG_DISCOUNT_PRE_TAX, discountPreTax)

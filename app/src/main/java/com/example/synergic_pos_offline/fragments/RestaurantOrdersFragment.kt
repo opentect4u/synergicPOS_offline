@@ -675,6 +675,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 chargeNames = ArrayList(charges.map { it.name }),
                                 chargeAmounts = charges.map { it.amount }.toDoubleArray(),
                                 chargeTypes = ArrayList(charges.map { it.type.name }),
+                                // The rate behind a percentage charge, so Checkout can
+                                // name it "Packing (5%)" the way the panel above does.
+                                chargeValues = charges.map { it.value }.toDoubleArray(),
+                                // Which kind of discount b.discount is. Under item-wise
+                                // it is only the SUM of the line shares, already inside
+                                // the lines, and Checkout must not take it off again.
+                                itemwiseDiscount = itemwiseDiscountActive,
                                 // Tax Settings' discount, worked out ONCE here and
                                 // carried across. The checkout used to price every
                                 // line with no discount and a hard-coded post-tax
@@ -1752,6 +1759,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val btnAdd = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAddMergeTable)
         val llTables = v.findViewById<LinearLayout>(R.id.llMergeTables)
         val tvEmpty = v.findViewById<TextView>(R.id.tvMergeEmpty)
+        val tilPayer = v.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilMergePayer)
+        val actPayer = v.findViewById<android.widget.AutoCompleteTextView>(R.id.actMergePayer)
         val btnSave = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormPositive)
         val btnCancel = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormNegative)
 
@@ -1802,14 +1811,45 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             )
             actWith.setText("", false)
         }
+        // WHICH TABLE PAYS. Defaults to the table the merge was started from - the one
+        // already in the list - so the old behaviour is what happens when the operator
+        // does not touch this, and moving it is one tap.
+        var payer: MergeCandidate? = null
+
+        /**
+         * Rebuilds the Bill to dropdown from what is queued.
+         *
+         * Hidden while there is nothing to choose between: with one table there is no
+         * question, and a dropdown holding a single answer is a control that can only
+         * be got wrong. It appears with the second table, which is the point at which
+         * whose bill it is becomes a decision.
+         */
+        fun refreshPayer() {
+            val names = added.map { label(it) }
+            tilPayer.visibility = if (added.size > 1) View.VISIBLE else View.GONE
+            // A payer removed from the list is no longer a payer; fall back to the
+            // first queued table rather than merging onto a table that is not there.
+            if (payer == null || added.none {
+                    it.code.equals(payer!!.code, true) && it.section.equals(payer!!.section, true)
+                }
+            ) payer = added.firstOrNull()
+            actPayer.setAdapter(
+                android.widget.ArrayAdapter(ctx, android.R.layout.simple_list_item_1, names)
+            )
+            actPayer.setText(payer?.let { label(it) }.orEmpty(), false)
+        }
+
         fun renderAdded() {
             llTables.removeAllViews()
             tvEmpty.visibility = if (added.isEmpty()) View.VISIBLE else View.GONE
             etSection.setText(if (added.isEmpty()) "" else added.first().section.ifBlank { "—" })
-            added.forEachIndexed { index, o ->
+            added.forEach { o ->
                 val row = LayoutInflater.from(ctx).inflate(R.layout.item_merge_table, llTables, false)
+                val pays = payer?.let {
+                    it.code.equals(o.code, true) && it.section.equals(o.section, true)
+                } == true
                 row.findViewById<TextView>(R.id.tvMergeTableName).text =
-                    if (index == 0) "Table ${label(o)}  (Kept)" else "Table ${label(o)}"
+                    if (pays) "Table ${label(o)}  (Pays bill)" else "Table ${label(o)}"
                 val count = o.order.items.size
                 row.findViewById<TextView>(R.id.tvMergeTableInfo).text =
                     "$count item${if (count == 1) "" else "s"}"
@@ -1817,20 +1857,27 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     added.removeAll {
                         it.code.equals(o.code, true) && it.section.equals(o.section, true)
                     }
-                    renderAdded(); refreshDropdown()
+                    refreshPayer(); renderAdded(); refreshDropdown()
                 }
                 llTables.addView(row)
             }
         }
 
         actWith.setOnClickListener { actWith.showDropDown() }
+        actPayer.setOnClickListener { actPayer.showDropDown() }
+        actPayer.setOnItemClickListener { _, _, pos, _ ->
+            payer = added.getOrNull(pos)
+            // The list re-renders so "(Pays bill)" moves with the choice - the row and
+            // the dropdown are two views of one decision and must not disagree.
+            renderAdded()
+        }
         btnAdd.setOnClickListener {
             val pick = actWith.text?.toString()?.trim().orEmpty()
             val picked = candidates().firstOrNull { label(it) == pick }
             when {
                 pick.isEmpty() -> actWith.error = "Select a table"
                 picked == null -> actWith.error = "Not a table in this section"
-                else -> { added.add(picked); renderAdded(); refreshDropdown() }
+                else -> { added.add(picked); refreshPayer(); renderAdded(); refreshDropdown() }
             }
         }
 
@@ -1860,25 +1907,59 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
 
         refreshDropdown()
+        refreshPayer()
         renderAdded()
 
         btnCancel.setOnClickListener { dialog.dismiss() }
         btnSave.setOnClickListener {
             if (added.size < 2) { toast("Add at least two tables to merge"); return@setOnClickListener }
+            // The chosen table pays; everything else queued folds into it. Falls back
+            // to the first added, which is the table the merge was started from - so a
+            // merge where the operator never opened Bill to behaves as it always did.
+            val keep = payer ?: added.first()
+            val sources = added.filterNot {
+                it.code.equals(keep.code, true) && it.section.equals(keep.section, true)
+            }
+            if (sources.isEmpty()) {
+                toast("Choose a different table to pay, or add another"); return@setOnClickListener
+            }
             dialog.dismiss()
-            performMerge(added.first().order, added.drop(1))
+            performMerge(keep.order, sources)
         }
         dialog.show()
     }
 
-    /** Applies the merge: fold each source table's items into the kept table. The
-     *  merged tables stay Occupied (part of the merge) and are freed only when the
-     *  kept order is settled. */
+    /**
+     * Applies the merge: every source table's items fold into [target]'s bill, and the
+     * source tables go back to the floor.
+     *
+     * ## The tables are freed here, not at settlement
+     *
+     * They used to stay Occupied until the kept bill was paid, on the model that the
+     * party is spread across both tables and one of them merely carries the bill. The
+     * model a merge is actually used for is the other one: the guests consolidate onto
+     * one table, one bill is asked for, and the table they left is empty from that
+     * moment. Holding it until settlement meant a free table nobody could seat, for as
+     * long as the party sat over their coffee.
+     *
+     * The tables are still recorded on the kept order's `merged_tables`, so the bill,
+     * the panel and the order list all go on naming it "1 + 2" - what is given back is
+     * the FLOOR STATUS, not the record of whose food is on the bill.
+     *
+     * That is why settlement no longer frees them blindly: by then table 2 may have
+     * new guests on it, and marking it Available underneath them would hand their
+     * table to somebody else. See [settlePaidOrder].
+     */
     private fun performMerge(target: OrderCard, sources: List<MergeCandidate>) {
         sources.forEach { source ->
             val order = source.order
-            roDao.mergeOrders(target.dbId, order.dbId)   // records the merged table + keeps it Occupied
+            roDao.mergeOrders(target.dbId, order.dbId)   // records the merged table on the kept bill
             orders.removeAll { it.dbId == order.dbId }   // its own card is gone (shares the kept bill)
+            // Back to the floor immediately - its guests are on the kept table now.
+            updateTableStatus(source.code, source.section, "Available")
+            // A merged-away SPLIT PART may have been the last of its split; giving the
+            // parent back is the same act as freeing a whole table.
+            freeParentIfSplitDone(source.code, source.section)
         }
         // The kept card learns what it now covers, so the panel and the order list
         // name the merged group without waiting for a reload.
@@ -4344,7 +4425,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (!order.type.equals("Take Away", ignoreCase = true))
             updateTableStatus(order.id, order.section, "Available")   // free the dine-in table
         // Merged tables are same-section by construction, so they free with it.
-        mergedTables.forEach { updateTableStatus(it, order.section, "Available") }
+        mergedTables.forEach { updateMergedTableStatus(it, order.section, "Available") }
         orders.removeAll { it.dbId == order.dbId }
         // A merged SPLIT PART goes back to its parent here too - see settlePaidOrder.
         mergedTables.forEach { freeParentIfSplitDone(it, order.section) }
@@ -4370,7 +4451,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         roDao.close(order.dbId)                          // payment done → remove from temp table
         updateTableStatus(order.id, order.section, "Available")  // table freed for the next guest
         // merged tables freed too (same section as the kept one)
-        mergedTables.forEach { updateTableStatus(it, order.section, "Available") }
+        mergedTables.forEach { updateMergedTableStatus(it, order.section, "Available") }
         orders.removeAll { it.dbId == order.dbId }
         // free the parent once all parts are done
         freeParentIfSplitDone(order.id, order.section)
@@ -4418,11 +4499,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * items / qty / KOT changes. It's only removed after payment (Bill & Pay).
      */
     private fun completeTable(order: OrderCard) {
-        val mergedBefore = roDao.mergedTablesOf(order.dbId)
         roDao.markCompleted(order.dbId)
         updateTableStatus(order.id, order.section, "Billing")   // billed → awaiting payment
-        // merged tables too (same section as the kept one)
-        mergedBefore.forEach { updateTableStatus(it, order.section, "Billing") }
+        // MERGED TABLES ARE NOT PUT INTO BILLING ANY MORE, because they are not held by
+        // this bill any more: [performMerge] gives them back to the floor as the merge
+        // happens. Marking a table Billing at this point would either colour an empty
+        // table for a bill that is not its own, or take a table away from the party who
+        // have since been seated at it.
+        //
+        // Merges made before that change still hold their tables Occupied, and those
+        // are given back when this order settles - see [updateMergedTableStatus].
+        // Occupied rather than Billing for the few minutes in between is a difference
+        // of shade on a table nobody can take either way.
         order.status = "COMPLETED"
         val root = view ?: return
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
@@ -4692,6 +4780,25 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun updateTableStatus(code: String, section: String, status: String) {
         if (code.contains(" ")) subTableDao.setStatus(code, section, status)
         else tableDao.setStatusByCode(code, section, status)
+    }
+
+    /**
+     * Sets a MERGED-AWAY table's status, unless somebody else has taken it since.
+     *
+     * [performMerge] hands these tables back to the floor as the merge happens, so by
+     * the time the kept bill is billed or settled one of them may have new guests and
+     * an order of its own. Writing this bill's status onto it then would take a live
+     * table away from the party sitting at it - marking it Available while they eat,
+     * or Billing while they are still ordering.
+     *
+     * They are still written to at all because of merges made BEFORE tables were freed
+     * at merge time: those are still held Occupied by a bill that has not settled, and
+     * settling it is the only thing that will ever give them back. An order of its own
+     * is what tells the two apart - a table held by an old merge has none.
+     */
+    private fun updateMergedTableStatus(code: String, section: String, status: String) {
+        if (orderFor(code, section) != null) return
+        updateTableStatus(code, section, status)
     }
 
     /**
