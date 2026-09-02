@@ -22,6 +22,29 @@ object ProductCsvTemplate {
     const val FILE_NAME = "item_master_template.csv"
 
     /**
+     * The heading a sheet may set the till's own screen language under.
+     *
+     * Not a fact about the product on that row - every product in a shop is sold
+     * under the one language the operator reads their screens in - but it rides
+     * along on the same sheet because there is no second file to ask for it on.
+     * Every row that fills this in has to name the *same* language: it is one
+     * setting for the whole till, not a fact that can differ line to line, so a
+     * sheet naming Hindi on one row and Marathi on another has not actually said
+     * which one it wants - see [ProductBulkImporter.regionalLanguageOf]. Filling
+     * only the first row and leaving the rest blank is the normal way to use it;
+     * a column left blank throughout resolves to English.
+     *
+     * The name given has to spell one of [PrintLanguage.Language]'s own names
+     * exactly - `nativeName` or `englishName` - or the closest one standing is
+     * chosen instead and the operator is warned which. Guessing rather than
+     * rejecting a near-miss is deliberate: "Marathi" typed as "Marthi" is still
+     * obviously Marathi, and bouncing the whole upload over one misspelt word the
+     * operator cannot even see misspelt - it is in a script most of the team does
+     * not read - would be worse than picking the language that word was reaching for.
+     */
+    const val REGIONAL_LANGUAGE_COLUMN = "regional_language"
+
+    /**
      * The columns, in order.
      *
      * `category` and `unit_id` are filled in by name - "Dairy", "Ltr" - not by id:
@@ -33,11 +56,19 @@ object ProductCsvTemplate {
      * `unit_id` keeps its name rather than becoming `unit`, and the import still
      * reads the older `sell_price`, so a sheet filled in against a previous template
      * imports rather than being rejected over a heading.
+     *
+     * `igst` and `vat` sit beside `cgst`/`sgst` as the other two ways a rate's tax
+     * can be written down - a rate is under one of them, never more than one, same
+     * as the Add Product dialog itself. A row is free to leave the ones it does not
+     * use blank.
+     *
+     * [REGIONAL_LANGUAGE_COLUMN] is not a per-product fact - see its own doc.
      */
     val header = listOf(
         "product_name", "category", "hsn_code", "bar_code",
-        "rate_name", "rate", "unit_id", "cgst", "sgst",
-        "discount", "discount_type", "selling_price", "purchase_price"
+        "rate_name", "rate", "unit_id", "cgst", "sgst", "igst", "vat",
+        "discount", "discount_type", "selling_price", "purchase_price",
+        REGIONAL_LANGUAGE_COLUMN
     )
 
     /**
@@ -70,14 +101,17 @@ object ProductCsvTemplate {
      *
      * Between them they cover the three units and the three GST rates in use, and
      * both a discounted line and an undiscounted one, so every column is shown
-     * filled in at least once.
+     * filled in at least once. `igst` and `vat` are left blank throughout - every
+     * sample line already carries its tax as `cgst`/`sgst`, and a rate is under one
+     * of the three, never more than one. [REGIONAL_LANGUAGE_COLUMN] is shown filled
+     * in on the first row only and blank on the rest, since one is all a sheet needs.
      */
     val sampleRows = listOf(
-        "Amul Premium Pack 100L,Dairy,40120,,Regular,498.75,Ltr,2.5,2.5,5,P,473.81,399",
-        "Britannia Premium Refill 200g,Bakery & Biscuits,190531,,Regular,393.75,PCS,9,9,5,P,374.06,315",
-        "Tata Sampann Premium Value 300g,Dry Fruits & Cereals,110412,,Regular,31.25,PCS,2.5,2.5,10,P,29.69,25",
-        "Fortune Premium Combo 400L,Oil & Ghee Masala,151219,,Regular,158.75,Ltr,2.5,2.5,5,P,150.81,127",
-        "Aashirvaad Premium Regular 500KG,Atta Rice & Dal,110100,,Regular,81.25,KG,2.5,2.5,10,P,77.19,65"
+        "Amul Premium Pack 100L,Dairy,40120,,Regular,498.75,Ltr,2.5,2.5,,,5,P,473.81,399,Hindi",
+        "Britannia Premium Refill 200g,Bakery & Biscuits,190531,,Regular,393.75,PCS,9,9,,,5,P,374.06,315,",
+        "Tata Sampann Premium Value 300g,Dry Fruits & Cereals,110412,,Regular,31.25,PCS,2.5,2.5,,,10,P,29.69,25,",
+        "Fortune Premium Combo 400L,Oil & Ghee Masala,151219,,Regular,158.75,Ltr,2.5,2.5,,,5,P,150.81,127,",
+        "Aashirvaad Premium Regular 500KG,Atta Rice & Dal,110100,,Regular,81.25,KG,2.5,2.5,,,10,P,77.19,65,"
     )
 
     /**

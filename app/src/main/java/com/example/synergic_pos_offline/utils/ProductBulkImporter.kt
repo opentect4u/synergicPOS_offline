@@ -40,8 +40,23 @@ object ProductBulkImporter {
         REPLACE
     }
 
-    /** How an import went: [imported] rows written, [skipped] rows that could not be. */
-    data class Result(val imported: Int, val skipped: Int, val removed: Int = 0)
+    /**
+     * How an import went: [imported] rows written, [skipped] rows that could not
+     * be, [removed] products a Replace cleared first.
+     *
+     * [languageApplied] is what the till's screen language was set to - always
+     * something, since [regionalLanguageOf] resolves a blank column to English
+     * rather than leaving the setting as it found it. [languageWarning] is set only
+     * where that resolution was not a plain, exact read of the sheet - see
+     * [regionalLanguageOf].
+     */
+    data class Result(
+        val imported: Int,
+        val skipped: Int,
+        val removed: Int = 0,
+        val languageApplied: String = PrintLanguage.Language.ENGLISH.englishName,
+        val languageWarning: String? = null
+    )
 
     /**
      * Every product id that some transaction still refers to.
@@ -191,6 +206,8 @@ object ProductBulkImporter {
         var skipped = 0
         var removed = 0
 
+        val languageMatch = regionalLanguageOf(rows)
+
         db.beginTransaction()
         try {
             if (mode == Mode.REPLACE) removed = clearProducts(db)
@@ -237,8 +254,8 @@ object ProductBulkImporter {
                     if (unitId != null) put("unit_id", unitId) else putNull("unit_id")
                     put("cgst_rate", r["cgst"]?.toDoubleOrNull() ?: 0.0)
                     put("sgst_rate", r["sgst"]?.toDoubleOrNull() ?: 0.0)
-                    put("igst_rate", 0.0)
-                    put("vat_rate", 0.0)
+                    put("igst_rate", r["igst"]?.toDoubleOrNull() ?: 0.0)
+                    put("vat_rate", r["vat"]?.toDoubleOrNull() ?: 0.0)
                     put("discount", r["discount"]?.toDoubleOrNull() ?: 0.0)
                     // A bulk-uploaded discount is always a percentage, whatever the
                     // sheet's discount_type column says: the figures in the template
@@ -269,8 +286,64 @@ object ProductBulkImporter {
         } finally {
             db.endTransaction()
         }
-        return Result(imported, skipped, removed)
+
+        // Applied only once the import itself has actually gone in - an exception
+        // partway through the loop above reaches the caller through this same
+        // function without a Result ever being built, and the till's screen
+        // language should not change out from under a sheet that failed to import.
+        android.preference.PreferenceManager.getDefaultSharedPreferences(context)
+            .edit().putString(AppLanguage.SETTING_KEY, languageMatch.language.code).commit()
+        val languageWarning = when {
+            languageMatch.conflicting ->
+                "The regional language column names more than one language - " +
+                    "\"${languageMatch.raw}\" (the first) was applied. Fill every row with the " +
+                    "same language, or leave the rest blank."
+            languageMatch.raw.isNotEmpty() && !languageMatch.exact ->
+                "\"${languageMatch.raw}\" does not spell a language exactly - " +
+                    "${languageMatch.language.englishName} was applied to the app language instead."
+            else -> null
+        }
+        return Result(imported, skipped, removed, languageMatch.language.englishName, languageWarning)
     }
+
+    /**
+     * The single language a bulk-upload sheet asks the app itself to run in - see
+     * [ProductCsvTemplate.REGIONAL_LANGUAGE_COLUMN].
+     *
+     * Every row that names one is read, not just the first, because the column
+     * stands for one till-wide setting and not a fact that can differ line to
+     * line: a sheet is only really asking for one language when every filled cell
+     * names the *same* one. Where they resolve to different languages, the first
+     * row's is kept and [LanguageMatch.conflicting] says so, rather than the
+     * import silently picking whichever one happened to be read last. A column
+     * left entirely blank resolves to English outright, [LanguageMatch.raw] empty -
+     * the language is always decided one way or another on an import, never left
+     * as whatever the till already had, so a sheet that says nothing about it
+     * cannot leave a till stuck in a language nobody chose for it this time.
+     */
+    fun regionalLanguageOf(rows: List<Map<String, String>>): LanguageMatch {
+        val matches = rows.mapNotNull { r ->
+            r[ProductCsvTemplate.REGIONAL_LANGUAGE_COLUMN]?.trim()?.takeIf { it.isNotEmpty() }
+        }.map { raw -> raw to PrintLanguage.Language.nearest(raw)!! }
+
+        val first = matches.firstOrNull()
+            ?: return LanguageMatch("", PrintLanguage.Language.ENGLISH, exact = true, conflicting = false)
+        val conflicting = matches.map { (_, m) -> m.first }.distinct().size > 1
+        return LanguageMatch(first.first, first.second.first, first.second.second, conflicting)
+    }
+
+    /**
+     * [raw] as the sheet wrote it on the row that decided it, matched to
+     * [language] - exactly if [exact]. [conflicting] is true where some other row
+     * named a different language rather than repeating this one or leaving its
+     * cell blank.
+     */
+    data class LanguageMatch(
+        val raw: String,
+        val language: PrintLanguage.Language,
+        val exact: Boolean,
+        val conflicting: Boolean
+    )
 
     /**
      * The id of the category called [name], adding it to the category master first

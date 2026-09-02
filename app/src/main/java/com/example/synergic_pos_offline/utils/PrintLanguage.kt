@@ -71,6 +71,35 @@ object PrintLanguage {
             fun fromStored(value: String?): Language = value?.trim()?.takeIf { it.isNotEmpty() }
                 ?.let { v -> values().firstOrNull { it.code.equals(v, true) || it.englishName.equals(v, true) } }
                 ?: ENGLISH
+
+            /**
+             * The language [name] most likely means, and whether it spelled one of
+             * [englishName]/[nativeName] exactly.
+             *
+             * Read off a bulk-upload sheet, where "spell it exactly as the app does"
+             * is the instruction but the operator typing it may be a keyboard and a
+             * transliteration away from the app's own spelling. Rather than reject
+             * "Marthi" or "Panjabi" outright, the nearest name by edit distance is
+             * taken instead - always one of the eleven, never a refusal - and the
+             * caller is left to say so, since only it knows whether this was worth a
+             * warning.
+             *
+             * Null only for a blank [name], which names no language for anything to
+             * be nearest to.
+             */
+            fun nearest(name: String): Pair<Language, Boolean>? {
+                val query = name.trim()
+                if (query.isEmpty()) return null
+                values().firstOrNull { it.englishName.equals(query, true) || it.nativeName == query }
+                    ?.let { return it to true }
+                val closest = values().minByOrNull { lang ->
+                    minOf(
+                        editDistance(query.lowercase(Locale.ROOT), lang.englishName.lowercase(Locale.ROOT)),
+                        editDistance(query, lang.nativeName)
+                    )
+                } ?: return null
+                return closest to false
+            }
         }
     }
 
@@ -426,4 +455,26 @@ object PrintLanguage {
     ) {
         put(normalise(key), arrayOf(hi, mr, ta, bn, te, kn, gu, or, pa, `as`))
     }
+}
+
+/**
+ * How many single-character edits turn [a] into [b] - the classic Levenshtein
+ * distance. What [PrintLanguage.Language.nearest] ranks its eleven candidates by,
+ * since it is cheap over eleven short words and does not need either string to be
+ * in a particular script to compare them.
+ */
+private fun editDistance(a: String, b: String): Int {
+    val dp = Array(a.length + 1) { IntArray(b.length + 1) }
+    for (i in 0..a.length) dp[i][0] = i
+    for (j in 0..b.length) dp[0][j] = j
+    for (i in 1..a.length) {
+        for (j in 1..b.length) {
+            dp[i][j] = if (a[i - 1] == b[j - 1]) {
+                dp[i - 1][j - 1]
+            } else {
+                1 + minOf(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+            }
+        }
+    }
+    return dp[a.length][b.length]
 }

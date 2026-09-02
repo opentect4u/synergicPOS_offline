@@ -130,6 +130,9 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         // operator who has filled a column in has every reason to expect it to land.
         val stockTracked = GeneralSettingsDao.isStockEnabled(ctx)
         val withStock = rows.count { ProductBulkImporter.openingStockOf(it) != null }
+        // Read the same way the import itself will read it, so the preview never
+        // promises a language the upload would not actually apply.
+        val languageMatch = ProductBulkImporter.regionalLanguageOf(rows)
         view.findViewById<TextView>(R.id.tvPreviewSub).text = buildString {
             append("$named of ${rows.size} row(s) • ${columns.size} columns")
             if (uncategorised > 0) {
@@ -147,6 +150,21 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
             if (newUnits.isNotEmpty()) {
                 append("\nNew units to be created: ${newUnits.joinToString(", ")}")
             }
+            append(
+                when {
+                    languageMatch.conflicting ->
+                        "\nThe regional language column names more than one language - " +
+                            "\"${languageMatch.raw}\" (the first) will be applied. Fill every row " +
+                            "with the same language, or leave the rest blank."
+                    languageMatch.raw.isEmpty() ->
+                        "\nNo regional language specified - app language will be set to English"
+                    languageMatch.exact ->
+                        "\nApp language will be set to ${languageMatch.language.englishName}"
+                    else ->
+                        "\n\"${languageMatch.raw}\" is not a recognised language - " +
+                            "${languageMatch.language.englishName} will be applied instead"
+                }
+            )
         }
 
         val table = view.findViewById<LinearLayout>(R.id.llPreviewTable)
@@ -229,6 +247,8 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
             append("${result.imported} product(s) uploaded successfully.")
             if (result.removed > 0) append("\n${result.removed} existing product(s) removed.")
             if (result.skipped > 0) append("\n${result.skipped} row(s) skipped.")
+            append("\nApp language set to ${result.languageApplied}.")
+            result.languageWarning?.let { append("\n$it") }
         }
         DialogUtils.showSuccess(
             context = ctx,

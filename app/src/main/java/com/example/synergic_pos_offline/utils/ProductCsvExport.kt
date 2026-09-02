@@ -43,6 +43,11 @@ object ProductCsvExport {
      * on any further one. The upload reads a row as a product, so a product sold at
      * two rates comes back as two products; repeating its count on both rows would
      * have the till end up holding twice the stock the sheet said it had.
+     *
+     * [ProductCsvTemplate.REGIONAL_LANGUAGE_COLUMN] is not a per-product column
+     * either - it is put against the *file's* first row only, carrying the app's
+     * current screen language, so re-uploading an unedited export leaves that
+     * setting exactly as it found it rather than clearing it.
      */
     private fun sql(withStock: Boolean): String {
         val products = DatabaseHelper.Tables.MD_PRODUCTS
@@ -62,7 +67,9 @@ object ProductCsvExport {
         return """
             SELECT p.product_name, c.category_name, p.hsn_code, p.bar_code,
                    r.rate_name, r.rate, u.unit_symbol, r.cgst_rate, r.sgst_rate,
-                   r.discount, r.discount_type, COALESCE(r.sell_price, r.sale_price), r.purchase_price
+                   r.igst_rate, r.vat_rate,
+                   r.discount, r.discount_type, COALESCE(r.sell_price, r.sale_price), r.purchase_price,
+                   '' AS regional_language
                    $stockCell
             FROM $products p
             LEFT JOIN $rates r ON r.product_id = p.id
@@ -79,18 +86,22 @@ object ProductCsvExport {
         val out = StringBuilder(columns.joinToString(",")).append("\n")
         DatabaseHelper.getInstance(context).readableDatabase.rawQuery(sql(withStock), null).use { c ->
             val stockIndex = if (withStock) c.columnCount - 1 else -1
+            val languageIndex = c.getColumnIndex("regional_language")
+            val currentLanguage = AppLanguage.of(context).englishName
+            var firstRow = true
             while (c.moveToNext()) {
                 val cells = (0 until c.columnCount).map { i ->
                     // A quantity is read as a number and written as one a person
                     // would: the raw column would hand over "12.0", and a sheet full
                     // of those invites the operator to "fix" every line of it.
-                    if (i == stockIndex) {
-                        field(if (c.isNull(i)) "" else StockDao.trim(c.getDouble(i)))
-                    } else {
-                        field(c.getString(i))
+                    when (i) {
+                        stockIndex -> field(if (c.isNull(i)) "" else StockDao.trim(c.getDouble(i)))
+                        languageIndex -> field(if (firstRow) currentLanguage else "")
+                        else -> field(c.getString(i))
                     }
                 }
                 out.append(cells.joinToString(",")).append("\n")
+                firstRow = false
             }
         }
         return out.toString()
