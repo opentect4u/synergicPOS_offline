@@ -4118,13 +4118,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
             // Tendered and change belong to cash alone - a card or a UPI transfer is
             // paid to the penny by the machine, so the box would be asking a question
-            // with only one answer.
-            //
-            // The QR no longer follows that rule in reverse. It is how a customer
-            // DECIDES to pay by phone, so it stands whatever mode is selected - see
-            // [CheckoutUpiQr].
+            // with only one answer. The QR appears on the same rule, in reverse: it is
+            // for the one mode that is paid by scanning.
             llCash.visibility = if (payMethod == "Cash") View.VISIBLE else View.GONE
-            com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(v, total)
+            com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(
+                v, total, online = payMethod == "Online"
+            )
         }
         methods.forEach { (id, name) ->
             v.findViewById<com.google.android.material.button.MaterialButton>(id).setOnClickListener {

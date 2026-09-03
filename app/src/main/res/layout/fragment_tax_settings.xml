@@ -94,10 +94,12 @@
                             android:orientation="vertical"
                             android:layout_marginTop="4dp">
 
+                            <!-- Pre-tax is no longer disabled here. It is switched on
+                                 and off in code, by the tax mode: it means nothing
+                                 under MRP, where the tax is already inside the price.
+                                 See TaxSettingsFragment.syncDiscountPosition. -->
                             <RadioButton android:id="@+id/rbPosPre" style="@style/BillSettingRadio"
-                                android:text="Pre-tax discount"
-                                android:enabled="false"
-                                android:alpha="0.5" />
+                                android:text="Pre-tax discount" />
                             <RadioButton android:id="@+id/rbPosPost" style="@style/BillSettingRadio"
                                 android:text="Post-tax discount" />
                         </RadioGroup>
@@ -150,8 +152,12 @@
 
                     <RadioButton android:id="@+id/rbExclusive" style="@style/BillSettingRadio"
                         android:layout_width="wrap_content" android:text="Exclusive" />
+                    <!-- "MRP", not "Inclusive". The id stays rbInclusive because it is
+                         the same setting - GstMode.INCLUSIVE - and what changed is
+                         only what a shopkeeper calls it: a price with the tax already
+                         inside it is the MRP, which is the word on the box. -->
                     <RadioButton android:id="@+id/rbInclusive" style="@style/BillSettingRadio"
-                        android:layout_width="wrap_content" android:layout_marginStart="24dp" android:text="Inclusive" />
+                        android:layout_width="wrap_content" android:layout_marginStart="24dp" android:text="MRP" />
                 </RadioGroup>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

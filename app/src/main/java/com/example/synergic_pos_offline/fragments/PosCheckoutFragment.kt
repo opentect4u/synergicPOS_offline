@@ -1059,7 +1059,9 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // Drawn here rather than in setMethod: the code carries the amount, so it has
         // to follow the total and not just the mode that was picked.
         view?.let {
-            com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(it, total())
+            com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(
+                it, total(), online = method == Method.ONLINE
+            )
         }
 
         if (!editMode) renderReceipt()

@@ -82,6 +82,7 @@ class BillListFragment : Fragment(), TitledScreen {
 
     /** Sort options for the bill list. */
     private enum class Sort(val label: String) {
+        BILL_NO_DESC("Bill No. (descending)"),
         BILL_NO_ASC("Bill No. (ascending)"),
         DATE_DESC("Date (newest)"),
         DATE_ASC("Date (oldest)"),
@@ -90,18 +91,20 @@ class BillListFragment : Fragment(), TitledScreen {
     }
 
     /**
-     * BILL NUMBER, ASCENDING - the order the book was written in.
+     * BILL NUMBER, HIGHEST FIRST - the last bill written, at the top.
      *
-     * The list opened on newest-first, which is the right answer for a till being
-     * watched during service and the wrong one for the book itself: bill history is
-     * read to find a bill, to check a run of them, or to tie the day's slips to the
-     * screen, and all three are done by number, upwards, the way the slips come off
-     * the printer.
+     * History is opened most often to reach the bill that just went out: to reprint
+     * it, to check it, to return against it. That one is the highest number there is,
+     * so putting it first is putting the answer where the screen opens, with no
+     * scrolling to the foot of a day's trading to reach the most recent sale.
+     *
+     * Ascending is the option directly beneath it, for reading the book as a run
+     * rather than reaching into it - see [byBillNo], which both share.
      *
      * First in the list as well as the default, so it is where the eye lands when the
      * sort is opened to come back to it.
      */
-    private var sort = Sort.BILL_NO_ASC
+    private var sort = Sort.BILL_NO_DESC
 
     private lateinit var llCustomRange: View
     private lateinit var etFromDate: TextInputEditText
@@ -269,6 +272,10 @@ class BillListFragment : Fragment(), TitledScreen {
         }
 
         val sorted = when (sort) {
+            // Reversed rather than a comparator of its own, so the two directions can
+            // never disagree about what "by bill number" means - the prefix grouping
+            // and the receiptNo tie-break come along with it.
+            Sort.BILL_NO_DESC -> filtered.sortedWith(byBillNo.reversed())
             Sort.BILL_NO_ASC -> filtered.sortedWith(byBillNo)
             Sort.DATE_DESC -> filtered.sortedByDescending { sortMillis(it) }
             Sort.DATE_ASC -> filtered.sortedBy { sortMillis(it) }

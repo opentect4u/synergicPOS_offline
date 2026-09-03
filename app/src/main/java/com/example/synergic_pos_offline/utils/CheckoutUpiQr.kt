@@ -19,20 +19,18 @@ import java.util.Locale
  * way and pay the same place - see [UpiQr] for why the amount has to be in the
  * code rather than typed by whoever scans it.
  *
- * ## Shown whenever there is a code to show
+ * ## Shown for ONLINE, and only then
  *
- * One condition: a UPI ID set up in Bill Settings, and something to pay. Neither the
- * payment mode nor the "UPI QR on bill" switch is consulted.
+ * Three conditions: Online is the chosen payment mode, a UPI ID is set up in Bill
+ * Settings, and there is something to pay. It briefly appeared for every mode; that
+ * put a scan-to-pay code in front of a customer paying cash, on a screen the counter
+ * turns round to them, which is an invitation to pay a bill that is being settled
+ * another way. Choosing Online is the customer saying they are paying by phone, and
+ * that is the moment the code is wanted.
  *
- * NOT THE PRINT SWITCH. That one decides what goes on PAPER. A shop turns it off to
- * save paper and clutter on every slip, and neither of those is a reason to take the
- * code off a screen - the details behind it are set up and in use either way.
- *
- * NOT THE MODE. It used to appear only once Online was picked, which is the wrong way
- * round: the code is how a customer DECIDES to pay by phone. Hidden until they had
- * already said so, it was only ever offered to somebody who had announced they did not
- * need it - and a customer reaching for their phone made the counter change the mode
- * first and turn the screen round second.
+ * NOT THE PRINT SWITCH, though. "UPI QR on bill" decides what goes on PAPER - a shop
+ * turns it off to save paper and clutter on every slip, and neither of those is a
+ * reason to withhold the code from somebody who has just said they want to scan it.
  */
 object CheckoutUpiQr {
 
@@ -47,11 +45,10 @@ object CheckoutUpiQr {
     /**
      * One bill setting: the login cache first, the database only if it has no answer.
      *
-     * The settings table used to be read outright here, and that was affordable while
-     * the code appeared for ONE payment mode - the read was skipped on every cash
-     * sale. It is drawn for every sale now, and [bind] runs on each totals refresh,
-     * which is once per keystroke in the tendered box. A full settings query behind
-     * each of those is a query per character typed.
+     * [bind] runs on every totals refresh - once per keystroke in the tendered box -
+     * so a full settings query behind each one is a query per character typed. The
+     * Online gate keeps most of those away, but a customer paying online types into
+     * that box too, and the cache costs nothing to read.
      *
      * Same two-step every other hot setting uses - see GeneralSettingsDao.isStockEnabled.
      * Blank and missing both come back null, so "not set up" is one case to the caller.
@@ -69,15 +66,19 @@ object CheckoutUpiQr {
     /**
      * Draws the code for [amount], or hides the block.
      *
+     * [online] is the caller's answer to whether Online is the chosen mode, so this
+     * stays out of the business of knowing how each till names its payment methods -
+     * they do not agree ("Online" here, Method.ONLINE there).
+     *
      * Safe to call on every totals refresh - which is what all three screens do, since
      * the amount is what the code is for. The URI it last drew is kept on the
      * ImageView, so a redraw that would produce the same code re-encodes nothing.
      */
-    fun bind(root: View, amount: Double) {
+    fun bind(root: View, amount: Double, online: Boolean) {
         val block = root.findViewById<View>(R.id.llCheckoutUpiQr) ?: return
         val target = root.findViewById<ImageView>(R.id.ivCheckoutUpiQr) ?: return
 
-        if (amount <= 0.0) {
+        if (!online || amount <= 0.0) {
             block.visibility = View.GONE
             return
         }

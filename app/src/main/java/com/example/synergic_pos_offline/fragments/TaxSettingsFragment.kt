@@ -22,15 +22,20 @@ import com.google.android.material.switchmaterial.SwitchMaterial
  * Tax & Discount settings, backed by [TaxSettingsDao] (md_app_settings, type 'T').
  * Discount options appear only when discount is on.
  *
- * Tax is a single on/off switch with one Inclusive/Exclusive mode. Which tax a
- * sale carries - GST or VAT - is no longer chosen here: it follows the product,
- * from whichever rate fields that product has set. See [GstCalculator.regimeOf].
+ * Tax is a single on/off switch with one Exclusive/MRP mode. "MRP" is what the
+ * screen calls [GstMode.INCLUSIVE] - a price with the tax already inside it is the
+ * MRP, which is the word on the box and the word a shopkeeper uses. The stored
+ * value and the id (rbInclusive) are unchanged; only the label is.
  *
- * Discount position: Pre-tax is disabled on this screen - greyed out and
- * unselectable - and Post-tax is always the one checked, regardless of what an
- * older save on this store may hold. Kept as two radio buttons rather than
- * removed, so the choice can be handed back to the operator without rebuilding
- * the screen.
+ * Which tax a sale carries - GST or VAT - is no longer chosen here: it follows the
+ * product, from whichever rate fields that product has set. See
+ * [GstCalculator.regimeOf].
+ *
+ * Discount position: Pre-tax is offered only under EXCLUSIVE tax. Under MRP the tax
+ * is already in the price, so there is no before-tax figure to discount, and the
+ * option is greyed - see [syncDiscountPosition]. It was disabled outright until now,
+ * with Post-tax pinned whatever was saved; both radios are live again, bounded by
+ * the mode.
  */
 class TaxSettingsFragment : Fragment(), TitledScreen {
 
@@ -65,14 +70,21 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
 
         bind(dao.load())
 
-        // Discount options visible only when discount is on.
-        swDiscount.setOnCheckedChangeListener { _, on -> llDiscountOptions.isVisible = on }
-
-        // Picking a type fixes the position with it, so only the radio moves.
         rgDiscountType.setOnCheckedChangeListener { _, _ -> syncDiscountPosition() }
 
-        // Mode shows only when tax is on.
-        swTax.setOnCheckedChangeListener { _, on -> rgTaxMode.isVisible = on }
+        // Mode shows only when tax is on - and it decides whether Pre-tax is offered,
+        // so the position block is re-read whenever either moves.
+        swTax.setOnCheckedChangeListener { _, on ->
+            rgTaxMode.isVisible = on
+            syncDiscountPosition()
+        }
+        rgTaxMode.setOnCheckedChangeListener { _, _ -> syncDiscountPosition() }
+        // Discount options visible only when discount is on; the position block inside
+        // them is settled by the same call.
+        swDiscount.setOnCheckedChangeListener { _, on ->
+            llDiscountOptions.isVisible = on
+            syncDiscountPosition()
+        }
 
         view.findViewById<MaterialButton>(R.id.btnSaveTax).setOnClickListener { onSave() }
 
@@ -95,16 +107,47 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         swTax.isChecked = s.taxEnabled
         rgTaxMode.isVisible = s.taxEnabled
         rgTaxMode.check(if (s.taxMode == GstMode.INCLUSIVE) R.id.rbInclusive else R.id.rbExclusive)
-        // Pre-tax is disabled on this screen, so Post-tax is the only one that can
-        // ever be checked here - regardless of what an older save on this store holds.
-        rgDiscountPosition.check(R.id.rbPosPost)
+        // The saved position is restored now that Pre-tax can be chosen. syncDiscount-
+        // Position runs straight after and moves it to Post-tax if the mode it was
+        // saved under no longer allows it.
+        rgDiscountPosition.check(
+            if (s.discountPosition == DiscountPosition.PRE_TAX) R.id.rbPosPre else R.id.rbPosPost
+        )
         syncDiscountPosition()
     }
 
-    /** Shows the Pre-tax / Post-tax block whenever discount is on - Post-tax is the
-     *  only one selectable there for now, see the class doc. */
+    /**
+     * Shows the Pre-tax / Post-tax block while discount is on, and decides whether
+     * Pre-tax may be picked at all.
+     *
+     * ## Pre-tax needs an exclusive price
+     *
+     * Under MRP the tax is already inside the price on the shelf, so there is no
+     * "before tax" to take a discount off - the figure the customer sees IS the taxed
+     * one. Taking a discount pre-tax there would mean stripping the tax out, cutting
+     * the remainder and adding tax back on, which is not what a shop means by a
+     * discount on an MRP item: they mean money off the price on the box.
+     *
+     * Exclusive prices have both moments, so the choice is real and offered.
+     *
+     * ## Greyed rather than hidden, and moved off rather than left sitting
+     *
+     * Greyed, because it is a choice that comes back the moment the mode changes -
+     * an option that vanishes reads as one that never existed. Moved off, because a
+     * disabled radio can still be the CHECKED one: switching from Exclusive with
+     * Pre-tax picked to MRP would otherwise leave the selection on a greyed button and
+     * save PRE_TAX for a mode that cannot honour it.
+     */
     private fun syncDiscountPosition() {
         llDiscountPosition.isVisible = swDiscount.isChecked
+
+        val exclusive = rgTaxMode.checkedRadioButtonId != R.id.rbInclusive
+        val rbPre = requireView().findViewById<android.widget.RadioButton>(R.id.rbPosPre)
+        rbPre.isEnabled = exclusive
+        rbPre.alpha = if (exclusive) 1f else 0.5f
+        if (!exclusive && rgDiscountPosition.checkedRadioButtonId == R.id.rbPosPre) {
+            rgDiscountPosition.check(R.id.rbPosPost)
+        }
     }
 
     private fun selectedDiscountType(): DiscountType = when (rgDiscountType.checkedRadioButtonId) {
@@ -117,9 +160,15 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         return TaxSettings(
             discountEnabled = swDiscount.isChecked,
             discountType = type,
-            // Pre-tax is disabled on this screen (see the class doc), so this is
-            // always Post-tax - the radio group can never land on rbPosPre.
-            discountPosition = DiscountPosition.POST_TAX,
+            // What is actually checked. This was pinned to POST_TAX while Pre-tax was
+            // disabled outright; it is a real choice now, and pinning it would throw
+            // away the one the operator just made.
+            //
+            // It cannot arrive as PRE_TAX under MRP: syncDiscountPosition moves the
+            // selection off Pre-tax whenever the mode stops allowing it, so the two can
+            // never be saved together.
+            discountPosition = if (rgDiscountPosition.checkedRadioButtonId == R.id.rbPosPre)
+                DiscountPosition.PRE_TAX else DiscountPosition.POST_TAX,
             taxEnabled = swTax.isChecked,
             taxMode = if (rgTaxMode.checkedRadioButtonId == R.id.rbInclusive) GstMode.INCLUSIVE else GstMode.EXCLUSIVE
         )
