@@ -490,11 +490,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         showUpiQr(root)
     }
 
-    /** Shows the scan-to-pay code while Online is the chosen mode. */
+    /** Shows the scan-to-pay code, whatever payment mode is selected. */
     private fun showUpiQr(root: View) {
-        com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(
-            root, total, online = payMethod.equals("Online", ignoreCase = true)
-        )
+        com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(root, total)
     }
 
     /** Reads the CURRENT theme colour fresh (never captured), so it can't go stale. */

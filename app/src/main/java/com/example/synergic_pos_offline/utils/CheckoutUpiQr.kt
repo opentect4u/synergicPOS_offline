@@ -19,43 +19,75 @@ import java.util.Locale
  * way and pay the same place - see [UpiQr] for why the amount has to be in the
  * code rather than typed by whoever scans it.
  *
- * Shown only while Online is the chosen mode, and only when a UPI ID has been set
- * up in Bill Settings. It does not consult the "UPI QR on bill" switch: that one
- * decides what is *printed*, and a code on screen costs no paper.
+ * ## Shown whenever there is a code to show
+ *
+ * One condition: a UPI ID set up in Bill Settings, and something to pay. Neither the
+ * payment mode nor the "UPI QR on bill" switch is consulted.
+ *
+ * NOT THE PRINT SWITCH. That one decides what goes on PAPER. A shop turns it off to
+ * save paper and clutter on every slip, and neither of those is a reason to take the
+ * code off a screen - the details behind it are set up and in use either way.
+ *
+ * NOT THE MODE. It used to appear only once Online was picked, which is the wrong way
+ * round: the code is how a customer DECIDES to pay by phone. Hidden until they had
+ * already said so, it was only ever offered to somebody who had announced they did not
+ * need it - and a customer reaching for their phone made the counter change the mode
+ * first and turn the screen round second.
  */
 object CheckoutUpiQr {
 
     /** Side of the drawn code, matching ivCheckoutUpiQr in the layout. */
     private const val QR_DP = 150
 
+    // The two Bill Settings rows this needs, spelled as BillSettingsDao writes them.
+    // Bill settings are stored under setting_type 'B'.
+    private const val KEY_UPI_ID = "Bill Upi Id"
+    private const val KEY_UPI_PAYEE_NAME = "Bill Upi Payee Name"
+
+    /**
+     * One bill setting: the login cache first, the database only if it has no answer.
+     *
+     * The settings table used to be read outright here, and that was affordable while
+     * the code appeared for ONE payment mode - the read was skipped on every cash
+     * sale. It is drawn for every sale now, and [bind] runs on each totals refresh,
+     * which is once per keystroke in the tendered box. A full settings query behind
+     * each of those is a query per character typed.
+     *
+     * Same two-step every other hot setting uses - see GeneralSettingsDao.isStockEnabled.
+     * Blank and missing both come back null, so "not set up" is one case to the caller.
+     */
+    private fun setting(root: View, key: String): String? {
+        SettingsCache.value(root.context, "B", key)?.takeIf { it.isNotBlank() }?.let { return it }
+        val s = runCatching { BillSettingsDao(root.context).load() }.getOrNull() ?: return null
+        return when (key) {
+            KEY_UPI_ID -> s.upiId
+            KEY_UPI_PAYEE_NAME -> s.upiPayeeName
+            else -> ""
+        }.takeIf { it.isNotBlank() }
+    }
+
     /**
      * Draws the code for [amount], or hides the block.
      *
-     * [online] is the caller's answer to which mode is selected, so this stays out
-     * of the business of knowing how each till names its payment methods.
-     *
-     * Safe to call on every totals refresh - which is what both screens do, since
+     * Safe to call on every totals refresh - which is what all three screens do, since
      * the amount is what the code is for. The URI it last drew is kept on the
      * ImageView, so a redraw that would produce the same code re-encodes nothing.
      */
-    fun bind(root: View, amount: Double, online: Boolean) {
+    fun bind(root: View, amount: Double) {
         val block = root.findViewById<View>(R.id.llCheckoutUpiQr) ?: return
         val target = root.findViewById<ImageView>(R.id.ivCheckoutUpiQr) ?: return
 
-        if (!online || amount <= 0.0) {
+        if (amount <= 0.0) {
             block.visibility = View.GONE
             return
         }
-        // Read only once Online is chosen, so the settings table is not queried on
-        // every keystroke of a cash sale.
-        val settings = runCatching { BillSettingsDao(root.context).load() }.getOrNull()
-        val vpa = settings?.upiId.orEmpty()
-        if (settings == null || !UpiQr.isValidVpa(vpa)) {
+        val vpa = setting(root, KEY_UPI_ID)
+        if (vpa == null || !UpiQr.isValidVpa(vpa)) {
             block.visibility = View.GONE
             return
         }
 
-        val uri = UpiQr.payUri(vpa, settings.upiPayeeName, amount)
+        val uri = UpiQr.payUri(vpa, setting(root, KEY_UPI_PAYEE_NAME).orEmpty(), amount)
         if (target.getTag(R.id.ivCheckoutUpiQr) != uri) {
             val px = (QR_DP * root.resources.displayMetrics.density).toInt().coerceAtLeast(1)
             val bitmap = UpiQr.bitmap(uri, px)

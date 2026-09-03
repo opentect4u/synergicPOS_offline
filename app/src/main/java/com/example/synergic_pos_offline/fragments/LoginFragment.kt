@@ -589,7 +589,13 @@ class LoginFragment : Fragment() {
         }
         if (user.isBlocked) {
             tilUsername.error = "This account is blocked"
-            Toast.makeText(requireContext(), "User is blocked. Contact Admin.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "This account is blocked. Contact Admin.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        offShift(user)?.let { reason ->
+            tilUsername.error = " "
+            tilPassword.error = "Outside shift hours"
+            Toast.makeText(requireContext(), reason, Toast.LENGTH_LONG).show()
             return
         }
 
@@ -708,6 +714,10 @@ class LoginFragment : Fragment() {
                     user.isBlocked -> {
                         toast("User is blocked. Contact Admin.")
                     }
+                    // The fingerprint is a way of TYPING the password, not a way past
+                    // the checks that follow it. Left out here, an operator whose shift
+                    // had ended could still open the till with a thumb.
+                    offShift(user) != null -> toast(offShift(user).orEmpty())
                     else -> signIn(user)
                 }
             },
@@ -745,6 +755,41 @@ class LoginFragment : Fragment() {
                 serialNo = c.getLong(c.getColumnIndexOrThrow("id"))
             )
         }
+    }
+
+    /**
+     * Why this operator may not sign in right now, or null if they may.
+     *
+     * ## Who this applies to
+     *
+     * A GENERAL user who has been PUT ON A SHIFT, on a till where App Settings has
+     * Shift switched on. All three have to hold:
+     *
+     *  * An ADMIN is never held out. Somebody has to be able to open the till to fix a
+     *    rota, unblock an account or close a day that ran long, and an admin locked out
+     *    by the clock is a shop locked out of its own POS.
+     *  * A user with NO shift keeps the hours they have always had. Assigning shifts to
+     *    some staff must not silently bar everybody else.
+     *  * With shifts switched OFF the times mean nothing, so a leftover shift_id from
+     *    when they were on cannot lock anyone out.
+     *
+     * ## Refused, not deferred
+     *
+     * The check is at the door rather than on a timer. Somebody already signed in when
+     * their shift ends is left alone - they are mid-sale, and throwing them out of a
+     * half-rung order to enforce a rota would lose the sale. What the shift bounds is
+     * OPENING the till, which is the moment a rota is actually about.
+     */
+    private fun offShift(user: User): String? {
+        if (user.role != UserRole.GENERAL_USER) return null
+        if (!com.example.synergic_pos_offline.database.ShiftDao.isEnabled(requireContext())) return null
+        val shift = com.example.synergic_pos_offline.database.ShiftDao
+            .forUser(requireContext(), user.serialNo) ?: return null
+        if (shift.coversNow(com.example.synergic_pos_offline.database.ShiftDao.nowMinutes())) return null
+        // Names the shift and its hours, because "outside shift hours" on its own
+        // leaves the operator with nothing to check against or to tell a manager.
+        return "Your shift (${shift.name}, ${shift.hours}) is not running now. " +
+            "You can sign in during your shift, or ask an admin."
     }
 
     private fun authenticateLocal(userId: String, password: String): User? {
