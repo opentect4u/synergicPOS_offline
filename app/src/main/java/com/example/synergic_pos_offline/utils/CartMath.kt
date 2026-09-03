@@ -17,8 +17,9 @@ import com.example.synergic_pos_offline.database.ChargeDao
  *
  * ## The four things Tax Settings decides
  *
- * - **GST / VAT / neither** - the regime. A line is taxed at whatever rates it
- *   actually carries; the regime only decides whether any tax applies at all.
+ * - **Tax on or off** - a line is taxed at whatever rates it actually carries
+ *   (GST or VAT is a fact about the product, not a store-wide choice - see
+ *   [GstCalculator.regimeOf]); this only decides whether any tax applies at all.
  * - **Inclusive or exclusive** - whether the listed price already contains its tax.
  * - **Item-wise or bill-wise discount** - a discount configured per product, or one
  *   figure entered against the whole bill. They are mutually exclusive.
@@ -45,7 +46,7 @@ object CartMath {
 
     /** Tax Settings, resolved once and handed to every call. */
     data class Config(
-        val regime: GstCalculator.TaxRegime,
+        val taxEnabled: Boolean,
         val inclusive: Boolean,
         val discountPreTax: Boolean,
         val itemwiseDiscount: Boolean,
@@ -59,8 +60,14 @@ object CartMath {
         val subtotal: Double,
         /** The whole-bill discount actually taken. Zero under item-wise. */
         val discount: Double,
-        /** What tax was charged on, across the bill. */
+        /** What tax was charged on the GOODS, across the bill - excludes [charges]. */
         val taxable: Double,
+        /**
+         * CGST/SGST/VAT actually charged on the bill - the goods' own tax, plus
+         * whatever tax [charges] carry too (see [totals]). Not split apart from
+         * one another: a charge is taxed at whatever rate(s) the goods themselves
+         * carry, not a rate of its own, so there is nothing to show separately.
+         */
         val cgst: Double,
         val sgst: Double,
         val vat: Double,
@@ -83,26 +90,24 @@ object CartMath {
         /**
          * What the bill comes to, before any round-off.
          *
-         * Service and extra charges join LAST, on top of the taxed goods. They are the
-         * shop's own additions rather than part of what was sold, so nothing above
-         * them - no discount, no tax - is worked out from them.
+         * Service and extra charges' own PRINCIPAL join LAST, on top of the taxed
+         * goods - they are the shop's own additions rather than part of what was
+         * sold, so no discount is worked out from them, and [chargesTotal] here is
+         * still the bare, untaxed figure. Their TAX, though, is already inside
+         * [goods] by way of the inflated [cgst]/[sgst]/[vat] - see [totals] - so it
+         * is not added again here.
          */
         val total: Double get() = BillRounding.toPaise(goods + service + chargesTotal)
     }
 
     /**
-     * The combined rate a line is stripped down by, for working out its pre-tax base.
-     *
-     * Regime-led, matching PosCheckoutFragment.lineDiscountForBill: on a GST till the
-     * base is backed out of CGST+SGST, on a VAT till out of VAT. (Which taxes are then
-     * CHARGED is [BillPricing]'s business, and it charges whatever rates the line
-     * carries - a distinction that matters only on a bill mixing the two.)
+     * The combined rate a line is stripped down by, for working out its pre-tax base -
+     * whatever the line itself carries (a product has GST rates or a VAT rate, never
+     * both, so summing all three is exactly picking whichever one it has), gated by
+     * whether tax is on at all. Matches [BillPricing]'s own `combinedRate`.
      */
-    fun rateOf(line: Line, cfg: Config): Double = when (cfg.regime) {
-        GstCalculator.TaxRegime.GST -> line.cgstRate + line.sgstRate
-        GstCalculator.TaxRegime.VAT -> line.vatRate
-        GstCalculator.TaxRegime.NONE -> 0.0
-    }
+    fun rateOf(line: Line, cfg: Config): Double =
+        if (cfg.taxEnabled) line.cgstRate + line.sgstRate + line.vatRate else 0.0
 
     /**
      * The discount for one line, expressed against its raw pre-tax base - the shape
@@ -134,7 +139,7 @@ object CartMath {
             sgstRate = line.sgstRate,
             vatRate = line.vatRate,
             discountAmount = lineDiscount(line, cfg, subtotal, billDiscount),
-            regime = cfg.regime,
+            taxEnabled = cfg.taxEnabled,
             inclusive = cfg.inclusive,
             discountPreTax = cfg.discountPreTax
         )
@@ -181,7 +186,9 @@ object CartMath {
      *
      * [service] is added by the caller's own rule (the restaurant's section charge);
      * [charges] are the shop's extra charges, already worked out against the pre-tax
-     * item total - see ChargeDao.
+     * item total - see ChargeDao. Their principal is untaxed itself, but is not tax-
+     * exempt: GST/VAT is charged on it too, at whatever rate(s) the lines it is
+     * spread across carry - see the note inside this function.
      */
     fun totals(
         lines: List<Line>,
@@ -196,9 +203,37 @@ object CartMath {
         val priced = lines.map { priceLine(it, cfg, sub, disc) }
 
         val taxable = priced.sumOf { it.taxable }
-        val cgst = priced.sumOf { it.cgst }
-        val sgst = priced.sumOf { it.sgst }
-        val vat = priced.sumOf { it.vat }
+        var cgst = priced.sumOf { it.cgst }
+        var sgst = priced.sumOf { it.sgst }
+        var vat = priced.sumOf { it.vat }
+
+        // The shop's own extra charges are taxable too, at the SAME rate(s) the
+        // goods on this bill carry - not a rate of their own. Spread across the
+        // lines by each one's share of the gross subtotal, exactly the way a
+        // bill-wise discount is spread (see lineDiscount), then taxed at THAT
+        // line's own cgstRate/sgstRate/vatRate - not a blended rate, the same
+        // distinction BillPricing draws for the goods themselves.
+        //
+        // Folded straight into cgst/sgst/vat rather than kept apart, so the
+        // charge's tax comes out of the bill's existing GST/VAT figure, not a
+        // column of its own. The charge's PRINCIPAL is untouched here: it still
+        // joins the bill once, on its own, via Totals.total's chargesTotal - only
+        // the tax ON it is added, so nothing is counted twice.
+        //
+        // Tax off means the till charges no tax at all, whatever rate a line carries
+        // on file - see BillPricing.price's own note on this - so a charge is not
+        // taxed there either.
+        if (cfg.taxEnabled) {
+            val chargesPrincipal = charges.sumOf { it.amount }
+            if (chargesPrincipal > 0.0 && sub > 0.0) {
+                lines.forEach { line ->
+                    val share = line.gross / sub * chargesPrincipal
+                    cgst += GstCalculator.taxAmount(share, line.cgstRate)
+                    sgst += GstCalculator.taxAmount(share, line.sgstRate)
+                    vat += GstCalculator.taxAmount(share, line.vatRate)
+                }
+            }
+        }
         // What a post-tax item-wise discount still owes: BillPricing reports the full
         // pre-discount taxable value and tax for those, and puts the reduction in the
         // line total instead. The difference is that reduction.

@@ -66,6 +66,8 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
             // reading two lines of zeroes - and one that does has them counted.
             if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
             if (report.hasVat) add("Total VAT" to money(report.totalVat))
+            if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
+            if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
         }
 
     /** The one figure the report is read for. */
@@ -101,6 +103,8 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
                 add("TOTAL CGST" to money(report.totalCgst))
                 if (report.hasIgst) add("TOTAL IGST" to money(report.totalIgst))
                 if (report.hasVat) add("TOTAL VAT " to money(report.totalVat))
+                if (report.totalServiceCharge > 0.005) add("SERVICE CHG" to money(report.totalServiceCharge))
+                if (report.totalOtherCharges > 0.005) add("EXTRA CHGS" to money(report.totalOtherCharges))
                 add("TOTAL AMT " to money(report.totalAmount))
             }.map { (label, value) -> "$label:" to value },
             emptyNote = "Nothing was sold in this period."

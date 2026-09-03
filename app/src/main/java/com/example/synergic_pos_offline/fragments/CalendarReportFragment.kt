@@ -58,6 +58,17 @@ abstract class CalendarReportFragment : PeriodReportFragment<CalendarReportDao.R
                     add("Best $periodLabel" to "${grain.label(it.period)}  ${money(it.totalAmount)}")
                 }
             }
+            // Each tax its own line rather than one blended figure - a GST return is
+            // filed against SGST and CGST separately, and IGST/VAT earn their place
+            // only where a bill in the range actually carried one.
+            add("Total SGST" to money(report.totalSgst))
+            add("Total CGST" to money(report.totalCgst))
+            if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
+            if (report.hasVat) add("Total VAT" to money(report.totalVat))
+            // Shown only where the range actually carried one - a shop that never
+            // charges Service or an Extra Charge should not read a zero row saying so.
+            if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
+            if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
         }
 
     /** The one figure the report is read for. */
@@ -108,11 +119,16 @@ abstract class CalendarReportFragment : PeriodReportFragment<CalendarReportDao.R
                     money(line.totalAmount)
                 )
             },
-            summary = listOf(
-                "TOTAL BILLS :" to report.totalBills.toString(),
-                "TOTAL TAX   :" to money(report.totalTax),
-                "TOTAL DISC. :" to money(report.totalDiscount)
-            ),
+            summary = buildList {
+                add("TOTAL BILLS :" to report.totalBills.toString())
+                add("TOTAL SGST  :" to money(report.totalSgst))
+                add("TOTAL CGST  :" to money(report.totalCgst))
+                if (report.hasIgst) add("TOTAL IGST  :" to money(report.totalIgst))
+                if (report.hasVat) add("TOTAL VAT   :" to money(report.totalVat))
+                add("TOTAL DISC. :" to money(report.totalDiscount))
+                if (report.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(report.totalServiceCharge))
+                if (report.totalOtherCharges > 0.005) add("EXTRA CHGS  :" to money(report.totalOtherCharges))
+            },
             total = "TOTAL AMOUNT:" to money(report.totalAmount),
             emptyNote = "No bills in this range."
         )

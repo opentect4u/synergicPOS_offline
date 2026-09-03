@@ -51,52 +51,56 @@ class TaxSettingsDao(context: Context) {
      * Full tax/discount configuration.
      *
      * Discount: [discountEnabled] gates a single [discountType], radio-selected when
-     * discount is on. [discountPosition] is not a choice at all - it follows from the
-     * type, see [effectivePosition] - and is carried here only because it is what the
-     * rest of the app calculates against.
+     * discount is on. [discountPosition] is not a choice at all right now - Pre-tax is
+     * disabled, so this is always Post-tax - and is carried here only because it is
+     * what the rest of the app calculates against.
      *
-     * Tax: [gstEnabled], [igstEnabled] and [vatEnabled] are mutually exclusive
-     * (enforced by the UI); [gstMode] only applies when GST is on.
+     * Tax: [taxEnabled] switches tax on or off store-wide; [taxMode] is the one
+     * shared Inclusive/Exclusive setting. Which tax a given sale carries - GST or
+     * VAT - is not decided here any more: it is the product's own business, read
+     * off whichever of its rate fields (cgst/sgst vs vat) it actually has set. See
+     * [com.example.synergic_pos_offline.utils.GstCalculator.regimeOf].
      */
     data class TaxSettings(
         val discountEnabled: Boolean = false,
         val discountType: DiscountType = DiscountType.ITEM_WISE,
-        val discountPosition: DiscountPosition = DiscountPosition.PRE_TAX,
+        val discountPosition: DiscountPosition = DiscountPosition.POST_TAX,
         // Tax
-        val gstEnabled: Boolean = false,
-        val gstMode: GstMode = GstMode.EXCLUSIVE,
-        val vatEnabled: Boolean = false,
-        val vatMode: GstMode = GstMode.EXCLUSIVE
+        val taxEnabled: Boolean = false,
+        val taxMode: GstMode = GstMode.EXCLUSIVE
     )
 
-    /** Reads every tax setting for the current store, applying defaults.
-     *  The position is taken from [effectivePosition] rather than from the stored
-     *  row, so a store configured before it followed the type still reads correctly. */
+    /**
+     * Reads every tax setting for the current store, applying defaults. The
+     * discount position is always Post-tax - see
+     * [discountPosition][TaxSettings.discountPosition].
+     *
+     * [taxEnabled]/[taxMode] fall back to the old separate GST/VAT keys when the
+     * unified ones have never been written for this store - a store saved before
+     * GST and VAT collapsed into one switch. Once this store saves again, [save]
+     * writes only the unified keys and this fallback stops mattering for it.
+     */
     fun load(): TaxSettings {
         val m = readAll()
         val d = TaxSettings()
         val type = DiscountType.fromCode(m[KEY_DISCOUNT_TYPE]) ?: d.discountType
+        val legacyVatOn = m[KEY_LEGACY_VAT_ENABLED]?.toBool() == true
+        val legacyGstOn = m[KEY_LEGACY_GST_ENABLED]?.toBool() == true
         return TaxSettings(
             discountEnabled = m[KEY_DISCOUNT_ENABLED]?.toBool() ?: d.discountEnabled,
             discountType = type,
-            // The operator's own choice, read back as stored. It used to be derived
-            // from the type here and on save, which meant the Pre-tax / Post-tax
-            // buttons were on the screen but could not be moved: picking one, saving,
-            // and coming back showed whatever the type implied. See DiscountPosition.
-            discountPosition = DiscountPosition.fromCode(m[KEY_DISCOUNT_POSITION])
-                ?: effectivePosition(type),
-            gstEnabled = m[KEY_GST_ENABLED]?.toBool() ?: d.gstEnabled,
-            gstMode = GstMode.fromCode(m[KEY_GST_MODE]) ?: d.gstMode,
-            vatEnabled = m[KEY_VAT_ENABLED]?.toBool() ?: d.vatEnabled,
-            vatMode = GstMode.fromCode(m[KEY_VAT_MODE]) ?: d.vatMode
+            // Pre-tax discount is disabled for now - every store calculates Post-tax,
+            // regardless of what an older save on this store holds.
+            discountPosition = DiscountPosition.POST_TAX,
+            taxEnabled = m[KEY_TAX_ENABLED]?.toBool() ?: (legacyGstOn || legacyVatOn),
+            taxMode = GstMode.fromCode(m[KEY_TAX_MODE])
+                ?: GstMode.fromCode(if (legacyVatOn) m[KEY_LEGACY_VAT_MODE] else m[KEY_LEGACY_GST_MODE])
+                ?: d.taxMode
         )
     }
 
-    /**
-     * Writes every tax setting for the current store (upsert per key). When discount
-     * is disabled, the type and position are stored as 0; when enabled, they hold the
-     * selected value (1-4).
-     */
+    /** Writes every tax setting for the current store (upsert per key). When discount
+     *  is disabled, the type is stored as 0; when enabled, it holds the selected value. */
     fun save(s: TaxSettings) {
         put(KEY_DISCOUNT_ENABLED, s.discountEnabled.b())
         put(KEY_DISCOUNT_TYPE, if (s.discountEnabled) s.discountType.code.toString() else "0")
@@ -105,12 +109,9 @@ class TaxSettingsDao(context: Context) {
             KEY_DISCOUNT_POSITION,
             if (s.discountEnabled) s.discountPosition.code.toString() else "0"
         )
-        put(KEY_GST_ENABLED, s.gstEnabled.b())
-        // GST type is only meaningful when GST is on; otherwise store null.
-        put(KEY_GST_MODE, if (s.gstEnabled) s.gstMode.code else null)
-        put(KEY_VAT_ENABLED, s.vatEnabled.b())
-        // VAT type is only meaningful when VAT is on; otherwise store null.
-        put(KEY_VAT_MODE, if (s.vatEnabled) s.vatMode.code else null)
+        put(KEY_TAX_ENABLED, s.taxEnabled.b())
+        // Tax mode is only meaningful when tax is on; otherwise store null.
+        put(KEY_TAX_MODE, if (s.taxEnabled) s.taxMode.code else null)
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "Tax settings save (type T)")
     }
@@ -185,29 +186,16 @@ class TaxSettingsDao(context: Context) {
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
     companion object {
-        /**
-         * The position a discount is applied at, which is not configurable: it
-         * follows from the type, whether or not GST/VAT is on.
-         *
-         * An item-wise discount is configured against the product's own rate and is
-         * always taken off before tax. A bill-wise discount is entered against the
-         * cart's total and is always taken off after it, so tax is charged on the
-         * full sale and the discount comes off the taxed total once.
-         *
-         * Applied on both save and load, so the stored value, the settings cache
-         * (read raw by the product master) and every calculation agree.
-         */
-        fun effectivePosition(type: DiscountType): DiscountPosition = when (type) {
-            DiscountType.ITEM_WISE -> DiscountPosition.PRE_TAX
-            DiscountType.BILL_WISE -> DiscountPosition.POST_TAX
-        }
-
         private const val KEY_DISCOUNT_ENABLED = "Discount"
         private const val KEY_DISCOUNT_TYPE = "Discount Type"
         private const val KEY_DISCOUNT_POSITION = "Discount Position"
-        private const val KEY_GST_ENABLED = "GST"
-        private const val KEY_GST_MODE = "GST Type"
-        private const val KEY_VAT_ENABLED = "VAT"
-        private const val KEY_VAT_MODE = "VAT Type"
+        private const val KEY_TAX_ENABLED = "Tax"
+        private const val KEY_TAX_MODE = "Tax Type"
+        // No longer written - read only, as a fallback for a store that saved
+        // settings before GST and VAT collapsed into one switch. See load().
+        private const val KEY_LEGACY_GST_ENABLED = "GST"
+        private const val KEY_LEGACY_GST_MODE = "GST Type"
+        private const val KEY_LEGACY_VAT_ENABLED = "VAT"
+        private const val KEY_LEGACY_VAT_MODE = "VAT Type"
     }
 }

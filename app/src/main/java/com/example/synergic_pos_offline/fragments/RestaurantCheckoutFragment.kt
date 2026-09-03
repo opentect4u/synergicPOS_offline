@@ -10,7 +10,6 @@ import android.widget.TextView
 import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
-import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
@@ -80,9 +79,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         }
     private val customer get() = arguments?.getString(ARG_CUSTOMER)?.ifBlank { "Walk-in" } ?: "Walk-in"
     private val serviceRate get() = arguments?.getDouble(ARG_SERVICE_RATE) ?: 0.0
-    private val gstEnabled get() = arguments?.getBoolean(ARG_GST_ON) ?: true
-    private val vatEnabled get() = arguments?.getBoolean(ARG_VAT_ON) ?: false
-    private val taxInclusive get() = arguments?.getBoolean(ARG_INCLUSIVE) ?: false
+    private val taxEnabled get() = arguments?.getBoolean(ARG_TAX_ON) ?: true
 
     /**
      * Tax Settings' discount, as the Orders screen worked it out - see CartMath.
@@ -91,13 +88,20 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
      * the operator was quoted on the cart page is the figure that has to be paid, and
      * a screen that works it out a second time can only ever agree by coincidence.
      *
-     * [billDiscount] is the whole-bill amount; [lineDiscounts] is each line's share of
-     * it against that line's raw pre-tax base. Which of the two does the work depends
-     * on [discountPreTax]: pre-tax, the per-line shares reduce the taxable value, and
-     * the bill figure is already inside them; post-tax, the lines are taxed in full
-     * and the bill figure comes off once, after tax.
+     * [billDiscount] is the whole-bill amount, in the RAW shape the printed slip's own
+     * per-line discount_amount figures are - see [lineDiscounts] - stored, not shown;
+     * [discountDisplay] is what the Discount row on THIS screen actually shows, which
+     * can differ under a post-tax item-wise discount (see BillBreakdown.discountDisplay
+     * on the Orders screen, which this is read from verbatim - the two rows have to
+     * agree by construction, not by two screens doing the same sum). [lineDiscounts]
+     * is each line's share of [billDiscount] against that line's raw pre-tax base.
+     * Which of the two does the work depends on [discountPreTax]: pre-tax, the
+     * per-line shares reduce the taxable value, and the bill figure is already inside
+     * them; post-tax, the lines are taxed in full and the bill figure comes off once,
+     * after tax.
      */
     private val billDiscount get() = arguments?.getDouble(ARG_DISCOUNT) ?: 0.0
+    private val discountDisplay get() = arguments?.getDouble(ARG_DISCOUNT_DISPLAY) ?: billDiscount
     private val lineDiscounts: DoubleArray get() = arguments?.getDoubleArray(ARG_LINE_DISCOUNTS) ?: DoubleArray(0)
     private val discountPreTax get() = arguments?.getBoolean(ARG_DISCOUNT_PRE_TAX) ?: true
 
@@ -105,12 +109,27 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     private fun discountFor(index: Int): Double = lineDiscounts.getOrElse(index) { 0.0 }
 
     /**
-     * Which of a line's own CGST/SGST or VAT rate is actually charged - see
-     * BillPricing.price. A line is taxed under whichever it carries a rate for,
-     * regardless of this; the regime only gates whether ANY tax applies at all,
-     * off when both GST and VAT are switched off.
+     * The whole bill, exactly as the Orders screen's own [CartMath.totals] worked it
+     * out - CGST, SGST, VAT, and the final payable and round-off, already rounded.
+     *
+     * PASTED here rather than re-priced: this screen used to run every line back
+     * through BillPricing itself and add the pieces up a second time, and the two
+     * additions drifted the moment either side gained a rule the other had not been
+     * given too - most recently, this screen's own copy never learned about a
+     * post-tax item-wise discount's further deduction (CartMath.Totals.itemwiseDiscount)
+     * at all, so a discounted table was quoted 1067 on the cart page and asked to pay
+     * 1073 here. Reading the Orders screen's own answer instead of a second guess at
+     * it is the only way the two are guaranteed to agree - see [payableTotal].
      */
-    private val taxRegime get() = com.example.synergic_pos_offline.utils.GstCalculator.regimeFor(gstEnabled, vatEnabled)
+    private val cgst get() = arguments?.getDouble(ARG_CGST) ?: 0.0
+    private val sgst get() = arguments?.getDouble(ARG_SGST) ?: 0.0
+    private val vat get() = arguments?.getDouble(ARG_VAT) ?: 0.0
+
+    /** The final amount due, already rounded - what Confirm Payment actually charges. */
+    private val payableTotal get() = arguments?.getDouble(ARG_PAYABLE) ?: 0.0
+
+    /** The adjustment [payableTotal] applied to reach the rounded figure - 0 when off. */
+    private val roundOffAmount get() = arguments?.getDouble(ARG_ROUND_OFF) ?: 0.0
 
     private var total = 0.0
 
@@ -201,33 +220,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     /** Renders the bill in the grocery format and shows it in a scrollable dialog. */
     private fun showReceiptPreview() {
         val ctx = requireContext()
-        var subtotal = 0.0; var taxable = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
-        lines.forEachIndexed { i, l ->
-            val p = com.example.synergic_pos_offline.utils.BillPricing.price(
-                l.rate, l.qty, l.cgstRate, l.sgstRate, l.vatRate,
-                discountFor(i), taxRegime, taxInclusive, discountPreTax
-            )
-            subtotal += l.qty * l.rate; taxable += p.taxable; cgst += p.cgst; sgst += p.sgst; vat += p.vat
-        }
+        val subtotal = lines.sumOf { it.qty * it.rate }
         // Flat section service charge (₹), applied only to a non-empty order.
         val service = if (subtotal > 0.0) serviceRate else 0.0
-        val chargesTotal = charges.sumOf { it.second }
-        // A POST-TAX discount comes off here, once, after tax - pre-tax it is already
-        // inside each line's taxable value above and must not be taken twice. This is
-        // CartMath.totals' own rule; the two have to match or the slip and the screen
-        // that printed it would quote different money.
-        // FROM THE TAXABLE VALUE, not the gross subtotal. Under a PRE-TAX discount the
-        // reduction lives inside each line's taxable value, so a total built on the
-        // listed subtotal adds the discount straight back on - which is what this did,
-        // quoting a pre-tax discounted table its full undiscounted price. Taxable + tax
-        // is the same figure the inclusive shortcut used to give when there was no
-        // discount, and the right one when there is. Matches CartMath.totals.
-        val goods = taxable + cgst + sgst + vat
-        val netTotal = (goods - (if (discountPreTax) 0.0 else billDiscount)).coerceAtLeast(0.0) +
-            service + chargesTotal
-        val roundOffOn = runCatching {
-            com.example.synergic_pos_offline.database.BillSettingsDao(ctx).load().roundOff
-        }.getOrDefault(false)
 
         // The table as the bill's own field - see Draft.table - rather than smuggled
         // in as the customer's name, which the Customer Details setting could switch
@@ -253,12 +248,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                     discountAmount = discountFor(i)
                 )
             },
-            // Bill Settings' Round Off is the only say in whether this rounds - on,
-            // it rounds every total regardless of what is in the cart; off, the exact
-            // taxed figure stands.
+            // Round off is the Orders screen's own figure too - see [roundOffAmount] -
+            // not reworked out here against a total this screen no longer builds.
             discount = billDiscount,
-            roundOff = if (roundOffOn) BillRounding.roundOff(netTotal) else 0.0,
-            netAmount = if (roundOffOn) BillRounding.payable(netTotal) else BillRounding.toPaise(netTotal),
+            roundOff = roundOffAmount,
+            netAmount = payableTotal,
             paymentModes = listOf(payMethod.uppercase(java.util.Locale.US)),
             serviceCharge = service,
             // Already worked out and filtered by order type on the Orders screen -
@@ -270,8 +264,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             returnAmount = run {
                 val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
                     ?.text?.toString()?.toDoubleOrNull() ?: 0.0
-                val payable = if (roundOffOn) BillRounding.payable(netTotal) else BillRounding.toPaise(netTotal)
-                (tendered - payable).coerceAtLeast(0.0)
+                (tendered - payableTotal).coerceAtLeast(0.0)
             }
         )
         val paperDots = com.example.synergic_pos_offline.database.OperatingPrinterDao(ctx).getAll()
@@ -334,65 +327,37 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         fillingTendered = false
     }
 
+    /**
+     * Draws the line rows and the totals block - the totals PASTED from the Orders
+     * screen's own [CartMath.totals] (see [cgst] and its neighbours), not re-priced
+     * here. A line's own name/qty/rate/amount are plain facts about the line and
+     * cannot drift regardless, so those alone are still worked out on this screen.
+     */
     private fun populateItems(root: View) {
         val container = root.findViewById<LinearLayout>(R.id.llCheckoutItems)
         val inflater = LayoutInflater.from(requireContext())
-        var subtotal = 0.0; var taxable = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
-        lines.forEachIndexed { index, l ->
+        val subtotal = lines.sumOf { it.qty * it.rate }
+        lines.forEach { l ->
             val row = inflater.inflate(R.layout.item_rest_checkout_line, container, false)
             row.findViewById<TextView>(R.id.tvLineName).text = l.name
             row.findViewById<TextView>(R.id.tvLineQty).text = qtyText(l.qty)
             row.findViewById<TextView>(R.id.tvLineRate).text = money(l.rate)
             row.findViewById<TextView>(R.id.tvLineAmount).text = money(l.qty * l.rate)
             container.addView(row)
-            // Per-line CGST/SGST or VAT, honouring the store Tax Settings (GST/VAT
-            // on/off, inclusive) - see [taxRegime]. Which of the two a line actually
-            // carries a rate for is the line's own business, not the till's.
-            val p = com.example.synergic_pos_offline.utils.BillPricing.price(
-                l.rate, l.qty, l.cgstRate, l.sgstRate, l.vatRate,
-                discountFor(index), taxRegime, taxInclusive, discountPreTax
-            )
-            subtotal += l.qty * l.rate
-            taxable += p.taxable
-            cgst += p.cgst
-            sgst += p.sgst
-            vat += p.vat
         }
         // Flat section service charge (₹), applied only to a non-empty order - the
-        // same flat figure RestaurantOrdersFragment.computeBill() and this screen's
-        // own showReceiptPreview() use. This used to be worked out as a PERCENTAGE of
-        // subtotal instead, which is not what the section's service charge is.
+        // same flat figure RestaurantOrdersFragment.computeBill() works out.
         val service = if (subtotal > 0.0) serviceRate else 0.0
-        // The shop's own extra charges - Parcel Charge among them - already worked
-        // out and filtered by order type on the Orders screen; joined last, on top of
-        // the taxed goods, same as CartMath.Totals.total does for every other screen.
-        val chargesTotal = charges.sumOf { it.second }
-        // See showReceiptPreview: from the taxable value, and the discount only comes
-        // off here when it is post-tax.
-        val goods = taxable + cgst + sgst + vat
-        val exactTotal = (goods - (if (discountPreTax) 0.0 else billDiscount)).coerceAtLeast(0.0) +
-            service + chargesTotal
-        // Bill Settings' Round Off is the only say in whether this rounds - see
-        // RestaurantOrdersFragment.roundOffOn(). Applied here, on the class field
-        // that everything below (the total shown, the Confirm button, the tendered
-        // validation, the QR amount, and ARG_TENDERED handed back to the Orders
-        // screen) reads from, so all of it agrees on the one payable figure.
-        val roundOffOn = runCatching {
-            com.example.synergic_pos_offline.database.BillSettingsDao(requireContext()).load().roundOff
-        }.getOrDefault(false)
-        total = if (roundOffOn) BillRounding.payable(exactTotal) else BillRounding.toPaise(exactTotal)
+        total = payableTotal
         root.findViewById<TextView>(R.id.tvSubtotal).text = "₹ ${money(subtotal)}"
-        // The discount, said out loud. It has always been taken off the total here -
-        // pre-tax inside each line's taxable value, post-tax off `goods` above - but
-        // the breakup never carried a line for it, so the page showed a subtotal of
-        // 220 and a total of 210 with nothing to account for the difference. The
-        // figure is the Orders screen's own (see billDiscount), so this row and the
-        // panel's Note & tax details row are the same number by construction.
+        // The discount, said out loud - the Orders screen's own DISPLAYED figure
+        // (see [discountDisplay]), so this row and the panel's Note & tax details
+        // row are the same number by construction, not by two screens agreeing.
         //
         // Signed, and hidden at zero, exactly as the panel does it.
         root.findViewById<View>(R.id.rowCheckoutDiscount).visibility =
-            if (billDiscount > 0.0) View.VISIBLE else View.GONE
-        root.findViewById<TextView>(R.id.tvCheckoutDiscount).text = "- ₹ ${money(billDiscount)}"
+            if (discountDisplay > 0.0) View.VISIBLE else View.GONE
+        root.findViewById<TextView>(R.id.tvCheckoutDiscount).text = "- ₹ ${money(discountDisplay)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(service)}"
 
         val llCharges = root.findViewById<LinearLayout>(R.id.llCheckoutCharges)
@@ -467,15 +432,20 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_HSNS = "hsns"
         private const val ARG_UNITS = "units"
         private const val ARG_SERVICE_RATE = "service_rate"
-        private const val ARG_GST_ON = "gst_on"
-        private const val ARG_VAT_ON = "vat_on"
+        private const val ARG_TAX_ON = "tax_on"
         private const val ARG_INCLUSIVE = "inclusive"
         private const val ARG_CHARGE_NAMES = "charge_names"
         private const val ARG_CHARGE_AMOUNTS = "charge_amounts"
         private const val ARG_CHARGE_TYPES = "charge_types"
         private const val ARG_DISCOUNT = "discount"
+        private const val ARG_DISCOUNT_DISPLAY = "discount_display"
         private const val ARG_LINE_DISCOUNTS = "line_discounts"
         private const val ARG_DISCOUNT_PRE_TAX = "discount_pre_tax"
+        private const val ARG_CGST = "cgst"
+        private const val ARG_SGST = "sgst"
+        private const val ARG_VAT = "vat"
+        private const val ARG_PAYABLE = "payable"
+        private const val ARG_ROUND_OFF = "round_off"
 
         /**
          * Builds a checkout for the running order [orderId] on [table] in [section],
@@ -485,7 +455,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
          * [hsns], [vats] and [units] are optional and default to empty - a caller that
          * has not looked them up (or a build predating these parameters) still gets a
          * working screen, just without HSN, VAT or a unit on it. Empty/zero in a slot
-         * means "this item has none". [vatEnabled] defaults off for the same reason.
+         * means "this item has none".
          *
          * [chargeNames]/[chargeAmounts]/[chargeTypes] are the shop's own extra charges
          * - Parcel Charge among them - already worked out and filtered by this order's
@@ -499,21 +469,37 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
          * the shape BillPricing takes - and is what makes a PRE-TAX discount reduce the
          * taxable value line by line; [discount] is the whole-bill figure a POST-TAX one
          * comes off after tax. Zero by default, which prices exactly as this screen did
-         * before it knew about discounts at all.
+         * before it knew about discounts at all. [discountDisplay] is what the Discount
+         * row on THIS screen actually shows - see the property of the same name.
+         *
+         * [cgst]/[sgst]/[vat]/[payableTotal]/[roundOffAmount] are
+         * `RestaurantOrdersFragment.computeBill()`'s own [CartMath.totals] answer,
+         * pasted rather than re-derived - see the properties of the same names for why:
+         * a second calculation here, however carefully mirrored, has already twice
+         * drifted from the first as each gained a rule the other had not. Zero by
+         * default, which is wrong for any order actually carrying tax or a total - callers
+         * must pass the Orders screen's real figures; the default only keeps a build
+         * predating these parameters from failing to compile.
          */
         fun newInstance(
             orderId: Long, table: String, section: String, customer: String,
             names: ArrayList<String>, qtys: DoubleArray, rates: DoubleArray,
             cgsts: DoubleArray, sgsts: DoubleArray, serviceRate: Double,
-            gstEnabled: Boolean, inclusive: Boolean, hsns: ArrayList<String> = arrayListOf(),
-            vats: DoubleArray = DoubleArray(0), vatEnabled: Boolean = false,
+            taxEnabled: Boolean, inclusive: Boolean, hsns: ArrayList<String> = arrayListOf(),
+            vats: DoubleArray = DoubleArray(0),
             units: ArrayList<String> = arrayListOf(),
             chargeNames: ArrayList<String> = arrayListOf(),
             chargeAmounts: DoubleArray = DoubleArray(0),
             chargeTypes: ArrayList<String> = arrayListOf(),
             discount: Double = 0.0,
+            discountDisplay: Double = discount,
             lineDiscounts: DoubleArray = DoubleArray(0),
-            discountPreTax: Boolean = true
+            discountPreTax: Boolean = true,
+            cgst: Double = 0.0,
+            sgst: Double = 0.0,
+            vat: Double = 0.0,
+            payableTotal: Double = 0.0,
+            roundOffAmount: Double = 0.0
         ): RestaurantCheckoutFragment = RestaurantCheckoutFragment().apply {
             arguments = android.os.Bundle().apply {
                 putLong(ARG_ORDER_ID, orderId)
@@ -529,15 +515,20 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putStringArrayList(ARG_HSNS, hsns)
                 putStringArrayList(ARG_UNITS, units)
                 putDouble(ARG_SERVICE_RATE, serviceRate)
-                putBoolean(ARG_GST_ON, gstEnabled)
-                putBoolean(ARG_VAT_ON, vatEnabled)
+                putBoolean(ARG_TAX_ON, taxEnabled)
                 putBoolean(ARG_INCLUSIVE, inclusive)
                 putStringArrayList(ARG_CHARGE_NAMES, chargeNames)
                 putDoubleArray(ARG_CHARGE_AMOUNTS, chargeAmounts)
                 putStringArrayList(ARG_CHARGE_TYPES, chargeTypes)
                 putDouble(ARG_DISCOUNT, discount)
+                putDouble(ARG_DISCOUNT_DISPLAY, discountDisplay)
                 putDoubleArray(ARG_LINE_DISCOUNTS, lineDiscounts)
                 putBoolean(ARG_DISCOUNT_PRE_TAX, discountPreTax)
+                putDouble(ARG_CGST, cgst)
+                putDouble(ARG_SGST, sgst)
+                putDouble(ARG_VAT, vat)
+                putDouble(ARG_PAYABLE, payableTotal)
+                putDouble(ARG_ROUND_OFF, roundOffAmount)
             }
         }
     }

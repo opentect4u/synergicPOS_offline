@@ -250,11 +250,25 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val taxable: Double = 0.0,
         /**
          * The discount taken off this order - the bill-wise figure typed on the cart
-         * page, or the sum of the lines' own under item-wise discount. One number
-         * whichever way it was arrived at, because that is what the slip prints and
-         * what the bill stores.
+         * page, or the sum of the lines' own under item-wise discount, ALWAYS
+         * against the lines' raw pre-tax base. This is what is written to the bill,
+         * per line as `td_bill_items.discount_amount` and per bill as
+         * `tot_discount_amount` - see the per-line figure sent alongside it at each
+         * call site. [BillReceiptRenderer] re-derives the customer-facing, taxed
+         * figure from those stored amounts itself; handing it an already-grossed
+         * total here would double the gross-up, which is what [discountDisplay]
+         * exists to avoid doing on screen instead.
          */
         val discount: Double = 0.0,
+        /**
+         * [discount], but grossed up the way a post-tax item-wise discount actually
+         * lands on the customer's total - for the panel only. A pre-tax discount
+         * reduces the taxable value directly, so it IS [discount]; a post-tax one
+         * comes off the taxed price instead, so what the customer sees knocked off
+         * is [discount] plus the tax it would otherwise have carried. Never written
+         * anywhere - see [discount] for why the stored figure has to stay raw.
+         */
+        val discountDisplay: Double = discount,
         /** How that discount was entered, for the record written to the bill. */
         val discountIsPercent: Boolean = true,
         val discountPercent: Double = 0.0,
@@ -352,10 +366,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             total = totals.total,
             vat = totals.vat,
             taxable = totals.taxable,
-            // Under item-wise the figure shown is what the lines' own discounts came
-            // to, which is the only discount there is; under bill-wise it is the one
-            // that was typed.
+            // Under item-wise this is what the lines' own discounts came to, always
+            // against their raw pre-tax base - matching the per-line discountAmount
+            // sent to checkout/the slip below, so a post-tax bill's stored total
+            // still equals the sum of what each line stored, and the receipt does
+            // not gross the same discount up twice (once per line, again here).
+            // Under bill-wise it is the one that was typed.
             discount = if (itemwiseDiscountActive) itemwiseDiscountTotal(lines) else totals.discount,
+            // The panel's own figure, which - unlike the stored one above - SHOULD
+            // read post-tax as the taxed reduction the customer sees, not the raw
+            // pre-tax figure: see discountDisplay's own doc.
+            discountDisplay = when {
+                !itemwiseDiscountActive -> totals.discount
+                discountPreTax -> itemwiseDiscountTotal(lines)
+                else -> totals.itemwiseDiscount
+            },
             discountIsPercent = discountMode == com.example.synergic_pos_offline.utils.GstCalculator.DiscountMode.PERCENT,
             discountPercent = com.example.synergic_pos_offline.utils.CartMath
                 .discountPercent(lines, cartConfig(), totals.discount),
@@ -372,7 +397,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** Tax Settings as the calculation needs them. */
     private fun cartConfig() = com.example.synergic_pos_offline.utils.CartMath.Config(
-        regime = taxRegime,
+        taxEnabled = taxEnabled,
         inclusive = taxInclusive,
         discountPreTax = discountPreTax,
         itemwiseDiscount = itemwiseDiscountActive,
@@ -380,25 +405,29 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     )
 
     /**
-     * What the lines' own discounts came to, for the Discount line on the panel and
-     * the slip. Read back as the gap between the full taxed line and what it actually
-     * sells for, so it reports the same number under all four pre/post x incl/excl
-     * rules rather than re-deriving each.
+     * What the lines' own discounts came to under a PRE-tax item-wise discount - the
+     * sum of each line's own [CartMath.lineDiscount], the figure actually taken off
+     * its pre-tax base, the same one [BillDao] stores against the line and the same
+     * shape a GST bill reports a discount in. [totals.itemwiseDiscount][CartMath.Totals.itemwiseDiscount]
+     * is the post-tax counterpart, already worked out where a bill needs that one.
+     *
+     * NOT the gap between the full taxed line and what it actually sells for. Under
+     * a pre-tax discount that gap is bigger than the discount itself by the tax the
+     * discount also saved - 10% off a 240.00 line at 5% GST sells for 5.34 less than
+     * the discount alone would suggest (216.00 taxed vs. 228.00 taxed), so reading
+     * the discount back that way reports 112.34 for a bill where 107.00 was actually
+     * configured and charged. [CartMath.lineDiscount] is exact regardless, since it
+     * is the pre-tax figure everything else - the taxable value, the tax, the row
+     * sent to checkout - is already built from. That gap IS the right figure post-tax,
+     * which is exactly what [CartMath.Totals.itemwiseDiscount] already is - see the
+     * call site, which reads for pre-tax only.
      */
     private fun itemwiseDiscountTotal(lines: List<com.example.synergic_pos_offline.utils.CartMath.Line>): Double {
         val cfg = cartConfig()
         val sub = com.example.synergic_pos_offline.utils.CartMath.subtotal(lines)
-        val undiscounted = lines.sumOf { l ->
-            val p = com.example.synergic_pos_offline.utils.CartMath.priceLine(
-                l.copy(discValue = 0.0, discType = null), cfg, sub, 0.0
-            )
-            p.itemTotal
-        }
-        val actual = lines.sumOf {
-            com.example.synergic_pos_offline.utils.CartMath.priceLine(it, cfg, sub, 0.0).itemTotal
-        }
-        return com.example.synergic_pos_offline.utils.BillRounding
-            .toPaise((undiscounted - actual).coerceAtLeast(0.0))
+        return com.example.synergic_pos_offline.utils.BillRounding.toPaise(
+            lines.sumOf { com.example.synergic_pos_offline.utils.CartMath.lineDiscount(it, cfg, sub, 0.0) }
+        )
     }
 
     /**
@@ -446,14 +475,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * reason, as [suppressNoteWatcher].
      */
     private var suppressDiscountWatcher = false
-    private val taxRegime by lazy { GstCalculator.regimeFor(taxSettings.gstEnabled, taxSettings.vatEnabled) }
-    private val taxInclusive by lazy {
-        when (taxRegime) {
-            GstCalculator.TaxRegime.GST -> taxSettings.gstMode == TaxSettingsDao.GstMode.INCLUSIVE
-            GstCalculator.TaxRegime.VAT -> taxSettings.vatMode == TaxSettingsDao.GstMode.INCLUSIVE
-            GstCalculator.TaxRegime.NONE -> false
-        }
-    }
+    /** Whether tax is switched on at all. Which of GST/VAT a product carries is not
+     *  a store-wide choice any more - see [GstCalculator.regimeOf]. */
+    private val taxEnabled by lazy { taxSettings.taxEnabled }
+    private val taxInclusive by lazy { taxSettings.taxMode == TaxSettingsDao.GstMode.INCLUSIVE }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -669,8 +694,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 order.dbId, order.id, order.section,
                                 order.phone.ifBlank { "Walk-in" }, names, qtys, rates,
                                 cgsts, sgsts, serviceRateFor(order.section),
-                                gstEnabled = taxSettings.gstEnabled, inclusive = taxInclusive,
-                                hsns = hsns, vats = vats, vatEnabled = taxSettings.vatEnabled,
+                                taxEnabled = taxSettings.taxEnabled, inclusive = taxInclusive,
+                                hsns = hsns, vats = vats,
                                 units = units,
                                 chargeNames = ArrayList(charges.map { it.name }),
                                 chargeAmounts = charges.map { it.amount }.toDoubleArray(),
@@ -683,6 +708,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 // the pre-tax / post-tax choice did nothing on the
                                 // screen the customer actually pays from.
                                 discount = b.discount,
+                                discountDisplay = b.discountDisplay,
                                 lineDiscounts = order.items.map { line ->
                                     com.example.synergic_pos_offline.utils.CartMath.lineDiscount(
                                         line.toMathLine(), cartConfig(),
@@ -691,7 +717,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                         b.discount
                                     )
                                 }.toDoubleArray(),
-                                discountPreTax = discountPreTax
+                                discountPreTax = discountPreTax,
+                                // THE WHOLE CALCULATION, again - CGST/SGST/VAT and the
+                                // final payable, pasted from this same b rather than
+                                // re-priced on the checkout screen. That screen used
+                                // to run every line back through BillPricing itself,
+                                // and its own copy never learned about a post-tax
+                                // item-wise discount's further deduction, so a table
+                                // quoted 1067 here was asked to pay 1073 there - two
+                                // additions of the one calculation, free to disagree
+                                // the moment either gained a rule the other had not.
+                                cgst = b.cgst,
+                                sgst = b.sgst,
+                                vat = b.vat,
+                                payableTotal = payableTotal(b.total),
+                                roundOffAmount = roundOffAmount(b.total)
                             )
                         )
                         .addToBackStack(null)
@@ -3259,7 +3299,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             focusQty = qtyEditable,
             focusRate = manualRateOn,
             rateEditable = manualRateOn,
-            taxRegime = taxRegime,
+            taxEnabled = taxEnabled,
             taxInclusive = taxInclusive,
             itemwiseDiscountActive = itemwiseDiscountActive,
             discountPreTax = discountPreTax
@@ -3316,7 +3356,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // dish went on.
             rateEditable = com.example.synergic_pos_offline.utils.SettingsCache
                 .value(requireContext(), "A", "Manual Rate") == "1",
-            taxRegime = taxRegime,
+            taxEnabled = taxEnabled,
             taxInclusive = taxInclusive,
             itemwiseDiscountActive = itemwiseDiscountActive,
             discountPreTax = discountPreTax
@@ -4613,10 +4653,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // typed here, under item-wise what the products' own discounts came to. Signed
         // so it reads as a deduction among lines that all add.
         root.findViewById<View>(R.id.rowOrderDiscount).visibility =
-            if (b.discount > 0.0) View.VISIBLE else View.GONE
+            if (b.discountDisplay > 0.0) View.VISIBLE else View.GONE
         root.findViewById<TextView>(R.id.tvOrderDiscountLabel).text =
             if (itemwiseDiscountActive) "Discount (item-wise)" else "Discount"
-        root.findViewById<TextView>(R.id.tvOrderDiscountAmt).text = "- ₹ ${money(b.discount)}"
+        root.findViewById<TextView>(R.id.tvOrderDiscountAmt).text = "- ₹ ${money(b.discountDisplay)}"
         // VAT only where a line actually carries it.
         root.findViewById<View>(R.id.rowOrderVat).visibility =
             if (b.vat > 0.0) View.VISIBLE else View.GONE

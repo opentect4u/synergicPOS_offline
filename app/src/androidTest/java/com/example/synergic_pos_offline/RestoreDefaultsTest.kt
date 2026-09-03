@@ -99,10 +99,8 @@ class RestoreDefaultsTest {
                 discountEnabled = true,
                 discountType = TaxSettingsDao.DiscountType.BILL_WISE,
                 discountPosition = TaxSettingsDao.DiscountPosition.POST_TAX,
-                gstEnabled = true,
-                gstMode = TaxSettingsDao.GstMode.INCLUSIVE,
-                vatEnabled = false,
-                vatMode = TaxSettingsDao.GstMode.INCLUSIVE
+                taxEnabled = true,
+                taxMode = TaxSettingsDao.GstMode.INCLUSIVE
             )
         )
         AppSettingsDao(ctx).save(

@@ -53,6 +53,11 @@ class ShiftWiseReportDao(context: Context) {
         val vat: Double,
         val discount: Double,
         val roundOff: Double,
+        /** The restaurant section's own flat charge - zero on a grocery bill. */
+        val serviceCharge: Double = 0.0,
+        /** The shop's other extra charges - Parcel Charge among them - added
+         *  together, since only the sum is stored per bill, not each by name. */
+        val otherCharges: Double = 0.0,
         val netAmount: Double,
         val regime: GstCalculator.TaxRegime
     ) {
@@ -75,8 +80,11 @@ class ShiftWiseReportDao(context: Context) {
         val totalMrp: Double get() = total { it.mrp }
         val totalCgst: Double get() = total { it.cgst }
         val totalSgst: Double get() = total { it.sgst }
+        val totalIgst: Double get() = total { it.igst }
         val totalVat: Double get() = total { it.vat }
         val totalDiscount: Double get() = total { it.discount }
+        val totalServiceCharge: Double get() = total { it.serviceCharge }
+        val totalOtherCharges: Double get() = total { it.otherCharges }
         val totalAmount: Double get() = total { it.netAmount }
 
         /** How many people on the shift actually billed over the period. */
@@ -84,6 +92,9 @@ class ShiftWiseReportDao(context: Context) {
 
         /** The VAT column earns its place only where a bill in the period carried it. */
         val hasVat: Boolean get() = lines.any { it.isVat || it.vat > 0.0 }
+
+        /** The IGST column earns its place only where a bill in the period carried it. */
+        val hasIgst: Boolean get() = lines.any { it.igst > 0.0 }
 
         val isEmpty: Boolean get() = lines.isEmpty()
 
@@ -121,7 +132,8 @@ class ShiftWiseReportDao(context: Context) {
                    COALESCE(b.tot_sgst_amount, 0), COALESCE(b.tot_igst_amount, 0),
                    COALESCE(b.tot_vat_amount, 0),
                    COALESCE(b.tot_discount_amount, 0), COALESCE(b.tot_round_off_amount, 0),
-                   COALESCE(b.net_amount, 0), b.settings_snapshot
+                   COALESCE(b.service_charge_amount, 0), COALESCE(b.tot_other_charges_amount, 0),
+                   COALESCE(b.net_amount, 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             JOIN ${DatabaseHelper.Tables.MD_USERS} u ON u.id = b.operator_id
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
@@ -161,12 +173,12 @@ class ShiftWiseReportDao(context: Context) {
                         vat = vat,
                         discount = c.getDouble(9),
                         roundOff = c.getDouble(10),
-                        netAmount = c.getDouble(11),
+                        serviceCharge = c.getDouble(11),
+                        otherCharges = c.getDouble(12),
+                        netAmount = c.getDouble(13),
                         // The same rule the Bill Wise Report applies, from the one
                         // place it lives - see [BillWiseReportDao.regimeOf].
-                        regime = BillWiseReportDao.regimeOf(
-                            c.getString(12), cgst + sgst + igst, vat
-                        )
+                        regime = BillWiseReportDao.regimeOf(cgst + sgst + igst, vat)
                     )
                 )
             }

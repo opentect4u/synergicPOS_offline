@@ -6,7 +6,7 @@ import org.json.JSONObject
 /**
  * The Bill Settings fields that change how a bill is *displayed* - HSN column,
  * line numbering, customer details mode, address line, total amount font size, the
- * round-off row, amount-in-words, and which tax regime (GST/VAT) was active - as
+ * round-off row, amount-in-words, and whether tax was switched on at all - as
  * opposed to the
  * ones that only affect how it was *calculated* (already baked into the stored
  * amounts, so nothing to snapshot there).
@@ -28,7 +28,10 @@ object BillSettingsSnapshot {
         val totalAmountFontSize: BillSettingsDao.FontSize,
         val roundOff: Boolean,
         val amountInWords: Boolean,
-        val taxRegime: GstCalculator.TaxRegime,
+        /** Whether tax was switched on at all when this bill was made. Which of
+         *  GST/VAT a line carries is not part of this snapshot - it is read straight
+         *  off that line's own stored rates, same as it always has been. */
+        val taxEnabled: Boolean,
         /** Whether the discount was taken before tax - drives where the DISCOUNT line
          *  sits in the summary (above tax for pre-tax, below it for post-tax). */
         val discountPreTax: Boolean,
@@ -39,7 +42,7 @@ object BillSettingsSnapshot {
 
     fun serialize(
         settings: BillSettingsDao.BillSettings,
-        taxRegime: GstCalculator.TaxRegime,
+        taxEnabled: Boolean,
         discountPreTax: Boolean,
         inclusive: Boolean
     ): String =
@@ -52,7 +55,7 @@ object BillSettingsSnapshot {
             put("totalAmountFontSize", settings.totalAmountFontSize.name)
             put("roundOff", settings.roundOff)
             put("amountInWords", settings.amountInWords)
-            put("taxRegime", taxRegime.name)
+            put("taxEnabled", taxEnabled)
             put("discountPreTax", discountPreTax)
             put("inclusive", inclusive)
         }.toString()
@@ -77,8 +80,13 @@ object BillSettingsSnapshot {
                     .getOrDefault(BillSettingsDao.FontSize.REGULAR),
                 roundOff = o.optBoolean("roundOff"),
                 amountInWords = o.optBoolean("amountInWords"),
-                taxRegime = runCatching { GstCalculator.TaxRegime.valueOf(o.getString("taxRegime")) }
-                    .getOrDefault(GstCalculator.TaxRegime.GST),
+                // New bills write "taxEnabled" directly. An older bill's JSON only has
+                // "taxRegime" (GST/VAT/NONE) - read that instead, so a bill sold before
+                // this change keeps recomputing exactly as it did on the day of sale.
+                taxEnabled = if (o.has("taxEnabled")) o.optBoolean("taxEnabled", true) else {
+                    runCatching { GstCalculator.TaxRegime.valueOf(o.getString("taxRegime")) }
+                        .getOrNull()?.let { it != GstCalculator.TaxRegime.NONE } ?: true
+                },
                 discountPreTax = o.optBoolean("discountPreTax", true),
                 inclusive = o.optBoolean("inclusive", false)
             )

@@ -27,11 +27,25 @@ class VoidBillReportDao(context: Context) {
         val billNumber: String,
         /** Value of the goods as listed, before tax was added. */
         val amount: Double,
-        /** Everything it would have charged in tax, however the regime split it. */
-        val tax: Double,
+        val cgst: Double = 0.0,
+        val sgst: Double = 0.0,
+        /** Zero on a shop that never sells inter-state. */
+        val igst: Double = 0.0,
+        /** Zero on a GST-only shop. */
+        val vat: Double = 0.0,
+        /** The restaurant section's own flat charge it would have carried - zero
+         *  on a grocery bill. */
+        val serviceCharge: Double = 0.0,
+        /** The shop's other extra charges it would have carried - Parcel Charge
+         *  among them - added together, since only the sum is stored, not each
+         *  by name. */
+        val otherCharges: Double = 0.0,
         /** What it would have come to - the bill's own net. */
         val total: Double
-    )
+    ) {
+        /** Everything this bill would have charged in tax, however the regime split it. */
+        val tax: Double get() = cgst + sgst + igst + vat
+    }
 
     /**
      * The whole report: the period asked for and every bill voided inside it.
@@ -46,7 +60,18 @@ class VoidBillReportDao(context: Context) {
     ) {
         val billCount: Int get() = lines.size
         val totalAmount: Double get() = total { it.amount }
-        val totalTax: Double get() = total { it.tax }
+        val totalCgst: Double get() = total { it.cgst }
+        val totalSgst: Double get() = total { it.sgst }
+        val totalIgst: Double get() = total { it.igst }
+        val totalVat: Double get() = total { it.vat }
+        /** Every tax these bills would have charged, however the regimes split it. */
+        val totalTax: Double get() = BillRounding.toPaise(totalCgst + totalSgst + totalIgst + totalVat)
+        /** The IGST column earns its place only where a voided bill carried it. */
+        val hasIgst: Boolean get() = lines.any { it.igst > 0.0 }
+        /** The VAT column earns its place only where a voided bill carried it. */
+        val hasVat: Boolean get() = lines.any { it.vat > 0.0 }
+        val totalServiceCharge: Double get() = total { it.serviceCharge }
+        val totalOtherCharges: Double get() = total { it.otherCharges }
 
         /** What was taken out of the takings - what the report is read for. */
         val grandTotal: Double get() = total { it.total }
@@ -74,8 +99,9 @@ class VoidBillReportDao(context: Context) {
 
         val figures = """
             COALESCE(b.bill_number, ''), COALESCE(b.tot_price, 0),
-            COALESCE(b.tot_cgst_amount, 0) + COALESCE(b.tot_sgst_amount, 0)
-          + COALESCE(b.tot_igst_amount, 0) + COALESCE(b.tot_vat_amount, 0),
+            COALESCE(b.tot_cgst_amount, 0), COALESCE(b.tot_sgst_amount, 0),
+            COALESCE(b.tot_igst_amount, 0), COALESCE(b.tot_vat_amount, 0),
+            COALESCE(b.service_charge_amount, 0), COALESCE(b.tot_other_charges_amount, 0),
             COALESCE(b.net_amount, 0), b.receipt_no
         """.trimIndent()
 
@@ -95,7 +121,7 @@ class VoidBillReportDao(context: Context) {
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
               AND COALESCE(b.is_voided, 0) = 1
               $storeClause
-            ORDER BY 5 ASC
+            ORDER BY 10 ASC
         """.trimIndent()
 
         val half = mutableListOf(fromDate, toDate).apply {
@@ -110,8 +136,13 @@ class VoidBillReportDao(context: Context) {
                     Line(
                         billNumber = c.getString(0).orEmpty().ifBlank { "-" },
                         amount = BillRounding.toPaise(c.getDouble(1)),
-                        tax = BillRounding.toPaise(c.getDouble(2)),
-                        total = c.getDouble(3)
+                        cgst = BillRounding.toPaise(c.getDouble(2)),
+                        sgst = BillRounding.toPaise(c.getDouble(3)),
+                        igst = BillRounding.toPaise(c.getDouble(4)),
+                        vat = BillRounding.toPaise(c.getDouble(5)),
+                        serviceCharge = BillRounding.toPaise(c.getDouble(6)),
+                        otherCharges = BillRounding.toPaise(c.getDouble(7)),
+                        total = c.getDouble(8)
                     )
                 )
             }

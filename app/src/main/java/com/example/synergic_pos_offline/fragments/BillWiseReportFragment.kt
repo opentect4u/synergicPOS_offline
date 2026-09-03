@@ -220,6 +220,10 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         if (r.totalIgst > 0.0) add("IGST Amount" to money(r.totalIgst))
         if (r.hasVat) add("VAT Amount" to money(r.totalVat))
         add("Discount Amount" to money(r.totalDiscount))
+        // Shown only where the period actually carried one - a shop that never
+        // charges Service or an Extra Charge should not read a zero row saying so.
+        if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
+        if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
     }
 
     /** The screen as a downloadable table: the columns and rows it is drawing. */
@@ -271,6 +275,8 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
                 add("CGST Amount" to money(r.totalCgst))
                 if (r.totalIgst > 0.0) add("IGST Amount" to money(r.totalIgst))
                 if (r.hasVat) add("VAT Amount" to money(r.totalVat))
+                if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
+                if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
                 add("Total Amount" to money(r.totalAmount))
                 add("Round Off Amount" to money(r.totalRoundOff))
             }.map { (label, value) -> label.uppercase().padEnd(LABEL_WIDTH) + " :" to value },

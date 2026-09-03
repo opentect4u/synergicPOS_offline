@@ -36,7 +36,7 @@ class ReturnDaoTest {
      * GST switched on is testing the emulator's configuration, not the code.
      */
     private val gstBasis = ReturnDao.PricingBasis(
-        regime = GstCalculator.TaxRegime.GST,
+        taxEnabled = true,
         inclusive = false,
         discountPreTax = true
     )
@@ -283,7 +283,7 @@ class ReturnDaoTest {
             arrayOf(
                 BillSettingsSnapshot.serialize(
                     BillSettingsDao(context).load(),
-                    GstCalculator.TaxRegime.GST,
+                    taxEnabled = true,
                     discountPreTax = true,
                     inclusive = true
                 ),
@@ -292,7 +292,7 @@ class ReturnDaoTest {
         )
 
         val basis = dao.basisForBill(receiptNo)
-        assertEquals(GstCalculator.TaxRegime.GST, basis.regime)
+        assertTrue("tax was on when this bill was raised", basis.taxEnabled)
         assertTrue("the bill was raised inclusive of tax", basis.inclusive)
         assertTrue("the bill discounted before tax", basis.discountPreTax)
     }

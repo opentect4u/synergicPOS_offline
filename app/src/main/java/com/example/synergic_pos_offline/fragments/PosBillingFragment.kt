@@ -242,24 +242,17 @@ class PosBillingFragment : Fragment(), TitledScreen {
         taxSettings.discountEnabled && taxSettings.discountType == TaxSettingsDao.DiscountType.ITEM_WISE
     }
 
-    /** GST and VAT are mutually exclusive in Tax Settings; NONE when neither is on. */
-    private val taxRegime by lazy { GstCalculator.regimeFor(taxSettings.gstEnabled, taxSettings.vatEnabled) }
+    /** Whether tax is switched on at all. Which of GST/VAT a product carries is not
+     *  a store-wide choice any more - see [GstCalculator.regimeOf]. */
+    private val taxEnabled by lazy { taxSettings.taxEnabled }
 
     /** Whether the listed price already includes whichever tax is active. */
-    private val taxInclusive by lazy {
-        when (taxRegime) {
-            GstCalculator.TaxRegime.GST -> taxSettings.gstMode == TaxSettingsDao.GstMode.INCLUSIVE
-            GstCalculator.TaxRegime.VAT -> taxSettings.vatMode == TaxSettingsDao.GstMode.INCLUSIVE
-            GstCalculator.TaxRegime.NONE -> false
-        }
-    }
+    private val taxInclusive by lazy { taxSettings.taxMode == TaxSettingsDao.GstMode.INCLUSIVE }
 
-    /** The combined rate a line is actually taxed at, per the active regime. */
-    private fun taxRateOf(p: Product): Double = when (taxRegime) {
-        GstCalculator.TaxRegime.GST -> p.cgst + p.sgst
-        GstCalculator.TaxRegime.VAT -> p.vat
-        GstCalculator.TaxRegime.NONE -> 0.0
-    }
+    /** The combined rate a line is actually taxed at - whatever the product itself
+     *  carries (a product has GST rates or a VAT rate, never both). */
+    private fun taxRateOf(p: Product): Double =
+        if (taxEnabled) p.cgst + p.sgst + p.vat else 0.0
     private var customerName: String? = null
     private var customerPhone: String? = null
     private var currentCustomerData: Map<String, Any?>? = null
@@ -1239,7 +1232,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             focusQty = qtyEditable,
             focusRate = !editing && manualRateOn,
             rateEditable = manualRateOn,
-            taxRegime = taxRegime,
+            taxEnabled = taxEnabled,
             taxInclusive = taxInclusive,
             itemwiseDiscountActive = itemwiseDiscountActive,
             discountPreTax = discountPreTax
@@ -1913,14 +1906,51 @@ class PosBillingFragment : Fragment(), TitledScreen {
         }
     }
 
-    /** "GST", "VAT" or plain "TAX" (neither switched on), matching the active regime. */
-    private fun taxLabelText(): String = when (taxRegime) {
-        GstCalculator.TaxRegime.GST -> "GST"
-        GstCalculator.TaxRegime.VAT -> "VAT"
-        GstCalculator.TaxRegime.NONE -> "TAX"
+    /**
+     * "GST" or "VAT" when every taxed line in the cart agrees, plain "TAX" when
+     * tax is off, the cart is empty, or it genuinely mixes GST- and VAT-rated
+     * products - there is no single word for that, so a neutral one is used
+     * rather than picking one regime to favour.
+     */
+    private fun taxLabelText(): String {
+        if (!taxEnabled) return "TAX"
+        val regimes = cart.map { GstCalculator.regimeOf(it.product.cgst, it.product.sgst, it.product.vat) }.toSet()
+        return when {
+            regimes == setOf(GstCalculator.TaxRegime.GST) -> "GST"
+            regimes == setOf(GstCalculator.TaxRegime.VAT) -> "VAT"
+            else -> "TAX"
+        }
     }
 
-    private fun taxAmt(): Double = taxOf(cart, discountAmt())
+    private fun taxAmt(): Double = taxOf(cart, discountAmt()) + chargeTaxOf(cart, extraChargesTotal())
+
+    /**
+     * The cart's extra charges, taxed at each line's own rate and spread by its
+     * share of the gross subtotal - the same rule [lineTaxRaw]'s own pre-tax
+     * discount spread uses, applied instead to [chargesPrincipal]. Folded into
+     * [taxAmt] rather than kept apart, so the charge's tax comes out of the
+     * bill's existing GST/VAT figure, not a column of its own - [extraChargesTotal]
+     * still joins [taxedTotal] once, on its own, untaxed, so nothing here is
+     * counted twice.
+     *
+     * Kept separate from [taxOf] itself, which a HELD bill's own snapshot also
+     * calls with [lines] that are not necessarily [cart] - [extraChargesTotal] is
+     * hard-wired to the live cart, so folding this into [taxOf] would tax a held
+     * bill's preview against the wrong (current) cart's charge.
+     */
+    private fun chargeTaxOf(lines: List<CartLine>, chargesPrincipal: Double): Double {
+        if (chargesPrincipal <= 0.0 || !taxEnabled) return 0.0
+        val sub = lines.sumOf { it.product.price * it.qty }
+        if (sub <= 0.0) return 0.0
+        return lines.sumOf { line ->
+            val share = line.product.price * line.qty / sub * chargesPrincipal
+            BillRounding.toPaise(
+                GstCalculator.taxAmount(share, line.product.cgst) +
+                    GstCalculator.taxAmount(share, line.product.sgst) +
+                    GstCalculator.taxAmount(share, line.product.vat)
+            )
+        }
+    }
 
     /**
      * Taxed value before rounding; what the round-off line is measured against.
@@ -2031,11 +2061,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
         } else {
             rawBase
         }
-        val tax = when (taxRegime) {
-            GstCalculator.TaxRegime.GST -> GstCalculator.taxAmount(taxable, product.cgst) + GstCalculator.taxAmount(taxable, product.sgst)
-            GstCalculator.TaxRegime.VAT -> GstCalculator.taxAmount(taxable, product.vat)
-            GstCalculator.TaxRegime.NONE -> 0.0
-        }
+        val tax = if (taxEnabled) {
+            GstCalculator.taxAmount(taxable, product.cgst) +
+                GstCalculator.taxAmount(taxable, product.sgst) +
+                GstCalculator.taxAmount(taxable, product.vat)
+        } else 0.0
         return Triple(taxable, tax, 0.0)
     }
 

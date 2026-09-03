@@ -117,11 +117,9 @@ object DefaultSettings {
     val TAX = TaxSettingsDao.TaxSettings(
         discountEnabled = false,
         discountType = TaxSettingsDao.DiscountType.ITEM_WISE,
-        discountPosition = TaxSettingsDao.DiscountPosition.PRE_TAX,
-        gstEnabled = false,
-        gstMode = TaxSettingsDao.GstMode.EXCLUSIVE,
-        vatEnabled = false,
-        vatMode = TaxSettingsDao.GstMode.EXCLUSIVE
+        discountPosition = TaxSettingsDao.DiscountPosition.POST_TAX,
+        taxEnabled = false,
+        taxMode = TaxSettingsDao.GstMode.EXCLUSIVE
     )
 
     // ---- App Settings (md_app_settings, type 'A') -----------------------------

@@ -68,7 +68,17 @@ class TaxReportDao(context: Context) {
     data class Report(
         val fromDate: String,
         val toDate: String,
-        val lines: List<Line>
+        val lines: List<Line>,
+        /**
+         * The period's Service Charge and other extra charges (Parcel Charge
+         * among them), read off `td_bills` rather than folded into the slabs
+         * above: a charge is not sold at a rate of its own to file against, and
+         * [Line]'s per-slab shape - which per-line `td_bill_items` storage never
+         * carried a charge-tax share for in the first place - has no row for one
+         * to join. Bolted on as one flat pair of totals instead, for the
+         * period's own bills, the same way every other report now shows them.
+         */
+        val charges: BillCharges = BillCharges(0.0, 0.0)
     ) {
         val slabCount: Int get() = lines.size
 
@@ -77,6 +87,9 @@ class TaxReportDao(context: Context) {
 
         val isEmpty: Boolean get() = lines.isEmpty()
     }
+
+    /** A period's Service Charge and other extra charges, summed from `td_bills`. */
+    data class BillCharges(val service: Double, val other: Double)
 
     /** What one slab has accumulated so far, before it becomes a [Line]. */
     private class Sum {
@@ -153,7 +166,7 @@ class TaxReportDao(context: Context) {
                         sgstRate = sgstRate,
                         vatRate = vatRate,
                         discountAmount = c.getDouble(6),
-                        regime = snapshot.taxRegime,
+                        taxEnabled = snapshot.taxEnabled,
                         inclusive = snapshot.inclusive,
                         discountPreTax = snapshot.discountPreTax
                     )
@@ -186,7 +199,7 @@ class TaxReportDao(context: Context) {
                     taxAmount = BillRounding.toPaise(sum.tax)
                 )
             }
-        return Report(fromDate, toDate, lines)
+        return Report(fromDate, toDate, lines, billCharges(helper.readableDatabase, fromDate, toDate, store))
     }
 
     /** The signed-in user's store; the registration row is the fallback. */
@@ -201,10 +214,56 @@ class TaxReportDao(context: Context) {
         return null
     }
 
-    private companion object {
-        const val SGST = "SGST"
-        const val CGST = "CGST"
-        const val IGST = "IGST"
-        const val VAT = "VAT"
+    companion object {
+        private const val SGST = "SGST"
+        private const val CGST = "CGST"
+        private const val IGST = "IGST"
+        private const val VAT = "VAT"
+
+        /**
+         * A period's Service Charge and other extra charges, summed straight off
+         * `td_bills` - one query, not per item or per bill, since neither figure is
+         * a fact that belongs to a single line. Shared rather than reworked out per
+         * report: [ItemWiseReportDao] and [CustomerItemWiseReportDao] bolt the same
+         * pair of totals onto reports grouped by something other than the bill -
+         * product, or customer-and-product - which have no per-bill row of their
+         * own for a charge to join, the same reason this report's own per-rate-slab
+         * rows do not carry one either.
+         *
+         * [customerId] narrows to one customer's bills, for a report scoped to one
+         * - null reads every bill in the period, matching this report's own use.
+         */
+        fun billCharges(
+            db: android.database.sqlite.SQLiteDatabase,
+            fromDate: String,
+            toDate: String,
+            store: Long?,
+            customerId: Long? = null
+        ): BillCharges {
+            val storeClause = if (store != null) "AND store_id = ?" else ""
+            val customerClause = if (customerId != null) "AND customer_id = ?" else ""
+            val args = mutableListOf(fromDate, toDate).apply {
+                if (store != null) add(store.toString())
+                if (customerId != null) add(customerId.toString())
+            }
+            db.rawQuery(
+                """
+                SELECT COALESCE(SUM(service_charge_amount), 0), COALESCE(SUM(tot_other_charges_amount), 0)
+                FROM ${DatabaseHelper.Tables.TD_BILLS}
+                WHERE substr(bill_date, 1, 10) BETWEEN ? AND ?
+                  AND COALESCE(is_voided, 0) = 0
+                  AND COALESCE(bill_status, 'COMPLETED') <> 'CANCELLED'
+                  $storeClause
+                  $customerClause
+                """.trimIndent(),
+                args.toTypedArray()
+            ).use { c ->
+                return if (c.moveToFirst()) {
+                    BillCharges(BillRounding.toPaise(c.getDouble(0)), BillRounding.toPaise(c.getDouble(1)))
+                } else {
+                    BillCharges(0.0, 0.0)
+                }
+            }
+        }
     }
 }

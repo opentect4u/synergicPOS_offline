@@ -135,6 +135,8 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
         container.addView(total("TOTAL QTY :", qtyFmt(r.totalQty)))
         container.addView(total("TOTAL SGST:", money(r.totalSgst)))
         container.addView(total("TOTAL CGST:", money(r.totalCgst)))
+        if (r.totalServiceCharge > 0.005) container.addView(total("SERVICE CHG:", money(r.totalServiceCharge)))
+        if (r.totalOtherCharges > 0.005) container.addView(total("EXTRA CHGS:", money(r.totalOtherCharges)))
         container.addView(total("TOTAL AMT :", money(r.totalAmount)))
     }
 
@@ -154,12 +156,14 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
         rows = r.items.map {
             listOf(it.name, qtyFmt(it.qty), money(it.amount), money(it.sgst), money(it.cgst))
         },
-        summary = listOf(
-            "Total Qty" to qtyFmt(r.totalQty),
-            "Total SGST" to money(r.totalSgst),
-            "Total CGST" to money(r.totalCgst),
-            "Total Amount" to money(r.totalAmount)
-        )
+        summary = buildList {
+            add("Total Qty" to qtyFmt(r.totalQty))
+            add("Total SGST" to money(r.totalSgst))
+            add("Total CGST" to money(r.totalCgst))
+            if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
+            if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
+            add("Total Amount" to money(r.totalAmount))
+        }
     )
 
     private fun showEmpty(title: String, hint: String) {

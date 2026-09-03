@@ -34,8 +34,18 @@ class CustomerItemWiseReportDao(context: Context) {
         val totalQty: Double,
         val totalSgst: Double,
         val totalCgst: Double,
-        val totalAmount: Double
+        val totalAmount: Double,
+        /**
+         * This customer's Service Charge and other extra charges (Parcel Charge
+         * among them) over the period, read off `td_bills` rather than folded
+         * into the item lines above - see [TaxReportDao.billCharges], which this
+         * calls with the same customer scoped in.
+         */
+        val charges: TaxReportDao.BillCharges = TaxReportDao.BillCharges(0.0, 0.0)
     ) {
+        val totalServiceCharge: Double get() = charges.service
+        val totalOtherCharges: Double get() = charges.other
+
         val isEmpty: Boolean get() = items.isEmpty()
     }
 
@@ -107,7 +117,8 @@ class CustomerItemWiseReportDao(context: Context) {
             totalQty = items.sumOf { it.qty },
             totalSgst = BillRounding.toPaise(items.sumOf { it.sgst }),
             totalCgst = BillRounding.toPaise(items.sumOf { it.cgst }),
-            totalAmount = BillRounding.toPaise(items.sumOf { it.amount })
+            totalAmount = BillRounding.toPaise(items.sumOf { it.amount }),
+            charges = TaxReportDao.billCharges(helper.readableDatabase, from, to, store = null, customerId = customerId)
         )
     }
 }

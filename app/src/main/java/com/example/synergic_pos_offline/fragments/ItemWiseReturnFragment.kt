@@ -152,15 +152,15 @@ class ItemWiseReturnFragment : Fragment(), TitledScreen {
      *
      * Laid out as the item sale dialog lays a line out - discount, taxable value,
      * each tax, then the amount under a rule - so the operator reads a return the
-     * way they read a sale. Which rows apply follows the regime, as it does there:
-     * GST shows CGST and SGST, VAT relabels the first and drops the second, and
-     * with no tax switched on both go.
+     * way they read a sale. Which rows apply follows the selected item's own rates
+     * - GST shows CGST and SGST, VAT relabels the first and drops the second - and
+     * with tax switched off entirely both go, whatever the item carries on file.
      */
     private fun refreshBreakdown() {
         val item = selected ?: return
         val line = currentLine()
 
-        val regime = taxRegime()
+        val regime = taxRegime(item)
         val vatOnly = regime == GstCalculator.TaxRegime.VAT
         root.findViewById<View>(R.id.rowReturnCgst).visibility =
             if (regime == GstCalculator.TaxRegime.NONE) View.GONE else View.VISIBLE
@@ -189,10 +189,11 @@ class ItemWiseReturnFragment : Fragment(), TitledScreen {
             if (blank) "₹0.00" else money(line!!.amount)
     }
 
-    /** The regime in force, which decides which tax rows the breakdown shows. */
-    private fun taxRegime(): GstCalculator.TaxRegime {
-        val settings = TaxSettingsDao(requireContext()).load()
-        return GstCalculator.regimeFor(settings.gstEnabled, settings.vatEnabled)
+    /** Which tax rows [item] shows, from whatever it carries on file - forced to
+     *  NONE when tax is switched off store-wide. */
+    private fun taxRegime(item: ReturnDao.Item): GstCalculator.TaxRegime {
+        if (!TaxSettingsDao(requireContext()).load().taxEnabled) return GstCalculator.TaxRegime.NONE
+        return GstCalculator.regimeOf(item.cgstRate, item.sgstRate, item.vatRate)
     }
 
     // ---- Saving ------------------------------------------------------------

@@ -222,17 +222,10 @@ class ReturnDao(private val context: Context) {
             settings.discountType == TaxSettingsDao.DiscountType.ITEM_WISE
         if (!itemWise || item.discountValue <= 0.0 || item.discountType == null) return 0.0
 
-        val regime = GstCalculator.regimeFor(settings.gstEnabled, settings.vatEnabled)
-        val combined = when (regime) {
-            GstCalculator.TaxRegime.GST -> item.cgstRate + item.sgstRate
-            GstCalculator.TaxRegime.VAT -> item.vatRate
-            GstCalculator.TaxRegime.NONE -> 0.0
-        }
-        val inclusive = when (regime) {
-            GstCalculator.TaxRegime.GST -> settings.gstMode == TaxSettingsDao.GstMode.INCLUSIVE
-            GstCalculator.TaxRegime.VAT -> settings.vatMode == TaxSettingsDao.GstMode.INCLUSIVE
-            GstCalculator.TaxRegime.NONE -> false
-        }
+        // Whatever the item itself carries - GST/VAT is a fact about the product,
+        // never a store-wide choice - gated by whether tax is on at all.
+        val combined = if (settings.taxEnabled) item.cgstRate + item.sgstRate + item.vatRate else 0.0
+        val inclusive = settings.taxMode == TaxSettingsDao.GstMode.INCLUSIVE
         val mode = if (item.discountType == "A") GstCalculator.DiscountMode.AMOUNT
         else GstCalculator.DiscountMode.PERCENT
         return GstCalculator.itemDiscountAgainstRawBase(
@@ -290,14 +283,16 @@ class ReturnDao(private val context: Context) {
     }
 
     /**
-     * The tax rules a line is priced under: which regime, whether the rate was
-     * included in the listed price, and whether a discount came off before tax.
+     * The tax rules a line is priced under: whether tax was on at all, whether the
+     * rate was included in the listed price, and whether a discount came off before
+     * tax. Which of GST/VAT a line carries is not part of this - it is read straight
+     * off that line's own stored rates, same as it always has been.
      *
      * Held as a value rather than read from settings inside the pricing, because
      * the two callers need different answers - see [basisForBill].
      */
     data class PricingBasis(
-        val regime: GstCalculator.TaxRegime,
+        val taxEnabled: Boolean,
         val inclusive: Boolean,
         val discountPreTax: Boolean
     )
@@ -323,7 +318,7 @@ class ReturnDao(private val context: Context) {
 
         val snapshot = BillSettingsSnapshot.parse(json)
         return if (snapshot == null) liveBasis() else PricingBasis(
-            regime = snapshot.taxRegime,
+            taxEnabled = snapshot.taxEnabled,
             inclusive = snapshot.inclusive,
             discountPreTax = snapshot.discountPreTax
         )
@@ -332,14 +327,9 @@ class ReturnDao(private val context: Context) {
     /** The rules in force now - what an item-wise return, having no bill, uses. */
     fun liveBasis(): PricingBasis {
         val settings = taxSettingsDao.load()
-        val regime = GstCalculator.regimeFor(settings.gstEnabled, settings.vatEnabled)
         return PricingBasis(
-            regime = regime,
-            inclusive = when (regime) {
-                GstCalculator.TaxRegime.GST -> settings.gstMode == TaxSettingsDao.GstMode.INCLUSIVE
-                GstCalculator.TaxRegime.VAT -> settings.vatMode == TaxSettingsDao.GstMode.INCLUSIVE
-                GstCalculator.TaxRegime.NONE -> false
-            },
+            taxEnabled = settings.taxEnabled,
+            inclusive = settings.taxMode == TaxSettingsDao.GstMode.INCLUSIVE,
             discountPreTax = settings.discountPosition == TaxSettingsDao.DiscountPosition.PRE_TAX
         )
     }
@@ -401,7 +391,7 @@ class ReturnDao(private val context: Context) {
             // customer paid the discounted price, so that is what goes back. On a
             // partial return the caller has already pro-rated it.
             discountAmount = discountAmount,
-            regime = rules.regime,
+            taxEnabled = rules.taxEnabled,
             inclusive = rules.inclusive,
             discountPreTax = rules.discountPreTax
         )

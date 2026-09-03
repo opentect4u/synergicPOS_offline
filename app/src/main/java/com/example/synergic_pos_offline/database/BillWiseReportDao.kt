@@ -43,6 +43,11 @@ class BillWiseReportDao(context: Context) {
         val vat: Double,
         val discount: Double,
         val roundOff: Double,
+        /** The restaurant section's own flat charge - zero on a grocery bill. */
+        val serviceCharge: Double = 0.0,
+        /** The shop's other extra charges - Parcel Charge among them - added
+         *  together, since only the sum is stored per bill, not each by name. */
+        val otherCharges: Double = 0.0,
         /** What the customer actually paid - the bill's net. */
         val netAmount: Double,
         /**
@@ -87,6 +92,8 @@ class BillWiseReportDao(context: Context) {
         val totalVat: Double get() = total { it.vat }
         val totalDiscount: Double get() = total { it.discount }
         val totalRoundOff: Double get() = total { it.roundOff }
+        val totalServiceCharge: Double get() = total { it.serviceCharge }
+        val totalOtherCharges: Double get() = total { it.otherCharges }
         val totalAmount: Double get() = total { it.netAmount }
 
         /**
@@ -136,7 +143,8 @@ class BillWiseReportDao(context: Context) {
                    COALESCE(b.tot_sgst_amount, 0), COALESCE(b.tot_igst_amount, 0),
                    COALESCE(b.tot_vat_amount, 0),
                    COALESCE(b.tot_discount_amount, 0), COALESCE(b.tot_round_off_amount, 0),
-                   COALESCE(b.net_amount, 0), b.settings_snapshot
+                   COALESCE(b.service_charge_amount, 0), COALESCE(b.tot_other_charges_amount, 0),
+                   COALESCE(b.net_amount, 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
               AND COALESCE(b.is_voided, 0) = 0
@@ -168,8 +176,10 @@ class BillWiseReportDao(context: Context) {
                         vat = vat,
                         discount = c.getDouble(8),
                         roundOff = c.getDouble(9),
-                        netAmount = c.getDouble(10),
-                        regime = regimeOf(c.getString(11), cgst + sgst + igst, vat)
+                        serviceCharge = c.getDouble(10),
+                        otherCharges = c.getDouble(11),
+                        netAmount = c.getDouble(12),
+                        regime = regimeOf(cgst + sgst + igst, vat)
                     )
                 )
             }
@@ -178,19 +188,12 @@ class BillWiseReportDao(context: Context) {
     }
 
     /**
-     * Which regime a bill was raised under.
-     *
-     * The settings snapshot frozen onto the bill is the answer wherever there is
-     * one - it is the record of how the sale was actually taxed, and it survives the
-     * till being reconfigured afterwards. This is the same source
-     * [com.example.synergic_pos_offline.utils.BillReceiptRenderer] reads when it
-     * reprints the bill, so a reprint and the report cannot disagree about it.
-     *
-     * A bill saved before snapshots existed has none, and the *live* settings are no
-     * guide to how it was taxed - they may have changed in between, which is the
-     * whole reason snapshots were added. So it is read off the money instead: tax
-     * booked as VAT means it was a VAT bill, tax booked as CGST/SGST/IGST means GST,
-     * and no tax at all means neither applied.
+     * Which regime a bill's row groups under, for the report's own columns - GST or
+     * VAT is a fact about the *products* on a bill (see
+     * [com.example.synergic_pos_offline.utils.GstCalculator.regimeOf]), not something
+     * the bill as a whole was raised under any more, so this reads it off the money
+     * actually booked: tax booked as VAT means the row groups as VAT, tax booked as
+     * CGST/SGST/IGST means GST, no tax at all means neither.
      */
 
     /** The signed-in user's store; the registration row is the fallback. */
@@ -215,14 +218,10 @@ class BillWiseReportDao(context: Context) {
          * copies of this rule would be two reports that could come to disagree about
          * which column a bill's tax belongs in.
          */
-        fun regimeOf(snapshotJson: String?, gstAmount: Double, vatAmount: Double):
-            GstCalculator.TaxRegime {
-            BillSettingsSnapshot.parse(snapshotJson)?.let { return it.taxRegime }
-            return when {
-                vatAmount > 0.0 -> GstCalculator.TaxRegime.VAT
-                gstAmount > 0.0 -> GstCalculator.TaxRegime.GST
-                else -> GstCalculator.TaxRegime.NONE
-            }
+        fun regimeOf(gstAmount: Double, vatAmount: Double): GstCalculator.TaxRegime = when {
+            vatAmount > 0.0 -> GstCalculator.TaxRegime.VAT
+            gstAmount > 0.0 -> GstCalculator.TaxRegime.GST
+            else -> GstCalculator.TaxRegime.NONE
         }
     }
 }

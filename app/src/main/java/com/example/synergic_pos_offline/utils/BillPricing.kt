@@ -27,7 +27,7 @@ object BillPricing {
 
     /**
      * Works [discountAmount] - always expressed against the line's raw pre-tax base -
-     * into the line under the active regime.
+     * into the line under whether tax is switched on.
      *
      * A post-tax discount (inclusive or exclusive) is the case where tax is NOT
      * charged on the discounted value: the rate is applied to the full base and the
@@ -45,23 +45,17 @@ object BillPricing {
         sgstRate: Double,
         vatRate: Double,
         discountAmount: Double,
-        regime: GstCalculator.TaxRegime,
+        taxEnabled: Boolean,
         inclusive: Boolean,
         discountPreTax: Boolean
     ): Line {
         val subtotal = rate * quantity
-        // Which taxes this line carries is the *line's* business, not the till's.
-        //
-        // The regime used to decide it: on a GST till only cgst/sgst were worked out
-        // and vatRate was ignored, so a VAT-rated product sold there was charged no
-        // VAT at all - the rate was read off the master, written to the bill, and
-        // then multiplied by nothing. The same in reverse on a VAT till.
-        //
-        // A shop can carry stock rated under either, and what a product is rated at
-        // is a fact about the product. So every rate the line actually has is
-        // charged. NONE still means none: switching both taxes off is a deliberate
-        // choice to charge no tax, not an invitation to read rates off the master.
-        val taxed = regime != GstCalculator.TaxRegime.NONE
+        // Which taxes this line carries is the *line's* business, not the till's -
+        // GST and VAT are a fact about the product (see GstCalculator.regimeOf),
+        // never a store-wide choice. So every rate the line actually has is
+        // charged. NONE still means none: switching tax off is a deliberate choice
+        // to charge nothing, not an invitation to read rates off the master.
+        val taxed = taxEnabled
         val combinedRate = if (taxed) cgstRate + sgstRate + vatRate else 0.0
         // The listed price is stripped of any tax it already includes to reach the
         // base the rate works on.

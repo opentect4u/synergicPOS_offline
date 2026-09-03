@@ -140,12 +140,8 @@ class BillDao(context: Context) {
         val seq = bill.reservedBillSeq ?: nextBillSequence(db, settings, nowDate)
         val billNumber = formatBillNumber(seq, settings)
         val taxSettings = taxSettingsDao.load()
-        val regime = GstCalculator.regimeFor(taxSettings.gstEnabled, taxSettings.vatEnabled)
-        val inclusive = when (regime) {
-            GstCalculator.TaxRegime.GST -> taxSettings.gstMode == TaxSettingsDao.GstMode.INCLUSIVE
-            GstCalculator.TaxRegime.VAT -> taxSettings.vatMode == TaxSettingsDao.GstMode.INCLUSIVE
-            GstCalculator.TaxRegime.NONE -> false
-        }
+        val taxEnabled = taxSettings.taxEnabled
+        val inclusive = taxSettings.taxMode == TaxSettingsDao.GstMode.INCLUSIVE
         val discountPreTax = taxSettings.discountPosition == TaxSettingsDao.DiscountPosition.PRE_TAX
 
         db.beginTransaction()
@@ -165,7 +161,7 @@ class BillDao(context: Context) {
                 put("bill_type", bill.billType)
                 // Frozen at creation time so a later reprint reads exactly as it did
                 // on the day, even after Bill/Tax Settings have since changed.
-                put("settings_snapshot", BillSettingsSnapshot.serialize(settings, regime, discountPreTax, inclusive))
+                put("settings_snapshot", BillSettingsSnapshot.serialize(settings, taxEnabled, discountPreTax, inclusive))
                 put("tot_price", bill.totalPrice)
                 put("tot_discount_amount", bill.discountAmount)
                 put("tot_discount_percentage", bill.discountPercentage)
@@ -211,7 +207,7 @@ class BillDao(context: Context) {
                     sgstRate = item.sgstRate,
                     vatRate = item.vatRate,
                     discountAmount = item.discountAmount,
-                    regime = regime,
+                    taxEnabled = taxEnabled,
                     inclusive = inclusive,
                     discountPreTax = discountPreTax
                 )

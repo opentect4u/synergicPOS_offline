@@ -43,7 +43,14 @@ class TaxReportFragment : PeriodReportFragment<TaxReportDao.Report>() {
         }
 
     override fun summaryOf(report: TaxReportDao.Report): List<Pair<String, String>> =
-        listOf("Tax Slabs" to report.slabCount.toString())
+        buildList {
+            add("Tax Slabs" to report.slabCount.toString())
+            // A flat pair of totals, not a slab of their own - a charge is not
+            // sold at a rate to file against, so it does not belong among the
+            // rows above. Shown only where the period actually carried one.
+            if (report.charges.service > 0.005) add("Service Charge" to money(report.charges.service))
+            if (report.charges.other > 0.005) add("Extra Charges" to money(report.charges.other))
+        }
 
     /** The one figure the report is read for. */
     override fun totalOf(report: TaxReportDao.Report): Pair<String, String> =
@@ -78,7 +85,10 @@ class TaxReportFragment : PeriodReportFragment<TaxReportDao.Report>() {
             evenColumns = true,
             rows = rows,
             footerRow = listOf("TOTAL :", "", "", money(report.totalTax)),
-            summary = emptyList(),
+            summary = buildList {
+                if (report.charges.service > 0.005) add("SERVICE CHG :" to money(report.charges.service))
+                if (report.charges.other > 0.005) add("EXTRA CHGS  :" to money(report.charges.other))
+            },
             emptyNote = "No tax was charged in this period."
         )
     }

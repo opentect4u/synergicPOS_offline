@@ -137,7 +137,7 @@ class CategoryWiseReportDao(context: Context) {
                         sgstRate = c.getDouble(4),
                         vatRate = c.getDouble(6),
                         discountAmount = c.getDouble(7),
-                        regime = snapshot.taxRegime,
+                        taxEnabled = snapshot.taxEnabled,
                         inclusive = snapshot.inclusive,
                         discountPreTax = snapshot.discountPreTax
                     ).taxable

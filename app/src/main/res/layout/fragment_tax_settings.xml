@@ -95,7 +95,9 @@
                             android:layout_marginTop="4dp">
 
                             <RadioButton android:id="@+id/rbPosPre" style="@style/BillSettingRadio"
-                                android:text="Pre-tax discount" />
+                                android:text="Pre-tax discount"
+                                android:enabled="false"
+                                android:alpha="0.5" />
                             <RadioButton android:id="@+id/rbPosPost" style="@style/BillSettingRadio"
                                 android:text="Post-tax discount" />
                         </RadioGroup>
@@ -125,21 +127,21 @@
                     android:textStyle="bold" android:textColor="@color/primary_blue" />
 
                 <TextView style="@style/BillSettingSub"
-                    android:text="Only one of GST / VAT can be active at a time" />
+                    android:text="Which tax a product carries - GST or VAT - is set on the product itself" />
 
-                <!-- GST -->
+                <!-- Tax -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">
-                        <TextView style="@style/BillSettingTitle" android:text="GST" />
-                        <TextView style="@style/BillSettingSub" android:text="Turning GST on switches VAT off" />
+                        <TextView style="@style/BillSettingTitle" android:text="Tax" />
+                        <TextView style="@style/BillSettingSub" android:text="Charge each product at whatever GST or VAT rate it carries" />
                     </LinearLayout>
                     <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/swGst" style="@style/BillSettingSwitch" />
+                        android:id="@+id/swTax" style="@style/BillSettingSwitch" />
                 </LinearLayout>
 
-                <!-- GST mode (shown only when GST is ON) -->
+                <!-- Tax mode (shown only when Tax is ON) -->
                 <RadioGroup
-                    android:id="@+id/rgGstMode"
+                    android:id="@+id/rgTaxMode"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -149,33 +151,6 @@
                     <RadioButton android:id="@+id/rbExclusive" style="@style/BillSettingRadio"
                         android:layout_width="wrap_content" android:text="Exclusive" />
                     <RadioButton android:id="@+id/rbInclusive" style="@style/BillSettingRadio"
-                        android:layout_width="wrap_content" android:layout_marginStart="24dp" android:text="Inclusive" />
-                </RadioGroup>
-
-                <View style="@style/BillSettingDivider" />
-
-                <!-- VAT -->
-                <LinearLayout style="@style/BillSettingRow">
-                    <LinearLayout style="@style/BillSettingText">
-                        <TextView style="@style/BillSettingTitle" android:text="VAT" />
-                        <TextView style="@style/BillSettingSub" android:text="Turning VAT on switches GST off" />
-                    </LinearLayout>
-                    <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/swVat" style="@style/BillSettingSwitch" />
-                </LinearLayout>
-
-                <!-- VAT mode (shown only when VAT is ON) -->
-                <RadioGroup
-                    android:id="@+id/rgVatMode"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginStart="4dp"
-                    android:visibility="gone">
-
-                    <RadioButton android:id="@+id/rbVatExclusive" style="@style/BillSettingRadio"
-                        android:layout_width="wrap_content" android:text="Exclusive" />
-                    <RadioButton android:id="@+id/rbVatInclusive" style="@style/BillSettingRadio"
                         android:layout_width="wrap_content" android:layout_marginStart="24dp" android:text="Inclusive" />
                 </RadioGroup>
             </LinearLayout>

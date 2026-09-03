@@ -50,9 +50,9 @@ class ShiftWiseReportFragment : PeriodReportFragment<ShiftWiseReportDao.Report>(
             "${report.shift?.name.orEmpty()}   •   ${report.billCount} bill(s)"
 
     /**
-     * The Bill Wise columns with the operator among them, and VAT only where a bill
-     * in the period actually carried it - the same rule Bill Wise applies, so a
-     * GST-only shop is not made to read a column of zeroes.
+     * The Bill Wise columns with the operator among them, and IGST/VAT only where a
+     * bill in the period actually carried one - the same rule Bill Wise applies, so
+     * a GST-only shop is not made to read a column of zeroes.
      */
     override fun columnsFor(report: ShiftWiseReportDao.Report): List<Column> = buildList {
         add(Column("BILL", 120, alignEnd = true))
@@ -62,6 +62,7 @@ class ShiftWiseReportFragment : PeriodReportFragment<ShiftWiseReportDao.Report>(
         add(Column("AMT", 110, alignEnd = true))
         add(Column("SGST", 100, alignEnd = true))
         add(Column("CGST", 100, alignEnd = true))
+        if (report.hasIgst) add(Column("IGST", 100, alignEnd = true))
         if (report.hasVat) add(Column("VAT", 100, alignEnd = true))
         add(Column("DISC.", 100, alignEnd = true))
         add(Column("TOTAL AMT", 130, alignEnd = true))
@@ -77,6 +78,7 @@ class ShiftWiseReportFragment : PeriodReportFragment<ShiftWiseReportDao.Report>(
                 add(money(line.mrp))
                 add(money(line.sgst))
                 add(money(line.cgst))
+                if (report.hasIgst) add(money(line.igst))
                 if (report.hasVat) add(money(line.vat))
                 add(money(line.discount))
                 add(money(line.netAmount))
@@ -90,8 +92,13 @@ class ShiftWiseReportFragment : PeriodReportFragment<ShiftWiseReportDao.Report>(
             add("Total Amt" to money(report.totalMrp))
             add("Total SGST" to money(report.totalSgst))
             add("Total CGST" to money(report.totalCgst))
+            if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
             if (report.hasVat) add("Total VAT" to money(report.totalVat))
             add("Total Disc." to money(report.totalDiscount))
+            // Shown only where the period actually carried one - a shop that never
+            // charges Service or an Extra Charge should not read a zero row saying so.
+            if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
+            if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
         }
 
     /** The one figure the report is read for: what the shift took. */

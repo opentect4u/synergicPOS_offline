@@ -2,7 +2,6 @@ package com.example.synergic_pos_offline.database
 
 import android.content.Context
 import com.example.synergic_pos_offline.utils.BillRounding
-import com.example.synergic_pos_offline.utils.BillSettingsSnapshot
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.SessionManager
 
@@ -164,8 +163,7 @@ class ReturnedBillReportDao(context: Context) {
                                 / NULLIF(i.quantity, 0)), 0),
                    COALESCE(SUM(COALESCE(i.vat_amount, 0) * ri.return_quantity
                                 / NULLIF(i.quantity, 0)), 0),
-                   MAX(COALESCE(r.total_return_amount, 0)),
-                   b.settings_snapshot
+                   MAX(COALESCE(r.total_return_amount, 0))
             FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} r
             JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = r.original_bill_id
             LEFT JOIN ${DatabaseHelper.Tables.TD_RETURN_ITEMS} ri ON ri.return_id = r.id
@@ -203,7 +201,9 @@ class ReturnedBillReportDao(context: Context) {
                         igst = igst,
                         vat = vat,
                         refund = c.getDouble(12),
-                        regime = regimeOf(c.getString(13), cgst + sgst + igst, vat)
+                        // The same rule the Bill Wise Report applies, from the one
+                        // place it lives - see [BillWiseReportDao.regimeOf].
+                        regime = BillWiseReportDao.regimeOf(cgst + sgst + igst, vat)
                     )
                 )
             }
@@ -226,26 +226,6 @@ class ReturnedBillReportDao(context: Context) {
             arrayOf(fromDate, toDate)
         ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
 
-    /**
-     * Which regime the original bill was raised under.
-     *
-     * The settings snapshot frozen onto it is the answer wherever there is one - it
-     * is the record of how the sale was actually taxed, and it is the same source
-     * [ReturnDao.basisForBill] priced the refund from, so the report and the refund
-     * cannot disagree about which taxes were in play.
-     *
-     * A bill saved before snapshots existed has none, and the live settings are no
-     * guide to how it was taxed. So it is read off the money that came back instead.
-     */
-    private fun regimeOf(snapshotJson: String?, gstAmount: Double, vatAmount: Double):
-        GstCalculator.TaxRegime {
-        BillSettingsSnapshot.parse(snapshotJson)?.let { return it.taxRegime }
-        return when {
-            vatAmount > 0.0 -> GstCalculator.TaxRegime.VAT
-            gstAmount > 0.0 -> GstCalculator.TaxRegime.GST
-            else -> GstCalculator.TaxRegime.NONE
-        }
-    }
 
     /** The signed-in user's store; the registration row is the fallback. */
     private fun currentStoreId(): Long? {

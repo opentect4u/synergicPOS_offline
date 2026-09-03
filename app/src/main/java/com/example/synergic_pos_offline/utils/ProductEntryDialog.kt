@@ -91,7 +91,7 @@ object ProductEntryDialog {
         /** When false the quantity is fixed (to [startQty]) and can't be typed into -
          *  driven by the "Enter Quantity" general setting. */
         qtyEditable: Boolean = true,
-        taxRegime: GstCalculator.TaxRegime = GstCalculator.TaxRegime.GST,
+        taxEnabled: Boolean = true,
         taxInclusive: Boolean = false,
         /** Tax Settings' Discount on and set to Item wise - each product's own
          *  pre-configured discount applies, priced per [discountPreTax]. */
@@ -133,9 +133,12 @@ object ProductEntryDialog {
         val tvSgstLabel = view.findViewById<TextView>(R.id.tvSgstLabel)
         tvDetMrp.text = money(product.price)
 
-        // Which detail rows even apply depends on the active regime - GST shows all
-        // three (combined/CGST/SGST); VAT relabels the CGST slot and drops SGST;
-        // NONE (no tax switched on) drops the whole block.
+        // Which detail rows even apply depends on this PRODUCT's own regime - GST
+        // shows all three (combined/CGST/SGST); VAT relabels the CGST slot and
+        // drops SGST; NONE (the product carries neither, or tax is switched off
+        // store-wide) drops the whole block. See GstCalculator.regimeOf.
+        val taxRegime = if (taxEnabled) GstCalculator.regimeOf(product.cgst, product.sgst, product.vat)
+        else GstCalculator.TaxRegime.NONE
         llDetGst.visibility = if (taxRegime == GstCalculator.TaxRegime.GST) android.view.View.VISIBLE else android.view.View.GONE
         llDetCgst.visibility = if (taxRegime == GstCalculator.TaxRegime.NONE) android.view.View.GONE else android.view.View.VISIBLE
         llDetSgst.visibility = if (taxRegime == GstCalculator.TaxRegime.GST) android.view.View.VISIBLE else android.view.View.GONE
@@ -275,7 +278,9 @@ object ProductEntryDialog {
                 tvDetMrp.text = money(r.rate)
                 curDiscValue = r.discValue
                 curDiscType = r.discType
-                when (taxRegime) {
+                val rowRegime = if (taxEnabled) GstCalculator.regimeOf(r.cgst, r.sgst, r.vat)
+                else GstCalculator.TaxRegime.NONE
+                when (rowRegime) {
                     GstCalculator.TaxRegime.VAT -> applyTaxLabels(r.vat, 0.0)
                     GstCalculator.TaxRegime.GST -> applyTaxLabels(r.cgst, r.sgst)
                     GstCalculator.TaxRegime.NONE -> applyTaxLabels(0.0, 0.0)

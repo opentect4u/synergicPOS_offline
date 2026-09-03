@@ -31,9 +31,10 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * UDF-Wise Report - the restaurant bills of a period grouped by UDF ("<table>-<section
- * id>"), each with its bill count and tax / discount / bill totals. Restaurant-only.
- * Screen and print come from one generated report, so Print sends what was reviewed.
+ * UDF-Wise Report - the restaurant bills of a period grouped by UDF ("<section>-
+ * <table>", e.g. "AC-1", "BAR-2"), each with its bill count and tax / discount /
+ * bill totals. Restaurant-only. Screen and print come from one generated report,
+ * so Print sends what was reviewed.
  */
 class UdfWiseReportFragment : Fragment(), TitledScreen {
 
@@ -151,8 +152,18 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
         summary.removeAllViews()
         summary.addView(summaryRow("Total Groups", r.rows.size.toString()))
         summary.addView(summaryRow("Total Bills", r.totalBills.toString()))
-        summary.addView(summaryRow("Tax Amount", money(r.totalTax)))
+        // Each tax its own line rather than one blended figure - a GST return is
+        // filed against SGST and CGST separately, and IGST/VAT earn their place
+        // only where a bill in the range actually carried one.
+        summary.addView(summaryRow("SGST Amount", money(r.totalSgst)))
+        summary.addView(summaryRow("CGST Amount", money(r.totalCgst)))
+        if (r.hasIgst) summary.addView(summaryRow("IGST Amount", money(r.totalIgst)))
+        if (r.hasVat) summary.addView(summaryRow("VAT Amount", money(r.totalVat)))
         summary.addView(summaryRow("Discount Amount", money(r.totalDiscount)))
+        // Shown only where the period actually carried one - a shop that never
+        // charges Service or an Extra Charge should not read a zero row saying so.
+        if (r.totalServiceCharge > 0.005) summary.addView(summaryRow("Service Charge", money(r.totalServiceCharge)))
+        if (r.totalOtherCharges > 0.005) summary.addView(summaryRow("Extra Charges", money(r.totalOtherCharges)))
         summary.addView(summaryRow("Bill Amount", money(r.totalBillAmount), emphasised = true))
     }
 
@@ -165,13 +176,18 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
         rows = r.rows.map {
             listOf(it.udf, it.bills.toString(), money(it.taxAmount), money(it.discount), money(it.billAmount))
         },
-        summary = listOf(
-            "Total Groups" to r.rows.size.toString(),
-            "Total Bills" to r.totalBills.toString(),
-            "Tax Amount" to money(r.totalTax),
-            "Discount Amount" to money(r.totalDiscount),
-            "Bill Amount" to money(r.totalBillAmount)
-        )
+        summary = buildList {
+            add("Total Groups" to r.rows.size.toString())
+            add("Total Bills" to r.totalBills.toString())
+            add("SGST Amount" to money(r.totalSgst))
+            add("CGST Amount" to money(r.totalCgst))
+            if (r.hasIgst) add("IGST Amount" to money(r.totalIgst))
+            if (r.hasVat) add("VAT Amount" to money(r.totalVat))
+            add("Discount Amount" to money(r.totalDiscount))
+            if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
+            if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
+            add("Bill Amount" to money(r.totalBillAmount))
+        }
     )
 
     private fun showEmpty(title: String, hint: String) {
@@ -196,7 +212,14 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
             rows = r.rows.map { row ->
                 listOf(row.udf, row.bills.toString(), money(row.taxAmount), money(row.discount), money(row.billAmount))
             },
-            summary = emptyList(),
+            summary = buildList {
+                add("SGST AMOUNT :" to money(r.totalSgst))
+                add("CGST AMOUNT :" to money(r.totalCgst))
+                if (r.hasIgst) add("IGST AMOUNT :" to money(r.totalIgst))
+                if (r.hasVat) add("VAT AMOUNT  :" to money(r.totalVat))
+                if (r.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(r.totalServiceCharge))
+                if (r.totalOtherCharges > 0.005) add("EXTRA CHGS  :" to money(r.totalOtherCharges))
+            },
             total = "TOTAL  :" to money(r.totalBillAmount),
             emptyNote = "No bills in this period."
         )

@@ -58,7 +58,17 @@ class ItemWiseReportDao(context: Context) {
     data class Report(
         val fromDate: String,
         val toDate: String,
-        val lines: List<Line>
+        val lines: List<Line>,
+        /**
+         * The period's Service Charge and other extra charges (Parcel Charge
+         * among them), read off `td_bills` rather than folded into the item
+         * lines above: a charge is not sold as an item to attribute a share of
+         * it to one, and [Line] - grouped by product across every bill it
+         * appeared on - has no single bill for one to belong to. Bolted on as
+         * one flat pair of totals instead, for the period's own bills, the same
+         * way [TaxReportDao] does.
+         */
+        val charges: TaxReportDao.BillCharges = TaxReportDao.BillCharges(0.0, 0.0)
     ) {
         val itemCount: Int get() = lines.size
         val totalQuantity: Double get() = total { it.quantity }
@@ -73,6 +83,9 @@ class ItemWiseReportDao(context: Context) {
 
         /** Whether anything sold inter-state - most tills never do. */
         val hasIgst: Boolean get() = lines.any { it.igst > 0.0 }
+
+        val totalServiceCharge: Double get() = charges.service
+        val totalOtherCharges: Double get() = charges.other
 
         val isEmpty: Boolean get() = lines.isEmpty()
 
@@ -178,7 +191,7 @@ class ItemWiseReportDao(context: Context) {
                         sgstRate = sgstRate,
                         vatRate = vatRate,
                         discountAmount = c.getDouble(8),
-                        regime = snapshot.taxRegime,
+                        taxEnabled = snapshot.taxEnabled,
                         inclusive = snapshot.inclusive,
                         discountPreTax = snapshot.discountPreTax
                     )
@@ -211,7 +224,10 @@ class ItemWiseReportDao(context: Context) {
                     vat = BillRounding.toPaise(sum.vat)
                 )
             }
-        return Report(fromDate, toDate, lines)
+        return Report(
+            fromDate, toDate, lines,
+            TaxReportDao.billCharges(helper.readableDatabase, fromDate, toDate, store)
+        )
     }
 
     /** The signed-in user's store; the registration row is the fallback. */

@@ -15,16 +15,20 @@ object GstCalculator {
     enum class DiscountMode { PERCENT, AMOUNT }
 
     /**
-     * Which tax a sale is charged under. GST and VAT are mutually exclusive in Tax
-     * Settings - a store is registered under one or the other, never both - and
-     * NONE when neither is switched on.
+     * Which tax a *product* is charged under. GST and VAT are mutually exclusive
+     * per product - md_product_rates carries one or the other, never both - and
+     * NONE when it carries neither. Not a store-wide setting any more: Tax
+     * Settings only switches tax on or off (see [TaxSettingsDao.TaxSettings]);
+     * which of GST/VAT applies is read straight off the product, via [regimeOf].
      */
     enum class TaxRegime { NONE, GST, VAT }
 
-    /** Resolves the active regime from Tax Settings' two on/off switches. */
-    fun regimeFor(gstEnabled: Boolean, vatEnabled: Boolean): TaxRegime = when {
-        gstEnabled -> TaxRegime.GST
-        vatEnabled -> TaxRegime.VAT
+    /** Classifies a product/line by whichever of its own rates is set - GST if it
+     *  carries CGST/SGST, VAT if it carries VAT, NONE if it carries neither. A
+     *  product is never expected to carry both. */
+    fun regimeOf(cgstRate: Double, sgstRate: Double, vatRate: Double): TaxRegime = when {
+        cgstRate + sgstRate > 0.0 -> TaxRegime.GST
+        vatRate > 0.0 -> TaxRegime.VAT
         else -> TaxRegime.NONE
     }
 

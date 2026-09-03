@@ -43,11 +43,22 @@ class VoidBillReportFragment : PeriodReportFragment<VoidBillReportDao.Report>() 
         }
 
     override fun summaryOf(report: VoidBillReportDao.Report): List<Pair<String, String>> =
-        listOf(
-            "Void Bills" to report.billCount.toString(),
-            "Total Amount" to money(report.totalAmount),
-            "Total Tax" to money(report.totalTax)
-        )
+        buildList {
+            add("Void Bills" to report.billCount.toString())
+            add("Total Amount" to money(report.totalAmount))
+            // Each tax its own line rather than one blended figure - a GST return
+            // is filed against SGST and CGST separately, and IGST/VAT earn their
+            // place only where a voided bill actually carried one.
+            add("Total SGST" to money(report.totalSgst))
+            add("Total CGST" to money(report.totalCgst))
+            if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
+            if (report.hasVat) add("Total VAT" to money(report.totalVat))
+            // Shown only where a voided bill actually carried one - a shop that
+            // never charges Service or an Extra Charge should not read a zero row
+            // saying so.
+            if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
+            if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
+        }
 
     /** The one figure the report is read for: what came out of the day's takings. */
     override fun totalOf(report: VoidBillReportDao.Report): Pair<String, String> =
@@ -71,9 +82,17 @@ class VoidBillReportFragment : PeriodReportFragment<VoidBillReportDao.Report>() 
             evenColumns = true,
             alignFirstColumnEnd = true,
             rows = rowsOf(report),
-            // One line, set across the whole width - the slip has never broken the
-            // void total out into the columns above it.
-            summary = listOf("TOTAL :" to money(report.grandTotal)),
+            summary = buildList {
+                add("SGST :" to money(report.totalSgst))
+                add("CGST :" to money(report.totalCgst))
+                if (report.hasIgst) add("IGST :" to money(report.totalIgst))
+                if (report.hasVat) add("VAT :" to money(report.totalVat))
+                if (report.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(report.totalServiceCharge))
+                if (report.totalOtherCharges > 0.005) add("EXTRA CHGS :" to money(report.totalOtherCharges))
+                // The one line the slip has always closed on, set across the whole
+                // width rather than repeated per column.
+                add("TOTAL :" to money(report.grandTotal))
+            },
             emptyNote = "No bill was voided in this period."
         )
 

@@ -811,20 +811,11 @@ class BillReceiptRenderer(context: Context) {
             val totalAmountFontSize = snapshot?.totalAmountFontSize ?: liveSettings.totalAmountFontSize
             val roundOffSetting = snapshot?.roundOff ?: liveSettings.roundOff
             val amountInWordsSetting = snapshot?.amountInWords ?: liveSettings.amountInWords
-            val taxRegime = snapshot?.taxRegime ?: run {
-                val taxSettings = TaxSettingsDao(ctx).load()
-                GstCalculator.regimeFor(taxSettings.gstEnabled, taxSettings.vatEnabled)
-            }
+            val taxEnabled = snapshot?.taxEnabled ?: TaxSettingsDao(ctx).load().taxEnabled
             val discountPreTax = snapshot?.discountPreTax
                 ?: (TaxSettingsDao(ctx).load().discountPosition == TaxSettingsDao.DiscountPosition.PRE_TAX)
-            val inclusive = snapshot?.inclusive ?: run {
-                val taxSettings = TaxSettingsDao(ctx).load()
-                when (taxRegime) {
-                    GstCalculator.TaxRegime.GST -> taxSettings.gstMode == TaxSettingsDao.GstMode.INCLUSIVE
-                    GstCalculator.TaxRegime.VAT -> taxSettings.vatMode == TaxSettingsDao.GstMode.INCLUSIVE
-                    GstCalculator.TaxRegime.NONE -> false
-                }
-            }
+            val inclusive = snapshot?.inclusive
+                ?: (TaxSettingsDao(ctx).load().taxMode == TaxSettingsDao.GstMode.INCLUSIVE)
 
             // Which layout this is being drawn into. The format is a live setting
             // rather than part of the bill's snapshot - it is how this till prints,
@@ -929,7 +920,7 @@ class BillReceiptRenderer(context: Context) {
 
             // Line items, plus the totals summed from those same lines.
             val raws = if (draft != null) {
-                draftRawLines(draft, hsnCode, taxRegime, inclusive, discountPreTax)
+                draftRawLines(draft, hsnCode, taxEnabled, inclusive, discountPreTax)
             } else {
                 readRawLines(db, receiptNo, hsnCode)
             }
@@ -942,7 +933,8 @@ class BillReceiptRenderer(context: Context) {
                 roundOff = 0.0
                 serviceCharge = 0.0
             }
-            val (items, lineTotals, taxSlabs) = loadItems(partRaws, inclusive)
+            val (items, lineTotals, initialTaxSlabs) = loadItems(partRaws, inclusive)
+            var taxSlabs = initialTaxSlabs
             val llItems = view.findViewById<LinearLayout>(R.id.llItems)
             llItems.removeAllViews()
             // The DISC column earns its place only when a line actually carries a
@@ -1028,24 +1020,21 @@ class BillReceiptRenderer(context: Context) {
             // Not cut apart into two pieces of paper - it is one sale, rung up at one
             // counter at one moment, and "NA" says so.
             //
-            // Split by the LINE, not by the till's setting. Each line already records
-            // the rates it was sold at, so a line with VAT on it is a VAT line whatever
-            // the shop's general regime is - which is what makes one bill able to carry
-            // both. A bill of one kind only takes the untouched path below and prints
-            // exactly as it always has.
+            // Split by the LINE, not by a store-wide setting. Each line already
+            // records the rates it was sold at - GST or VAT is a fact about the
+            // product (see GstCalculator.regimeOf) - so a line with VAT on it is a
+            // VAT line regardless of what any other line on the same bill carries,
+            // which is what makes one bill able to carry both. A bill of one kind
+            // only takes the untouched path below and prints exactly as it always has.
             //
-            // Except when NEITHER is on. Tax Settings' GST and VAT switched off
-            // together means the till is charging no tax at all - BillPricing.price
-            // zeroes every line's tax whatever rate it carries (taxed = regime !=
-            // NONE) - so a line's stored rate is a leftover figure, not a live one,
-            // and splitting on it would demarcate two untaxed sections that print
-            // 0% either side of a divider for no reason. One of the two switched on
-            // is enough: that IS the shop's regime, and a line rated the other way
-            // still means something under it.
+            // Except when tax is switched off entirely. BillPricing.price zeroes
+            // every line's tax whatever rate it carries (taxed = taxEnabled), so a
+            // line's stored rate is a leftover figure, not a live one, and splitting
+            // on it would demarcate two untaxed sections that print 0% either side
+            // of a divider for no reason.
             val vatItems = items.filter { it.vat }
             val gstItems = items.filter { !it.vat }
-            val split = taxRegime != GstCalculator.TaxRegime.NONE &&
-                vatItems.isNotEmpty() && gstItems.isNotEmpty()
+            val split = taxEnabled && vatItems.isNotEmpty() && gstItems.isNotEmpty()
 
             (if (split) gstItems else items).forEach {
                 llItems.addView(
@@ -1129,7 +1118,7 @@ class BillReceiptRenderer(context: Context) {
                 sectionSummary(partRaws.filter { TaxPart.VAT_ONLY.covers(it.vat, it.vatRate) })
             }
 
-            val totals = lineTotals.copy(discount = discount)
+            var totals = lineTotals.copy(discount = discount)
 
             // Round off is whatever the bill recorded, not something worked out here:
             // the printed total has to match the amount that was actually charged.
@@ -1197,6 +1186,24 @@ class BillReceiptRenderer(context: Context) {
             val useStored = storedCharges >= 0.0 && draft == null
             val chargesTotal = if (useStored) BillRounding.toPaise(storedCharges) else recomputedTotal
             val breakdownAgrees = kotlin.math.abs(recomputedTotal - chargesTotal) < 0.01
+
+            // THE CHARGES' OWN TAX, for a fresh sale only.
+            //
+            // A reprint (draft == null) must read exactly as it did on the day - see
+            // "A SAVED BILL CARRIES ITS OWN CHARGE TOTAL" above, and payable below,
+            // which already keep that path pinned to what was actually stored. This
+            // pass never runs for one.
+            //
+            // Not folded into loadItems() itself: for a grocery draft, chargesTotal
+            // above is only known AFTER totals.itemsSubtotal exists (it is what the
+            // charge is computed against), so the charges principal cannot be known
+            // before loadItems() runs for every caller - a pass after both are built
+            // is the only ordering that works uniformly.
+            if (draft != null && chargesTotal > 0.0 && taxEnabled) {
+                val (inflatedTotals, inflatedSlabs) = inflateForCharges(partRaws, totals, taxSlabs, chargesTotal)
+                totals = inflatedTotals
+                taxSlabs = inflatedSlabs
+            }
             val chargeLines: List<Pair<String, Double>> = when {
                 !useStored || breakdownAgrees -> recomputed
                 chargesTotal > 0.0 -> listOf("OTHER CHARGES" to chargesTotal)
@@ -1226,9 +1233,36 @@ class BillReceiptRenderer(context: Context) {
             // the service charge duplicated into tot_other_charges_amount, so the same
             // sum came out different again for them.
             //
-            // Round off is likewise read, never recomputed.
-            val payable = if (draft == null) storedNetAmount
-            else totals.grandTotal + roundOff + serviceCharge + chargesTotal
+            // Round off, for a draft, is worked out HERE - last, against this
+            // render's own fully-assembled pre-round figure - rather than trusted
+            // from draft.roundOff, which was computed by a SEPARATE calculation
+            // (the Orders screen's CartMath) against ITS OWN total. The two totals
+            // are built the same way in principle, but round differently in detail
+            // - CartMath rounds a charge's spread tax once, summed; inflateForCharges
+            // above rounds it per line, to keep every printed "SGST @ X%" row
+            // reconciling with the total beside it (see that function's own note).
+            // A round-off computed against one of those totals and then added to
+            // the other does not necessarily land on a whole rupee - which is
+            // exactly the "1066.98" fault this replaces: the round-off zeroed the
+            // paisa of a number this render was not actually about to print.
+            //
+            // A saved bill's round-off is still read, never recomputed - that
+            // figure is what the customer was actually charged, and reprinting a
+            // different one because today's numbers land differently would be
+            // rewriting the sale, not reporting it.
+            val preRoundTotal = totals.grandTotal + serviceCharge + chargesTotal
+            val payable: Double
+            val effectiveRoundOff: Double
+            if (draft == null) {
+                payable = storedNetAmount
+                effectiveRoundOff = roundOff
+            } else if (roundOffSetting) {
+                payable = BillRounding.payable(preRoundTotal)
+                effectiveRoundOff = BillRounding.roundOff(preRoundTotal)
+            } else {
+                payable = BillRounding.toPaise(preRoundTotal)
+                effectiveRoundOff = 0.0
+            }
 
             // Bill summary: item count / qty / gross, each tax rate on its own line,
             // discount and totals - laid out as "label : value" lines. Replaces the
@@ -1284,7 +1318,7 @@ class BillReceiptRenderer(context: Context) {
                     taxSlabs = if (taxWise) emptyList() else taxSlabs,
                     summarySp = summarySp, showTotalTax = !taxWise,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
-                    roundOff = roundOff, showRoundOff = roundOffSetting, narrow = narrow,
+                    roundOff = effectiveRoundOff, showRoundOff = roundOffSetting, narrow = narrow,
                     serviceCharge = serviceCharge, charges = chargeRows, trailer = trailer
                 )
                 view.findViewById<TextView>(R.id.tvGrandTotalLabel)?.text = "${t("GRAND TOTAL")}:"
@@ -1304,7 +1338,7 @@ class BillReceiptRenderer(context: Context) {
                 renderStandardSummary(
                     llSummary, totals, taxSlabs, summarySp, netSize,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
-                    roundOff = roundOff, showRoundOff = roundOffSetting,
+                    roundOff = effectiveRoundOff, showRoundOff = roundOffSetting,
                     payable = payable, narrow = narrow, serviceCharge = serviceCharge,
                     charges = chargeRows,
                     trailer = trailer, boldTrailer = boldTrailer
@@ -1753,7 +1787,7 @@ class BillReceiptRenderer(context: Context) {
     private fun draftRawLines(
         draft: Draft,
         includeHsn: Boolean,
-        regime: GstCalculator.TaxRegime,
+        taxEnabled: Boolean,
         inclusive: Boolean,
         discountPreTax: Boolean
     ): List<RawLine> = draft.items.map { item ->
@@ -1764,7 +1798,7 @@ class BillReceiptRenderer(context: Context) {
             sgstRate = item.sgstRate,
             vatRate = item.vatRate,
             discountAmount = item.discountAmount,
-            regime = regime,
+            taxEnabled = taxEnabled,
             inclusive = inclusive,
             discountPreTax = discountPreTax
         )
@@ -1912,6 +1946,78 @@ class BillReceiptRenderer(context: Context) {
             .sortedByDescending { it.key }
             .map { (_, acc) -> TaxSlab(acc[0], acc[1], acc[2], acc[3], acc[4], acc[5], acc[6]) }
         return Triple(list, totals, taxSlabs)
+    }
+
+    /**
+     * Folds a fresh bill's extra-charges TAX into an already-built [totals]/
+     * [taxSlabs] - never the charge's own principal, which keeps printing on its
+     * own row (see "THE SHOP'S EXTRA CHARGES" above) and joins [payable]
+     * separately, exactly as before.
+     *
+     * [chargesPrincipal] is spread across [raws] by each line's share of the
+     * gross subtotal - the same rule a bill-wise discount is spread by (see
+     * CartMath.lineDiscount) - and taxed at that line's own cgstRate/sgstRate/
+     * vatRate, not a blended one. Folded into the SAME cgst/sgst/vat sums and the
+     * SAME rate-slab bucket [loadItems] already built for that line's own goods
+     * tax, rather than into the unused [BillTotals.otherTax] hook: otherTax would
+     * inflate [BillTotals.grandTotal] correctly but leave the individually
+     * PRINTED "SGST @ X%"/"CGST @ X%" rows understated, so the slip's own tax
+     * lines would no longer add up to its own total - every line on a printed
+     * slip has to reconcile, not just the figure at the foot of it.
+     */
+    private fun inflateForCharges(
+        raws: List<RawLine>,
+        totals: BillTotals,
+        taxSlabs: List<TaxSlab>,
+        chargesPrincipal: Double
+    ): Pair<BillTotals, List<TaxSlab>> {
+        val grossSubtotal = raws.sumOf { it.subtotal }
+        if (grossSubtotal <= 0.0) return totals to taxSlabs
+
+        var cgstAdd = 0.0
+        var sgstAdd = 0.0
+        var vatAdd = 0.0
+        // rate, rate, rate, cgstAdd, sgstAdd, vatAdd - the same key scheme
+        // loadItems uses, so a line's charge-tax share lands in the SAME row its
+        // own goods tax does.
+        val slabAdd = LinkedHashMap<Long, DoubleArray>()
+        raws.forEach { raw ->
+            val share = raw.subtotal / grossSubtotal * chargesPrincipal
+            val c = BillRounding.toPaise(GstCalculator.taxAmount(share, raw.cgstRate))
+            val s = BillRounding.toPaise(GstCalculator.taxAmount(share, raw.sgstRate))
+            val v = BillRounding.toPaise(GstCalculator.taxAmount(share, raw.vatRate))
+            if (c + s + v <= 0.0) return@forEach
+            cgstAdd += c; sgstAdd += s; vatAdd += v
+            val vatLine = v > 0.0 && c + s <= 0.0
+            val key = Math.round((raw.cgstRate + raw.sgstRate + raw.vatRate) * 100.0) * 2 +
+                (if (vatLine) 1L else 0L)
+            val acc = slabAdd.getOrPut(key) { DoubleArray(6) }
+            acc[0] = raw.cgstRate; acc[1] = raw.sgstRate; acc[2] = raw.vatRate
+            acc[3] += c; acc[4] += s; acc[5] += v
+        }
+        if (cgstAdd + sgstAdd + vatAdd <= 0.0) return totals to taxSlabs
+
+        // Every line that owes a charge-tax share already carries its own goods
+        // tax at the same rate - a nonzero rate against a nonzero gross always
+        // produced a nonzero goods tax in loadItems, so it was already bucketed.
+        // The fresh-slab fallback below is a safety net for the rare exception -
+        // a line whose own goods tax happened to round away to nothing - not the
+        // normal case.
+        val inflatedSlabs = taxSlabs.map { slab ->
+            val vatLine = slab.hasVat && !slab.hasGst
+            val key = Math.round((slab.cgstRate + slab.sgstRate + slab.vatRate) * 100.0) * 2 +
+                (if (vatLine) 1L else 0L)
+            val add = slabAdd.remove(key) ?: return@map slab
+            slab.copy(cgst = slab.cgst + add[3], sgst = slab.sgst + add[4], vat = slab.vat + add[5])
+        } + slabAdd.values.map { add ->
+            TaxSlab(add[0], add[1], add[2], base = 0.0, cgst = add[3], sgst = add[4], vat = add[5])
+        }
+
+        return totals.copy(
+            cgst = totals.cgst + cgstAdd,
+            sgst = totals.sgst + sgstAdd,
+            vat = totals.vat + vatAdd
+        ) to inflatedSlabs
     }
 
     /**

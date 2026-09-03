@@ -151,17 +151,12 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     /** Whether the whole-bill discount comes off before GST (Tax Settings' Discount Position). */
     private val discountPreTax by lazy { taxSettings.discountPosition == TaxSettingsDao.DiscountPosition.PRE_TAX }
 
-    /** GST and VAT are mutually exclusive in Tax Settings; NONE when neither is on. */
-    private val taxRegime by lazy { GstCalculator.regimeFor(taxSettings.gstEnabled, taxSettings.vatEnabled) }
+    /** Whether tax is switched on at all. Which of GST/VAT a product carries is not
+     *  a store-wide choice any more - see [GstCalculator.regimeOf]. */
+    private val taxEnabled by lazy { taxSettings.taxEnabled }
 
     /** Whether the listed price already includes whichever tax is active. */
-    private val taxInclusive by lazy {
-        when (taxRegime) {
-            GstCalculator.TaxRegime.GST -> taxSettings.gstMode == TaxSettingsDao.GstMode.INCLUSIVE
-            GstCalculator.TaxRegime.VAT -> taxSettings.vatMode == TaxSettingsDao.GstMode.INCLUSIVE
-            GstCalculator.TaxRegime.NONE -> false
-        }
-    }
+    private val taxInclusive by lazy { taxSettings.taxMode == TaxSettingsDao.GstMode.INCLUSIVE }
 
     /** Item-wise discount: each product's own pre-configured discount applies instead
      *  of the whole-bill discount carried over from the cart page. */
@@ -769,28 +764,19 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      */
     private fun lineTaxRaw(line: CheckoutSession.Line, grossSubtotal: Double, discAmt: Double): LineTax {
         val gross = line.price * line.qty
-        val rate = when (taxRegime) {
-            GstCalculator.TaxRegime.GST -> line.cgstRate + line.sgstRate
-            GstCalculator.TaxRegime.VAT -> line.vatRate
-            GstCalculator.TaxRegime.NONE -> 0.0
-        }
+        val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate else 0.0
 
         if (itemwiseDiscountActive && line.itemDiscValue > 0.0 && line.itemDiscType != null) {
             val mode = if (line.itemDiscType == "A") GstCalculator.DiscountMode.AMOUNT else GstCalculator.DiscountMode.PERCENT
             val pricing = GstCalculator.priceItem(gross, rate, taxInclusive, discountPreTax, mode, line.itemDiscValue)
-            return when (taxRegime) {
-                GstCalculator.TaxRegime.GST -> LineTax(
-                    pricing.taxable,
-                    GstCalculator.taxAmount(pricing.taxable, line.cgstRate),
-                    GstCalculator.taxAmount(pricing.taxable, line.sgstRate),
-                    0.0,
-                    pricing.discount
-                )
-                GstCalculator.TaxRegime.VAT -> LineTax(
-                    pricing.taxable, 0.0, 0.0, GstCalculator.taxAmount(pricing.taxable, line.vatRate), pricing.discount
-                )
-                GstCalculator.TaxRegime.NONE -> LineTax(pricing.taxable, 0.0, 0.0, 0.0, pricing.discount)
-            }
+            if (!taxEnabled) return LineTax(pricing.taxable, 0.0, 0.0, 0.0, pricing.discount)
+            return LineTax(
+                pricing.taxable,
+                GstCalculator.taxAmount(pricing.taxable, line.cgstRate),
+                GstCalculator.taxAmount(pricing.taxable, line.sgstRate),
+                GstCalculator.taxAmount(pricing.taxable, line.vatRate),
+                pricing.discount
+            )
         }
 
         val rawBase = GstCalculator.taxableBase(gross, rate, taxInclusive)
@@ -799,23 +785,29 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         } else {
             rawBase
         }
-        return when (taxRegime) {
-            GstCalculator.TaxRegime.GST -> LineTax(
-                taxable,
-                GstCalculator.taxAmount(taxable, line.cgstRate),
-                GstCalculator.taxAmount(taxable, line.sgstRate),
-                0.0
-            )
-            GstCalculator.TaxRegime.VAT -> LineTax(taxable, 0.0, 0.0, GstCalculator.taxAmount(taxable, line.vatRate))
-            GstCalculator.TaxRegime.NONE -> LineTax(taxable, 0.0, 0.0, 0.0)
-        }
+        if (!taxEnabled) return LineTax(taxable, 0.0, 0.0, 0.0)
+        return LineTax(
+            taxable,
+            GstCalculator.taxAmount(taxable, line.cgstRate),
+            GstCalculator.taxAmount(taxable, line.sgstRate),
+            GstCalculator.taxAmount(taxable, line.vatRate)
+        )
     }
 
-    /** "GST", "VAT" or plain "TAX" (neither switched on), matching the active regime. */
-    private fun taxLabelText(): String = when (taxRegime) {
-        GstCalculator.TaxRegime.GST -> "GST"
-        GstCalculator.TaxRegime.VAT -> "VAT"
-        GstCalculator.TaxRegime.NONE -> "TAX"
+    /**
+     * "GST" or "VAT" when every taxed line on the bill agrees, plain "TAX" when
+     * tax is off or the bill genuinely mixes GST- and VAT-rated products - there
+     * is no single word for that, so a neutral one is used rather than picking
+     * one regime to favour.
+     */
+    private fun taxLabelText(): String {
+        if (!taxEnabled) return "TAX"
+        val regimes = lines.map { GstCalculator.regimeOf(it.cgstRate, it.sgstRate, it.vatRate) }.toSet()
+        return when {
+            regimes == setOf(GstCalculator.TaxRegime.GST) -> "GST"
+            regimes == setOf(GstCalculator.TaxRegime.VAT) -> "VAT"
+            else -> "TAX"
+        }
     }
 
     /**
@@ -871,11 +863,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      */
     private fun lineDiscountForBill(line: CheckoutSession.Line): Double {
         val gross = line.price * line.qty
-        val rate = when (taxRegime) {
-            GstCalculator.TaxRegime.GST -> line.cgstRate + line.sgstRate
-            GstCalculator.TaxRegime.VAT -> line.vatRate
-            GstCalculator.TaxRegime.NONE -> 0.0
-        }
+        val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate else 0.0
         if (itemwiseDiscountActive && line.itemDiscValue > 0.0 && line.itemDiscType != null) {
             val mode = if (line.itemDiscType == "A") GstCalculator.DiscountMode.AMOUNT else GstCalculator.DiscountMode.PERCENT
             return GstCalculator.itemDiscountAgainstRawBase(gross, rate, taxInclusive, discountPreTax, mode, line.itemDiscValue)
@@ -884,10 +872,36 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         return if (discountPreTax && sub > 0) gross / sub * discountAmt() else 0.0
     }
 
-    private fun cgstAmt() = lines.sumOf { lineTax(it).cgst }
-    private fun sgstAmt() = lines.sumOf { lineTax(it).sgst }
-    private fun vatAmt() = lines.sumOf { lineTax(it).vat }
+    private fun cgstAmt() = lines.sumOf { lineTax(it).cgst + chargeTaxOf(it).cgst }
+    private fun sgstAmt() = lines.sumOf { lineTax(it).sgst + chargeTaxOf(it).sgst }
+    private fun vatAmt() = lines.sumOf { lineTax(it).vat + chargeTaxOf(it).vat }
     private fun taxableSum() = lines.sumOf { lineTax(it).taxable }
+
+    /**
+     * This line's share of the shop's own extra charges, taxed at the line's own
+     * rate - the same gross-share spread [lineTaxRaw] applies to a pre-tax
+     * whole-bill discount, applied instead to [extraChargesTotal]. Folded into
+     * [cgstAmt]/[sgstAmt]/[vatAmt] rather than kept apart, so the charge's tax
+     * comes out of the bill's existing GST/VAT figure, not a column of its own.
+     *
+     * The charge's own PRINCIPAL is untouched by this - it still joins
+     * [taxedTotal] once, on its own, via [extraChargesTotal], so nothing here is
+     * counted twice.
+     */
+    private fun chargeTaxOf(line: CheckoutSession.Line): LineTax {
+        val principal = extraChargesTotal()
+        val sub = subtotal()
+        if (principal <= 0.0 || sub <= 0.0 || !taxEnabled) {
+            return LineTax(0.0, 0.0, 0.0, 0.0)
+        }
+        val share = line.price * line.qty / sub * principal
+        return LineTax(
+            0.0,
+            GstCalculator.taxAmount(share, line.cgstRate),
+            GstCalculator.taxAmount(share, line.sgstRate),
+            GstCalculator.taxAmount(share, line.vatRate)
+        ).toPaise()
+    }
 
     /** The further amount still owed to lines' own item-wise discount, on top of
      *  [taxableSum]/[cgstAmt]/[sgstAmt]/[vatAmt] - see [lineTax]. Zero unless
@@ -895,7 +909,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     private fun itemwiseDiscountSum() = lines.sumOf { lineTax(it).discount }
 
     /** Tax at each product's own rate, not one blanket rate across the bill. CGST+SGST
-     *  and VAT are mutually exclusive - only one regime is ever active - so summing all three is safe. */
+     *  and VAT are mutually exclusive per LINE (a product carries one or the other,
+     *  never both) - not store-wide any more - so summing all three is still safe. */
     private fun taxAmt() = cgstAmt() + sgstAmt() + vatAmt()
 
     /**

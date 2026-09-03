@@ -28,12 +28,24 @@ class CalendarReportDao(context: Context) {
         /** The period as stored: "2026-08-11", "2026-08" or "2026". */
         val period: String,
         val billCount: Int,
-        /** Every tax the period's bills charged, however the regimes split it. */
-        val totalTax: Double,
+        val cgst: Double,
+        val sgst: Double,
+        /** Zero on a shop that never sells inter-state. */
+        val igst: Double = 0.0,
+        /** Zero on a GST-only shop. */
+        val vat: Double = 0.0,
         val totalDiscount: Double,
+        /** The restaurant section's own flat charge - zero on a grocery bill. */
+        val totalServiceCharge: Double = 0.0,
+        /** The shop's other extra charges - Parcel Charge among them - added
+         *  together, since only the sum is stored per bill, not each by name. */
+        val totalOtherCharges: Double = 0.0,
         /** What those bills came to - their net. */
         val totalAmount: Double
-    )
+    ) {
+        /** Every tax this period's bills charged, however the regimes split it. */
+        val totalTax: Double get() = cgst + sgst + igst + vat
+    }
 
     /**
      * The whole report: the range asked for, at the width it was asked at, and every
@@ -54,8 +66,19 @@ class CalendarReportDao(context: Context) {
     ) {
         val periodCount: Int get() = lines.size
         val totalBills: Int get() = lines.sumOf { it.billCount }
-        val totalTax: Double get() = BillRounding.toPaise(lines.sumOf { it.totalTax })
+        val totalCgst: Double get() = BillRounding.toPaise(lines.sumOf { it.cgst })
+        val totalSgst: Double get() = BillRounding.toPaise(lines.sumOf { it.sgst })
+        val totalIgst: Double get() = BillRounding.toPaise(lines.sumOf { it.igst })
+        val totalVat: Double get() = BillRounding.toPaise(lines.sumOf { it.vat })
+        /** Every tax the range charged, however the regimes split it. */
+        val totalTax: Double get() = BillRounding.toPaise(totalCgst + totalSgst + totalIgst + totalVat)
+        /** The IGST column earns its place only where a bill in the range carried it. */
+        val hasIgst: Boolean get() = lines.any { it.igst > 0.0 }
+        /** The VAT column earns its place only where a bill in the range carried it. */
+        val hasVat: Boolean get() = lines.any { it.vat > 0.0 }
         val totalDiscount: Double get() = BillRounding.toPaise(lines.sumOf { it.totalDiscount })
+        val totalServiceCharge: Double get() = BillRounding.toPaise(lines.sumOf { it.totalServiceCharge })
+        val totalOtherCharges: Double get() = BillRounding.toPaise(lines.sumOf { it.totalOtherCharges })
         val totalAmount: Double get() = BillRounding.toPaise(lines.sumOf { it.totalAmount })
 
         /** The best period of the range, for the summary to name. Null when empty. */
@@ -90,9 +113,13 @@ class CalendarReportDao(context: Context) {
         val sql = """
             SELECT $period AS period,
                    COUNT(*),
-                   COALESCE(SUM(COALESCE(b.tot_cgst_amount, 0) + COALESCE(b.tot_sgst_amount, 0)
-                              + COALESCE(b.tot_igst_amount, 0) + COALESCE(b.tot_vat_amount, 0)), 0),
+                   COALESCE(SUM(b.tot_cgst_amount), 0),
+                   COALESCE(SUM(b.tot_sgst_amount), 0),
+                   COALESCE(SUM(b.tot_igst_amount), 0),
+                   COALESCE(SUM(b.tot_vat_amount), 0),
                    COALESCE(SUM(b.tot_discount_amount), 0),
+                   COALESCE(SUM(b.service_charge_amount), 0),
+                   COALESCE(SUM(b.tot_other_charges_amount), 0),
                    COALESCE(SUM(b.net_amount), 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             WHERE $period BETWEEN ? AND ?
@@ -114,9 +141,14 @@ class CalendarReportDao(context: Context) {
                     Line(
                         period = c.getString(0).orEmpty(),
                         billCount = c.getInt(1),
-                        totalTax = BillRounding.toPaise(c.getDouble(2)),
-                        totalDiscount = BillRounding.toPaise(c.getDouble(3)),
-                        totalAmount = BillRounding.toPaise(c.getDouble(4))
+                        cgst = BillRounding.toPaise(c.getDouble(2)),
+                        sgst = BillRounding.toPaise(c.getDouble(3)),
+                        igst = BillRounding.toPaise(c.getDouble(4)),
+                        vat = BillRounding.toPaise(c.getDouble(5)),
+                        totalDiscount = BillRounding.toPaise(c.getDouble(6)),
+                        totalServiceCharge = BillRounding.toPaise(c.getDouble(7)),
+                        totalOtherCharges = BillRounding.toPaise(c.getDouble(8)),
+                        totalAmount = BillRounding.toPaise(c.getDouble(9))
                     )
                 )
             }

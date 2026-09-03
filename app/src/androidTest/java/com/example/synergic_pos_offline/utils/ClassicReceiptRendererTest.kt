@@ -98,9 +98,8 @@ class ClassicReceiptRendererTest {
         bills.saveBillFormat(BillFormat.CLASSIC)
         taxes.save(
             taxBefore.copy(
-                gstEnabled = true,
-                gstMode = TaxSettingsDao.GstMode.EXCLUSIVE,
-                vatEnabled = false
+                taxEnabled = true,
+                taxMode = TaxSettingsDao.GstMode.EXCLUSIVE
             )
         )
         try {

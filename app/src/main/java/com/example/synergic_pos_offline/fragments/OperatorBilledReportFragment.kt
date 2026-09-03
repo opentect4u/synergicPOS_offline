@@ -71,12 +71,22 @@ class OperatorBilledReportFragment : PeriodReportFragment<OperatorBilledReportDa
         }
 
     override fun summaryOf(report: OperatorBilledReportDao.Report): List<Pair<String, String>> =
-        listOf(
-            "Total Bills" to report.billCount.toString(),
-            "Total Items" to StockDao.trim(report.totalItems),
-            "Total Tax" to money(report.totalTax),
-            "Total Disc." to money(report.totalDiscount)
-        )
+        buildList {
+            add("Total Bills" to report.billCount.toString())
+            add("Total Items" to StockDao.trim(report.totalItems))
+            // Each tax its own line rather than one blended figure - a GST return
+            // is filed against SGST and CGST separately, and IGST/VAT earn their
+            // place only where a bill in the period actually carried one.
+            add("Total SGST" to money(report.totalSgst))
+            add("Total CGST" to money(report.totalCgst))
+            if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
+            if (report.hasVat) add("Total VAT" to money(report.totalVat))
+            add("Total Disc." to money(report.totalDiscount))
+            // Shown only where the period actually carried one - a shop that never
+            // charges Service or an Extra Charge should not read a zero row saying so.
+            if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
+            if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
+        }
 
     /** The one figure the report is read for. */
     override fun totalOf(report: OperatorBilledReportDao.Report): Pair<String, String> =
@@ -105,13 +115,18 @@ class OperatorBilledReportFragment : PeriodReportFragment<OperatorBilledReportDa
             evenColumns = true,
             alignFirstColumnEnd = true,
             rows = rowsOf(report),
-            summary = listOf(
-                "TOTAL BILLS" to report.billCount.toString(),
-                "TOTAL ITEMS" to StockDao.trim(report.totalItems),
-                "TOTAL TAX  " to money(report.totalTax),
-                "TOTAL DISC." to money(report.totalDiscount),
-                "GRAND TOTAL" to money(report.grandTotal)
-            ).map { (label, value) -> "$label :" to value },
+            summary = buildList {
+                add("TOTAL BILLS" to report.billCount.toString())
+                add("TOTAL ITEMS" to StockDao.trim(report.totalItems))
+                add("TOTAL SGST " to money(report.totalSgst))
+                add("TOTAL CGST " to money(report.totalCgst))
+                if (report.hasIgst) add("TOTAL IGST " to money(report.totalIgst))
+                if (report.hasVat) add("TOTAL VAT  " to money(report.totalVat))
+                add("TOTAL DISC." to money(report.totalDiscount))
+                if (report.totalServiceCharge > 0.005) add("SERVICE CHG" to money(report.totalServiceCharge))
+                if (report.totalOtherCharges > 0.005) add("EXTRA CHGS " to money(report.totalOtherCharges))
+                add("GRAND TOTAL" to money(report.grandTotal))
+            }.map { (label, value) -> "$label :" to value },
             emptyNote = "No bills in this period."
         )
 
