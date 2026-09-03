@@ -76,7 +76,8 @@ class ReportsFragment : Fragment() {
             "Year Wise Report",
             "UDF Wise Item Report",
             "Customer Item Wise RPT",
-            "Time Wise Item Report"
+            "Time Wise Item Report",
+            WAITER_WISE_REPORT
         )
 
         // Stock Report only exists where there is a count to report on, and the KOT
@@ -111,6 +112,7 @@ class ReportsFragment : Fragment() {
                 STOCK_REPORT -> openFragment(StockReportFragment())
                 LOW_STOCK_REPORT -> openFragment(LowStockReportFragment())
                 SHIFT_WISE_REPORT -> openFragment(ShiftWiseReportFragment())
+                WAITER_WISE_REPORT -> openFragment(WaiterWiseReportFragment())
                 "UDF-Wise Report" -> openFragment(UdfWiseReportFragment())
                 "UDF Wise Item Report" -> openFragment(UdfWiseItemReportFragment())
                 "Customer Item Wise RPT" -> openFragment(CustomerItemWiseReportFragment())
@@ -132,17 +134,22 @@ class ReportsFragment : Fragment() {
         /** Named once; shown only where the shop runs shifts. */
         private const val SHIFT_WISE_REPORT = "Shift Wise Report"
 
+        /** Named once; shown only in Restaurant mode - see [RESTAURANT_ONLY]. */
+        private const val WAITER_WISE_REPORT = "Waiter Wise Report"
+
         /**
          * Reports that only exist in Restaurant mode.
          *
-         * A KOT is a kitchen ticket and a UDF is a field of a restaurant order;
-         * neither is ever raised on a grocery till. The tiles would open screens that
-         * could only be empty, and an empty report reads as a broken one.
+         * A KOT is a kitchen ticket, a UDF is a field of a restaurant order, and a
+         * waiter serves a table - none of the three is ever raised on a grocery till.
+         * The tiles would open screens that could only be empty, and an empty report
+         * reads as a broken one.
          */
         private val RESTAURANT_ONLY = setOf(
             "KOT Cancel Report",
             "UDF-Wise Report",
-            "UDF Wise Item Report"
+            "UDF Wise Item Report",
+            WAITER_WISE_REPORT
         )
 
         /**

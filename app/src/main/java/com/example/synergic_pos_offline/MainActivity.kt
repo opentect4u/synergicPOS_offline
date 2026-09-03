@@ -631,6 +631,7 @@ class MainActivity : AppCompatActivity() {
             "Stock Report" -> navigateTo(StockReportFragment())
             "Low Stock Report" -> navigateTo(LowStockReportFragment())
             "Shift Wise Report" -> navigateTo(ShiftWiseReportFragment())
+            "Waiter Wise Report" -> navigateTo(WaiterWiseReportFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")
                     com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment()
@@ -716,7 +717,7 @@ class MainActivity : AppCompatActivity() {
             "Opr Bill Report", "Shift Wise Report", "Category/Dept Wise Bill Report", "Payment & Receipt", "Customer Payment",
             "Customer Ledger", "Profit & Loss Report", "KOT Cancel Report", "Day-Wise Report",
             "Month Wise Report", "Year Wise Report", "UDF Wise Item Report", "Customer Item Wise RPT",
-            "Time Wise Item Report"
+            "Time Wise Item Report", "Waiter Wise Report"
         ).filter { ReportsFragment.isVisible(context, it) }
 
         // The masters, in the order and on the conditions [DatabaseSettingsFragment]
