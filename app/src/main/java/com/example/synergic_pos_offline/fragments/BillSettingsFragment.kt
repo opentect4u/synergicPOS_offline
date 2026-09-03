@@ -170,11 +170,18 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         // preview has to be recomputed when it moves.
         rgTokenReset.setOnCheckedChangeListener { _, _ -> updateTokenPreview() }
 
-        // The UPI fields only mean anything once the QR is switched on.
-        swUpiQr.setOnCheckedChangeListener { _, on ->
-            llUpiFields.isVisible = on
-            if (on) updateUpiPreview()
-        }
+        // THE UPI FIELDS STAY ON SCREEN WHATEVER THE SWITCH SAYS.
+        //
+        // They used to fold away with it, which made one switch do two jobs: whether a
+        // code is PRINTED on the bill, and whether the shop may set one up at all.
+        // Those are different questions. A shop entering its UPI details had to turn
+        // printing on to reach the boxes, and one that decided not to print a code on
+        // every slip lost sight of details it had already saved - details that are
+        // still in use, because the checkout screen shows the code from them.
+        //
+        // Left editable rather than greyed, for the same reason: an id can be typed,
+        // corrected or re-uploaded before printing is ever switched on.
+        swUpiQr.setOnCheckedChangeListener { _, _ -> updateUpiPreview() }
         val upiWatcher = object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
@@ -235,7 +242,8 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         swCustomerAddress.isChecked = s.customerAddressPrinting
         actTotalFontSize.setText(s.totalAmountFontSize.label, false)
         swUpiQr.isChecked = s.upiQrEnabled
-        llUpiFields.isVisible = s.upiQrEnabled
+        // Always shown - see the switch listener above.
+        llUpiFields.isVisible = true
         etUpiId.setText(s.upiId)
         etUpiName.setText(s.upiPayeeName)
         currentFormat = s.billFormat
@@ -380,11 +388,23 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         val bitmap = UpiQr.bitmap(uri, px)
         ivUpiQrPreview.setImageBitmap(bitmap)
         ivUpiQrPreview.isVisible = bitmap != null
-        tvUpiPreviewNote.text = if (bitmap == null) {
-            "The code could not be drawn for this UPI ID."
-        } else {
-            "Sample for \u20B9 " + String.format(java.util.Locale.US, "%.2f", PREVIEW_AMOUNT) +
-                " \u2014 every bill prints its own code carrying that bill's total."
+        // WHAT THE NOTE SAYS FOLLOWS THE SWITCH, now that the section is on screen in
+        // both states. It read "every bill prints its own code" unconditionally, which
+        // was safe while these fields only appeared with printing switched on and is a
+        // plain untruth beside a switch that is off.
+        //
+        // Off is not "this does nothing" either: the checkout screen draws its code
+        // from these same details, so the setting decides paper and nothing else, and
+        // the note says which.
+        val sample = "Sample for \u20B9 " +
+            String.format(java.util.Locale.US, "%.2f", PREVIEW_AMOUNT)
+        tvUpiPreviewNote.text = when {
+            bitmap == null -> "The code could not be drawn for this UPI ID."
+            swUpiQr.isChecked ->
+                "$sample \u2014 every bill prints its own code carrying that bill's total."
+            else ->
+                "$sample \u2014 not printed on bills while the switch above is off. " +
+                    "It is still shown on the checkout screen to scan."
         }
     }
 

@@ -82,12 +82,26 @@ class BillListFragment : Fragment(), TitledScreen {
 
     /** Sort options for the bill list. */
     private enum class Sort(val label: String) {
+        BILL_NO_ASC("Bill No. (ascending)"),
         DATE_DESC("Date (newest)"),
         DATE_ASC("Date (oldest)"),
         AMOUNT_DESC("Amount (high–low)"),
         AMOUNT_ASC("Amount (low–high)")
     }
-    private var sort = Sort.DATE_DESC
+
+    /**
+     * BILL NUMBER, ASCENDING - the order the book was written in.
+     *
+     * The list opened on newest-first, which is the right answer for a till being
+     * watched during service and the wrong one for the book itself: bill history is
+     * read to find a bill, to check a run of them, or to tie the day's slips to the
+     * screen, and all three are done by number, upwards, the way the slips come off
+     * the printer.
+     *
+     * First in the list as well as the default, so it is where the eye lands when the
+     * sort is opened to come back to it.
+     */
+    private var sort = Sort.BILL_NO_ASC
 
     private lateinit var llCustomRange: View
     private lateinit var etFromDate: TextInputEditText
@@ -255,6 +269,7 @@ class BillListFragment : Fragment(), TitledScreen {
         }
 
         val sorted = when (sort) {
+            Sort.BILL_NO_ASC -> filtered.sortedWith(byBillNo)
             Sort.DATE_DESC -> filtered.sortedByDescending { sortMillis(it) }
             Sort.DATE_ASC -> filtered.sortedBy { sortMillis(it) }
             Sort.AMOUNT_DESC -> filtered.sortedByDescending { it.amount }
@@ -276,6 +291,33 @@ class BillListFragment : Fragment(), TitledScreen {
             "No bills found"
         }
     }
+
+    /**
+     * Bills in bill-number order, the way a book reads.
+     *
+     * ## Why not a plain string sort
+     *
+     * A bill number is a prefix and a counter - "INV-9", "INV-10" - and comparing those
+     * as text puts 10 before 9, because "1" sorts before "9". The list would look
+     * ordered and be wrong exactly where a long day makes it matter, at the tens and
+     * hundreds boundaries.
+     *
+     * So the two parts are compared as what they are: the prefix as text, the counter
+     * as a number. A shop that changes its prefix mid-book gets its series grouped
+     * rather than interleaved, which is also what somebody looking for a bill expects.
+     *
+     * ## The tie-break
+     *
+     * [BillDao.Bill.receiptNo] settles two bills that read the same. Numbering restarts
+     * when the book is erased (see BillErase), so a till can genuinely hold two bills
+     * called INV-0001 from either side of that line - and a sort that left their order
+     * to chance would shuffle them between one opening of this screen and the next.
+     * receiptNo never restarts, so the older one stays above the newer.
+     */
+    private val byBillNo: Comparator<BillDao.Bill> =
+        compareBy<BillDao.Bill> { it.billNo.takeWhile { c -> !c.isDigit() } }
+            .thenBy { b -> b.billNo.filter { it.isDigit() }.toLongOrNull() ?: Long.MAX_VALUE }
+            .thenBy { it.receiptNo }
 
     /** Sortable timestamp (date + time) for a bill; 0 if unparseable. */
     private fun sortMillis(b: BillDao.Bill): Long =
