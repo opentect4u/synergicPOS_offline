@@ -137,6 +137,7 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
         container.addView(total("TOTAL CGST:", money(r.totalCgst)))
         if (r.totalServiceCharge > 0.005) container.addView(total("SERVICE CHG:", money(r.totalServiceCharge)))
         if (r.totalOtherCharges > 0.005) container.addView(total("EXTRA CHGS:", money(r.totalOtherCharges)))
+        if (r.totalParcelCharge > 0.005) container.addView(total("PARCEL CHG:", money(r.totalParcelCharge)))
         container.addView(total("TOTAL AMT :", money(r.totalAmount)))
     }
 
@@ -162,6 +163,7 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
             add("Total CGST" to money(r.totalCgst))
             if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
             if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
+            if (r.totalParcelCharge > 0.005) add("Parcel Charge" to money(r.totalParcelCharge))
             add("Total Amount" to money(r.totalAmount))
         }
     )

@@ -86,6 +86,7 @@ class OperatorBilledReportFragment : PeriodReportFragment<OperatorBilledReportDa
             // charges Service or an Extra Charge should not read a zero row saying so.
             if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
             if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
+            if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
         }
 
     /** The one figure the report is read for. */
@@ -125,6 +126,7 @@ class OperatorBilledReportFragment : PeriodReportFragment<OperatorBilledReportDa
                 add("TOTAL DISC." to money(report.totalDiscount))
                 if (report.totalServiceCharge > 0.005) add("SERVICE CHG" to money(report.totalServiceCharge))
                 if (report.totalOtherCharges > 0.005) add("EXTRA CHGS " to money(report.totalOtherCharges))
+                if (report.totalParcelCharge > 0.005) add("PARCEL CHG " to money(report.totalParcelCharge))
                 add("GRAND TOTAL" to money(report.grandTotal))
             }.map { (label, value) -> "$label :" to value },
             emptyNote = "No bills in this period."

@@ -58,6 +58,7 @@ class VoidBillReportFragment : PeriodReportFragment<VoidBillReportDao.Report>() 
             // saying so.
             if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
             if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
+            if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
         }
 
     /** The one figure the report is read for: what came out of the day's takings. */
@@ -89,6 +90,7 @@ class VoidBillReportFragment : PeriodReportFragment<VoidBillReportDao.Report>() 
                 if (report.hasVat) add("VAT :" to money(report.totalVat))
                 if (report.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(report.totalServiceCharge))
                 if (report.totalOtherCharges > 0.005) add("EXTRA CHGS :" to money(report.totalOtherCharges))
+                if (report.totalParcelCharge > 0.005) add("PARCEL CHG :" to money(report.totalParcelCharge))
                 // The one line the slip has always closed on, set across the whole
                 // width rather than repeated per column.
                 add("TOTAL :" to money(report.grandTotal))

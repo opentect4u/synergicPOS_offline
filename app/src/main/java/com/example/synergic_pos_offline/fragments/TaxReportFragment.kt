@@ -50,6 +50,7 @@ class TaxReportFragment : PeriodReportFragment<TaxReportDao.Report>() {
             // rows above. Shown only where the period actually carried one.
             if (report.charges.service > 0.005) add("Service Charge" to money(report.charges.service))
             if (report.charges.other > 0.005) add("Extra Charges" to money(report.charges.other))
+            if (report.charges.parcel > 0.005) add("Parcel Charge" to money(report.charges.parcel))
         }
 
     /** The one figure the report is read for. */
@@ -88,6 +89,7 @@ class TaxReportFragment : PeriodReportFragment<TaxReportDao.Report>() {
             summary = buildList {
                 if (report.charges.service > 0.005) add("SERVICE CHG :" to money(report.charges.service))
                 if (report.charges.other > 0.005) add("EXTRA CHGS  :" to money(report.charges.other))
+                if (report.charges.parcel > 0.005) add("PARCEL CHG  :" to money(report.charges.parcel))
             },
             emptyNote = "No tax was charged in this period."
         )

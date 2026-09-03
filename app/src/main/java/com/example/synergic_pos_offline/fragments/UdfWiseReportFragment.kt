@@ -164,6 +164,7 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
         // charges Service or an Extra Charge should not read a zero row saying so.
         if (r.totalServiceCharge > 0.005) summary.addView(summaryRow("Service Charge", money(r.totalServiceCharge)))
         if (r.totalOtherCharges > 0.005) summary.addView(summaryRow("Extra Charges", money(r.totalOtherCharges)))
+        if (r.totalParcelCharge > 0.005) summary.addView(summaryRow("Parcel Charge", money(r.totalParcelCharge)))
         summary.addView(summaryRow("Bill Amount", money(r.totalBillAmount), emphasised = true))
     }
 
@@ -186,6 +187,7 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
             add("Discount Amount" to money(r.totalDiscount))
             if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
             if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
+            if (r.totalParcelCharge > 0.005) add("Parcel Charge" to money(r.totalParcelCharge))
             add("Bill Amount" to money(r.totalBillAmount))
         }
     )
@@ -219,6 +221,7 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
                 if (r.hasVat) add("VAT AMOUNT  :" to money(r.totalVat))
                 if (r.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(r.totalServiceCharge))
                 if (r.totalOtherCharges > 0.005) add("EXTRA CHGS  :" to money(r.totalOtherCharges))
+                if (r.totalParcelCharge > 0.005) add("PARCEL CHG  :" to money(r.totalParcelCharge))
             },
             total = "TOTAL  :" to money(r.totalBillAmount),
             emptyNote = "No bills in this period."

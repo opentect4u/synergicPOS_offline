@@ -56,9 +56,11 @@ class OperatorBilledReportDao(context: Context) {
         val discount: Double,
         /** The restaurant section's own flat charge - zero on a grocery bill. */
         val serviceCharge: Double = 0.0,
-        /** The shop's other extra charges - Parcel Charge among them - added
-         *  together, since only the sum is stored per bill, not each by name. */
+        /** The shop's other extra charges, Parcel Charge excluded - see [parcelCharge]. */
         val otherCharges: Double = 0.0,
+        /** Parcel Charge's own share, broken out from [otherCharges] - see
+         *  ChargeDao.Kind.PARCEL. Zero on a bill sold before this was tracked. */
+        val parcelCharge: Double = 0.0,
         /** What the customer paid - the bill's net. */
         val total: Double
     ) {
@@ -93,6 +95,7 @@ class OperatorBilledReportDao(context: Context) {
         val totalDiscount: Double get() = total { it.discount }
         val totalServiceCharge: Double get() = total { it.serviceCharge }
         val totalOtherCharges: Double get() = total { it.otherCharges }
+        val totalParcelCharge: Double get() = total { it.parcelCharge }
         val grandTotal: Double get() = total { it.total }
 
         val isEmpty: Boolean get() = lines.isEmpty()
@@ -168,6 +171,7 @@ class OperatorBilledReportDao(context: Context) {
                    MAX(COALESCE(b.tot_discount_amount, 0)),
                    MAX(COALESCE(b.service_charge_amount, 0)),
                    MAX(COALESCE(b.tot_other_charges_amount, 0)),
+                   MAX(COALESCE(b.parcel_charge_amount, 0)),
                    MAX(COALESCE(b.net_amount, 0))
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             LEFT JOIN ${DatabaseHelper.Tables.TD_BILL_ITEMS} i ON i.bill_id = b.receipt_no
@@ -197,8 +201,9 @@ class OperatorBilledReportDao(context: Context) {
                         vat = BillRounding.toPaise(c.getDouble(5)),
                         discount = BillRounding.toPaise(c.getDouble(6)),
                         serviceCharge = BillRounding.toPaise(c.getDouble(7)),
-                        otherCharges = BillRounding.toPaise(c.getDouble(8)),
-                        total = c.getDouble(9)
+                        otherCharges = (BillRounding.toPaise(c.getDouble(8)) - BillRounding.toPaise(c.getDouble(9))).coerceAtLeast(0.0),
+                        parcelCharge = BillRounding.toPaise(c.getDouble(9)),
+                        total = c.getDouble(10)
                     )
                 )
             }
