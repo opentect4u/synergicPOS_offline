@@ -340,8 +340,17 @@ object DialogUtils {
         val spanColumns: Int = 1,
         val inputType: String = "text",
         val maxLength: Int = -1,
-        val fieldType: String = "text", // "text", "dropdown", "toggle"
-        val options: List<String> = emptyList(), // For dropdown type
+        /**
+         * "text", "dropdown", "toggle" or "checkboxes".
+         *
+         * "checkboxes" is the multi-select answer to "dropdown": [options] are shown as
+         * a labelled row of boxes and ANY NUMBER of them can be on, where a dropdown
+         * forces exactly one. Its value - in and out - is the checked options joined by
+         * commas, so a caller reads it back with `split(",")` and nothing else about
+         * the form changes.
+         */
+        val fieldType: String = "text", // "text", "dropdown", "toggle", "checkboxes"
+        val options: List<String> = emptyList(), // For dropdown and checkboxes
         /** A "text" field shown but not editable - its [value] is fixed. */
         val locked: Boolean = false
     )
@@ -395,6 +404,9 @@ object DialogUtils {
 
         val inputs = ArrayList<TextInputEditText>(fields.size)
         val toggles = HashMap<Int, Boolean>() // For toggle fields: index -> value
+        // Checkbox fields: index -> the boxes, in the order the caller listed them, so
+        // the value read back out is in that order too rather than tick order.
+        val checkboxes = HashMap<Int, List<android.widget.CheckBox>>()
         val density = context.resources.displayMetrics.density
         val margin = (8 * density).toInt()
 
@@ -423,29 +435,118 @@ object DialogUtils {
 
             when (field.fieldType) {
                 "toggle" -> {
-                    // Create a toggle switch
+                    // A SWITCH IN A BOX, so it sits in the row as an equal.
+                    //
+                    // It used to be a bare label and switch with no ground under them,
+                    // dropped between two outlined fields. Beside a bordered box it read
+                    // as text that had escaped its field: no edge, no fill, a different
+                    // height, and the label in body-sized black where the fields put
+                    // theirs small and grey on the border.
+                    //
+                    // Same background, same corner radius and the same 56dp height as
+                    // item_form_field, so a row of "Type | Enabled" is two controls of
+                    // one size rather than a control and a caption.
                     val container = android.widget.LinearLayout(ctx).apply {
                         layoutParams = params
                         orientation = android.widget.LinearLayout.HORIZONTAL
                         gravity = android.view.Gravity.CENTER_VERTICAL
-                        setPadding(margin, 0, 0, margin)
+                        minimumHeight = (56 * density).toInt()
+                        background = androidx.core.content.ContextCompat
+                            .getDrawable(ctx, R.drawable.bg_dropdown_field)
+                        setPadding(
+                            (14 * density).toInt(), 0, (10 * density).toInt(), 0
+                        )
                     }
                     val label = android.widget.TextView(ctx).apply {
                         text = field.label
-                        layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                        )
                         textSize = 14f
-                        setTextColor(context.resources.getColor(android.R.color.black, null))
+                        setTextColor(ctx.resources.getColor(R.color.text_main, null))
                     }
-                    val toggle = android.widget.Switch(ctx).apply {
+                    // The state in words beside the switch. A switch alone is read by
+                    // its position, which is a thing to know rather than see - and on
+                    // a form that is saved and reopened, "On" or "Off" is what the
+                    // operator is checking.
+                    val state = android.widget.TextView(ctx).apply {
+                        textSize = 12f
+                        setTextColor(ctx.resources.getColor(R.color.text_secondary, null))
+                        setPadding(0, 0, (8 * density).toInt(), 0)
+                    }
+                    val toggle = com.google.android.material.switchmaterial.SwitchMaterial(ctx).apply {
                         isChecked = field.value.lowercase() in listOf("yes", "true", "enabled", "on", "1")
-                        layoutParams = android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(
+                            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                        )
                     }
+                    state.text = if (toggle.isChecked) "On" else "Off"
                     container.addView(label)
+                    container.addView(state)
                     container.addView(toggle)
+                    // The margin the outlined fields carry themselves (item_form_field's
+                    // 12dp bottom), applied here so the row's two halves end level.
+                    params.setMargins(margin, 0, margin, margin + (12 * density).toInt())
                     grid.addView(container, params)
                     toggles[index] = toggle.isChecked
-                    toggle.setOnCheckedChangeListener { _, isChecked -> toggles[index] = isChecked }
+                    toggle.setOnCheckedChangeListener { _, isChecked ->
+                        toggles[index] = isChecked
+                        state.text = if (isChecked) "On" else "Off"
+                    }
                     // Add empty EditText to inputs list for consistency
+                    inputs.add(TextInputEditText(ctx).apply { visibility = android.view.View.GONE })
+                }
+                "checkboxes" -> {
+                    // A label with the options under it, laid out like the other
+                    // fields rather than as a dialog of its own: the answer is several
+                    // of a short list, and a picker that has to be opened, scrolled and
+                    // dismissed to tick two boxes hides how many are on. Here the
+                    // answer is readable without touching anything.
+                    // On the same ground as the fields around it - see the toggle above.
+                    // A bare label with three boxes under it read as loose text on the
+                    // dialog rather than as the form's last question.
+                    val container = android.widget.LinearLayout(ctx).apply {
+                        layoutParams = params
+                        orientation = android.widget.LinearLayout.VERTICAL
+                        background = androidx.core.content.ContextCompat
+                            .getDrawable(ctx, R.drawable.bg_dropdown_field)
+                        setPadding(
+                            (14 * density).toInt(), (10 * density).toInt(),
+                            (14 * density).toInt(), (10 * density).toInt()
+                        )
+                    }
+                    container.addView(
+                        android.widget.TextView(ctx).apply {
+                            text = field.label
+                            textSize = 12f
+                            setTextColor(ctx.resources.getColor(R.color.text_secondary, null))
+                        }
+                    )
+                    // One row, and the field is expected to span the dialog's full
+                    // width (spanColumns) so the options have the room. A handful of
+                    // short labels is what this is for; a long list belongs in a
+                    // dropdown, where scrolling is the point.
+                    val row = android.widget.LinearLayout(ctx).apply {
+                        orientation = android.widget.LinearLayout.HORIZONTAL
+                    }
+                    // Ticked from the value: the same comma list this field gives back,
+                    // so an edit opens on exactly what was saved.
+                    val on = field.value.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                    val boxes = field.options.map { option ->
+                        android.widget.CheckBox(ctx).apply {
+                            text = option
+                            textSize = 14f
+                            isChecked = on.any { it.equals(option, ignoreCase = true) }
+                            setPadding(0, 0, (12 * density).toInt(), 0)
+                        }
+                    }
+                    boxes.forEach { row.addView(it) }
+                    container.addView(row)
+                    grid.addView(container, params)
+                    checkboxes[index] = boxes
+                    // A placeholder so `inputs` stays index-aligned with `fields`, the
+                    // same thing the toggle branch above does.
                     inputs.add(TextInputEditText(ctx).apply { visibility = android.view.View.GONE })
                 }
                 "dropdown" -> {
@@ -535,6 +636,13 @@ object DialogUtils {
             val values = fields.mapIndexed { index, field ->
                 when (field.fieldType) {
                     "toggle" -> if (toggles[index] == true) "Yes" else "No"
+                    // The ticked options, comma-joined, in the order they were listed.
+                    // Empty when none is ticked - which is a real answer ("applies to
+                    // nothing"), not a missing one, so it is left to the caller to
+                    // decide whether that is allowed.
+                    "checkboxes" -> checkboxes[index].orEmpty()
+                        .filter { it.isChecked }
+                        .joinToString(",") { it.text.toString() }
                     else -> inputs.getOrNull(index)?.text?.toString()?.trim().orEmpty()
                 }
             }

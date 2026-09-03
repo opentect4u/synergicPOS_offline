@@ -98,6 +98,39 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             section.isBlank() -> tableNo
             else -> "$tableNo ($section)"
         }
+    /**
+     * What kind of order this is, as the Orders screen stores it. Blank from a caller
+     * that predates the argument, which falls back to the token-prefix guess below.
+     */
+    private val orderType get() = arguments?.getString(ARG_ORDER_TYPE).orEmpty()
+
+    /**
+     * Whether this order is a counter one - a take-away token or a QSR order.
+     *
+     * Asked of the TYPE where one was passed, and only then of the code. Both counter
+     * modes are numbered from the same token sequence, so "TA-" says the order has no
+     * table but not which of the two it is.
+     */
+    private val counter: Boolean
+        get() = if (orderType.isNotBlank())
+            orderType.equals("Take Away", true) || orderType.equals("QSR", true)
+        else tableNo.startsWith("TA-", ignoreCase = true)
+
+    /** The order type as ChargeDao names it - which charges this bill carries. */
+    private val chargeOrderType: String
+        get() = when {
+            orderType.equals("QSR", ignoreCase = true) -> "QSR"
+            orderType.equals("Take Away", ignoreCase = true) -> "TAKEAWAY"
+            orderType.isNotBlank() -> "DINE_IN"
+            // No type passed: fall back to what the code says, as this always did.
+            tableNo.startsWith("TA-", ignoreCase = true) -> "TAKEAWAY"
+            else -> "DINE_IN"
+        }
+
+    /** How a counter order is announced - by its own mode rather than "Take Away". */
+    private val counterLabel: String
+        get() = orderType.ifBlank { "Take Away" }
+
     private val customer get() = arguments?.getString(ARG_CUSTOMER)?.ifBlank { "Walk-in" } ?: "Walk-in"
     private val serviceRate get() = arguments?.getDouble(ARG_SERVICE_RATE) ?: 0.0
     private val gstEnabled get() = arguments?.getBoolean(ARG_GST_ON) ?: true
@@ -164,10 +197,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Take-away carries a "TA-n" token, not a table — label it accordingly.
-        val heading = if (tableNo.startsWith("TA-", ignoreCase = true))
-            "Take Away  •  $tableLabel"
-        else "Table: $tableLabel"
+        // A counter order carries a token, not a table — label it by its own mode.
+        val heading = if (counter) "$counterLabel  •  $tableLabel" else "Table: $tableLabel"
         view.findViewById<TextView>(R.id.tvCoTable).text = "$heading     Customer: $customer"
         populateItems(view)
 
@@ -268,8 +299,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         // The table as the bill's own field - see Draft.table - rather than smuggled
         // in as the customer's name, which the Customer Details setting could switch
         // off and take the table number off the bill with it.
-        val receiptTable = if (tableNo.startsWith("TA-", ignoreCase = true))
-            "Take Away $tableLabel" else tableLabel
+        val receiptTable = if (counter) "$counterLabel $tableLabel" else tableLabel
         val draft = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft(
             billNumber = com.example.synergic_pos_offline.database.BillDao(ctx).nextBillNumber(),
             dateTime = java.text.SimpleDateFormat("dd-MM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date()),
@@ -302,7 +332,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             charges = charges.map { it.first to it.second },
             chargeTypes = charges.map { it.third },
             chargeApplicabilities = charges.map { "BOTH" },
-            orderType = if (tableNo.startsWith("TA-", ignoreCase = true)) "TAKEAWAY" else "DINE_IN",
+            orderType = chargeOrderType,
             returnAmount = run {
                 val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
                     ?.text?.toString()?.toDoubleOrNull() ?: 0.0
@@ -522,6 +552,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_CHARGE_TYPES = "charge_types"
         private const val ARG_CHARGE_VALUES = "charge_values"
         private const val ARG_ITEMWISE_DISCOUNT = "itemwise_discount"
+        private const val ARG_ORDER_TYPE = "order_type"
         private const val ARG_DISCOUNT = "discount"
         private const val ARG_LINE_DISCOUNTS = "line_discounts"
         private const val ARG_DISCOUNT_PRE_TAX = "discount_pre_tax"
@@ -570,6 +601,18 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             // the row is called and, more importantly, whether [discount] may be taken
             // off the total at all - under item-wise it is only the SUM of the line
             // shares, and those have already come off inside each line.
+            /**
+             * What kind of order this is - "Dine In", "Take Away" or "QSR", as the
+             * Orders screen stores it.
+             *
+             * Passed rather than guessed. This screen used to read the type off the
+             * token code, on the rule that a "TA-" prefix meant take-away - and QSR
+             * shares that counter sequence, so every QSR bill announced itself as a
+             * take-away, on the heading, on the slip and in the order type its charges
+             * were filtered by. Empty falls back to the old guess, so a caller that
+             * has not been updated behaves as it did.
+             */
+            orderType: String = "",
             itemwiseDiscount: Boolean = false,
             discount: Double = 0.0,
             lineDiscounts: DoubleArray = DoubleArray(0),
@@ -597,6 +640,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putStringArrayList(ARG_CHARGE_TYPES, chargeTypes)
                 putDoubleArray(ARG_CHARGE_VALUES, chargeValues)
                 putBoolean(ARG_ITEMWISE_DISCOUNT, itemwiseDiscount)
+                putString(ARG_ORDER_TYPE, orderType)
                 putDouble(ARG_DISCOUNT, discount)
                 putDoubleArray(ARG_LINE_DISCOUNTS, lineDiscounts)
                 putBoolean(ARG_DISCOUNT_PRE_TAX, discountPreTax)

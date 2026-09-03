@@ -93,6 +93,31 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     ) {
         val completed: Boolean get() = status.equals("COMPLETED", ignoreCase = true)
 
+        /** A counter order settled at the counter - "Print & Settlement" in one press. */
+        val takeAway: Boolean get() = type.equals(TYPE_TAKE_AWAY, ignoreCase = true)
+
+        /**
+         * Quick service: rung up at the counter like a take-away, billed and settled
+         * like a table.
+         *
+         * Between the two rather than beside them. It has no table, so everything about
+         * seating, KOTs and table actions folds away as it does for a take-away - but
+         * it is not paid where it is rung up either: the bill is printed, then
+         * Settlement opens the checkout page, which is the grocery till's flow.
+         */
+        val qsr: Boolean get() = type.equals(TYPE_QSR, ignoreCase = true)
+
+        /**
+         * Whether this order has NO TABLE - a take-away token or a QSR one.
+         *
+         * The question nearly every "is it a take-away?" test was really asking. They
+         * were written when a take-away was the only order without a table, so the type
+         * and the absence of a table were the same fact; QSR splits them, and a check
+         * left naming the type would put a table label, a Transfer and a floor status
+         * on a counter order.
+         */
+        val counter: Boolean get() = takeAway || qsr
+
         /** How [discountMode] is stored - "A" for a flat amount, else a percentage. */
         val discountType: String?
             get() = when {
@@ -322,9 +347,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // whichever screen rang it up. Worked out on the gross subtotal, not on the
         // service charge, which is itself an addition rather than something sold.
         //
-        // Filtered by applicability against this order's TAKEAWAY/DINE_IN type - see
-        // ChargeDao.Applicability. A charge set to "None" never comes back here.
-        val chargeOrderType = if (orderType?.equals("Take Away", ignoreCase = true) == true) "TAKEAWAY" else "DINE_IN"
+        // Filtered by applicability against this order's own mode - see
+        // ChargeDao.Applicability. A charge ticked for nothing never comes back here.
+        val chargeOrderType = chargeModeOf(orderType)
         val charges = runCatching {
             com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal, chargeOrderType)
         }.getOrDefault(emptyList())
@@ -361,6 +386,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 .discountPercent(lines, cartConfig(), totals.discount),
             charges = charges
         )
+    }
+
+    /**
+     * An order type as [ChargeDao.amountsOn] names it.
+     *
+     * QSR IS ITS OWN MODE HERE, and was briefly folded into TAKEAWAY - both are counter
+     * orders, so at the time the two were interchangeable. They are not: a shop that
+     * puts a packing charge on take-away parcels and not on a quick-service tray needs
+     * the two told apart, and the charge master now asks about all three separately.
+     * Folding them meant a QSR bill quietly carried whatever the counter was charged.
+     */
+    private fun chargeModeOf(orderType: String?): String = when {
+        orderType?.equals(TYPE_TAKE_AWAY, ignoreCase = true) == true -> "TAKEAWAY"
+        orderType?.equals(TYPE_QSR, ignoreCase = true) == true -> "QSR"
+        else -> "DINE_IN"
     }
 
     /** This cart line, in the shape the calculation takes it. */
@@ -487,7 +527,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // set - the Take Away button, a take-away order selected from the list, or a
         // restored one.
         segOrderType.addOnButtonCheckedListener { _, checkedId, isChecked ->
-            if (isChecked) setChooseTableEnabled(view, checkedId != R.id.btnTakeAway)
+            // Neither counter mode has a table to pick.
+            if (isChecked) setChooseTableEnabled(
+                view, checkedId != R.id.btnTakeAway && checkedId != R.id.btnQsr
+            )
         }
         segOrderType.check(R.id.btnDineIn)
 
@@ -495,6 +538,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // already active, just select it (no duplicate token); otherwise start a new one.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnTakeAway)
             .setOnClickListener { openTakeAway() }
+        // QSR needs no table either - tapping it opens a QSR order the same way.
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnQsr)
+            .setOnClickListener { openCounterOrder(TYPE_QSR) }
         // Dine In switches the segment and opens the floor plan.
         //
         // The two halves of this control now answer the same way. Take Away above
@@ -529,7 +575,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnChooseTable).setOnClickListener {
             showChooseTableDialog()
         }
-        setChooseTableEnabled(view, segOrderType.checkedButtonId != R.id.btnTakeAway)
+        setChooseTableEnabled(
+            view,
+            segOrderType.checkedButtonId != R.id.btnTakeAway &&
+                segOrderType.checkedButtonId != R.id.btnQsr
+        )
 
         // More → the whole order in a roomy popup, since this panel is narrow.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnMoreItems)
@@ -585,10 +635,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             when {
                 order.items.isEmpty() -> toast("Add items before printing the bill")
                 order.completed -> toast("Table already billed")
-                // Belt and braces behind the greying in [setBillPrintEnabled]: the
-                // button is not tappable in this state, but the rule is what matters
-                // and it should not live only in a view's enabled flag.
-                !kotSent(order) -> toast("Send the KOT first — the bill goes to the table after the kitchen has the order")
+                // Belt and braces behind the greying in [setBillPrintEnabled], and it
+                // has to ask the same question that does. QSR sends no KOT, so this
+                // refused every QSR bill with "Send the KOT first" - a ticket the mode
+                // has no button to send - while the button above it sat enabled.
+                !order.qsr && !kotSent(order) ->
+                    toast("Send the KOT first — the bill goes to the table after the kitchen has the order")
                 else -> resolveBillPrinterThenPrint(order)
             }
         }
@@ -633,13 +685,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 order == null -> toast("Select a table order first")
                 order.items.isEmpty() -> toast("Add items before billing")
                 // A TAKE-AWAY IS SETTLED WHERE IT WAS RUNG UP, not on a screen of its
-                // own. The checkout page earns its place for a table: the bill is
-                // itemised there because a table's bill is read, queried and argued
-                // over before it is paid. A counter order has just been rung up in
-                // front of the person paying for it, so listing it back to them is a
-                // page to get past on the way to taking the money - and it costs the
-                // counter the order it was working on and a trip back.
-                order.type.equals("Take Away", ignoreCase = true) ->
+                // own. Its one button prints and settles together, so the customer is
+                // standing there paying as it is pressed - listing the order back to
+                // them is a page to get past on the way to taking the money, and it
+                // costs the counter the order it was working on and a trip back.
+                //
+                // QSR IS NOT THAT, and falls through to the page below with the tables.
+                // It has already printed a bill as its own step, so by this point the
+                // slip is in the customer's hand and the checkout page is where it is
+                // read back and paid against - which is the grocery till's flow, and
+                // the reason the mode exists.
+                order.takeAway ->
                     showQuickPayment(order)
                 else -> {
                     val names = ArrayList(order.items.map { it.name })
@@ -686,6 +742,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 // it is only the SUM of the line shares, already inside
                                 // the lines, and Checkout must not take it off again.
                                 itemwiseDiscount = itemwiseDiscountActive,
+                                // What kind of order this is, rather than leaving the
+                                // checkout to read it off the token code - QSR and
+                                // Take Away share that sequence.
+                                orderType = order.type,
                                 // Tax Settings' discount, worked out ONCE here and
                                 // carried across. The checkout used to price every
                                 // line with no discount and a hard-coded post-tax
@@ -779,7 +839,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /**
      * The segment recolors by *checked state* via a ColorStateList, so toggling
-     * Dine In / Take Away updates automatically and both sides stay consistent.
+     * Dine In / Take Away / QSR updates automatically and every side stays consistent.
+     *
+     * Walks the group's own children rather than a list of ids. Named one by one, a
+     * segment added to the layout came out unpainted - white on white against its
+     * neighbours - and the list here had to be remembered as a second place to edit.
+     * The group knows what is in it; this asks it.
      */
     private fun styleSeg(view: View, accent: Int) {
         val white = android.graphics.Color.WHITE
@@ -788,8 +853,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         )
         val bg = ColorStateList(states, intArrayOf(accent, white))
         val text = ColorStateList(states, intArrayOf(white, accent))
-        listOf(R.id.btnDineIn, R.id.btnTakeAway).forEach { id ->
-            view.findViewById<com.google.android.material.button.MaterialButton>(id).apply {
+        val seg = view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(
+            R.id.segOrderType
+        ) ?: return
+        for (i in 0 until seg.childCount) {
+            (seg.getChildAt(i) as? com.google.android.material.button.MaterialButton)?.apply {
                 backgroundTintList = bg
                 setTextColor(text)
                 strokeColor = ColorStateList.valueOf(accent)
@@ -843,14 +911,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         shown.forEach { o ->
             val card = inflater.inflate(R.layout.item_order_card, list, false)
                     as com.google.android.material.card.MaterialCardView
-            val takeAway = o.type.equals("Take Away", ignoreCase = true)
+            val counter = o.counter
             card.findViewById<TextView>(R.id.tvOrderId).apply {
-                text = if (takeAway) o.id.replace("TA-", "Token #") else tableDisplayName(o)
+                text = if (counter) o.id.replace("TA-", "Token #") else tableDisplayName(o)
                 setTextColor(accent)
             }
             card.findViewById<TextView>(R.id.tvOrderType).text = o.type
             card.findViewById<TextView>(R.id.tvOrderGuests).text =
-                if (takeAway) "—" else o.section.ifBlank { "—" }
+                if (counter) "—" else o.section.ifBlank { "—" }
             card.findViewById<TextView>(R.id.tvOrderTime).apply { text = o.time; setTextColor(accent) }
             card.findViewById<TextView>(R.id.tvOrderCashier).text = o.cashier
             card.findViewById<TextView>(R.id.tvOrderAmount).text = o.amount
@@ -879,13 +947,31 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     /** Marks [order] active, repaints the list, and loads its own cart into the detail panel. */
+    /**
+     * The segment button that stands for an order [type].
+     *
+     * One definition for the two places that light the segment from an order - showing
+     * one, and creating one. Written out twice they drifted the moment a third type
+     * arrived: a QSR order restored from the list would have lit Dine In, and the
+     * screen would then have offered it a table.
+     *
+     * Dine In is the fallback rather than a case of its own, so an order carrying some
+     * older or unknown type still lands somewhere rather than leaving the segment on
+     * whatever was last lit.
+     */
+    private fun segmentFor(type: String): Int = when {
+        type.equals(TYPE_TAKE_AWAY, ignoreCase = true) -> R.id.btnTakeAway
+        type.equals(TYPE_QSR, ignoreCase = true) -> R.id.btnQsr
+        else -> R.id.btnDineIn
+    }
+
     private fun selectOrder(order: OrderCard) {
         orders.forEach { it.selected = (it === order) }
         val root = view ?: return
         // Reflect the selected order's type on the top segment (programmatic check
         // doesn't fire the Take Away click listener, so it won't open a new order).
         root.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType).check(
-            if (order.type.equals("Take Away", ignoreCase = true)) R.id.btnTakeAway else R.id.btnDineIn
+            segmentFor(order.type)
         )
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         showOrderDetail(order)
@@ -900,11 +986,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val root = view ?: return
         showDiscountFor(order)
         val accent = ThemeManager.getThemeColor(requireContext())
-        val takeAway = order.type.equals("Take Away", ignoreCase = true)
-        // Take Away has no table — show it as a take-away token, not "Table: …".
-        root.findViewById<TextView>(R.id.tvDetailTableLabel).visibility = if (takeAway) View.GONE else View.VISIBLE
+        val takeAway = order.takeAway
+        val counter = order.counter
+        // A counter order has no table - show it as what it is, not "Table: …".
+        root.findViewById<TextView>(R.id.tvDetailTableLabel).visibility = if (counter) View.GONE else View.VISIBLE
         root.findViewById<TextView>(R.id.tvDetailTable).apply {
-            text = if (takeAway) "Take Away" else tableDisplayName(order); setTextColor(accent)
+            text = if (counter) order.type else tableDisplayName(order); setTextColor(accent)
         }
         root.findViewById<TextView>(R.id.tvDetailCustomer).text = order.phone.ifBlank { "Walk-in" }
         // THE ONLY WAY A TAKE-AWAY GETS A CUSTOMER, and it is optional. Beside the tag
@@ -941,15 +1028,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // asking it to split an act that is not divided.
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPrint)
             .visibility = if (takeAway) View.GONE else View.VISIBLE
+        // QSR HAS ONE BUTTON TOO, and it is the other one.
+        //
+        // Quick service is rung up and handed over: there is no ticket to send ahead
+        // to a kitchen that is standing at the same counter, so Print KOT has nothing
+        // to do on a QSR order and goes. What is left is Print Bill, then Settlement -
+        // the grocery till's two steps, which is what this mode is.
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnPrintKot)
+            .visibility = if (order.qsr) View.GONE else View.VISIBLE
         root.findViewById<TextView>(R.id.tvDetailGuests).text =
-            if (takeAway) order.id.replace("TA-", "Token #")
+            if (counter) order.id.replace("TA-", "Token #")
             else if (order.section.isNotBlank()) "${order.section}  ·  ${order.type}" else order.type
         root.findViewById<TextView>(R.id.tvDetailOrderTime).text =
             "Order Time: ${order.time.ifBlank { "—" }}"
         setNoteField(root, order.note)
         // Take Away has no table to transfer, merge or split; those fold away. It does
         // have food to cook, so Print KOT stays available - see setDineInActionsEnabled.
-        setDineInActionsEnabled(root, !order.type.equals("Take Away", ignoreCase = true))
+        setDineInActionsEnabled(root, !order.counter)
         // After the type rule, so a billed order stays locked whatever type it is.
         setBilledLock(root, order.completed)
     }
@@ -1065,7 +1160,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private fun onAddCustomer() {
         val order = currentOrder() ?: return toast("Select an order first")
-        if (!order.type.equals("Take Away", ignoreCase = true))
+        if (!order.takeAway)
             return toast("Only a take-away carries a customer — a table order is its table")
         // A printed bill already carries the customer it was printed with. Changing it
         // now would leave the slip in the customer's hand naming somebody else.
@@ -1099,8 +1194,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun onTransfer() {
         if (!tableShiftOn) return toast("Table Shift is switched off in App Settings")
         val order = currentOrder() ?: return toast("Select a table order first")
-        if (order.type.equals("Take Away", ignoreCase = true))
-            return toast("Not available for Take Away")
+        if (order.counter)
+            return toast("Not available for a counter order")
         if (order.completed) return toast("Table already billed — cannot transfer")
         showTransferDialog(order)
     }
@@ -1129,8 +1224,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun onMerge() {
         if (!tableMergeOn) return toast("Table Merge is switched off in App Settings")
         val order = currentOrder() ?: return toast("Select a table order first")
-        if (order.type.equals("Take Away", ignoreCase = true))
-            return toast("Not available for Take Away")
+        if (order.counter)
+            return toast("Not available for a counter order")
         if (order.completed) return toast("Table already billed — cannot merge")
         if (!kotSent(order))
             return toast("Print this table's KOT first — merge joins tables the kitchen is already cooking for")
@@ -1159,8 +1254,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun onSplit() {
         if (!tableSplitOn) return toast("Table Split is switched off in App Settings")
         val order = currentOrder() ?: return toast("Select a table order first")
-        if (order.type.equals("Take Away", ignoreCase = true))
-            return toast("Not available for Take Away")
+        if (order.counter)
+            return toast("Not available for a counter order")
         if (order.completed) return toast("Table already billed — cannot split")
         if (order.id.contains(" ")) return toast("This is already a split sub-table")
         if (kotSent(order))
@@ -1177,7 +1272,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (roDao.hasSentActiveItems(order.dbId)) {
             return toast("Can't cancel — items already sent to kitchen. Remove them (and Print KOT to cancel) first.")
         }
-        val label = if (order.type.equals("Take Away", ignoreCase = true))
+        val label = if (order.counter)
             order.id.replace("TA-", "Take Away Token #") else "Table ${order.id}"
         // An empty split part is not an order being thrown away - it is a seat of a
         // split nobody used, and cancelling it is how the operator gives that seat
@@ -1203,10 +1298,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * a table - see [showChooseTableDialog]. One definition, so the two cannot drift
      * into starting a second token for a counter that already has one open.
      */
-    private fun openTakeAway() {
+    private fun openTakeAway() = openCounterOrder(TYPE_TAKE_AWAY)
+
+    /**
+     * Opens a counter order of [type] - a take-away token or a QSR one.
+     *
+     * The two start identically: no table to choose, no customer to ask for, a token
+     * cut from the shop's own numbering, and an empty one reused rather than piled on.
+     * Where they part is at the other end - how they are billed and settled - so they
+     * share this and differ in [setBillPrintEnabled] and [setSettlementEnabled] rather
+     * than in two copies of the same opening.
+     */
+    private fun openCounterOrder(type: String) {
         val root = view ?: return
         root.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
-            .check(R.id.btnTakeAway)
+            .check(segmentFor(type))
         // NO CUSTOMER PROMPT. The order starts, and the customer is added afterwards
         // if there is one - see [onAddCustomer], the Add Customer button beside the
         // token on the panel.
@@ -1218,12 +1324,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // costs nothing on the orders that have nobody, and the ones that do can be
         // filled in while the food is being made rather than with a queue waiting.
         //
-        // An EMPTY take-away already open is reused rather than adding a second token
-        // beside it - tapping Take Away twice should not leave a trail of TA-1, TA-2,
-        // TA-3 with nothing on any of them. One with items on it is a real order being
-        // served and is left alone.
+        // An EMPTY order OF THIS TYPE already open is reused rather than adding a
+        // second token beside it - tapping Take Away twice should not leave a trail of
+        // TA-1, TA-2, TA-3 with nothing on any of them. One with items on it is a real
+        // order being served and is left alone.
+        //
+        // Matched on the type as well as on being empty, so an untouched take-away is
+        // not quietly handed back when QSR was asked for. They are different modes with
+        // different buttons at the far end, and reusing across them would put an order
+        // in front of the operator that bills the other way.
         val reusable = orders.firstOrNull {
-            it.type.equals("Take Away", ignoreCase = true) && !it.completed && it.items.isEmpty()
+            it.type.equals(type, ignoreCase = true) && !it.completed && it.items.isEmpty()
         }
         if (reusable != null) {
             // RENUMBERED to whatever Token Numbering says now.
@@ -1245,9 +1356,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // before by tapping the button that opened it.
             selectOrder(reusable)
         } else {
-            openNewOrder(nextTakeAwayCode(), section = "", phone = "", type = "Take Away")
+            openNewOrder(nextTakeAwayCode(), section = "", phone = "", type = type)
         }
-        toast("Take-away order started — add items, then Settlement")
+        // ONE TOKEN SEQUENCE FOR BOTH counter modes - see [nextTakeAwayCode]. A shop
+        // has one counter and one pile of tokens on it, so a QSR order and a take-away
+        // sharing a number would be two customers holding the same slip. The numbering
+        // counts every order, so the codes stay unique across the two.
+        toast(
+            if (type.equals(TYPE_QSR, ignoreCase = true))
+                "QSR order started — add items, then Print Bill"
+            else "Take-away order started — add items, then Settlement"
+        )
     }
 
     /** Choose Table, greyed out the same way the other dine-in-only actions are. */
@@ -1377,7 +1496,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * hidden outright ([showOrderDetail]), because "Print & Settlement" IS its bill.
      */
     private fun setBillPrintEnabled(root: View, order: OrderCard?) {
-        val ready = order != null && !order.completed && kotSent(order)
+        // QSR WAITS FOR ITEMS, NOT FOR A KOT. It sends none - the kitchen is the
+        // counter - so a rule about the ticket having gone would grey this button for
+        // ever and leave the mode with no way to bill at all. What it waits for instead
+        // is something to bill: an empty order has no slip to print.
+        val ready = order != null && !order.completed &&
+            if (order.qsr) order.items.isNotEmpty() else kotSent(order)
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPrint)?.apply {
             isEnabled = ready
             alpha = if (ready) 1f else 0.4f
@@ -1408,11 +1532,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * sits would read as the screen having lost it.
      */
     private fun setSettlementEnabled(root: View, order: OrderCard?) {
-        val takeAway = order?.type.equals("Take Away", ignoreCase = true)
         // Sent, not merely typed: kotQty is what actually went to the pass.
         val kotSent = order?.items?.any { it.kotQty > 0.0 } == true
-        val ready = order != null && order.items.isNotEmpty() &&
-            kotSent && (takeAway || order.completed)
+        val ready = order != null && order.items.isNotEmpty() && when {
+            // Take-away settles where it was rung up, so the ticket having gone is the
+            // only step before it - the one press prints and settles together.
+            order.takeAway -> kotSent
+            // QSR follows the grocery order of events: ring it up, print the bill,
+            // take the money. No KOT is involved, so the printed bill is the whole
+            // gate - and it is a real one, because Settlement opens the checkout page
+            // and that page prices what the slip already said.
+            order.qsr -> order.completed
+            // A table: the ticket to the kitchen, then the bill to the table, then
+            // money. Both steps, in that order.
+            else -> kotSent && order.completed
+        }
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPay)?.apply {
             isEnabled = ready
             alpha = if (ready) 1f else 0.4f
@@ -1465,7 +1599,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * the slip.
      */
     private fun settlementLabel(order: OrderCard?, total: Double): String {
-        val what = if (order?.type.equals("Take Away", ignoreCase = true)) "Print & Settlement"
+        val what = if (order?.takeAway == true) "Print & Settlement"
         else "Settlement"
         return "$what  ( ₹ ${money(total)} )"
     }
@@ -1498,10 +1632,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         outlined(R.id.btnToggleOrders)
         outlined(R.id.btnTableActions); outlined(R.id.btnBillPrint)
 
-        // Segment toggle colours.
-        listOf(R.id.btnDineIn, R.id.btnTakeAway).forEach {
-            root.findViewById<com.google.android.material.button.MaterialButton>(it).strokeColor =
-                ColorStateList.valueOf(accent)
+        // Segment toggle colours - every button in the group, for the reason on
+        // [styleSeg]: a segment added to the layout must not need a second edit here
+        // to be painted like its neighbours.
+        root.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(
+            R.id.segOrderType
+        )?.let { seg ->
+            for (i in 0 until seg.childCount) {
+                (seg.getChildAt(i) as? com.google.android.material.button.MaterialButton)
+                    ?.strokeColor = ColorStateList.valueOf(accent)
+            }
         }
 
         // Active-orders tab + count badge + detail accents.
@@ -1666,7 +1806,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // the screen settling can put it back. A programmatic check does not fire the
         // buttons' own click listeners, so this cannot re-enter and open a second order.
         root.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType).check(
-            if (type.equals("Take Away", ignoreCase = true)) R.id.btnTakeAway else R.id.btnDineIn
+            segmentFor(type)
         )
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         showOrderDetail(order)
@@ -1764,7 +1904,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // table's bill to join, and offering it here is how one gets merged away
         // half-keyed - see [onMerge]. Take Away orders have no table to merge at all.
         val activeTables = orders.filter {
-            !it.completed && !it.type.equals("Take Away", ignoreCase = true) && kotSent(it)
+            !it.completed && !it.counter && kotSent(it)
         }
         // No "two active tables" check any more: a free table can be merged in now, so
         // one running order and an empty table beside it is a perfectly good merge -
@@ -1924,7 +2064,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // falls back to asking for a first table, which is what it did before.
         val startFrom = currentOrder()
         if (startFrom != null && !startFrom.completed &&
-            !startFrom.type.equals("Take Away", ignoreCase = true) && kotSent(startFrom)
+            !startFrom.counter && kotSent(startFrom)
         ) {
             added.add(MergeCandidate(startFrom.id, startFrom.section, startFrom))
         }
@@ -3813,7 +3953,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val container = v.findViewById<LinearLayout>(R.id.llDialogOrderItems)
         val empty = v.findViewById<TextView>(R.id.tvOrderItemsEmpty)
 
-        val label = if (order.type.equals("Take Away", ignoreCase = true))
+        val label = if (order.counter)
             "Take Away ${order.id}" else "Table ${order.id}"
         v.findViewById<TextView>(R.id.tvOrderItemsTitle).text = "Order Items — $label"
 
@@ -4197,7 +4337,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         order: OrderCard, billNumber: String, payment: String, tendered: Double = 0.0
     ): com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft {
         val b = computeBill(order)
-        val chargeOrderType = if (order.type.equals("Take Away", ignoreCase = true)) "TAKEAWAY" else "DINE_IN"
+        val chargeOrderType = chargeModeOf(order.type)
         val items = order.items.map { line ->
             // HSN comes off the catalogue, because a cart line does not carry one: the
             // order stores what was sold and at what price, and the tax code belongs to
@@ -4237,7 +4377,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // The table as the bill's own field - see Draft.table. Carries its section,
         // since a table number repeats in every section.
         val who = customerFor(order.phone)
-        val billTable = if (order.type.equals("Take Away", ignoreCase = true))
+        val billTable = if (order.counter)
             "Take Away ${order.id.replace("TA-", "Token #")}"
         else if (order.section.isBlank()) order.id
         else "${order.id} (${order.section})"
@@ -4270,7 +4410,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // than worked out again - so what prints is what the customer was told.
             charges = b.charges.map { it.name to it.amount },
             chargeTypes = b.charges.map { it.type.name },
-            chargeApplicabilities = b.charges.map { it.applicability.name },
+            chargeApplicabilities = b.charges.map { it.applicability.store() },
             orderType = chargeOrderType,
             returnAmount = (tendered - payableTotal(b.total)).coerceAtLeast(0.0)   // cash to hand back
         )
@@ -4322,7 +4462,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // The same move Print KOT makes, for the same reason: the waiter has finished
         // with this table for now. It stays in Active Orders as Completed - Billed, so
         // Settlement is one tap away when the guests are ready.
-        view?.post { if (isAdded) showChooseTableDialog() }
+        //
+        // A COUNTER ORDER STAYS PUT. There is no floor to go back to, and the customer
+        // is standing there waiting to pay - Settlement is the very next thing that
+        // happens, not something to come back for.
+        //
+        // This is what stopped QSR settling. The picker opened over the bill that had
+        // just printed, and closing it without choosing a table means "this order has
+        // no table", which turns the screen into a NEW take-away - so the QSR order was
+        // swapped out from under the operator and its Settlement button went with it.
+        if (!order.counter) view?.post { if (isAdded) showChooseTableDialog() }
     }
 
     /**
@@ -4482,7 +4631,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
         val mergedTables = roDao.mergedTablesOf(order.dbId)
         roDao.close(order.dbId)                          // delete order + items, close KOT
-        if (!order.type.equals("Take Away", ignoreCase = true))
+        if (!order.counter)
             updateTableStatus(order.id, order.section, "Available")   // free the dine-in table
         // Merged tables are same-section by construction, so they free with it.
         mergedTables.forEach { updateMergedTableStatus(it, order.section, "Available") }
@@ -4560,7 +4709,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private fun completeTable(order: OrderCard) {
         roDao.markCompleted(order.dbId)
-        updateTableStatus(order.id, order.section, "Billing")   // billed → awaiting payment
+        // Only an order that HAS a table colours one. A counter order's id is a token,
+        // not a table code, so this went looking for a table called "TA-3" and quietly
+        // matched nothing - harmless, but it is a floor update for an order that is not
+        // on the floor.
+        if (!order.counter) updateTableStatus(order.id, order.section, "Billing")
         // MERGED TABLES ARE NOT PUT INTO BILLING ANY MORE, because they are not held by
         // this bill any more: [performMerge] gives them back to the floor as the merge
         // happens. Marking a table Billing at this point would either colour an empty
@@ -4579,7 +4732,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // re-selected: this IS the moment it was billed, and the operator is looking
         // at the panel when it happens.
         setBilledLock(root, billed = true)
-        toast("Table ${order.id} billed — locked. Use Bill & Pay to settle.")
+        toast(
+            if (order.counter) "${tableLabel(order)} billed — locked. Use Settlement to take payment."
+            else "Table ${order.id} billed — locked. Use Bill & Pay to settle."
+        )
     }
 
     /** A picker of printers when no default is set for the flag (KOT counters / bill printers). */
@@ -4624,7 +4780,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // 'Reserved','Cleaning','Billing','Blocked'), so it either failed to save or
         // read back as unknown - and an unknown status showed the table as FREE while
         // guests were sitting at it.
-        if (!order.type.equals("Take Away", ignoreCase = true)) {
+        if (!order.counter) {
             updateTableStatus(order.id, order.section, "Occupied")
             roDao.mergedTablesOf(order.dbId)
                 .forEach { updateTableStatus(it, order.section, "Occupied") }
@@ -4867,13 +5023,25 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * of them it was once a second section has a table 1 too.
      */
     private fun tableLabel(order: OrderCard): String = when {
-        order.type.equals("Take Away", ignoreCase = true) ->
+        order.counter ->
             order.id.replace("TA-", "Take Away Token #")
         order.section.isBlank() -> "Table ${order.id}"
         else -> "Table ${order.id} (${order.section})"
     }
 
     private companion object {
+        /**
+         * The three order types, as they are written into `td_running_order.order_type`
+         * and read back everywhere.
+         *
+         * Named here because they are stored strings: an order restored from the
+         * database is whatever text was saved on it, so a typo in one comparison out of
+         * twenty is a mode that silently stops being itself. "Dine In" needs no constant
+         * - nothing tests for it, it is what an order is when it is neither of these.
+         */
+        const val TYPE_TAKE_AWAY = "Take Away"
+        const val TYPE_QSR = "QSR"
+
         const val MENU_TRANSFER = 1
         const val MENU_MERGE = 2
         const val MENU_SPLIT = 3
