@@ -36,8 +36,98 @@ class ChargeDao(context: Context) {
         PERCENTAGE, AMOUNT
     }
 
-    enum class Applicability {
-        BOTH, TAKEAWAY, DINE_IN, NONE
+    /**
+     * The order types a charge applies to.
+     *
+     * ## Why this is a SET and not one word
+     *
+     * The column used to hold one of BOTH / TAKEAWAY / DINE_IN / NONE, which was enough
+     * while a restaurant had two modes. With QSR there are three, and a single word
+     * cannot say "Dine In and QSR but not the counter" - the case that has no spelling.
+     * "BOTH" could not even say which two it meant.
+     *
+     * So the column now holds a comma list of [Mode] names - "DINE_IN,QSR" - and this
+     * type is the set behind it. Everything that used to compare against one enum value
+     * now asks [applies].
+     *
+     * ## Reading what is already there
+     *
+     * The old words are still understood, so no migration is needed and a shop's
+     * charges keep working across the upgrade:
+     *
+     *  * `BOTH` -> every mode. A charge the shop said applies everywhere should apply
+     *    to QSR too; it was set before QSR existed, and "everywhere" is what it meant.
+     *  * `TAKEAWAY` / `DINE_IN` -> that one mode.
+     *  * `NONE`, or anything unreadable -> nothing, which is the safe way to be wrong:
+     *    a charge that fails to appear is noticed and fixed, one that appears on bills
+     *    it should not have been on is money taken by mistake.
+     */
+    enum class Mode {
+        DINE_IN, TAKEAWAY, QSR;
+
+        companion object {
+            /** The order type strings [amountsOn] is called with. */
+            fun of(orderType: String?): Mode? = when (orderType?.uppercase()) {
+                "DINE_IN" -> DINE_IN
+                "TAKEAWAY" -> TAKEAWAY
+                "QSR" -> QSR
+                else -> null
+            }
+        }
+    }
+
+    @JvmInline
+    value class Applicability(val modes: Set<Mode>) {
+
+        /** Whether this charge belongs on an order of [mode]. */
+        fun applies(mode: Mode?): Boolean = mode != null && mode in modes
+
+        /** Nothing ticked - the charge is set up but not in use anywhere. */
+        val none: Boolean get() = modes.isEmpty()
+
+        /**
+         * Every mode ticked - what the old `BOTH` meant, and what a GROCERY sale asks
+         * for. See [amountsOn].
+         */
+        val all: Boolean get() = modes.containsAll(Mode.entries)
+
+        /**
+         * How the column stores it: the mode names, comma separated, in enum order.
+         *
+         * NOTHING TICKED IS WRITTEN AS "NONE", not as an empty string. A blank column
+         * means the field was never written - a row from before it existed - and that
+         * is read back as "everywhere", which is what those rows meant. Writing an
+         * empty string for "applies nowhere" would collide with it, and the charge
+         * would come back applying to every mode: the exact opposite of what was saved.
+         */
+        fun store(): String =
+            if (modes.isEmpty()) "NONE"
+            else Mode.entries.filter { it in modes }.joinToString(",") { it.name }
+
+        companion object {
+            val ALL = Applicability(Mode.entries.toSet())
+            val NONE = Applicability(emptySet())
+
+            /**
+             * Reads the column, in either the new form or the old.
+             *
+             * A value with no comma might be one of the legacy words or a single mode
+             * name; both are handled by falling through to the mode lookup after the
+             * legacy names have had their turn.
+             */
+            fun parse(raw: String?): Applicability {
+                val text = raw?.trim().orEmpty()
+                if (text.isEmpty()) return ALL
+                when (text.uppercase()) {
+                    "BOTH" -> return ALL
+                    "NONE" -> return NONE
+                }
+                val modes = text.split(",")
+                    .mapNotNull { Mode.of(it.trim()) }
+                    .toSet()
+                return Applicability(modes)
+            }
+        }
     }
 
     /**
@@ -59,14 +149,14 @@ class ChargeDao(context: Context) {
         val value: Double,  // percentage value (e.g., 5) or amount value (e.g., 50)
         val type: Type,      // PERCENTAGE or AMOUNT
         val enabled: Boolean,
-        val applicability: Applicability = Applicability.BOTH,  // For restaurants: BOTH, TAKEAWAY, DINE_IN, or NONE
+        val applicability: Applicability = Applicability.ALL,
         val kind: Kind = Kind.EXTRA
     )
 
     /** One charge worked out against a particular bill. */
     data class Applied(
         val name: String, val value: Double, val type: Type, val amount: Double,
-        val applicability: Applicability = Applicability.BOTH, val kind: Kind = Kind.EXTRA
+        val applicability: Applicability = Applicability.ALL, val kind: Kind = Kind.EXTRA
     )
 
     /** Every charge in the master, enabled or not - what the master screen lists. */
@@ -92,11 +182,9 @@ class ChargeDao(context: Context) {
                             Type.PERCENTAGE
                         },
                         enabled = c.getInt(4) != 0,
-                        applicability = try {
-                            Applicability.valueOf(c.getString(5)?.uppercase() ?: "BOTH")
-                        } catch (e: Exception) {
-                            Applicability.BOTH
-                        },
+                        // Reads the new comma list and the old single words alike -
+                        // see [Applicability.parse].
+                        applicability = Applicability.parse(c.getString(5)),
                         kind = try {
                             Kind.valueOf(c.getString(6)?.uppercase() ?: "EXTRA")
                         } catch (e: Exception) {
@@ -125,21 +213,31 @@ class ChargeDao(context: Context) {
      * Percentage charges are calculated as a percentage of itemsTotal.
      * Amount charges are fixed amounts added to the bill.
      *
-     * [orderType] filters by [Applicability]: pass "TAKEAWAY" or "DINE_IN" for a
-     * restaurant order so a TAKEAWAY-only or DINE_IN-only charge only comes back on
-     * the order it was set for. Left null for grocery, where there is no order type -
-     * only a BOTH charge ever applies there. A NONE charge never comes back, whatever
-     * is passed.
+     * [orderType] filters by [Applicability]: pass "DINE_IN", "TAKEAWAY" or "QSR" for a
+     * restaurant order, so a charge comes back only on the modes it was ticked for.
+     *
+     * ## Grocery passes null, and asks a different question
+     *
+     * A grocery sale is not one of the three modes, so it cannot be filtered as though
+     * it were. It gets the charges ticked for EVERY mode - which is exactly what the
+     * old `BOTH` meant, and what `BOTH` still parses to, so a grocery bill carries the
+     * same charges after this change as before it.
+     *
+     * Not "applies anywhere", which was the first thing tried here and is wrong: a
+     * charge ticked for Dine In alone would then have appeared on grocery bills, which
+     * is money taken by mistake from the till that never asked for it.
+     *
+     * A PARCEL charge never reaches a grocery bill whatever it is ticked for. It is a
+     * restaurant charge by definition - the screen that defines it barred the old
+     * "Both" for exactly this reason - so the rule belongs here, where it holds however
+     * the master is edited, rather than in what the form allows.
      */
     fun amountsOn(itemsTotal: Double, orderType: String? = null): List<Applied> {
         if (itemsTotal <= 0.0) return emptyList()
+        val mode = Mode.of(orderType)
         return enabled().filter {
-            when (it.applicability) {
-                Applicability.NONE -> false
-                Applicability.TAKEAWAY -> orderType == "TAKEAWAY"
-                Applicability.DINE_IN -> orderType == "DINE_IN"
-                Applicability.BOTH -> true
-            }
+            if (mode == null) it.kind == Kind.EXTRA && it.applicability.all
+            else it.applicability.applies(mode)
         }.map {
             val amount = when (it.type) {
                 Type.PERCENTAGE -> round2(itemsTotal * it.value / 100.0)
@@ -154,7 +252,7 @@ class ChargeDao(context: Context) {
 
     fun insert(
         name: String, value: Double, type: Type, enabled: Boolean,
-        applicability: Applicability = Applicability.BOTH, kind: Kind = Kind.EXTRA
+        applicability: Applicability = Applicability.ALL, kind: Kind = Kind.EXTRA
     ): Long {
         val v = ContentValues().apply {
             put("store_id", currentStoreId())
@@ -162,7 +260,7 @@ class ChargeDao(context: Context) {
             put("percentage", value)
             put("charge_type", type.name)
             put("is_enabled", if (enabled) 1 else 0)
-            put("applicability", applicability.name)
+            put("applicability", applicability.store())
             put("charge_kind", kind.name)
             put("is_active", 1)
             put("created_at", now())
@@ -173,14 +271,14 @@ class ChargeDao(context: Context) {
 
     fun update(
         id: Long, name: String, value: Double, type: Type, enabled: Boolean,
-        applicability: Applicability = Applicability.BOTH, kind: Kind = Kind.EXTRA
+        applicability: Applicability = Applicability.ALL, kind: Kind = Kind.EXTRA
     ): Int {
         val v = ContentValues().apply {
             put("charge_name", name)
             put("percentage", value)
             put("charge_type", type.name)
             put("is_enabled", if (enabled) 1 else 0)
-            put("applicability", applicability.name)
+            put("applicability", applicability.store())
             put("charge_kind", kind.name)
             put("modified_at", now())
             put("modified_by", currentUser())

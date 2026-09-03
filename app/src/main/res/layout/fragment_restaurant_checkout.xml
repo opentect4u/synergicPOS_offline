@@ -196,16 +196,6 @@
                         <TextView android:id="@+id/tvService" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                     </LinearLayout>
 
-                    <!-- The shop's own extra charges - Parcel Charge among them - one
-                         row per charge handed in from the Orders screen, which already
-                         worked out which ones apply to this order. Empty and takes no
-                         height when none apply. -->
-                    <LinearLayout
-                        android:id="@+id/llCheckoutCharges"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical" />
-
                     <LinearLayout style="@style/OrderSummaryRow">
                         <TextView style="@style/OrderSummaryLabel" android:text="CGST" />
                         <TextView android:id="@+id/tvCgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
@@ -215,6 +205,32 @@
                         <TextView style="@style/OrderSummaryLabel" android:text="SGST" />
                         <TextView android:id="@+id/tvSgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                     </LinearLayout>
+
+                    <!-- Only on a bill that actually carries VAT, exactly as the Orders
+                         panel's rowOrderVat. It was missing here entirely while the VAT
+                         was still added into the total, so a VAT shop's rows did not
+                         come to its own total. -->
+                    <LinearLayout android:id="@+id/rowCheckoutVat" style="@style/OrderSummaryRow"
+                        android:visibility="gone">
+                        <TextView style="@style/OrderSummaryLabel" android:text="VAT" />
+                        <TextView android:id="@+id/tvCheckoutVat" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                    </LinearLayout>
+
+                    <!-- The shop's own extra charges - Parcel Charge among them - one
+                         row per charge handed in from the Orders screen, which already
+                         worked out which ones apply to this order. Empty and takes no
+                         height when none apply.
+
+                         LAST in the breakdown, as on the Orders panel, because that is
+                         where they join the sum: on top of the taxed goods, being the
+                         shop's own additions rather than part of what was sold. They
+                         used to sit above CGST here, so the two screens listed the same
+                         bill in a different order. -->
+                    <LinearLayout
+                        android:id="@+id/llCheckoutCharges"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
 
                     <View
                         android:layout_width="match_parent"

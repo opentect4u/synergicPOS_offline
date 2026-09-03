@@ -187,6 +187,32 @@
                     android:textSize="13sp"
                     android:textColor="@color/primary_blue" />
 
+                <!-- Customer details for a TAKE-AWAY, on demand.
+                     Beside the customer tag it edits, because that tag is the thing
+                     being changed and reading "Walk-in" is what prompts the change.
+                     A take-away's customer could only be entered as the token was
+                     opened, or refused at Print Bill; a counter that took a name after
+                     the order had started had nowhere to put it.
+                     Shown for take-away only - a table's customer is the table. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAddCustomer"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="10dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="Add Customer"
+                    android:textSize="13sp"
+                    android:textAllCaps="false"
+                    android:visibility="gone"
+                    app:icon="@drawable/ic_plus"
+                    app:iconSize="14dp"
+                    app:iconPadding="4dp"
+                    app:cornerRadius="10dp" />
+
                 <TextView
                     android:id="@+id/tvDetailGuests"
                     android:layout_width="wrap_content"
@@ -211,8 +237,8 @@
                     android:layout_height="1dp"
                     android:layout_weight="1" />
 
-                <!-- Dine In / Take Away, on the end of the line that already says what
-                     the order IS - the same question, so it reads as one row. -->
+                <!-- Dine In / Take Away / QSR, on the end of the line that already says
+                     what the order IS - the same question, so it reads as one row. -->
                 <com.google.android.material.button.MaterialButtonToggleGroup
                     android:id="@+id/segOrderType"
                     android:layout_width="wrap_content"
@@ -247,6 +273,30 @@
                         android:textSize="13sp"
                         android:letterSpacing="0"
                         android:text="Take Away"
+                        app:cornerRadius="10dp" />
+
+                    <!-- QSR - the third way an order is taken. Laid out to match its
+                         two neighbours exactly (same style, height, insets, padding,
+                         text size and corner radius) so the group reads as one control
+                         of three rather than two plus an addition.
+
+                         DESIGN ONLY at this point: nothing is wired to it yet, so the
+                         segment can be checked but the screen behaves as it always has.
+                         See styleSeg, which colours whatever is in this group, and the
+                         segment listener in onViewCreated, which is where the third
+                         mode's behaviour will go. -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnQsr"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingHorizontal="14dp"
+                        android:maxLines="1"
+                        android:textSize="13sp"
+                        android:letterSpacing="0"
+                        android:text="QSR"
                         app:cornerRadius="10dp" />
                 </com.google.android.material.button.MaterialButtonToggleGroup>
             </LinearLayout>

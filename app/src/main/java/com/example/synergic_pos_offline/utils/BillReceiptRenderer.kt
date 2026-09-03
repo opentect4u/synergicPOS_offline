@@ -585,8 +585,8 @@ class BillReceiptRenderer(context: Context) {
          */
         val charges: List<Pair<String, Double>> = emptyList(),
         val chargeTypes: List<String> = emptyList(), // PERCENTAGE or AMOUNT for each charge
-        val chargeApplicabilities: List<String> = emptyList(), // BOTH, TAKEAWAY, DINE_IN, or NONE
-        /** Order type for filtering charges: "TAKEAWAY" or "DINE_IN", null for grocery */
+        val chargeApplicabilities: List<String> = emptyList(), // ChargeDao.Applicability.store() per charge
+        /** Order type for filtering charges: "DINE_IN", "TAKEAWAY" or "QSR"; null for grocery */
         val orderType: String? = null,
         /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
         val returnAmount: Double = 0.0
@@ -1150,15 +1150,20 @@ class BillReceiptRenderer(context: Context) {
                 val applied = runCatching { ChargeDao(ctx).amountsOn(totals.itemsSubtotal, orderType) }.getOrDefault(emptyList())
                 rawChargeLines = applied.map { it.name to it.amount }
                 rawChargeTypes = applied.map { it.type.name }
-                rawChargeApplicabilities = applied.map { it.applicability.name }
+                rawChargeApplicabilities = applied.map { it.applicability.store() }
             }
+            // Kept by the SAME rule ChargeDao.amountsOn applies, read off the same
+            // stored value - see ChargeDao.Applicability. Written out separately here
+            // it could only ever be a second opinion, and it was already the older one:
+            // it knew BOTH, TAKEAWAY and DINE_IN, so a charge ticked for QSR was
+            // dropped off a slip the screen had already charged for.
+            //
+            // A grocery slip passes no order type and keeps whatever applies anywhere,
+            // matching amountsOn.
+            val chargeMode = ChargeDao.Mode.of(orderType)
             val keepIndices = rawChargeLines.indices.filter { i ->
-                when (rawChargeApplicabilities.getOrNull(i) ?: "BOTH") {
-                    "NONE" -> false
-                    "TAKEAWAY" -> orderType == "TAKEAWAY"
-                    "DINE_IN" -> orderType == "DINE_IN"
-                    else -> true // BOTH - always applies, grocery or restaurant, any order type
-                }
+                val a = ChargeDao.Applicability.parse(rawChargeApplicabilities.getOrNull(i))
+                if (chargeMode == null) !a.none else a.applies(chargeMode)
             }
             val recomputed = keepIndices.map { rawChargeLines[it] }
             val recomputedTypes = keepIndices.map { rawChargeTypes.getOrNull(it) ?: "PERCENTAGE" }

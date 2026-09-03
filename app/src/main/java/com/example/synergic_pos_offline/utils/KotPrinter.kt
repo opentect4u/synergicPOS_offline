@@ -62,8 +62,42 @@ object KotPrinter {
         }
     }
 
-    /** One printed line: its text, the paint to draw it with, and whether it centers. */
-    private class Line(val text: String, val paint: Paint, val center: Boolean)
+    /**
+     * One printed line.
+     *
+     * [text] is the left-hand (or centred) part; [mid] and [right] are the other two
+     * columns of a row that carries more than one thing - the header row of a KOT puts
+     * the number on the left, the date in the middle and the time hard against the
+     * right edge, and the dish rows put the quantity in a column of its own.
+     *
+     * Three separate draws rather than one padded string: a thermal ticket is drawn as
+     * a bitmap in a proportional face, so columns spaced with spaces line up only in a
+     * monospaced one and drift by a character or two on every row otherwise.
+     */
+    private class Line(
+        val text: String,
+        val paint: Paint,
+        val center: Boolean = false,
+        val mid: String? = null,
+        val right: String? = null
+    )
+
+    /**
+     * The KOT number as the ticket prints it: the running figure alone, zero-padded.
+     *
+     * The number is STORED as "KOT-0008" - that is what the record is called, what the
+     * cancel report lists and what the toast says when the ticket goes to the printer -
+     * so it is not the stored form that changes here, only how this one document
+     * writes it. The row already says "KOT NO", and "KOT NO : KOT-0008" says it twice.
+     *
+     * Padded to four figures whatever it arrives as, so the number sits in the same
+     * place on every ticket and a stack of them can be flicked through by eye. A number
+     * that is not a number at all is left exactly as it is rather than mangled.
+     */
+    private fun kotNo(raw: String): String {
+        val tail = raw.substringAfterLast('-').trim().ifBlank { raw.trim() }
+        return tail.toLongOrNull()?.toString()?.padStart(4, '0') ?: tail
+    }
 
     /**
      * Breaks [text] into lines that each fit within [maxWidth] when drawn with [paint],
@@ -151,44 +185,62 @@ object KotPrinter {
         /** This ticket's own labels, in the till's print language. */
         fun t(text: String) = PrintLanguage.tr(language, text)
 
-        // KOT stays KOT in every language. It is what the trade calls this document -
-        // the kitchen, the floor and the till all say it - and spelling out "kitchen
-        // order ticket" in another language would name it something nobody asks for.
-        lines += Line("KOT", title, center = true)
-        // The KOT number, the table code, the time and the date are identifiers, not
-        // words: the staff match them against a physical table and a screen that both
-        // say "T1", so they print as they are, the way a bill number does.
-        lines += Line(batch.kotNumber, sub, center = true)
-        if (batch.section.isNotBlank()) {
-            lines += Line("${t("SECTION")}: ${batch.section}", sub, center = true)
-        }
-        lines += Line("${t("TABLE")}: ${batch.tableCode}    ${batch.time}", sub, center = true)
-        // The date on its own line, under the table and time.
+        // BILL KOT stays as it is in every language. It is what the trade calls this
+        // document - the kitchen, the floor and the till all say it - and spelling out
+        // "kitchen order ticket" in another language would name it something nobody
+        // asks for.
+        lines += Line("BILL KOT", title, center = true)
+
+        // THE HEADER ROW: number, date and time across one line.
         //
-        // Not appended to the line above: on a 58mm roll "TABLE: 12    26-08-2026
-        // 03:45 PM" runs off the edge, and the table code is the first thing the pass
-        // looks for - it must not be the thing that gets pushed out. A line of its own
-        // costs one line of paper and keeps both readable at a glance.
-        //
-        // Blank on a batch built without one, which prints nothing rather than an
-        // empty line.
-        if (batch.date.isNotBlank()) {
-            lines += Line(batch.date, sub, center = true)
-        }
+        // All three are identifiers rather than words - the staff match them against a
+        // table and a screen that both say the same thing - so they print as they are,
+        // the way a bill number does. Spread across the width instead of stacked: it is
+        // read at a glance at the pass, and three centred lines make the reader hunt
+        // down the ticket for the one they want.
+        ruleBefore += lines.size
+        lines += Line(
+            "${t("KOT NO")} : ${kotNo(batch.kotNumber)}",
+            sub,
+            mid = batch.date.takeIf { it.isNotBlank() },
+            right = batch.time.takeIf { it.isNotBlank() }
+        )
+        // The table under it, on the left, where the eye lands after the number. The
+        // room goes in brackets beside the code rather than on a line of its own -
+        // table codes repeat across sections, so "1" alone does not say which room was
+        // served, and this is the way the table is named everywhere else in the app.
+        val table = if (batch.section.isNotBlank()) "${batch.tableCode} (${batch.section})"
+        else batch.tableCode
+        lines += Line("${t("TABLE")} : $table", sub)
+
+        // The column heads, so the figures down the right have something naming them.
+        ruleBefore += lines.size
+        lines += Line(t("ITEM"), sub, right = t("QUANTITY"))
+
         /**
-         * One dish: how many, and what - in the print language, and wrapped.
+         * One dish: what, and how many - the name down the left and the quantity in its
+         * own column against the right edge.
          *
-         * Wrapped because it has to be. A dish line is the one thing on this ticket
-         * that cannot be allowed to run off the edge, and a name in another script is
-         * not the width the English one was. The note below it has always been
-         * wrapped for the same reason; this simply stops the item lines being the
-         * exception.
+         * The name is wrapped to the room left BESIDE the quantity column, not to the
+         * whole width: a long dish name running under the figures would print the two
+         * on top of each other. Only the first line carries the quantity; a name that
+         * takes two lines is still one dish ordered once.
          */
-        fun dish(name: String, qty: Double): List<Line> =
-            wrapToWidth(
-                "${qty.toInt()} x  ${ProductName.inPrintLanguage(language, name)}",
-                item, width - padX * 2
-            ).map { Line(it, item, center = false) }
+        fun dish(name: String, qty: Double): List<Line> {
+            val qtyText = String.format(java.util.Locale.US, "%.2f", qty)
+            // Reserved from the widest thing this column ever holds - its own heading
+            // or a four-figure quantity - so the names stop at the same place on every
+            // ticket rather than wherever this one's numbers happen to end.
+            val qtyCol = maxOf(
+                item.measureText("0000.00"), sub.measureText(t("QUANTITY"))
+            ) + gap * 2
+            val wrapped = wrapToWidth(
+                ProductName.inPrintLanguage(language, name), item, width - padX * 2 - qtyCol
+            )
+            return wrapped.mapIndexed { i, part ->
+                Line(part, item, right = if (i == 0) qtyText else null)
+            }
+        }
 
         if (batch.lines.isNotEmpty()) ruleBefore += lines.size
         batch.lines.forEach { (name, qty) -> lines += dish(name, qty) }
@@ -220,11 +272,24 @@ object KotPrinter {
                 if (line.center) {
                     canvas?.drawText(line.text, width / 2f, y, line.paint.apply { textAlign = Paint.Align.CENTER })
                 } else {
+                    // Left, then any middle, then any right - each drawn where it
+                    // belongs rather than padded into one string. The alignment is set
+                    // per draw because the paints are shared between lines.
                     canvas?.drawText(line.text, padX, y, line.paint.apply { textAlign = Paint.Align.LEFT })
+                    line.mid?.let {
+                        canvas?.drawText(it, width / 2f, y, line.paint.apply { textAlign = Paint.Align.CENTER })
+                    }
+                    line.right?.let {
+                        canvas?.drawText(it, width - padX, y, line.paint.apply { textAlign = Paint.Align.RIGHT })
+                    }
                 }
                 y += line.paint.descent() + gap
             }
-            return y
+            // Closes the ticket under the last dish, the way the rules above open each
+            // block. Without it the list of food simply stops, and on a ticket torn off
+            // by hand there is nothing to say the bottom line is the bottom line rather
+            // than where the paper was pulled through.
+            return PrintType.drawRule(canvas, y, width, padX)
         }
 
         val height = (layout(null) + padBottom).toInt().coerceAtLeast(1)

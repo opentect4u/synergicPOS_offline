@@ -78,6 +78,19 @@ object CustomerPrompt {
          */
         showSkip: Boolean = false,
         skipText: String = "Skip",
+        /**
+         * The number to open the form on - the customer already attached to whatever
+         * is being edited.
+         *
+         * Only the phone is taken, because the phone is what finds the rest: setting it
+         * runs the same search a typed number runs, so the name, the address and the
+         * "Known customer" line all fill themselves from the master. Passing the name
+         * and address in as well would mean showing a copy of a record beside the
+         * record itself, and the copy going stale the moment anybody edited the master.
+         *
+         * Blank - the default - opens the empty form every existing caller gets.
+         */
+        phone: String = "",
         onCancel: (() -> Unit)? = null,
         onPicked: (CustomerDao.Customer) -> Unit
     ) {
@@ -147,6 +160,23 @@ object CustomerPrompt {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
+
+        // Opened on an existing customer: the form fills itself in.
+        //
+        // Set AFTER the watcher is attached, and deliberately so - it is the watcher
+        // that makes this an edit rather than a typed-in number. Writing the phone
+        // fires the same search a typed one fires, so the name and address arrive from
+        // the master, `matched` is set so Save updates that customer instead of adding
+        // a second row against the same number, and the state line says the record was
+        // recognised. Seeded before the watcher, none of that would happen and the
+        // operator would be looking at a lone number with two empty boxes under it.
+        //
+        // The caret goes to the end so a mistyped digit can be backspaced straight
+        // away, which is the usual reason for opening this on an existing number.
+        if (phone.isNotBlank()) {
+            etPhone.setText(phone)
+            etPhone.setSelection(etPhone.text?.length ?: 0)
+        }
 
         btnNegative.setOnClickListener { dialog.dismiss() }
         var saved = false

@@ -62,6 +62,26 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         names.mapIndexed { i, n -> Triple(n, amounts.getOrElse(i) { 0.0 }, types.getOrNull(i) ?: "AMOUNT") }
     }
 
+    /** Each charge's rate, for the ones that are a percentage - see [chargeLabel]. */
+    private val chargeValues: DoubleArray by lazy {
+        arguments?.getDoubleArray(ARG_CHARGE_VALUES) ?: DoubleArray(0)
+    }
+
+    /**
+     * A charge as the Orders panel writes it: "Packing (5%)" for a percentage charge,
+     * the bare name for a flat one.
+     *
+     * The rate is put beside the name for the reason given there - a percentage charge
+     * showing only its rupee amount cannot be checked against the master by anyone
+     * reading the screen. This screen showed the bare name either way, so the same
+     * charge read differently on the two pages of one bill.
+     */
+    private fun chargeLabel(index: Int, name: String, type: String): String {
+        val rate = chargeValues.getOrElse(index) { 0.0 }
+        return if (type.equals("PERCENTAGE", ignoreCase = true) && rate > 0.0)
+            "$name (${qtyText(rate)}%)" else name
+    }
+
     private val orderId get() = arguments?.getLong(ARG_ORDER_ID) ?: -1L
     private val tableNo get() = arguments?.getString(ARG_TABLE).orEmpty()
     private val section get() = arguments?.getString(ARG_SECTION).orEmpty()
@@ -77,6 +97,39 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             section.isBlank() -> tableNo
             else -> "$tableNo ($section)"
         }
+    /**
+     * What kind of order this is, as the Orders screen stores it. Blank from a caller
+     * that predates the argument, which falls back to the token-prefix guess below.
+     */
+    private val orderType get() = arguments?.getString(ARG_ORDER_TYPE).orEmpty()
+
+    /**
+     * Whether this order is a counter one - a take-away token or a QSR order.
+     *
+     * Asked of the TYPE where one was passed, and only then of the code. Both counter
+     * modes are numbered from the same token sequence, so "TA-" says the order has no
+     * table but not which of the two it is.
+     */
+    private val counter: Boolean
+        get() = if (orderType.isNotBlank())
+            orderType.equals("Take Away", true) || orderType.equals("QSR", true)
+        else tableNo.startsWith("TA-", ignoreCase = true)
+
+    /** The order type as ChargeDao names it - which charges this bill carries. */
+    private val chargeOrderType: String
+        get() = when {
+            orderType.equals("QSR", ignoreCase = true) -> "QSR"
+            orderType.equals("Take Away", ignoreCase = true) -> "TAKEAWAY"
+            orderType.isNotBlank() -> "DINE_IN"
+            // No type passed: fall back to what the code says, as this always did.
+            tableNo.startsWith("TA-", ignoreCase = true) -> "TAKEAWAY"
+            else -> "DINE_IN"
+        }
+
+    /** How a counter order is announced - by its own mode rather than "Take Away". */
+    private val counterLabel: String
+        get() = orderType.ifBlank { "Take Away" }
+
     private val customer get() = arguments?.getString(ARG_CUSTOMER)?.ifBlank { "Walk-in" } ?: "Walk-in"
     private val serviceRate get() = arguments?.getDouble(ARG_SERVICE_RATE) ?: 0.0
     private val taxEnabled get() = arguments?.getBoolean(ARG_TAX_ON) ?: true
@@ -104,6 +157,22 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     private val discountDisplay get() = arguments?.getDouble(ARG_DISCOUNT_DISPLAY) ?: billDiscount
     private val lineDiscounts: DoubleArray get() = arguments?.getDoubleArray(ARG_LINE_DISCOUNTS) ?: DoubleArray(0)
     private val discountPreTax get() = arguments?.getBoolean(ARG_DISCOUNT_PRE_TAX) ?: true
+
+    /** Whether the discount is the item-wise one - see [billDiscountOffTotal]. */
+    private val itemwiseDiscount get() = arguments?.getBoolean(ARG_ITEMWISE_DISCOUNT) ?: false
+
+    /**
+     * How much of [billDiscount] still has to come off the taxed total.
+     *
+     * Nothing, unless the discount is BILL-WISE and POST-TAX. A pre-tax bill discount
+     * is already inside each line's taxable value through [lineDiscounts]; an ITEM-WISE
+     * discount is likewise already inside each line, and [billDiscount] is then only
+     * the sum of those shares reported for display. Subtracting it here as well took
+     * an item-wise discount off twice, so this screen quoted less than the panel that
+     * sent the order to it - and less than the slip that had been printed.
+     */
+    private val billDiscountOffTotal: Double
+        get() = if (discountPreTax || itemwiseDiscount) 0.0 else billDiscount
 
     /** This line's share of the discount, or 0 where none was passed. */
     private fun discountFor(index: Int): Double = lineDiscounts.getOrElse(index) { 0.0 }
@@ -147,10 +216,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Take-away carries a "TA-n" token, not a table — label it accordingly.
-        val heading = if (tableNo.startsWith("TA-", ignoreCase = true))
-            "Take Away  •  $tableLabel"
-        else "Table: $tableLabel"
+        // A counter order carries a token, not a table — label it by its own mode.
+        val heading = if (counter) "$counterLabel  •  $tableLabel" else "Table: $tableLabel"
         view.findViewById<TextView>(R.id.tvCoTable).text = "$heading     Customer: $customer"
         populateItems(view)
 
@@ -227,8 +294,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         // The table as the bill's own field - see Draft.table - rather than smuggled
         // in as the customer's name, which the Customer Details setting could switch
         // off and take the table number off the bill with it.
-        val receiptTable = if (tableNo.startsWith("TA-", ignoreCase = true))
-            "Take Away $tableLabel" else tableLabel
+        val receiptTable = if (counter) "$counterLabel $tableLabel" else tableLabel
         val draft = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft(
             billNumber = com.example.synergic_pos_offline.database.BillDao(ctx).nextBillNumber(),
             dateTime = java.text.SimpleDateFormat("dd-MM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date()),
@@ -260,7 +326,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             charges = charges.map { it.first to it.second },
             chargeTypes = charges.map { it.third },
             chargeApplicabilities = charges.map { "BOTH" },
-            orderType = if (tableNo.startsWith("TA-", ignoreCase = true)) "TAKEAWAY" else "DINE_IN",
+            orderType = chargeOrderType,
             returnAmount = run {
                 val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
                     ?.text?.toString()?.toDoubleOrNull() ?: 0.0
@@ -359,18 +425,27 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             if (discountDisplay > 0.0) View.VISIBLE else View.GONE
         root.findViewById<TextView>(R.id.tvCheckoutDiscount).text = "- ₹ ${money(discountDisplay)}"
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(service)}"
-
-        val llCharges = root.findViewById<LinearLayout>(R.id.llCheckoutCharges)
-        llCharges.removeAllViews()
-        charges.forEach { (name, amount, _) ->
-            val row = inflater.inflate(R.layout.row_order_charge, llCharges, false)
-            row.findViewById<TextView>(R.id.tvChargeLabel).text = name
-            row.findViewById<TextView>(R.id.tvChargeValue).text = "₹ ${money(amount)}"
-            llCharges.addView(row)
-        }
-
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(cgst)}"
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(sgst)}"
+        // VAT only where a line actually carries it, as the Orders panel does it. The
+        // figure was already in the total and on no row, so a VAT bill's rows did not
+        // add up to its own foot.
+        root.findViewById<View>(R.id.rowCheckoutVat).visibility =
+            if (vat > 0.0) View.VISIBLE else View.GONE
+        root.findViewById<TextView>(R.id.tvCheckoutVat).text = "₹ ${money(vat)}"
+
+        // Last, after the tax, because that is where they join the sum - and because
+        // that is where the Orders panel puts them. Inflated from the panel's own row
+        // layout rather than a second one of this screen's: two layouts doing one job
+        // is how the two breakups drifted apart in the first place.
+        val llCharges = root.findViewById<LinearLayout>(R.id.llCheckoutCharges)
+        llCharges.removeAllViews()
+        charges.forEachIndexed { i, (name, amount, type) ->
+            val row = inflater.inflate(R.layout.item_order_summary_line, llCharges, false)
+            row.findViewById<TextView>(R.id.tvSummaryLabel).text = chargeLabel(i, name, type)
+            row.findViewById<TextView>(R.id.tvSummaryValue).text = "₹ ${money(amount)}"
+            llCharges.addView(row)
+        }
         root.findViewById<TextView>(R.id.tvTotalAmount).text = "₹ ${money(total)}"
         root.findViewById<MaterialButton>(R.id.btnConfirmPay).text = "Confirm Payment  ( ₹ ${money(total)} )"
         fillTenderedWithTotal(root)
@@ -437,6 +512,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_CHARGE_NAMES = "charge_names"
         private const val ARG_CHARGE_AMOUNTS = "charge_amounts"
         private const val ARG_CHARGE_TYPES = "charge_types"
+        private const val ARG_CHARGE_VALUES = "charge_values"
+        private const val ARG_ITEMWISE_DISCOUNT = "itemwise_discount"
+        private const val ARG_ORDER_TYPE = "order_type"
         private const val ARG_DISCOUNT = "discount"
         private const val ARG_DISCOUNT_DISPLAY = "discount_display"
         private const val ARG_LINE_DISCOUNTS = "line_discounts"
@@ -491,6 +569,29 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             chargeNames: ArrayList<String> = arrayListOf(),
             chargeAmounts: DoubleArray = DoubleArray(0),
             chargeTypes: ArrayList<String> = arrayListOf(),
+            // The RATE behind a percentage charge - 5.0 for a 5% packing charge. Only
+            // the rupee amount used to come across, so this screen could name the
+            // charge but not say what it was a percentage OF, while the Orders panel
+            // beside it did. Empty for a caller that has not looked them up, which
+            // simply leaves the names bare as before.
+            chargeValues: DoubleArray = DoubleArray(0),
+            // Whether the discount is Tax Settings' ITEM-WISE one. It changes both what
+            // the row is called and, more importantly, whether [discount] may be taken
+            // off the total at all - under item-wise it is only the SUM of the line
+            // shares, and those have already come off inside each line.
+            /**
+             * What kind of order this is - "Dine In", "Take Away" or "QSR", as the
+             * Orders screen stores it.
+             *
+             * Passed rather than guessed. This screen used to read the type off the
+             * token code, on the rule that a "TA-" prefix meant take-away - and QSR
+             * shares that counter sequence, so every QSR bill announced itself as a
+             * take-away, on the heading, on the slip and in the order type its charges
+             * were filtered by. Empty falls back to the old guess, so a caller that
+             * has not been updated behaves as it did.
+             */
+            orderType: String = "",
+            itemwiseDiscount: Boolean = false,
             discount: Double = 0.0,
             discountDisplay: Double = discount,
             lineDiscounts: DoubleArray = DoubleArray(0),
@@ -520,6 +621,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putStringArrayList(ARG_CHARGE_NAMES, chargeNames)
                 putDoubleArray(ARG_CHARGE_AMOUNTS, chargeAmounts)
                 putStringArrayList(ARG_CHARGE_TYPES, chargeTypes)
+                putDoubleArray(ARG_CHARGE_VALUES, chargeValues)
+                putBoolean(ARG_ITEMWISE_DISCOUNT, itemwiseDiscount)
+                putString(ARG_ORDER_TYPE, orderType)
                 putDouble(ARG_DISCOUNT, discount)
                 putDouble(ARG_DISCOUNT_DISPLAY, discountDisplay)
                 putDoubleArray(ARG_LINE_DISCOUNTS, lineDiscounts)

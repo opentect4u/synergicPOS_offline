@@ -499,15 +499,20 @@ class ProductsFragment : DataTableFragment() {
         // What gates these fields against EACH OTHER is unchanged and is not about
         // the settings at all - see syncTaxFields: a rate is taxed one way or the
         // other, never both.
-        val gstOn = SettingsCache.value(requireContext(), "T", "GST") == "1"
-        val vatOn = SettingsCache.value(requireContext(), "T", "VAT") == "1"
+        // ONLY TWO SETTINGS ARE READ HERE, and neither decides what may be entered.
+        //
+        // GST/VAT on-off and Discount Type are gone from this form entirely: they say
+        // what the TILL charges, and this form records what the PRODUCT is. Reading
+        // them here is what made a typed VAT vanish from Sell Price on a GST till and a
+        // typed discount do nothing on a bill-wise one.
+        //
+        // What is left is the two that say how to READ a number rather than whether it
+        // counts, and neither has a per-product answer anywhere:
+        //
+        //  * Inclusive/exclusive - whether the rate typed already contains its tax.
+        //  * Discount position - whether a discount comes off before tax or after.
         val gstInclusive = SettingsCache.value(requireContext(), "T", "GST Type") == "I"
         val vatInclusive = SettingsCache.value(requireContext(), "T", "VAT Type") == "I"
-        // Discount applies per product rate only when it is on AND item-wise; a
-        // bill-wise discount is applied later at billing, so the master keeps the
-        // rate's discount field disabled. Position decides how it hits sell price.
-        val discountOn = SettingsCache.value(requireContext(), "T", "Discount") == "1"
-        val itemWiseDiscount = discountOn && SettingsCache.value(requireContext(), "T", "Discount Type") == "1"
         val preTaxDiscount = SettingsCache.value(requireContext(), "T", "Discount Position") == "1"
         // Item Rate (general settings, type 'G'): Multiple ("M") allows several rate
         // cards; anything else (default Single, "S") pins the form to one card.
@@ -551,15 +556,21 @@ class ProductsFragment : DataTableFragment() {
             //
             // The only rule left is the one below, and it is about the product rather
             // than the till: a rate is under VAT or under GST, never both.
-            fun show(id: Int, visible: Boolean) {
-                row.findViewById<android.view.View>(id)?.visibility =
-                    if (visible) android.view.View.VISIBLE else android.view.View.GONE
-            }
-            fun has(v: String?) = (v?.toDoubleOrNull() ?: 0.0) > 0.0
-            // The discount row is a different question - not which tax this rate
-            // carries but whether the till discounts per item at all - so it keeps the
-            // hide-when-it-does-not-apply rule.
-            show(R.id.rowRateDiscount, itemWiseDiscount || has(prefill?.discount))
+            // The discount goes the same way as the tax boxes above: always on screen,
+            // always editable, whatever Tax Settings says.
+            //
+            // It used to be hidden unless the till was set to ITEM-WISE discount, and
+            // greyed even then unless it was. So on a shop set to bill-wise - or with
+            // discount switched off while it was being set up - the Discount and
+            // Discount Type fields were simply not on the form, and there was nothing
+            // to say they existed or why they had gone.
+            //
+            // Same reasoning as the tax fields: the master records what the PRODUCT is
+            // - what it is taxed at, what it is discounted by - and which of those a
+            // till actually applies is a question for the screens that price a bill.
+            // They read the setting for themselves ([CartMath.Config.itemwiseDiscount]),
+            // so a figure sitting here on a bill-wise till costs nothing and is ready
+            // for the day the shop switches over.
 
             // A SAVED RATE'S TAX AND DISCOUNT ARE EDITABLE.
             //
@@ -575,8 +586,8 @@ class ProductsFragment : DataTableFragment() {
             // a figure is simply typed wrong. With this locked the only way to correct
             // one was to add a second rate beside it and leave the wrong one in place,
             // which leaves the master less true, not more.
-            etDiscount.isEnabled = itemWiseDiscount
-            actDiscType.isEnabled = itemWiseDiscount
+            // Left enabled. See the note above the discount row for why Tax Settings
+            // no longer decides whether this can be typed in.
 
             // Prefill from an existing rate (edit). The name is fixed by position
             // (set in renumberRates), so it is not restored from the saved value.
@@ -628,10 +639,27 @@ class ProductsFragment : DataTableFragment() {
             // product is taxed at, and every box on it stays open until the rule above
             // closes one. Clearing a box is what re-opens the other side, which is how
             // a rate is moved from one tax to the other.
+            /**
+             * Whether a tax box actually carries a RATE - a figure above zero.
+             *
+             * Not "has any text in it", which is what this used to ask and what made an
+             * edited product read-only. A saved rate stores 0 in the taxes it does not
+             * use, not NULL, so opening one prefilled every box: "0" is not blank, so
+             * all four counted as filled, so all four locked each other out and the
+             * whole row came up grey. A product saved under VAT could not have its VAT
+             * corrected, and one saved under GST could not have its GST corrected.
+             *
+             * Zero is the absence of a tax, and the comment above has always said so -
+             * "a figure of 0 does not lock out the other side" - it was only the test
+             * that disagreed.
+             */
+            fun rated(field: TextInputEditText): Boolean =
+                (field.text?.toString()?.trim()?.toDoubleOrNull() ?: 0.0) > 0.0
+
             fun syncTaxFields() {
-                val vatFilled = !etVat.text.isNullOrBlank()
-                val cgstSgstFilled = !etCgst.text.isNullOrBlank() || !etSgst.text.isNullOrBlank()
-                val igstFilled = !etIgst.text.isNullOrBlank()
+                val vatFilled = rated(etVat)
+                val cgstSgstFilled = rated(etCgst) || rated(etSgst)
+                val igstFilled = rated(etIgst)
                 val gstFilled = cgstSgstFilled || igstFilled
                 etVat.isEnabled = !gstFilled
                 etIgst.isEnabled = !vatFilled && !cgstSgstFilled
@@ -670,26 +698,35 @@ class ProductsFragment : DataTableFragment() {
             fun computeSellPrice() {
                 if (etRateVal.text.isNullOrBlank()) { etSell.setText(""); return }
                 val rate = etRateVal.text?.toString()?.toDoubleOrNull() ?: 0.0
-                // Effective tax rate + inclusive flag (GST xor VAT).
-                val taxPct: Double
-                val inclusive: Boolean
-                when {
-                    gstOn -> {
-                        val cgst = etCgst.text?.toString()?.toDoubleOrNull() ?: 0.0
-                        val sgst = etSgst.text?.toString()?.toDoubleOrNull() ?: 0.0
-                        val igst = etIgst.text?.toString()?.toDoubleOrNull() ?: 0.0
-                        taxPct = cgst + sgst + igst
-                        inclusive = gstInclusive
-                    }
-                    vatOn -> {
-                        taxPct = etVat.text?.toString()?.toDoubleOrNull() ?: 0.0
-                        inclusive = vatInclusive
-                    }
-                    else -> { taxPct = 0.0; inclusive = false }
-                }
+                // THE TAX THIS ROW CARRIES, not the one Tax Settings has switched on.
+                //
+                // This used to pick the regime off the settings: with GST on it summed
+                // the GST boxes and a typed VAT was ignored, with both off it took no
+                // tax at all. So the form disagreed with itself - the operator entered
+                // VAT 5 in a box this screen had just let them fill, and Sell Price came
+                // back as the bare rate with nothing to say why.
+                //
+                // A rate is under VAT or under GST and never both (that is the rule the
+                // boxes above enforce), so whichever one carries a figure IS the tax,
+                // and the form can work its own sell price out without asking the till
+                // what it charges.
+                val vat = etVat.text?.toString()?.toDoubleOrNull() ?: 0.0
+                val gst = (etCgst.text?.toString()?.toDoubleOrNull() ?: 0.0) +
+                    (etSgst.text?.toString()?.toDoubleOrNull() ?: 0.0) +
+                    (etIgst.text?.toString()?.toDoubleOrNull() ?: 0.0)
+                val onVat = vat > 0.0
+                val taxPct = if (onVat) vat else gst
+                // Inclusive is the one thing still read from Tax Settings, and it has
+                // to be: it says whether the rate typed already CONTAINS its tax, and
+                // there is no per-product answer to that anywhere. Which of the two
+                // flags applies follows the tax the row is under.
+                val inclusive = if (onVat) vatInclusive else gstInclusive
                 val t = taxPct / 100.0
 
-                val sell = if (itemWiseDiscount) {
+                val sell = run {
+                    // Applied whenever one is typed. It used to need Tax Settings on
+                    // ITEM-WISE, so a discount entered on a bill-wise till changed
+                    // nothing on screen and looked like it had not registered.
                     val discVal = etDiscount.text?.toString()?.toDoubleOrNull() ?: 0.0
                     val isPercent = actDiscType.text?.toString() != "Amount"
                     fun less(base: Double) =
@@ -711,8 +748,6 @@ class ProductsFragment : DataTableFragment() {
                             less(rate * (1 + t))
                         }
                     }
-                } else {
-                    if (inclusive) rate else rate * (1 + t)
                 }
                 etSell.setText(String.format("%.2f", sell))
             }
@@ -721,7 +756,10 @@ class ProductsFragment : DataTableFragment() {
             etSgst.addTextChangedListener { computeSellPrice() }
             etIgst.addTextChangedListener { computeSellPrice() }
             etVat.addTextChangedListener { computeSellPrice() }
-            if (itemWiseDiscount) {
+            // Wired whatever Tax Settings says, like the four tax boxes above it. Behind
+            // the `if` these two listeners never ran on a bill-wise till, so typing a
+            // discount there left Sell Price sitting at its undiscounted figure.
+            run {
                 val tilDiscType = row.findViewById<TextInputLayout>(R.id.tilRateDiscType)
                 etDiscount.addTextChangedListener { computeSellPrice() }
                 actDiscType.addTextChangedListener {

@@ -25,9 +25,13 @@ import com.google.android.material.button.MaterialButton
  * A second tab, [ChargeDao.Kind.PARCEL] - the shop's one packing/delivery charge for
  * a restaurant order, saved in this same table under the same fields as any Extra
  * Charge (see [ChargeDao]), told apart only by [ChargeDao.Kind]. Its name is fixed
- * rather than typed - see [showChargeForm] - and it can only ever be a Takeaway or
- * Dine In audience, never Both: unlike an Extra Charge, it has no meaning on a
- * grocery bill at all.
+ * rather than typed - see [showChargeForm].
+ *
+ * Its audience is ticked from the same three modes an Extra Charge uses. It used to be
+ * barred from "Both" so that it could never reach a grocery bill; that option is gone,
+ * and the rule it was standing in for now lives where it cannot be edited around - see
+ * [ChargeDao.amountsOn], which keeps a parcel charge off a grocery sale whatever it is
+ * ticked for.
  *
  * The tab itself only shows when App Settings' "Parcel Charge" toggle is on - see
  * [buildHeaderExtra]. That toggle decides nothing about whether an already-defined
@@ -172,19 +176,26 @@ class ChargesFragment : DataTableFragment() {
         val currentType = current?.type ?: ChargeDao.Type.PERCENTAGE
         val isParcel = currentKind == ChargeDao.Kind.PARCEL
 
-        // Parcel Charge's audience is never Both - it never reaches a grocery bill,
-        // so an option that would mean "grocery too" for an Extra Charge would be
-        // meaningless here. A parcel row somehow left at Both (there is no way to set
-        // one - defensive only) falls back to Takeaway rather than show an option
-        // that is not on the list.
-        val forOptions = if (isParcel) listOf("Takeaway", "Dine In", "None") else listOf("Both", "Takeaway", "Dine In", "None")
-        val forValue = when (current?.applicability) {
-            ChargeDao.Applicability.TAKEAWAY -> "Takeaway"
-            ChargeDao.Applicability.DINE_IN -> "Dine In"
-            ChargeDao.Applicability.NONE -> "None"
-            ChargeDao.Applicability.BOTH -> if (isParcel) "Takeaway" else "Both"
-            null -> if (isParcel) "Takeaway" else "Both"
-        }
+        // THE AUDIENCE IS TICKED, NOT PICKED.
+        //
+        // It was a dropdown of Both / Takeaway / Dine In / None, which could only ever
+        // name one answer - and with QSR added there are three modes and eight ways to
+        // answer. "Both" could not say WHICH two, and there was no way at all to put a
+        // charge on Dine In and QSR but not the counter.
+        //
+        // Three boxes say all of it: what is ticked is where the charge applies, and
+        // nothing ticked is the old "None". "Both" needs no option of its own any more
+        // - it is simply more than one box.
+        // A NEW CHARGE STARTS WITH NOTHING TICKED. An edit opens on what was saved.
+        //
+        // Pre-ticking all three would have the form answer its own question, and the
+        // answer it gives is the widest one there is - a charge on every bill in the
+        // shop, agreed to by whoever did not notice three boxes were already on. Where
+        // a charge applies is the point of adding one, so it is asked rather than
+        // assumed, and an empty row reads as a question waiting.
+        val forOptions = listOf(MODE_DINE_IN, MODE_TAKEAWAY, MODE_QSR)
+        val forValue =
+            if (existing == null) "" else modesOf(current?.applicability).joinToString(",")
 
         // Field order: Name, Value, Enabled, Type, For
         val fields = listOf(
@@ -198,11 +209,11 @@ class ChargesFragment : DataTableFragment() {
                 value = current?.let { trimPct(it.value) }.orEmpty(),
                 inputType = "decimal"
             ),
-            DialogUtils.FormField(
-                label = "Enabled",
-                value = if (current?.enabled != false) "Yes" else "No",
-                fieldType = "toggle"
-            ),
+            // TYPE THEN ENABLED, in that order, so the switch sits to the RIGHT of
+            // Percentage rather than to its left. The two questions in this row are of
+            // different kinds - what the number means, and whether the charge is in use
+            // at all - and the reading order is the order they are decided in: set the
+            // charge up, then turn it on.
             DialogUtils.FormField(
                 label = "Type",
                 value = if (currentType == ChargeDao.Type.PERCENTAGE) "Percentage" else "Amount",
@@ -210,10 +221,18 @@ class ChargesFragment : DataTableFragment() {
                 options = listOf("Percentage", "Amount")
             ),
             DialogUtils.FormField(
-                label = "For",
+                label = "Enabled",
+                value = if (current?.enabled != false) "Yes" else "No",
+                fieldType = "toggle"
+            ),
+            DialogUtils.FormField(
+                label = "Applies to",
                 value = forValue,
-                fieldType = "dropdown",
-                options = forOptions
+                fieldType = "checkboxes",
+                options = forOptions,
+                // The whole width: three boxes side by side do not fit a half-width
+                // column, and an option pushed off the edge is one nobody can tick.
+                spanColumns = 2
             )
         )
 
@@ -227,30 +246,26 @@ class ChargesFragment : DataTableFragment() {
             },
             fields = fields,
             positiveText = if (existing == null) "Add" else "Update",
-            mandatoryFields = listOf(0, 1, 3)
+            // Name, Value and Type - the three that must be answered. Their indices
+            // moved when Type and Enabled swapped places above; a stale index here
+            // would insist on the switch and let a charge save with no type.
+            mandatoryFields = listOf(0, 1, 2)
         ) { values ->
+            // Read by the field order declared above: name, value, type, enabled, modes.
             val name = if (isParcel) PARCEL_CHARGE_NAME else values.getOrNull(0)?.trim().orEmpty()
             val value = values.getOrNull(1)?.trim()?.toDoubleOrNull()
-            val enabled = values.getOrNull(2)?.equals("Yes", ignoreCase = true) ?: true
-            val typeStr = values.getOrNull(3)?.trim()?.uppercase().orEmpty()
+            val typeStr = values.getOrNull(2)?.trim()?.uppercase().orEmpty()
+            val enabled = values.getOrNull(3)?.equals("Yes", ignoreCase = true) ?: true
             val type = try {
                 ChargeDao.Type.valueOf(typeStr)
             } catch (e: Exception) {
                 if (typeStr.startsWith("A")) ChargeDao.Type.AMOUNT else ChargeDao.Type.PERCENTAGE
             }
 
-            val applicabilityStr = values.getOrNull(4)?.trim().orEmpty()
-            val applicability = try {
-                ChargeDao.Applicability.valueOf(applicabilityStr.uppercase().replace(" ", "_"))
-            } catch (e: Exception) {
-                when (applicabilityStr.lowercase()) {
-                    "takeaway" -> ChargeDao.Applicability.TAKEAWAY
-                    "dine in" -> ChargeDao.Applicability.DINE_IN
-                    "both" -> ChargeDao.Applicability.BOTH
-                    "none" -> ChargeDao.Applicability.NONE
-                    else -> ChargeDao.Applicability.BOTH
-                }
-            }
+            // The ticked boxes, comma-joined by the form - see FormField's "checkboxes".
+            val modes = values.getOrNull(4).orEmpty()
+                .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val applicability = applicabilityOf(modes)
 
             when {
                 name.isEmpty() -> { toast("Charge name is required"); return@showForm }
@@ -274,7 +289,44 @@ class ChargesFragment : DataTableFragment() {
     private fun trimPct(v: Double): String =
         if (v % 1.0 == 0.0) v.toLong().toString() else v.toString().trimEnd('0').trimEnd('.')
 
+    /**
+     * The boxes a stored applicability ticks, and the applicability a set of ticked
+     * boxes makes.
+     *
+     * Straight through in both directions now that the column holds a list: the label
+     * on a box and the mode behind it are the same thing, so this is a rename rather
+     * than the lossy translation it had to be while the column held one word. A
+     * combination the old enum could not spell - Dine In and QSR, say - now stores as
+     * itself and comes back as itself.
+     */
+    private fun modesOf(a: ChargeDao.Applicability?): List<String> =
+        (a ?: ChargeDao.Applicability.ALL).modes
+            .sortedBy { it.ordinal }
+            .map { labelOf(it) }
+
+    private fun applicabilityOf(modes: List<String>): ChargeDao.Applicability =
+        ChargeDao.Applicability(modes.mapNotNull { modeOf(it) }.toSet())
+
+    /** The mode a box's label stands for. */
+    private fun modeOf(label: String): ChargeDao.Mode? = when (label) {
+        MODE_DINE_IN -> ChargeDao.Mode.DINE_IN
+        MODE_TAKEAWAY -> ChargeDao.Mode.TAKEAWAY
+        MODE_QSR -> ChargeDao.Mode.QSR
+        else -> null
+    }
+
+    /** How a mode is written on a box and in the list. */
+    private fun labelOf(mode: ChargeDao.Mode): String = when (mode) {
+        ChargeDao.Mode.DINE_IN -> MODE_DINE_IN
+        ChargeDao.Mode.TAKEAWAY -> MODE_TAKEAWAY
+        ChargeDao.Mode.QSR -> MODE_QSR
+    }
+
     private companion object {
+        const val MODE_DINE_IN = "Dine In"
+        const val MODE_TAKEAWAY = "Takeaway"
+        const val MODE_QSR = "QSR"
+
         const val PARCEL_CHARGE_NAME = "Parcel Charge"
     }
 }

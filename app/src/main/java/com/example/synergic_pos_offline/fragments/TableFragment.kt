@@ -36,19 +36,28 @@ class TableFragment : DataTableFragment() {
     private var waiterNames: Map<Long, String> = emptyMap()
 
     /**
-     * The statuses a table can be set to here.
+     * The statuses a table can be SET to here: the three the shop decides.
      *
-     * "Reserved" is deliberately not among them. The schema still allows it - it is
-     * one of the values md_table.table_status checks against, and the floor plan
-     * still knows how to colour one - but nothing in the app books a table ahead, so
-     * offering it only lets a table be parked in a state the service flow never
-     * clears. A table taken by a booking is Occupied like any other.
+     * Available, Cleaning and Blocked are the only ones anybody chooses for a table.
+     * The rest describe what is happening ON it, and the service flow writes them
+     * itself - Occupied when the KOT goes out, Billing when the bill is printed, and
+     * back to Available when the table settles. Offering those on this form let a
+     * table be typed into a state nothing had put it in, and typed out of one it was
+     * genuinely in.
      *
-     * A table left Reserved by an older build reads back as Available below, the way
-     * any status this list does not carry does, and is saved as Available the next
-     * time its section is edited.
+     * "Reserved" is not here for the older reason: the schema allows it and the floor
+     * plan can colour it, but nothing in the app books a table ahead, so it could only
+     * park a table in a state the service flow never clears.
+     *
+     * "KOT Printed" was on this list and is not a status at all - md_table.table_status
+     * checks against 'Available','Occupied','Reserved','Cleaning','Billing','Blocked',
+     * so choosing it either failed to save or read back as unknown, which the floor
+     * plan shows as a FREE table while guests are sitting at it.
+     *
+     * A table already in one of the statuses this list does not carry keeps it - see
+     * where the field is filled in below.
      */
-    private val statuses = listOf("Available", "Occupied", "KOT Printed", "Cleaning", "Billing", "Blocked")
+    private val statuses = listOf("Available", "Cleaning", "Blocked")
 
     override fun loadRows(): MutableList<DataRow> {
         cache.clear()
@@ -242,7 +251,16 @@ class TableFragment : DataTableFragment() {
                 setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, statuses))
                 threshold = 0
                 keyListener = null
-                setText(prefill?.status?.takeIf { it in statuses } ?: "Available", false)
+                // ITS ACTUAL STATUS, even one this dropdown does not offer.
+                //
+                // A table being served is Occupied or Billing, and neither is on the
+                // list above any more. Falling back to "Available" would show the
+                // wrong thing and then SAVE it - one trip into Edit on a busy section
+                // would free every table in it, mid-service, with the guests still
+                // sitting there. The field takes no typing (keyListener is null), so
+                // what is shown here only changes when the operator picks one of the
+                // three, and a live status simply survives the save.
+                setText(prefill?.status?.ifBlank { "Available" } ?: "Available", false)
                 setOnClickListener { showDropDown() }
             }
             r.findViewById<ImageButton>(R.id.btnRemoveUnit).setOnClickListener {
