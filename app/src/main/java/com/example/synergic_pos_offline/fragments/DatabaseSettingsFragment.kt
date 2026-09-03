@@ -44,20 +44,35 @@ class DatabaseSettingsFragment : Fragment() {
             DatabaseItem("Products", android.R.drawable.ic_menu_agenda, R.color.menu_sale, R.color.menu_sale_icon),
             DatabaseItem("Customers", android.R.drawable.ic_menu_myplaces, R.color.menu_report, R.color.menu_report_icon),
             DatabaseItem("Description/Ledger", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon),
-            DatabaseItem("Units", android.R.drawable.ic_menu_crop, R.color.menu_settings, R.color.menu_settings_icon)
+            DatabaseItem("Units", android.R.drawable.ic_menu_crop, R.color.menu_settings, R.color.menu_settings_icon),
+            DatabaseItem("Rate Name", android.R.drawable.ic_menu_sort_by_size, R.color.menu_inventory, R.color.menu_inventory_icon),
+            DatabaseItem("Extra Charges", android.R.drawable.ic_menu_agenda, R.color.menu_settings, R.color.menu_settings_icon)
         )
+        // Only where the shop runs shifts. Off, there is nothing to put in the master
+        // and nothing that reads it - see App Settings' Shift toggle.
+        if (com.example.synergic_pos_offline.database.ShiftDao.isEnabled(requireContext())) {
+            items.add(DatabaseItem("Shifts", R.drawable.ic_clock, R.color.menu_inventory, R.color.menu_inventory_icon))
+        }
+        // Restaurant-only masters.
         if (!isGrocery) {
             items.add(DatabaseItem("Waiter", android.R.drawable.ic_menu_manage, R.color.menu_delete, R.color.menu_delete_icon))
+            items.add(DatabaseItem("Section", android.R.drawable.ic_menu_mapmode, R.color.menu_master, R.color.menu_master_icon))
+            items.add(DatabaseItem("Table", android.R.drawable.ic_menu_agenda, R.color.menu_report, R.color.menu_report_icon))
         }
 
         rvDatabase.adapter = DatabaseAdapter(items) { item ->
             when (item.title) {
                 "Category/Department" -> openFragment(CategoryDepartmentFragment())
                 "Units" -> openFragment(UnitFragment())
+                "Rate Name" -> openFragment(RateNameFragment())
+                "Extra Charges" -> openFragment(ChargesFragment())
+                "Shifts" -> openFragment(ShiftFragment())
                 "Waiter" -> openFragment(WaiterFragment())
                 "Customers" -> openFragment(CustomerFragment())
                 "Description/Ledger" -> openFragment(DescriptionLedgerFragment())
                 "Products" -> openFragment(ProductsFragment())
+                "Section" -> openFragment(SectionFragment())
+                "Table" -> openFragment(TableFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             }
         }

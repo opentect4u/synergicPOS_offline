@@ -20,11 +20,37 @@ class GeneralSettingsDao(context: Context) {
     private val table = DatabaseHelper.Tables.MD_APP_SETTINGS
 
     /** Business mode of the app. Persisted as a single-letter [code] (G / R). */
+    /**
+     * What kind of till this is.
+     *
+     * [CALCULATOR] is not a smaller Grocery: it has no products, no tax and no
+     * masters, only a rate and a quantity typed straight in. A shop running one has
+     * no use for the rest of the app, so in that mode there is one screen and no menu
+     * at all - see `CalculatorFragment`.
+     */
     enum class Mode(val code: String, val label: String) {
-        GROCERY("G", "Grocery"), RESTAURANT("R", "Restaurant");
+        GROCERY("G", "Grocery"), RESTAURANT("R", "Restaurant"), CALCULATOR("C", "Calculator");
         companion object {
-            /** Accepts the stored code (G/R) or the display label. */
+            /** Accepts the stored code (G/R/C) or the display label. */
             fun fromStored(value: String?): Mode? = value?.let { v ->
+                values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
+            }
+        }
+    }
+
+    /**
+     * How a sale return is taken. Persisted as a single-letter [code] (B / I).
+     *
+     * BILL_WISE starts from the original bill and returns lines off it, so it can be
+     * held to a time limit - the bill has a date to measure from. ITEM_WISE starts
+     * from the item instead, with no bill behind it and so nothing to measure a
+     * limit against, which is why Sale Return Days only applies to the former.
+     */
+    enum class ReturnMode(val code: String, val label: String) {
+        BILL_WISE("B", "Bill-wise"), ITEM_WISE("I", "Item-wise");
+        companion object {
+            /** Accepts the stored code (B/I) or the display label. */
+            fun fromStored(value: String?): ReturnMode? = value?.let { v ->
                 values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
             }
         }
@@ -41,14 +67,97 @@ class GeneralSettingsDao(context: Context) {
         }
     }
 
+    /**
+     * How the sale-page product grid orders its tiles. Persisted as a short
+     * [code]. Serial No. means the product's own id - the order it was added to
+     * the catalogue in, since there is no separate ordering column on a product.
+     */
+    enum class ProductSort(val code: String, val label: String, val orderBy: String) {
+        SERIAL_ASC("SA", "Serial No. (Ascending)", "id ASC"),
+        SERIAL_DESC("SD", "Serial No. (Descending)", "id DESC"),
+        NAME_ASC("NA", "Name (A-Z)", "product_name ASC"),
+        NAME_DESC("ND", "Name (Z-A)", "product_name DESC");
+        companion object {
+            /** Accepts the stored code or the display label. */
+            fun fromStored(value: String?): ProductSort? = value?.let { v ->
+                values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
+            }
+        }
+    }
+
+    /**
+     * Where the app lands once a user logs in. Persisted as a single-letter [code]
+     * (S / H).
+     *
+     * [SALE] is the default: a cashier signs in to sell, and the till opening on the
+     * Sale screen saves them a tap every shift. [HOME] is for a till that is also
+     * someone's back office - the Dashboard first, with Sale a menu away - and is how
+     * the app behaved before this setting existed.
+     */
+    enum class LandingScreen(val code: String, val label: String) {
+        SALE("S", "Sale"), HOME("H", "Home");
+        companion object {
+            /** Accepts the stored code (S/H) or the display label. */
+            fun fromStored(value: String?): LandingScreen? = value?.let { v ->
+                values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
+            }
+        }
+    }
+
     /** The general-settings configuration with defaults. */
     data class GeneralSettings(
         val mode: Mode = Mode.GROCERY,
         val saleReturn: Boolean = false,
+        val returnMode: ReturnMode = ReturnMode.BILL_WISE,
+        /** Only meaningful under [ReturnMode.BILL_WISE] - see [ReturnMode]. */
         val saleReturnDays: Int = 0,
         val lastBillStatus: Boolean = false,
         val quantityStatus: Boolean = false,
-        val itemRate: ItemRate = ItemRate.SINGLE
+        val itemRate: ItemRate = ItemRate.SINGLE,
+        /** How the sale-page product grid is ordered - see [ProductSort]. */
+        val productSort: ProductSort = ProductSort.SERIAL_ASC,
+        /**
+         * Whether a sale captures the customer at all.
+         *
+         * Off, the till never asks: the sale carries no customer, `customer_id` is
+         * left null and the receipt prints no customer block. A credit sale is the
+         * exception - it is collected later, so it has to be attributable, and it
+         * asks for the customer and prints them whatever this says.
+         *
+         * Defaults off, with the rest of the optional flags: most sales over a
+         * counter are to nobody in particular, and a till that stops to ask who is
+         * buying a packet of biscuits is slower at the one thing it is for. A shop
+         * that does need the customer on its bills turns it on once.
+         */
+        val customerInfo: Boolean = false,
+        /** Which screen a login lands on - see [LandingScreen]. */
+        val landingScreen: LandingScreen = LandingScreen.SALE,
+        /**
+         * Whether the till tracks stock at all. Off, nothing below it applies -
+         * there is no quantity on hand to alert against.
+         */
+        val stockFlag: Boolean = false,
+        /** Warn when an item runs low. Only meaningful while [stockFlag] is on. */
+        val stockAlert: Boolean = false,
+        /** The on-hand quantity at or below which an item is low. Only meaningful
+         *  while [stockAlert] is on. */
+        val stockAlertQty: Int = 0,
+        /**
+         * Section access, set by an admin. When off, that top-level section (Master /
+         * Settings / Reports) is hidden from a NON-admin user's menu and drawer; an
+         * admin always sees all three, so turning one off can never lock the admin out
+         * of the screen these are set on. All OFF by default - a general user sees none
+         * of the three until an admin grants access.
+         */
+        val accessMaster: Boolean = false,
+        val accessSettings: Boolean = false,
+        val accessReports: Boolean = false,
+        /**
+         * About App specifically - it sits inside Settings but carries the irreversible
+         * actions (erase bills, restore, restore defaults), so it is granted separately
+         * from the rest of Settings rather than coming along with it.
+         */
+        val accessAboutApp: Boolean = false
     )
 
     /** Reads every general setting for the current store, applying defaults. */
@@ -58,10 +167,21 @@ class GeneralSettingsDao(context: Context) {
         return GeneralSettings(
             mode = Mode.fromStored(m[KEY_MODE]) ?: d.mode,
             saleReturn = m[KEY_SALE_RETURN]?.toBool() ?: d.saleReturn,
+            returnMode = ReturnMode.fromStored(m[KEY_RETURN_MODE]) ?: d.returnMode,
             saleReturnDays = m[KEY_SALE_RETURN_DAYS]?.toIntOrNull() ?: d.saleReturnDays,
             lastBillStatus = m[KEY_LAST_BILL_STATUS]?.toBool() ?: d.lastBillStatus,
             quantityStatus = m[KEY_QUANTITY_STATUS]?.toBool() ?: d.quantityStatus,
-            itemRate = ItemRate.fromStored(m[KEY_ITEM_RATE]) ?: d.itemRate
+            itemRate = ItemRate.fromStored(m[KEY_ITEM_RATE]) ?: d.itemRate,
+            productSort = ProductSort.fromStored(m[KEY_PRODUCT_SORT]) ?: d.productSort,
+            customerInfo = m[KEY_CUSTOMER_INFO]?.toBool() ?: d.customerInfo,
+            landingScreen = LandingScreen.fromStored(m[KEY_LANDING_SCREEN]) ?: d.landingScreen,
+            stockFlag = m[KEY_STOCK_FLAG]?.toBool() ?: d.stockFlag,
+            stockAlert = m[KEY_STOCK_ALERT]?.toBool() ?: d.stockAlert,
+            stockAlertQty = m[KEY_STOCK_ALERT_QTY]?.toIntOrNull() ?: d.stockAlertQty,
+            accessMaster = m[KEY_ACCESS_MASTER]?.toBool() ?: d.accessMaster,
+            accessSettings = m[KEY_ACCESS_SETTINGS]?.toBool() ?: d.accessSettings,
+            accessReports = m[KEY_ACCESS_REPORTS]?.toBool() ?: d.accessReports,
+            accessAboutApp = m[KEY_ACCESS_ABOUT_APP]?.toBool() ?: d.accessAboutApp
         )
     }
 
@@ -70,12 +190,49 @@ class GeneralSettingsDao(context: Context) {
     fun save(s: GeneralSettings) {
         put(KEY_MODE, s.mode.code)
         put(KEY_SALE_RETURN, s.saleReturn.b())
-        put(KEY_SALE_RETURN_DAYS, if (s.saleReturn) s.saleReturnDays.toString() else "0")
+        put(KEY_RETURN_MODE, s.returnMode.code)
+        // Days only bound a bill-wise return; item-wise has no bill to date from.
+        val daysApply = s.saleReturn && s.returnMode == ReturnMode.BILL_WISE
+        put(KEY_SALE_RETURN_DAYS, if (daysApply) s.saleReturnDays.toString() else "0")
         put(KEY_LAST_BILL_STATUS, s.lastBillStatus.b())
         put(KEY_QUANTITY_STATUS, s.quantityStatus.b())
         put(KEY_ITEM_RATE, s.itemRate.code)
+        put(KEY_PRODUCT_SORT, s.productSort.code)
+        put(KEY_CUSTOMER_INFO, s.customerInfo.b())
+        put(KEY_LANDING_SCREEN, s.landingScreen.code)
+        // Stock cascades: no stock tracking means no alert, and no alert means no
+        // quantity to alert at - store the dependants off rather than leave a stale
+        // value that would come back the moment the parent is switched on again.
+        val alertApply = s.stockFlag && s.stockAlert
+        put(KEY_STOCK_FLAG, s.stockFlag.b())
+        put(KEY_STOCK_ALERT, alertApply.b())
+        put(KEY_STOCK_ALERT_QTY, if (alertApply) s.stockAlertQty.toString() else "0")
+        put(KEY_ACCESS_MASTER, s.accessMaster.b())
+        put(KEY_ACCESS_SETTINGS, s.accessSettings.b())
+        put(KEY_ACCESS_REPORTS, s.accessReports.b())
+        put(KEY_ACCESS_ABOUT_APP, s.accessAboutApp.b())
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "General settings save (type G)")
+    }
+
+    /**
+     * The language printed slips are labelled in.
+     *
+     * Kept out of [GeneralSettings] deliberately. That data class is loaded and saved
+     * as a block by the General Settings screen, and this setting has a screen of its
+     * own - folding it in would mean every save of one screen rewrote a value the
+     * other screen owns, and a stale copy in memory would quietly put the language
+     * back.
+     */
+    fun loadPrintLanguage(): String? = readAll()[KEY_PRINT_LANGUAGE]?.takeIf { it.isNotBlank() }
+
+    /** Stores [code] (an EN/HI/… language code) and republishes the settings cache. */
+    fun savePrintLanguage(code: String) {
+        put(KEY_PRINT_LANGUAGE, code)
+        helper.regroupAppSettingsByType()
+        com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(
+            appContext, "Print language save (type G)"
+        )
     }
 
     // ---- Low-level key/value access ----------------------------------------
@@ -142,16 +299,105 @@ class GeneralSettingsDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
-    private companion object {
-        const val KEY_MODE = "Mode"
-        const val KEY_SALE_RETURN = "Sale Return"
-        const val KEY_SALE_RETURN_DAYS = "Sale Return Days"
-        const val KEY_LAST_BILL_STATUS = "Last Bill Status"
-        const val KEY_QUANTITY_STATUS = "Quantity Status"
-        const val KEY_ITEM_RATE = "Item Rate"
+    companion object {
+        private const val KEY_MODE = "Mode"
+        private const val KEY_SALE_RETURN = "Sale Return"
+        private const val KEY_SALE_RETURN_DAYS = "Sale Return Days"
+        private const val KEY_RETURN_MODE = "Sale Return Mode"
+        private const val KEY_LAST_BILL_STATUS = "Last Bill Status"
+        private const val KEY_QUANTITY_STATUS = "Quantity Status"
+        private const val KEY_ITEM_RATE = "Item Rate"
+        private const val KEY_PRODUCT_SORT = "Product Sorting"
+        private const val KEY_CUSTOMER_INFO = "Customer Info"
+        private const val KEY_LANDING_SCREEN = "Landing Screen"
+        private const val KEY_STOCK_FLAG = "Stock Flag"
+        private const val KEY_STOCK_ALERT = "Stock Alert"
+        private const val KEY_STOCK_ALERT_QTY = "Stock Alert Quantity"
+        /** Shared with `PrintLanguage`, which reads it out of the login cache. */
+        const val KEY_PRINT_LANGUAGE =
+            com.example.synergic_pos_offline.utils.PrintLanguage.SETTING_KEY
+        const val KEY_ACCESS_MASTER = "Access Master"
+        const val KEY_ACCESS_SETTINGS = "Access Settings"
+        const val KEY_ACCESS_REPORTS = "Access Reports"
+        const val KEY_ACCESS_ABOUT_APP = "Access About App"
+
+        /**
+         * Whether the signed-in user may open [key] (one of the KEY_ACCESS_* keys).
+         *
+         * An admin always may - the toggles restrict general users only, so an admin
+         * can never hide the section they are set on from themselves. For everyone else
+         * it reads the cached flag, defaulting OFF when it has never been set - a
+         * general user sees the section only once an admin has switched it on.
+         */
+        fun canAccessSection(context: Context, key: String): Boolean {
+            if (com.example.synergic_pos_offline.utils.SessionManager.isAdmin()) return true
+            // Read off the signed-in user's own row. It used to be one flag per till
+            // out of the settings cache, which answered the same for everyone who
+            // signed in on that machine - a manager and a counter hand sharing a till
+            // could not be given different sections.
+            val id = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.serialNo
+                ?.takeIf { it > 0 } ?: return false
+            val access = runCatching { UserDao(context).accessFor(id) }
+                .getOrDefault(UserDao.Access())
+            return when (key) {
+                KEY_ACCESS_MASTER -> access.master
+                KEY_ACCESS_SETTINGS -> access.settings
+                KEY_ACCESS_REPORTS -> access.reports
+                KEY_ACCESS_ABOUT_APP -> access.aboutApp
+                else -> false
+            }
+        }
+
+        /**
+         * Whether stock tracking is on - the one answer every Stock & Inventory
+         * entry point asks before it shows itself.
+         *
+         * Prefers the login cache (no database hit on a menu build) and falls back
+         * to the database when the cache has no answer for the key, which is the
+         * case on a till that has not saved general settings since the flag existed.
+         */
+        fun isStockEnabled(context: Context): Boolean {
+            val cached = com.example.synergic_pos_offline.utils.SettingsCache
+                .value(context, "G", KEY_STOCK_FLAG)
+            if (!cached.isNullOrBlank()) return cached == "1" || cached.equals("true", true)
+            return GeneralSettingsDao(context).load().stockFlag
+        }
+
+        /**
+         * Whether the till collects customer details at all - General Settings ▸
+         * Customer Info.
+         *
+         * A shop that does not keep a customer list has no use for being asked who
+         * every order is for, and a counter that has to dismiss a form on each sale
+         * learns to dismiss it without reading it. Off, the prompt does not appear
+         * and the order runs without a customer attached.
+         *
+         * Read the same way as the stock flag: the login cache first, the database
+         * only when the cache has no answer.
+         */
+        fun isCustomerInfoEnabled(context: Context): Boolean {
+            val cached = com.example.synergic_pos_offline.utils.SettingsCache
+                .value(context, "G", KEY_CUSTOMER_INFO)
+            if (!cached.isNullOrBlank()) return cached == "1" || cached.equals("true", true)
+            return GeneralSettingsDao(context).load().customerInfo
+        }
+
+        /**
+         * How the sale-page product grid should be ordered - General Settings ▸
+         * Product Sorting.
+         *
+         * Read the same way as the stock flag: the login cache first, the database
+         * only when the cache has no answer.
+         */
+        fun productSort(context: Context): ProductSort {
+            val cached = com.example.synergic_pos_offline.utils.SettingsCache
+                .value(context, "G", KEY_PRODUCT_SORT)
+            ProductSort.fromStored(cached)?.let { return it }
+            return GeneralSettingsDao(context).load().productSort
+        }
     }
 }

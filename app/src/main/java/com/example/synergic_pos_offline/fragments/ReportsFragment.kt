@@ -1,5 +1,6 @@
 package com.example.synergic_pos_offline.fragments
 
+import android.content.Context
 import android.content.res.ColorStateList
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -14,6 +15,8 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.MainActivity
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
 
@@ -59,7 +62,9 @@ class ReportsFragment : Fragment() {
             "UDF-Wise Report",
             "Payment-Wise Report",
             "Unsold Product Report",
+            LOW_STOCK_REPORT,
             "Opr Bill Report",
+            SHIFT_WISE_REPORT,
             "Category/Dept Wise Bill Report",
             "Payment & Receipt",
             "Customer Payment",
@@ -74,14 +79,95 @@ class ReportsFragment : Fragment() {
             "Time Wise Item Report"
         )
 
-        val reportItems = titles.mapIndexed { index, title ->
+        // Stock Report only exists where there is a count to report on, and the KOT
+        // and UDF reports only in Restaurant - see [isVisible], which the sidebar
+        // asks the same question of.
+        val shown = titles.filter { isVisible(requireContext(), it) }
+
+        val reportItems = shown.mapIndexed { index, title ->
             val (bg, icon) = palette[index % palette.size]
             ReportItem(title, android.R.drawable.ic_menu_view, bg, icon)
         }
 
         rvReports.adapter = ReportsAdapter(reportItems) { item ->
-            Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
+            when (item.title) {
+                "Bill Wise Report" -> openFragment(BillWiseReportFragment())
+                "Item Wise Report" -> openFragment(ItemWiseReportFragment())
+                "Operator Wise Report" -> openFragment(OperatorWiseReportFragment())
+                "Tax Report" -> openFragment(TaxReportFragment())
+                "Payment-Wise Report" -> openFragment(PaymentWiseReportFragment())
+                "Returned Bill Report" -> openFragment(ReturnedBillReportFragment())
+                "Unsold Product Report" -> openFragment(UnsoldProductReportFragment())
+                "Category/Dept Wise Bill Report" -> openFragment(CategoryWiseReportFragment())
+                "Opr Bill Report" -> openFragment(OperatorBilledReportFragment())
+                "Item Bill Report" -> openFragment(ItemBillReportFragment())
+                "Time Wise Item Report" -> openFragment(TimeWiseItemReportFragment())
+                "Duplicate Bill Report" -> openFragment(DuplicateReportFragment())
+                "Void Bill Report" -> openFragment(VoidBillReportFragment())
+                "Profit & Loss Report" -> openFragment(ProfitLossReportFragment())
+                "Day-Wise Report" -> openFragment(DayWiseReportFragment())
+                "Month Wise Report" -> openFragment(MonthWiseReportFragment())
+                "Year Wise Report" -> openFragment(YearWiseReportFragment())
+                STOCK_REPORT -> openFragment(StockReportFragment())
+                LOW_STOCK_REPORT -> openFragment(LowStockReportFragment())
+                SHIFT_WISE_REPORT -> openFragment(ShiftWiseReportFragment())
+                "UDF-Wise Report" -> openFragment(UdfWiseReportFragment())
+                "UDF Wise Item Report" -> openFragment(UdfWiseItemReportFragment())
+                "Customer Item Wise RPT" -> openFragment(CustomerItemWiseReportFragment())
+                "KOT Cancel Report" -> openFragment(KotCancelReportFragment())
+                "Customer Payment" -> openFragment(CustomerPaymentReportFragment())
+                "Customer Ledger" -> openFragment(CustomerLedgerFragment())
+                else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
+            }
         }
+    }
+
+    companion object {
+        /** Named once: the tile is filtered by this and opened by it. */
+        private const val STOCK_REPORT = "Stock Report"
+
+        /** Named once, for the same reason - and gated on the same setting. */
+        private const val LOW_STOCK_REPORT = "Low Stock Report"
+
+        /** Named once; shown only where the shop runs shifts. */
+        private const val SHIFT_WISE_REPORT = "Shift Wise Report"
+
+        /**
+         * Reports that only exist in Restaurant mode.
+         *
+         * A KOT is a kitchen ticket and a UDF is a field of a restaurant order;
+         * neither is ever raised on a grocery till. The tiles would open screens that
+         * could only be empty, and an empty report reads as a broken one.
+         */
+        private val RESTAURANT_ONLY = setOf(
+            "KOT Cancel Report",
+            "UDF-Wise Report",
+            "UDF Wise Item Report"
+        )
+
+        /**
+         * Whether [title] belongs on this till at all.
+         *
+         * The one rule, and both places that list reports ask it: this grid and the
+         * sidebar's Reports branch. They are two descriptions of one menu, and a
+         * report hidden from one of them only is worse than one never hidden - it is
+         * still reachable, just no longer where anyone looks for it.
+         */
+        fun isVisible(context: Context, title: String): Boolean = when {
+            title == STOCK_REPORT || title == LOW_STOCK_REPORT ->
+                GeneralSettingsDao.isStockEnabled(context)
+            title == SHIFT_WISE_REPORT ->
+                com.example.synergic_pos_offline.database.ShiftDao.isEnabled(context)
+            title in RESTAURANT_ONLY -> SettingsCache.value(context, "G", "Mode") == "R"
+            else -> true
+        }
+    }
+
+    private fun openFragment(fragment: Fragment) {
+        requireActivity().supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, fragment)
+            .addToBackStack(null)
+            .commit()
     }
 
     data class ReportItem(

@@ -45,6 +45,38 @@ object ThemeManager {
         applyRecursive(root, getThemeColor(root.context))
     }
 
+    /**
+     * Styles a dialog's confirm/cancel button pair: the positive filled with the
+     * accent (or [positiveColor], for a destructive action) and lettered in white,
+     * the negative white with accent lettering inside an accent border.
+     *
+     * Both text colors are set here rather than left to the widget styles. A
+     * MaterialButton with no `android:textColor` takes its label color from the
+     * platform theme, which is not necessarily readable against the background the
+     * button is being tinted with - the label then comes out invisible.
+     */
+    fun styleDialogButtons(
+        positive: MaterialButton?,
+        negative: MaterialButton?,
+        positiveColor: Int? = null
+    ) {
+        val context = positive?.context ?: negative?.context ?: return
+        val accent = getThemeColor(context)
+        positive?.apply {
+            backgroundTintList = ColorStateList.valueOf(positiveColor ?: accent)
+            setTextColor(Color.WHITE)
+            iconTint = ColorStateList.valueOf(Color.WHITE)
+            strokeWidth = 0
+        }
+        negative?.apply {
+            backgroundTintList = ColorStateList.valueOf(Color.WHITE)
+            setTextColor(accent)
+            strokeColor = ColorStateList.valueOf(accent)
+            strokeWidth = (resources.displayMetrics.density * 1.5f).toInt()
+            iconTint = ColorStateList.valueOf(accent)
+        }
+    }
+
     private fun applyRecursive(view: View, color: Int) {
         themeSingle(view, color)
         if (view is ViewGroup) {
@@ -64,7 +96,16 @@ object ThemeManager {
             is MaterialButton -> {
                 // Determine if this button should be Outlined (White bg, colored border) 
                 // or Filled (colored bg, white text).
-                if (isSecondary(name)) {
+                if (keepsOwnIcon(name)) {
+                    // The report download buttons. Outlined like any other secondary
+                    // action, but their icons are a red PDF page and a green
+                    // spreadsheet - the colour is how they are told apart, so the
+                    // accent is not allowed to paint over it.
+                    view.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+                    view.setTextColor(color)
+                    view.strokeColor = tint
+                    view.strokeWidth = (view.resources.displayMetrics.density * 1.5f).toInt()
+                } else if (isSecondary(name)) {
                     // Outlined style matching Dialog Cancel button
                     view.backgroundTintList = ColorStateList.valueOf(Color.WHITE)
                     view.setTextColor(color)
@@ -108,8 +149,12 @@ object ThemeManager {
 
             is TextInputLayout -> themeTextInput(view, color, tint)
 
+            // Tinted by NAME, from this list. An icon added to a screen and not added
+            // here keeps whatever colour its XML gave it and sits at the old accent
+            // while everything around it changes - which is what btnSale did until it
+            // was listed. A new header icon belongs on this line the day it is added.
             is ImageView -> if (name == "btnBack" || name == "btnMenu" ||
-                name == "btnTheme" || name == "btnHome" || name == "ivChevron" ||
+                name == "btnTheme" || name == "btnHome" || name == "btnSale" || name == "ivChevron" ||
                 name == "btnRowEdit" || name == "btnRowDelete" || name == "btnRowPrint" ||
                 name == "btnGlobalPrint" || name == "btnGlobalDelete" || name == "btnGlobalDownload" ||
                 name == "btnPlus" || name == "btnMinus" || name == "btnRemoveLine" || name == "btnRemove") {
@@ -134,6 +179,16 @@ object ThemeManager {
         if (name == "sidebarHeader" || name == "barTotal" || name == "barLeftTotal" || name == "barAmountDue") {
             view.setBackgroundColor(color)
         }
+    }
+
+    /**
+     * Buttons whose icon carries meaning of its own and must not be re-tinted: the
+     * PDF and Excel downloads on every report screen, which are told apart by being
+     * red and green.
+     */
+    private fun keepsOwnIcon(name: String?): Boolean {
+        val low = name?.lowercase() ?: return false
+        return low.endsWith("pdf") || low.endsWith("excel")
     }
 
     private fun isSecondary(name: String?): Boolean {

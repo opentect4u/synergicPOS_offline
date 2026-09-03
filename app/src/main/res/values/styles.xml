@@ -1,6 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
+    <!-- Restaurant order summary: a label on the left, a value on the right. -->
+    <style name="OrderSummaryRow">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:baselineAligned">false</item>
+        <item name="android:paddingVertical">5dp</item>
+    </style>
+
+    <style name="OrderSummaryLabel">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/text_secondary</item>
+    </style>
+
+    <style name="OrderSummaryValue">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/text_main</item>
+    </style>
+
     <!-- Bill Settings: a title + subtitle on the left, a control on the right. -->
     <style name="BillSettingRow">
         <item name="android:layout_width">match_parent</item>
@@ -128,18 +153,67 @@
         <item name="android:background">@drawable/pos_hint_bg</item>
     </style>
 
-    <!-- Printed hyphen separator line, like a thermal receipt. -->
+    <!-- One figure on the Advance Payment account card: a caption over a value. -->
+    <style name="AdvanceStatTile">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:layout_marginHorizontal">3dp</item>
+        <item name="android:background">@drawable/bg_stat_tile</item>
+        <item name="android:padding">12dp</item>
+    </style>
+
+    <style name="AdvanceStatLabel">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:letterSpacing">0.06</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:textColor">@color/text_secondary</item>
+    </style>
+
+    <style name="AdvanceStatValue">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">4dp</item>
+        <item name="android:textSize">19sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:textColor">@color/text_main</item>
+    </style>
+
+    <!--
+        Printed hyphen separator line, like a thermal receipt. The one rule every
+        slip draws - bill, KOT, statement, master list - so that a rule is the same
+        rule wherever it appears. PrintType.RULE is the same run of hyphens for the
+        slips that are drawn on a canvas instead of laid out from XML; change one and
+        change the other.
+
+        Cut off square at the edge of the paper rather than trailing an ellipsis. The
+        line is deliberately longer than any roll it prints on, so the overflow is
+        the point - marking it "..." says the rule was truncated, which on a receipt
+        just reads as a smudge.
+    -->
     <style name="BillDashLine">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">6dp</item>
-        <item name="android:layout_marginBottom">6dp</item>
+        <item name="android:layout_marginTop">0dp</item>
+        <item name="android:layout_marginBottom">0dp</item>
         <item name="android:fontFamily">monospace</item>
         <item name="android:textSize">13sp</item>
         <item name="android:textColor">#222222</item>
         <item name="android:singleLine">true</item>
         <item name="android:scrollHorizontally">true</item>
+        <item name="android:ellipsize">none</item>
         <item name="android:text">--------------------------------------------------------</item>
     </style>
+
+    <!--
+        Kept as the name the Classic and Tax Wise layouts already ask for. It used to
+        be the only rule that was cut square; that is now how every rule is drawn, so
+        there is nothing left for it to add.
+    -->
+    <style name="BillDashLineClassic" parent="BillDashLine" />
 
 </resources>

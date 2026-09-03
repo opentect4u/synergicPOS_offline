@@ -1,7 +1,5 @@
 package com.example.synergic_pos_offline.fragments
 
-import android.content.ContentValues
-import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
@@ -9,44 +7,39 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ArrayAdapter
 import android.widget.LinearLayout
+import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
-import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
-import com.example.synergic_pos_offline.database.DatabaseHelper
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.utils.CsvUtils
+import com.example.synergic_pos_offline.utils.Downloads
+import com.example.synergic_pos_offline.utils.DialogUtils
+import com.example.synergic_pos_offline.utils.ProductBulkImporter
+import com.example.synergic_pos_offline.utils.ProductCsvTemplate
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.textfield.MaterialAutoCompleteTextView
-import java.io.File
 
 /**
  * Dedicated "Bulk Upload Products" page reached from the Products screen.
  *
- * The operator picks a category, downloads a CSV template to see the structure,
- * fills it in a spreadsheet, and uploads it — every row is added as a new product
- * under the chosen category (a preview is shown before anything is written).
+ * The operator downloads a CSV template to see the structure, fills it in a
+ * spreadsheet, and uploads it — every row becomes a product, under the category the
+ * row itself names. A preview is shown before anything is written, and it is there
+ * that the operator says whether to add to the products already on the till or
+ * replace them.
+ *
+ * There is no category to pick on this page: one upload can carry the whole
+ * catalogue, and a sheet holding twenty categories cannot be filed under a single
+ * one chosen beforehand.
  */
 class BulkUploadProductFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Bulk Upload Products"
-
-    private data class Category(val id: Int, val name: String)
-
-    private lateinit var actCategory: MaterialAutoCompleteTextView
-    private var categories: List<Category> = emptyList()
-
-    /** Upload columns matching the Add-Product popup; category comes from the page. */
-    private val csvHeader = listOf(
-        "product_name", "hsn_code", "bar_code",
-        "rate_name", "rate", "unit_id", "cgst", "sgst",
-        "discount", "discount_type", "sell_price", "purchase_price"
-    )
 
     private val uploadCsv: ActivityResultLauncher<String> =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -60,53 +53,34 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        actCategory = view.findViewById(R.id.actBulkCategory)
-        categories = loadCategories()
-        actCategory.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, categories.map { it.name })
-        )
-        actCategory.setOnItemClickListener { _, _, pos, _ -> actCategory.tag = categories[pos].id }
-
-     //   view.findViewById<MaterialButton>(R.id.btnBulkDownload).setOnClickListener { downloadTemplate() }
+        view.findViewById<MaterialButton>(R.id.btnBulkDownload).setOnClickListener { downloadTemplate() }
         view.findViewById<MaterialButton>(R.id.btnBulkUpload).setOnClickListener {
-            if (selectedCategoryId() == null) toast("Select a category first")
-            else uploadCsv.launch("*/*")
+            uploadCsv.launch("*/*")
         }
 
         ThemeManager.applyTheme(view)
     }
 
-    private fun selectedCategoryId(): Int? = actCategory.tag as? Int
-
     // ---- Template download --------------------------------------------------
 
+    /**
+     * Saves the template to Downloads, for the operator to fill in and upload back.
+     *
+     * It is written to the Downloads folder rather than offered to another app
+     * through a chooser: the chooser only appears where something is installed that
+     * handles `text/csv`, and on a till where nothing is, the button did nothing at
+     * all. The sheet itself comes from [ProductCsvTemplate], shared with the
+     * download icon on the Products screen.
+     */
     private fun downloadTemplate() {
         try {
-            val file = File(requireContext().cacheDir, "item_master_template.csv")
-            file.bufferedWriter().use { w ->
-                w.appendLine(csvHeader.joinToString(","))
-                w.appendLine("Apple,987640,11111111,Retail,120,1,5,5,0,P,120,110")
-                w.appendLine("Mango,897651,11111112,Retail,80,2,5,5,0,P,80,70")
-            }
-            val uri = FileProvider.getUriForFile(
-                requireContext(), "${requireContext().packageName}.fileprovider", file
+            val savedTo = Downloads.save(
+                requireContext(), ProductCsvTemplate.FILE_NAME,
+                ProductCsvTemplate.content(requireContext())
             )
-            val view = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "text/csv")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            try {
-                startActivity(Intent.createChooser(view, "Open template with"))
-            } catch (_: android.content.ActivityNotFoundException) {
-                val share = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/csv"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                startActivity(Intent.createChooser(share, "Save template to"))
-            }
+            toast("Template saved to $savedTo")
         } catch (e: Exception) {
-            toast("Could not create template: ${e.message}")
+            toast("Could not save template: ${e.message}")
         }
     }
 
@@ -125,134 +99,173 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
     }
 
     private fun showPreview(rows: List<Map<String, String>>) {
-        val ctx = requireContext()
-        val categoryName = categories.firstOrNull { it.id == selectedCategoryId() }?.name ?: "-"
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_csv_preview, null)
         val dialog = AlertDialog.Builder(ctx).setView(view).create()
             .also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         // Column order comes from the CSV header (rows are LinkedHashMaps).
         val columns = rows.first().keys.toList()
         val named = rows.count { (it["product_name"] ?: it["item_name"]).orEmpty().isNotBlank() }
-        view.findViewById<TextView>(R.id.tvPreviewSub).text =
-            "$named of ${rows.size} row(s) • ${columns.size} columns → category \"$categoryName\""
+        // Categories and units the sheet names that this till does not have yet are
+        // called out before the import, not after: they will be created, and that is
+        // worth seeing while Cancel is still on screen - a misspelt "Diary" reads as
+        // a new category rather than as the mistake it is.
+        val newCategories =
+            unknownNames(rows, "category", ProductBulkImporter.knownCategoryNames(ctx))
+        // Read through the importer, so the units the preview promises to create are
+        // the ones it will actually create - whichever heading the sheet used.
+        val knownUnits = ProductBulkImporter.knownUnitNames(ctx)
+        val newUnits = rows
+            .mapNotNull { ProductBulkImporter.unitNameOf(it) }
+            .distinctBy { it.lowercase() }
+            .filter { it.lowercase() !in knownUnits }
+        // A row that names no category imports uncategorised rather than being
+        // filed under a guess - the page no longer asks for one to guess with.
+        val uncategorised = rows.count { it["category"].orEmpty().isBlank() }
+        // What the sheet's stock column is about to do, said before it does it. Only
+        // a till that tracks stock opens a count from it, and on one that does not
+        // the figures are quietly dropped - which is worth saying out loud, since an
+        // operator who has filled a column in has every reason to expect it to land.
+        val stockTracked = GeneralSettingsDao.isStockEnabled(ctx)
+        val withStock = rows.count { ProductBulkImporter.openingStockOf(it) != null }
+        // Read the same way the import itself will read it, so the preview never
+        // promises a language the upload would not actually apply.
+        val languageMatch = ProductBulkImporter.regionalLanguageOf(rows)
+        view.findViewById<TextView>(R.id.tvPreviewSub).text = buildString {
+            append("$named of ${rows.size} row(s) • ${columns.size} columns")
+            if (uncategorised > 0) {
+                append("\n$uncategorised row(s) name no category and will be left uncategorised")
+            }
+            if (withStock > 0) {
+                append(
+                    if (stockTracked) "\nOpening stock will be set for $withStock row(s)"
+                    else "\nStock tracking is off - the stock column will be ignored"
+                )
+            }
+            if (newCategories.isNotEmpty()) {
+                append("\nNew categories to be created: ${newCategories.joinToString(", ")}")
+            }
+            if (newUnits.isNotEmpty()) {
+                append("\nNew units to be created: ${newUnits.joinToString(", ")}")
+            }
+            append(
+                when {
+                    languageMatch.conflicting ->
+                        "\nThe regional language column names more than one language - " +
+                            "\"${languageMatch.raw}\" (the first) will be applied. Fill every row " +
+                            "with the same language, or leave the rest blank."
+                    languageMatch.raw.isEmpty() ->
+                        "\nNo regional language specified - app language will be set to English"
+                    languageMatch.exact ->
+                        "\nApp language will be set to ${languageMatch.language.englishName}"
+                    else ->
+                        "\n\"${languageMatch.raw}\" is not a recognised language - " +
+                            "${languageMatch.language.englishName} will be applied instead"
+                }
+            )
+        }
 
         val table = view.findViewById<LinearLayout>(R.id.llPreviewTable)
         // Header row.
         table.addView(tableRow(ctx, columns, columns.map { it.replace('_', ' ').uppercase() }, -1))
         table.addView(divider(ctx))
-        // Data rows.
-        rows.forEachIndexed { i, r ->
+        // Only the first stretch of rows is drawn. Every row still imports - this is
+        // a limit on what is put on screen, not on what is uploaded. The table is
+        // built one view per cell, so a sheet of a thousand products would be
+        // thirteen thousand views laid out before the dialog could appear, and the
+        // till would sit frozen through it. Nobody reads the nine-hundredth row of a
+        // preview anyway; what it is there for is to show the shape of the file.
+        rows.take(PREVIEW_ROWS).forEachIndexed { i, r ->
             table.addView(tableRow(ctx, columns, columns.map { r[it].orEmpty() }, i))
+        }
+        if (rows.size > PREVIEW_ROWS) {
+            table.addView(divider(ctx))
+            table.addView(
+                TextView(ctx).apply {
+                    text = "… and ${rows.size - PREVIEW_ROWS} more row(s), all of which will be imported"
+                    textSize = 12f
+                    setPadding(dp(14), dp(10), dp(14), dp(10))
+                    setTextColor(resources.getColor(R.color.text_secondary, null))
+                }
+            )
         }
 
         view.findViewById<MaterialButton>(R.id.btnPreviewCancel).setOnClickListener { dialog.dismiss() }
         view.findViewById<MaterialButton>(R.id.btnPreviewSubmit).setOnClickListener {
-            val (ok, failed) = insertProducts(rows, selectedCategoryId())
-            dialog.dismiss()
-            toast("Imported $ok product(s)" + if (failed > 0) ", $failed skipped" else "")
+            val replace = view.findViewById<RadioGroup>(R.id.rgImportMode)
+                .checkedRadioButtonId == R.id.rbImportReplace
+            if (replace) confirmReplace(ctx) { runImport(ctx, rows, dialog, ProductBulkImporter.Mode.REPLACE) }
+            else runImport(ctx, rows, dialog, ProductBulkImporter.Mode.APPEND)
         }
 
         ThemeManager.applyTheme(view)
         dialog.show()
     }
 
-    /** Inserts each row as a new product (under [categoryId]) + its default rate. */
-    private fun insertProducts(rows: List<Map<String, String>>, categoryId: Int?): Pair<Int, Int> {
-        val db = DatabaseHelper.getInstance(requireContext()).writableDatabase
-        val (storeId, outletId) = storeAndOutlet()
-        var ok = 0
-        var failed = 0
-        db.beginTransaction()
-        try {
-            for (r in rows) {
-                val name = (r["product_name"] ?: r["item_name"]).orEmpty()
-                if (name.isBlank()) { failed++; continue }
 
-                val product = ContentValues().apply {
-                    if (storeId != null) put("store_id", storeId) else putNull("store_id")
-                    put("product_name", name)
-                    put("hsn_code", r["hsn_code"]?.ifBlank { null })
-                    put("bar_code", r["bar_code"]?.ifBlank { null })
-                    if (categoryId != null) put("category_id", categoryId) else putNull("category_id")
-                }
-                val id = db.insert(DatabaseHelper.Tables.MD_PRODUCTS, null, product)
-                if (id == -1L) { failed++; continue }
+    /**
+     * Asks once more before a Replace, stating what it will actually do to *this*
+     * till - how many products go, and how many cannot.
+     *
+     * Deleting the catalogue is not something the operator can undo from the till,
+     * and "Replace" chosen among radio buttons is easier to pick by accident than to
+     * recover from, so the count is put in front of them before it happens. A till
+     * with nothing on it yet is not worth stopping for.
+     */
+    private fun confirmReplace(ctx: android.content.Context, onConfirm: () -> Unit) {
+        val counts = ProductBulkImporter.replaceCounts(ctx)
+        if (counts.total == 0) { onConfirm(); return }
 
-                val rateVal = (r["rate"] ?: r["price"])?.toDoubleOrNull() ?: 0.0
-                val sell = r["sell_price"]?.toDoubleOrNull() ?: r["sale_price"]?.toDoubleOrNull() ?: rateVal
-                val rate = ContentValues().apply {
-                    if (storeId != null) put("store_id", storeId) else putNull("store_id")
-                    if (outletId != null) put("outlet_id", outletId) else putNull("outlet_id")
-                    put("product_id", id)
-                    put("rate_name", r["rate_name"]?.ifBlank { null })
-                    put("rate", rateVal)
-                    r["unit_id"]?.toIntOrNull()?.let { put("unit_id", it) } ?: putNull("unit_id")
-                    put("cgst_rate", r["cgst"]?.toDoubleOrNull() ?: 0.0)
-                    put("sgst_rate", r["sgst"]?.toDoubleOrNull() ?: 0.0)
-                    put("igst_rate", 0.0)
-                    put("vat_rate", 0.0)
-                    put("discount", r["discount"]?.toDoubleOrNull() ?: 0.0)
-                    discountType(r["discount_type"])?.let { put("discount_type", it) } ?: putNull("discount_type")
-                    put("sale_price", sell)
-                    put("sell_price", sell)
-                    put("purchase_price", r["purchase_price"]?.toDoubleOrNull() ?: 0.0)
-                }
-                val rid = db.insert(DatabaseHelper.Tables.MD_PRODUCT_RATES, null, rate)
-                if (rid != -1L) {
-                    db.execSQL(
-                        "UPDATE ${DatabaseHelper.Tables.MD_PRODUCT_RATES} SET \"default\" = 1 WHERE id = ?",
-                        arrayOf<Any>(rid)
-                    )
-                }
-                ok++
-            }
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
+        val kept = if (counts.kept > 0) {
+            "\n\n${counts.kept} product(s) already on a bill, return or stock entry will be " +
+                "kept - removing them would break those records."
+        } else ""
+        DialogUtils.showConfirm(
+            context = ctx,
+            title = "Replace all products?",
+            message = "This removes ${counts.removable} product(s) from this till, " +
+                "with their rates and stock, and then imports the sheet.$kept",
+            positiveText = "Replace",
+            negativeText = "Cancel",
+            destructive = true,
+            onConfirm = onConfirm
+        )
+    }
+
+    /** Runs the import, closes the preview and reports what happened. */
+    private fun runImport(
+        ctx: android.content.Context,
+        rows: List<Map<String, String>>,
+        preview: AlertDialog,
+        mode: ProductBulkImporter.Mode
+    ) {
+        val result = ProductBulkImporter.import(ctx, rows, mode)
+        preview.dismiss()
+        val summary = buildString {
+            append("${result.imported} product(s) uploaded successfully.")
+            if (result.removed > 0) append("\n${result.removed} existing product(s) removed.")
+            if (result.skipped > 0) append("\n${result.skipped} row(s) skipped.")
+            append("\nApp language set to ${result.languageApplied}.")
+            result.languageWarning?.let { append("\n$it") }
         }
-        return ok to failed
+        DialogUtils.showSuccess(
+            context = ctx,
+            title = "Upload Complete",
+            message = summary
+        )
     }
 
     // ---- Helpers ------------------------------------------------------------
 
-    private fun loadCategories(): List<Category> {
-        val list = mutableListOf<Category>()
-        val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
-        db.query(
-            DatabaseHelper.Tables.MD_CATEGORY, arrayOf("id", "category_name"),
-            null, null, null, null, "category_name COLLATE NOCASE"
-        ).use { c ->
-            while (c.moveToNext()) {
-                list.add(Category(c.getInt(0), c.getString(1).orEmpty()))
-            }
-        }
-        return list
-    }
-
-    /** Normalises a discount type to the stored 'P'/'A' (null when unrecognised). */
-    private fun discountType(v: String?): String? = when (v?.trim()?.uppercase()?.firstOrNull()) {
-        'P' -> "P"
-        'A' -> "A"
-        else -> null
-    }
-
-    /** store_id and outlet_id sourced from md_registration (verified row preferred). */
-    private fun storeAndOutlet(): Pair<Int?, Int?> {
-        val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
-        db.rawQuery(
-            "SELECT store_id, outlet_id FROM ${DatabaseHelper.Tables.MD_REGISTRATION} " +
-                "ORDER BY verify_flag DESC, store_id ASC LIMIT 1", null
-        ).use { c ->
-            if (c.moveToFirst()) {
-                val s = if (c.isNull(0)) null else c.getInt(0)
-                val o = if (c.isNull(1)) null else c.getInt(1)
-                return s to o
-            }
-        }
-        return null to null
-    }
+    /** The distinct values of [column] the sheet names that [known] does not hold. */
+    private fun unknownNames(
+        rows: List<Map<String, String>>, column: String, known: Set<String>
+    ): List<String> = rows
+        .mapNotNull { it[column]?.trim()?.takeIf { v -> v.isNotEmpty() } }
+        .distinctBy { it.lowercase() }
+        .filter { it.lowercase() !in known }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
@@ -260,8 +273,11 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
     private fun columnWidth(name: String): Int = dp(
         when (name) {
             "item_name", "product_name", "description" -> 150
+            // Category names run long - "Dry Fruits & Cereals" - and are the column
+            // the operator most wants to read back before importing.
+            "category" -> 150
             "rate_name", "hsn_code", "bar_code" -> 110
-            "unit_id", "discount_type" -> 92
+            "unit_id", "discount_type", "selling_price", "purchase_price" -> 92
             else -> 80
         }
     )
@@ -309,4 +325,17 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
 
     private fun toast(msg: String) =
         android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_SHORT).show()
+
+    private companion object {
+        /**
+         * How many rows of the sheet the preview draws.
+         *
+         * A limit on the preview only - every row in the file is imported. The table
+         * is built a view per cell, so drawing a whole large sheet would freeze the
+         * till before the dialog appeared, and a preview nobody can scroll to the end
+         * of is not telling them anything the first fifty rows did not.
+         */
+        const val PREVIEW_ROWS = 50
+    }
+
 }

@@ -78,12 +78,29 @@
                 app:tint="@color/primary_blue"
                 android:contentDescription="Home / Dashboard" />
 
+            <!-- Straight to the sale screen, from wherever the till happens to be.
+                 Beside Home because it is the same kind of control - a place the app
+                 always goes back to - and it is the one that matters more on a till:
+                 a shop spends its day on the sale screen and only visits the rest.
+                 Which sale screen it opens is the mode's business, not this button's;
+                 MainActivity routes it exactly as the sidebar's Sale row does. -->
+            <ImageButton
+                android:id="@+id/btnSale"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_toStartOf="@id/btnHome"
+                android:layout_centerVertical="true"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_sale"
+                app:tint="@color/primary_blue"
+                android:contentDescription="Sale" />
+
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_centerVertical="true"
                 android:layout_toEndOf="@id/btnBack"
-                android:layout_toStartOf="@id/btnHome"
+                android:layout_toStartOf="@id/btnSale"
                 android:layout_marginStart="8dp"
                 android:orientation="vertical">
 
@@ -164,6 +181,49 @@
             android:clipToPadding="false"
             android:scrollbars="vertical"
             tools:listitem="@layout/item_sidebar_node" />
+
+        <!--
+            Logout sits outside the scrolling list, pinned to the foot of the drawer.
+            The tree above it runs to dozens of rows once Reports is expanded, so a
+            Logout listed as its last item would be somewhere you scroll to find. It
+            is also not a place to navigate to, which is what everything in that list
+            is - keeping it out of the tree says so.
+        -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E4E7EB" />
+
+        <LinearLayout
+            android:id="@+id/llSidebarLogout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:minHeight="56dp"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="12dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackground">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="12dp"
+                android:src="@android:drawable/ic_lock_power_off"
+                app:tint="@color/menu_delete_icon"
+                android:contentDescription="Logout" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Logout"
+                android:textSize="17sp"
+                android:textStyle="bold"
+                android:textColor="@color/menu_delete_icon" />
+        </LinearLayout>
 
     </LinearLayout>
 

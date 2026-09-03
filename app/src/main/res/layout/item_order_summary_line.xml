@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One line of the order panel's totals breakdown, for the rows that are not known
+  until the order is: the shop's Extra Charges and its Parcel Charge, which vary in
+  number and depend on whether the order is dine-in or take-away.
+
+  Deliberately the same styles the fixed rows above it use, so a charge reads as part
+  of the same breakdown rather than as something bolted underneath it.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/OrderSummaryRow">
+
+    <TextView
+        android:id="@+id/tvSummaryLabel"
+        style="@style/OrderSummaryLabel"
+        android:text="Charge" />
+
+    <TextView
+        android:id="@+id/tvSummaryValue"
+        style="@style/OrderSummaryValue"
+        android:text="₹ 0.00" />
+</LinearLayout>

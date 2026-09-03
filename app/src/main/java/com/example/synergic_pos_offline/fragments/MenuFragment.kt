@@ -13,6 +13,7 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.google.android.material.card.MaterialCardView
 
 class MenuFragment : Fragment() {
@@ -34,18 +35,36 @@ class MenuFragment : Fragment() {
         val columns = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) 4 else 2
         rvMenu.layoutManager = GridLayoutManager(requireContext(), columns)
 
-        val menuItems = listOf(
-            MenuItem("Master", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon),
-            MenuItem("Settings", android.R.drawable.ic_menu_preferences, R.color.menu_settings, R.color.menu_settings_icon),
-            MenuItem("Stock & Inventory", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon),
-            MenuItem("Sale", android.R.drawable.ic_menu_add, R.color.menu_sale, R.color.menu_sale_icon),
-            MenuItem("Bill", android.R.drawable.ic_menu_agenda, R.color.menu_report, R.color.menu_report_icon),
-            MenuItem("Sale Return", android.R.drawable.ic_menu_revert, R.color.menu_delete, R.color.menu_delete_icon),
-            MenuItem("Advance Payment", android.R.drawable.ic_menu_today, R.color.menu_sale, R.color.menu_sale_icon),
-            // MenuItem("Duplicate Bill", android.R.drawable.ic_menu_today, R.color.menu_master, R.color.menu_master_icon),
-            // MenuItem("Delete Bill", android.R.drawable.ic_menu_delete, R.color.menu_delete, R.color.menu_delete_icon),
-            MenuItem("Reports", android.R.drawable.ic_menu_view, R.color.menu_report, R.color.menu_report_icon)
-        )
+        // Stock & Inventory only exists while stock tracking is on - with the flag
+        // off there is no quantity on hand for those screens to work against.
+        val stockOn = GeneralSettingsDao.isStockEnabled(requireContext())
+        
+        // Sale Return and Advance Payment are grocery-only flows — hidden in Restaurant.
+        val isRestaurant = com.example.synergic_pos_offline.utils.SettingsCache
+            .value(requireContext(), "G", "Mode") == "R"
+
+        // Admin-set section access: a section switched off is hidden from a general
+        // user's menu; an admin always sees all three (GeneralSettingsDao.canAccessSection).
+        val ctx = requireContext()
+        val canMaster = GeneralSettingsDao.canAccessSection(ctx, GeneralSettingsDao.KEY_ACCESS_MASTER)
+        val canSettings = GeneralSettingsDao.canAccessSection(ctx, GeneralSettingsDao.KEY_ACCESS_SETTINGS)
+        val canReports = GeneralSettingsDao.canAccessSection(ctx, GeneralSettingsDao.KEY_ACCESS_REPORTS)
+
+        val menuItems = buildList {
+            if (canMaster) add(MenuItem("Master", android.R.drawable.ic_menu_edit, R.color.menu_master, R.color.menu_master_icon))
+            if (canSettings) add(MenuItem("Settings", android.R.drawable.ic_menu_preferences, R.color.menu_settings, R.color.menu_settings_icon))
+            if (stockOn) {
+                add(MenuItem("Stock & Inventory", android.R.drawable.ic_menu_agenda, R.color.menu_inventory, R.color.menu_inventory_icon))
+            }
+            add(MenuItem("Sale", android.R.drawable.ic_menu_add, R.color.menu_sale, R.color.menu_sale_icon))
+            add(MenuItem("Bill History", android.R.drawable.ic_menu_agenda, R.color.menu_report, R.color.menu_report_icon))
+            if (!isRestaurant) {
+                add(MenuItem("Sale Return", android.R.drawable.ic_menu_revert, R.color.menu_delete, R.color.menu_delete_icon))
+                add(MenuItem("Advance Payment", android.R.drawable.ic_menu_today, R.color.menu_sale, R.color.menu_sale_icon))
+            }
+            // MenuItem("Duplicate Bill", ...); MenuItem("Delete Bill", ...)
+            if (canReports) add(MenuItem("Reports", android.R.drawable.ic_menu_view, R.color.menu_report, R.color.menu_report_icon))
+        }
 
         rvMenu.adapter = MenuAdapter(menuItems) { item ->
             handleAction(item.title)
@@ -59,10 +78,26 @@ class MenuFragment : Fragment() {
             "Settings" -> openFragment(SettingsFragment())
             "Stock & Inventory" -> openFragment(InventoryFragment())
             "Reports" -> openFragment(ReportsFragment())
-            "Bill" -> openFragment(BillListFragment())
-            "Sale" -> openFragment(PosBillingFragment())
+            "Bill History" -> openFragment(BillListFragment())
+            "Sale Return" -> openSaleReturn()
+            "Sale" -> openFragment(
+                if (com.example.synergic_pos_offline.utils.SettingsCache.value(requireContext(), "G", "Mode") == "R")
+                    RestaurantOrdersFragment()
+                else PosBillingFragment()
+            )
+            "Advance Payment" -> openFragment(AdvancePaymentFragment())
             else -> Toast.makeText(requireContext(), "Opening $title...", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /** Opens whichever return screen the settings call for - see [SaleReturnRouter]. */
+    private fun openSaleReturn() {
+        val screen = SaleReturnRouter.screenFor(requireContext())
+        if (screen == null) {
+            Toast.makeText(requireContext(), SaleReturnRouter.DISABLED_MESSAGE, Toast.LENGTH_LONG).show()
+            return
+        }
+        openFragment(screen)
     }
 
     private fun openFragment(fragment: Fragment) {

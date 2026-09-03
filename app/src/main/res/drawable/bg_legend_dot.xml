@@ -1,0 +1,7 @@
+<!-- The small rounded square that keys a colour to a status in the Choose Table
+     legend. Left white here and tinted per entry with android:backgroundTint. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="3dp" />
+    <solid android:color="#FFFFFF" />
+</shape>

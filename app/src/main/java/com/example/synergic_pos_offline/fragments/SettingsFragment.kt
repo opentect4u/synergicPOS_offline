@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.MainActivity
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.textfield.TextInputEditText
@@ -42,7 +43,11 @@ class SettingsFragment : Fragment() {
         val bill = { BillSettingsFragment() as Fragment }
         val tax = { TaxSettingsFragment() as Fragment }
         val app = { AppSettingsFragment() as Fragment }
-        val printer = { OperatingPrinterFragment() as Fragment }
+        val printer = { PrintSettingsFragment() as Fragment }
+        val printTemplate = {
+            PrintSettingsFragment.newInstance(PrintSettingsFragment.TAB_TEMPLATE) as Fragment
+        }
+        val printLanguage = { PrintLanguageFragment() as Fragment }
         fun e(name: String, screen: String, open: () -> Fragment, match: String = name) =
             SettingEntry(name, screen, open, match)
         listOf(
@@ -54,6 +59,12 @@ class SettingsFragment : Fragment() {
             e("Last Bill Status", "General Settings", general),
             e("Enter Quantity Status", "General Settings", general),
             e("Item Rate", "General Settings", general),
+            e("Product Sorting", "General Settings", general),
+            e("After Login", "General Settings", general),
+            e("Landing Screen", "General Settings", general, match = "After Login"),
+            e("Stock", "General Settings", general),
+            e("Stock Alert", "General Settings", general),
+            e("Alert Quantity", "General Settings", general),
             // Bill Settings
             e("Bill No. Character", "Bill Settings", bill),
             e("Reset Bill No.", "Bill Settings", bill),
@@ -62,10 +73,18 @@ class SettingsFragment : Fragment() {
             e("Amount in Words", "Bill Settings", bill, match = "Amount in words"),
             e("Total Amount Font Size", "Bill Settings", bill, match = "Total amount Font Size"),
             e("Two Copy Bill", "Bill Settings", bill, match = "Two copy bill"),
+            e("Coupon Splitting", "Bill Settings", bill),
+            e("Coupon", "Bill Settings", bill, match = "Coupon Splitting"),
             e("Round Off", "Bill Settings", bill),
             e("HSN Code", "Bill Settings", bill),
+            e("Product Serial Number", "Bill Settings", bill),
+            e("Time on Bill", "Bill Settings", bill),
             e("Customer Address Printing", "Bill Settings", bill),
             e("Customer Details", "Bill Settings", bill),
+            e("UPI QR", "Bill Settings", bill, match = "UPI QR on bill"),
+            e("UPI ID", "Bill Settings", bill),
+            e("QR Code", "Bill Settings", bill, match = "UPI QR on bill"),
+            e("Scan to Pay", "Bill Settings", bill, match = "UPI QR on bill"),
             // Tax Settings
             e("Discount", "Tax Settings", tax),
             e("Discount Type", "Tax Settings", tax),
@@ -78,9 +97,34 @@ class SettingsFragment : Fragment() {
             e("Manual Rate", "App Settings", app),
             e("Cash Reception", "App Settings", app),
             e("Other Charges", "App Settings", app),
+            e("Parcel Charge", "App Settings", app),
             e("Payment Mode", "App Settings", app),
+            e("Biometric Login", "App Settings", app),
+            e("Shift", "App Settings", app),
+            e("Fingerprint Login", "App Settings", app, match = "Biometric Login"),
             // Printer
-            e("Printer", "Printer Settings", printer)
+            e("Printer", "Printer Settings", printer),
+            e("Print Template", "Printer Settings", printTemplate),
+            e("Bill Template", "Printer Settings", printTemplate, match = "Print Template"),
+            // Print Language
+            e("Print Language", "Language", printLanguage, match = "PRINT LANGUAGE"),
+            e("Language", "Language", printLanguage, match = "APP LANGUAGE"),
+            e("Bill Language", "Language", printLanguage, match = "PRINT LANGUAGE"),
+            e("Report Language", "Language", printLanguage, match = "PRINT LANGUAGE"),
+            e("App Language", "Language", printLanguage, match = "APP LANGUAGE"),
+            e("Screen Language", "Language", printLanguage, match = "APP LANGUAGE")
+        ) + restaurantAppSettings(app)
+    }
+
+    /** Restaurant-only App Settings toggles — searchable only when Mode = Restaurant. */
+    private fun restaurantAppSettings(app: () -> Fragment): List<SettingEntry> {
+        if (SettingsCache.value(requireContext(), "G", "Mode") != "R") return emptyList()
+        return listOf(
+            SettingEntry("Coupon Mode", "App Settings", app),
+            SettingEntry("KOT", "App Settings", app),
+            SettingEntry("Table Merge", "App Settings", app),
+            SettingEntry("Table Shift", "App Settings", app),
+            SettingEntry("Table Split", "App Settings", app)
         )
     }
 
@@ -146,22 +190,41 @@ class SettingsFragment : Fragment() {
             // needed again) - "Operating Printer" now takes over the "Printer Settings" name
             // and spot in the grid, routed via its own key so the two don't collide below.
             SettingsItem("Printer Settings", R.drawable.ic_print, R.color.menu_report, R.color.menu_report_icon, key = "Operating Printer"),
-            SettingsItem("App Settings", android.R.drawable.ic_menu_manage, R.color.menu_sale, R.color.menu_sale_icon)
-        )
+            SettingsItem("App Settings", android.R.drawable.ic_menu_manage, R.color.menu_sale, R.color.menu_sale_icon),
+            SettingsItem("About App", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon),
+            // Beside About App: it is about how the till prints rather than about a
+            // part of the sale, which is what the four tiles above it are each for.
+            SettingsItem("Language", android.R.drawable.ic_menu_sort_alphabetically, R.color.menu_sale, R.color.menu_sale_icon)
+        ).filter {
+            // About App is granted separately in General Settings ▸ Access Control: an
+            // admin always sees it, a general user only when it has been switched on.
+            it.key != "About App" || com.example.synergic_pos_offline.database.GeneralSettingsDao
+                .canAccessSection(requireContext(), com.example.synergic_pos_offline.database.GeneralSettingsDao.KEY_ACCESS_ABOUT_APP)
+        }
 
+        // One decision, on the tile's key. It used to be two `when` blocks running
+        // one after the other, so opening any settings screen also fell through the
+        // second and toasted "Opening ..." over the screen it had just opened.
         rvSettings.adapter = SettingsAdapter(settingsItems) { item ->
-            val fragment: Fragment? = when (item.title) {
-                "General Settings" -> GeneralSettingsFragment()
-                "Bill Settings" -> BillSettingsFragment()
-                "Tax Settings" -> TaxSettingsFragment()
-                "App Settings" -> AppSettingsFragment()
-                else -> null
-            }
-            if (fragment != null) openFragment(fragment)
-            else Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             when (item.key) {
+                "General Settings" -> openFragment(GeneralSettingsFragment())
+                "Bill Settings" -> openFragment(BillSettingsFragment())
+                "Tax Settings" -> openFragment(TaxSettingsFragment())
+                "App Settings" -> openFragment(AppSettingsFragment())
+                "Language" -> openFragment(PrintLanguageFragment())
+                // The tile is filtered out when access is off; refused here as well so
+                // the rule holds however the screen is reached.
+                "About App" ->
+                    if (com.example.synergic_pos_offline.database.GeneralSettingsDao.canAccessSection(
+                            requireContext(),
+                            com.example.synergic_pos_offline.database.GeneralSettingsDao.KEY_ACCESS_ABOUT_APP
+                        )
+                    ) openFragment(AboutAppFragment())
+                    else Toast.makeText(
+                        requireContext(), "About App is not available for your login", Toast.LENGTH_SHORT
+                    ).show()
                 "Printer Settings" -> openFragment(PrinterSettingsFragment())
-                "Operating Printer" -> openFragment(OperatingPrinterFragment())
+                "Operating Printer" -> openFragment(PrintSettingsFragment())
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             }
         }

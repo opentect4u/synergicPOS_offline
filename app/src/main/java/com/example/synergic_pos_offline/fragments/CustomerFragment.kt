@@ -9,6 +9,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.CustomerDao
+import com.example.synergic_pos_offline.utils.CustomerLedgerDialog
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
@@ -19,7 +20,7 @@ import com.google.android.material.textfield.TextInputLayout
  * "Customers" management screen — a concrete [DataTableFragment] backed by the
  * [CustomerDao] SQLite table. Full Add/Edit/Delete persisted.
  *
- * The Credit toggle gates the Credit Limit / Credit Days inputs.
+ * The Credit toggle gates the Credit Limit and Balance inputs.
  */
 class CustomerFragment : DataTableFragment() {
 
@@ -49,6 +50,22 @@ class CustomerFragment : DataTableFragment() {
 
     private fun money(v: Double): String = "₹ " + String.format("%.2f", v)
 
+    // ---- Per-row ledger ----------------------------------------------------
+
+    /**
+     * Only a customer on credit has a running account, so only their row offers a
+     * ledger. Everyone else is settled at the counter every time and has nothing
+     * for a statement to state.
+     */
+    override fun rowActionIcon(row: DataRow): Int? =
+        if (cache[row.id]?.creditEnabled == true) R.drawable.ic_ledger else null
+
+    override val rowActionLabel = "Customer ledger"
+
+    override fun onRowAction(row: DataRow) {
+        cache[row.id]?.let { CustomerLedgerDialog.show(requireContext(), layoutInflater, it) }
+    }
+
     // ---- Custom Add / Edit popups -----------------------------------------
 
     override fun onAddRow() = showCustomerDialog(null)
@@ -60,13 +77,13 @@ class CustomerFragment : DataTableFragment() {
     }
 
     private fun showCustomerDialog(row: DataRow?) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
         val existing = row?.let { cache[it.id] }
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_customer, null)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
         val etName = view.findViewById<TextInputEditText>(R.id.etName)
@@ -80,9 +97,7 @@ class CustomerFragment : DataTableFragment() {
         val swCredit = view.findViewById<SwitchMaterial>(R.id.swCredit)
         val tvCreditState = view.findViewById<TextView>(R.id.tvCreditState)
         val tilCreditLimit = view.findViewById<TextInputLayout>(R.id.tilCreditLimit)
-        val tilCreditDays = view.findViewById<TextInputLayout>(R.id.tilCreditDays)
         val etCreditLimit = view.findViewById<TextInputEditText>(R.id.etCreditLimit)
-        val etCreditDays = view.findViewById<TextInputEditText>(R.id.etCreditDays)
         val btnSave = view.findViewById<MaterialButton>(R.id.btnFormPositive)
         val btnCancel = view.findViewById<MaterialButton>(R.id.btnFormNegative)
 
@@ -99,7 +114,6 @@ class CustomerFragment : DataTableFragment() {
         etGstin.setText(existing?.gstin.orEmpty())
         etBalance.setText(existing?.let { trimNumber(it.balance) }.orEmpty())
         etCreditLimit.setText(existing?.let { trimNumber(it.creditLimit) }.orEmpty())
-        etCreditDays.setText(existing?.creditDays?.takeIf { it != 0 || existing.creditEnabled }?.toString().orEmpty())
         btnSave.text = if (existing == null) "Add" else "Update"
 
         // Credit gates every figure that only exists because of it - the limit, the
@@ -109,7 +123,6 @@ class CustomerFragment : DataTableFragment() {
         fun applyCreditState(enabled: Boolean) {
             tvCreditState.text = if (enabled) "Yes" else "No"
             tilCreditLimit.isEnabled = enabled
-            tilCreditDays.isEnabled = enabled
             tilBalance.isEnabled = enabled
         }
         swCredit.isChecked = existing?.creditEnabled ?: false
@@ -131,16 +144,26 @@ class CustomerFragment : DataTableFragment() {
                 etName.error = "Name is required"
                 return@setOnClickListener
             }
+            val phone = etPhone.text?.toString()?.trim().orEmpty()
+            if (phone.isEmpty()) {
+                etPhone.error = "Phone number is required"
+                etPhone.requestFocus()
+                return@setOnClickListener
+            }
+            if (phone.length < 10) {
+                etPhone.error = "Enter a valid phone number"
+                etPhone.requestFocus()
+                return@setOnClickListener
+            }
             val credit = swCredit.isChecked
             val customer = CustomerDao.Customer(
                 id = existing?.id ?: 0L,
                 name = name,
                 address = etAddress.text?.toString()?.trim().orEmpty(),
-                phone = etPhone.text?.toString()?.trim().orEmpty(),
+                phone = phone,
                 gstin = etGstin.text?.toString()?.trim().orEmpty(),
                 creditEnabled = credit,
                 creditLimit = if (credit) etCreditLimit.text?.toString()?.toDoubleOrNull() ?: 0.0 else 0.0,
-                creditDays = if (credit) etCreditDays.text?.toString()?.toIntOrNull() ?: 0 else 0,
                 balance = etBalance.text?.toString()?.toDoubleOrNull() ?: 0.0,
                 birthday = etBirthday.text?.toString()?.trim().orEmpty(),
                 anniversary = etAnniversary.text?.toString()?.trim().orEmpty()

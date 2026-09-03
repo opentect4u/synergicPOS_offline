@@ -55,7 +55,7 @@ object CustomerCardDialog {
         val view = inflater.inflate(R.layout.dialog_customer_result, null)
         val dialog = AlertDialog.Builder(context).setView(view).create()
             .also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val name = customer.name.trim()
         view.findViewById<TextView>(R.id.tvResultName).text =

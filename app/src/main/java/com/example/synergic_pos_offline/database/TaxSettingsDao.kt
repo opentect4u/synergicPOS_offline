@@ -79,7 +79,12 @@ class TaxSettingsDao(context: Context) {
         return TaxSettings(
             discountEnabled = m[KEY_DISCOUNT_ENABLED]?.toBool() ?: d.discountEnabled,
             discountType = type,
-            discountPosition = effectivePosition(type),
+            // The operator's own choice, read back as stored. It used to be derived
+            // from the type here and on save, which meant the Pre-tax / Post-tax
+            // buttons were on the screen but could not be moved: picking one, saving,
+            // and coming back showed whatever the type implied. See DiscountPosition.
+            discountPosition = DiscountPosition.fromCode(m[KEY_DISCOUNT_POSITION])
+                ?: effectivePosition(type),
             gstEnabled = m[KEY_GST_ENABLED]?.toBool() ?: d.gstEnabled,
             gstMode = GstMode.fromCode(m[KEY_GST_MODE]) ?: d.gstMode,
             vatEnabled = m[KEY_VAT_ENABLED]?.toBool() ?: d.vatEnabled,
@@ -95,9 +100,10 @@ class TaxSettingsDao(context: Context) {
     fun save(s: TaxSettings) {
         put(KEY_DISCOUNT_ENABLED, s.discountEnabled.b())
         put(KEY_DISCOUNT_TYPE, if (s.discountEnabled) s.discountType.code.toString() else "0")
+        // What was picked, not what the type implies - see the note on load().
         put(
             KEY_DISCOUNT_POSITION,
-            if (s.discountEnabled) effectivePosition(s.discountType).code.toString() else "0"
+            if (s.discountEnabled) s.discountPosition.code.toString() else "0"
         )
         put(KEY_GST_ENABLED, s.gstEnabled.b())
         // GST type is only meaningful when GST is on; otherwise store null.
@@ -174,7 +180,7 @@ class TaxSettingsDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 

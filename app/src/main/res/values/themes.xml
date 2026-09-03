@@ -12,6 +12,21 @@
         <item name="colorOnSecondary">@color/black</item>
         <!-- Status bar color. -->
         <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
+        <!-- Every AlertDialog uses this theme, so custom-card popups wrap tightly to
+             their card and stay centred instead of the card sitting left-aligned
+             inside a wider min-width window. -->
+        <item name="alertDialogTheme">@style/AppAlertDialog</item>
         <!-- Customize your theme here. -->
+    </style>
+
+    <!-- Dialog theme: no enforced minimum width, so the window hugs its content and
+         a fixed-width custom card centres on screen instead of sitting left-aligned
+         inside a wider min-width window. The window background is intentionally left
+         at the default here: popups with their own card set a transparent background
+         themselves, while those that rely on the standard dialog panel (e.g. the
+         add-to-cart and calculator popups) keep it. -->
+    <style name="AppAlertDialog" parent="Theme.MaterialComponents.Light.Dialog.Alert">
+        <item name="android:windowMinWidthMajor">320dp</item>
+        <item name="android:windowMinWidthMinor">320dp</item>
     </style>
 </resources>

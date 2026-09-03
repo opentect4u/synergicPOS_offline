@@ -5,7 +5,10 @@ import android.content.res.ColorStateList
 import androidx.core.view.isVisible
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.text.Editable
@@ -14,7 +17,9 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.CheckBox
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -28,13 +33,29 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.PrintType
+import com.example.synergic_pos_offline.utils.ThermalPrinter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 
 /** Largest edge, in px, decoded for the full-size image preview. */
 private const val PREVIEW_PX = 1200
+
+/**
+ * Rows shown before the list has to be scrolled to reveal more. The table renders
+ * one page at a time and appends the next page as the bottom nears, so a screen
+ * backed by a few thousand records still opens instantly and scrolls smoothly.
+ */
+private const val PAGE_SIZE = 50
+
+/** Start loading the next page this many rows before the current end is reached. */
+private const val LOAD_MORE_THRESHOLD = 10
 
 /** Decodes only as many pixels as needed, so large image BLOBs stay cheap to show. */
 private fun decodeSampledBitmap(bytes: ByteArray, targetPx: Int): Bitmap? = try {
@@ -81,6 +102,14 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     /** Initial rows to display; each row's cells must align with [columns]. */
     abstract fun loadRows(): MutableList<DataRow>
 
+    /**
+     * A chance to add something above the search row - a tab strip, say - into
+     * [container], which starts empty and GONE. A subclass that adds anything to it
+     * is responsible for making it VISIBLE; one that does not is unaffected, which is
+     * every master but the one that needs this.
+     */
+    open fun buildHeaderExtra(container: FrameLayout) {}
+
     /** Column index (into [columns]) rendered as an image thumbnail, if any. */
     open val thumbnailColumn: Int? = null
 
@@ -93,6 +122,18 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     /** Column index (into [columns]) rendered as an inline ON/OFF switch, if any. */
     open val switchColumn: Int? = null
 
+    /**
+     * Columns (indices into [columns]) whose cells wrap onto as many lines as their
+     * text needs, instead of being cut off with an ellipsis on one line.
+     *
+     * One line per cell is what keeps a table of short values - names, codes, amounts -
+     * scannable, so it stays the default. A column holding a whole sentence, like a
+     * printed header or footer line, is the opposite case: truncated it is unreadable,
+     * and the operator cannot tell what will come out on the paper without opening the
+     * row. Opting a column in here is saying it holds prose, not a value.
+     */
+    open val wrappingColumns: Set<Int> get() = emptySet()
+
     /** Invoked when a row's inline switch is toggled. Persist + reflect the new state. */
     open fun onSwitchToggled(row: DataRow, isOn: Boolean) {}
 
@@ -102,8 +143,61 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     /** Invoked when a row's Test Print button is tapped. */
     open fun onTestPrintRow(row: DataRow) {}
 
+    /**
+     * Icon for an extra action on [row], or null to leave that row without one.
+     *
+     * Decided per row rather than per screen, so an action that only makes sense
+     * for some records - a ledger for a customer who is actually on credit - is
+     * simply absent on the rest instead of being offered and then refused.
+     */
+    open fun rowActionIcon(row: DataRow): Int? = null
+
+    /** Accessibility label for the [rowActionIcon] button. */
+    open val rowActionLabel: String get() = "Action"
+
+    /** Invoked when a row's extra action button is tapped. */
+    open fun onRowAction(row: DataRow) {}
+
+    /**
+     * Set true to make the whole row tappable, calling [onRowClick].
+     *
+     * For a table whose rows are a way in to somewhere else rather than records to
+     * be edited in place - tapping an item to move its stock, say. Off by default,
+     * so a table of editable records keeps the pencil as its only way in and a
+     * mis-tap on a row cannot navigate away from it.
+     */
+    open val rowClickable: Boolean get() = false
+
+    /** Invoked when a row is tapped, if [rowClickable]. */
+    open fun onRowClick(row: DataRow) {}
+
+    /**
+     * Transforms a cell's text before display, e.g., for transliteration.
+     * Override in subclasses to apply language-specific formatting.
+     */
+    open fun formatCellText(columnIndex: Int, row: DataRow, text: String): String = text
+
+    /** Set false on a table that shows records rather than owning them (no + FAB). */
+    open val showsAddAction: Boolean get() = true
+
+    /** Set false to drop the per-row pencil on a table that is not edited in place. */
+    open val showsEditAction: Boolean get() = true
+
+    /**
+     * Set false to drop the tick boxes and the Print/Delete bar above the table.
+     *
+     * A table that does not own its rows has no business offering to delete them -
+     * the stock screens list products, and deleting a product is the product
+     * master's job, not something reachable from a stock count.
+     */
+    open val showsSelection: Boolean get() = true
+
     private val allRows = mutableListOf<DataRow>()
+    // The full result of the current search/filter. [visibleRows] is the paged slice
+    // of this that the adapter actually renders; select-all and the empty state still
+    // reason over the whole filtered set here.
     private val shownRows = mutableListOf<DataRow>()
+    private val visibleRows = mutableListOf<DataRow>()
     private val selectedIds = linkedSetOf<String>()
     private var query = ""
 
@@ -126,6 +220,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        buildHeaderExtra(view.findViewById(R.id.flHeaderExtra))
+
         tvSelectionCount = view.findViewById(R.id.tvSelectionCount)
         btnGlobalPrint = view.findViewById(R.id.btnGlobalPrint)
         btnGlobalDelete = view.findViewById(R.id.btnGlobalDelete)
@@ -134,7 +230,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         tvEmpty = view.findViewById(R.id.tvEmpty)
 
         adapter = DataTableAdapter(
-            shownRows,
+            visibleRows,
             columns.size,
             selectedIds,
             thumbnailColumn,
@@ -142,15 +238,33 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             onThumbnailClick = { onThumbnailClick(it) },
             showsThumbnails,
             switchColumn,
+            wrappingColumns,
             onSwitchToggled = { row, isOn -> onSwitchToggled(row, isOn) },
             onEdit = { onEditRow(it) },
             onThumbClick = { showImagePreview(it) },
             onSelectionChanged = { updateSelectionUI() },
             showsTestPrintAction = showsTestPrintAction,
-            onTestPrint = { onTestPrintRow(it) }
+            onTestPrint = { onTestPrintRow(it) },
+            rowActionIcon = { rowActionIcon(it) },
+            rowActionLabel = rowActionLabel,
+            onRowAction = { onRowAction(it) },
+            showsSelection = showsSelection,
+            showsEditAction = showsEditAction,
+            onRowClick = if (rowClickable) ({ onRowClick(it) }) else null
         )
         rvTable.layoutManager = LinearLayoutManager(requireContext())
         rvTable.adapter = adapter
+
+        // Infinite scroll: append the next page as the bottom of the current one nears.
+        rvTable.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                if (dy <= 0) return
+                val lm = rv.layoutManager as? LinearLayoutManager ?: return
+                if (lm.findLastVisibleItemPosition() >= visibleRows.size - LOAD_MORE_THRESHOLD) {
+                    loadNextPage()
+                }
+            }
+        })
 
         buildHeader(view.findViewById(R.id.llTableHeader))
 
@@ -167,7 +281,21 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             override fun afterTextChanged(s: Editable?) {}
         })
 
-        view.findViewById<View>(R.id.btnAdd).setOnClickListener { onAddRow() }
+        setUpColumnFilter(view)
+
+        view.findViewById<View>(R.id.btnAdd).apply {
+            isVisible = showsAddAction
+            setOnClickListener { onAddRow() }
+        }
+        // The row carries the selection controls *and* the download action, and a
+        // screen can want the second without the first - Stock In moves nothing by
+        // selecting rows, but still hands over a sheet to fill in. So the row shows
+        // for either, and the selection-only controls inside it are hidden on their
+        // own.
+        view.findViewById<View>(R.id.llActionRow).isVisible = showsSelection || showDownloadTemplate()
+        view.findViewById<View>(R.id.tvSelectionCount).isVisible = showsSelection
+        view.findViewById<View>(R.id.btnGlobalPrint).isVisible = showsSelection
+        view.findViewById<View>(R.id.btnGlobalDelete).isVisible = showsSelection
 
         // A single FAB that opens a dedicated bulk-upload page (product screen).
         view.findViewById<View>(R.id.btnBulkPage).apply {
@@ -195,6 +323,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         cbSelectAll = CheckBox(ctx)
         cbSelectAll.layoutParams = LinearLayout.LayoutParams((44 * density).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT)
         cbSelectAll.buttonTintList = ColorStateList.valueOf(accent)
+        // Kept in the header even when hidden, so the columns still line up with the
+        // rows - whose own tick box is hidden the same way rather than removed.
+        cbSelectAll.visibility = if (showsSelection) View.VISIBLE else View.INVISIBLE
         cbSelectAll.setOnCheckedChangeListener { _, isChecked ->
             if (suppressSelectAll) return@setOnCheckedChangeListener
             if (isChecked) shownRows.forEach { selectedIds.add(it.id) }
@@ -247,19 +378,85 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         suppressSelectAll = false
     }
 
-    private fun applyFilter(q: String) {
-        query = q.trim()
-        shownRows.clear()
-        if (query.isEmpty()) {
-            shownRows.addAll(allRows)
-        } else {
-            shownRows.addAll(allRows.filter { row ->
-                row.cells.any { it.contains(query, ignoreCase = true) }
-            })
+    /**
+     * The column a screen can offer a dropdown filter on, as its index into
+     * [columns]; null - the default - leaves the dropdown off the screen entirely.
+     *
+     * Filtering by a whole column is a different question from searching: a search
+     * for "Dairy" also matches a product happening to be *called* Dairy Milk, which
+     * is not what someone narrowing a table by category is asking for. The dropdown
+     * matches the cell exactly, and its options are whatever values that column
+     * actually holds - so it cannot offer a category the table has nothing under.
+     */
+    protected open val filterColumnIndex: Int? = null
+
+    /** The dropdown's "no filter" entry, and what it is set to until one is picked. */
+    private val allFilterValues = "All"
+
+    /** The value picked in the column dropdown, or [allFilterValues] for no filter. */
+    private var filterValue: String = allFilterValues
+
+    /**
+     * Fills the column dropdown from the rows on screen and wires it to the filter.
+     *
+     * Rebuilt from [allRows] rather than queried, so it lists exactly the values the
+     * table holds and needs no knowledge of where they came from.
+     */
+    private fun setUpColumnFilter(view: View) {
+        val index = filterColumnIndex ?: return
+        val til = view.findViewById<View>(R.id.tilFilter) ?: return
+        val act = view.findViewById<MaterialAutoCompleteTextView>(R.id.actFilter) ?: return
+        til.visibility = View.VISIBLE
+        (til as? com.google.android.material.textfield.TextInputLayout)?.hint = columns.getOrNull(index)
+
+        val values = listOf(allFilterValues) + allRows
+            .mapNotNull { it.cells.getOrNull(index)?.takeIf { cell -> cell.isNotBlank() } }
+            .distinct()
+            .sortedBy { it.lowercase() }
+        act.setAdapter(ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, values))
+        act.setText(filterValue.takeIf { it in values } ?: allFilterValues, false)
+        act.setOnItemClickListener { _, _, pos, _ ->
+            filterValue = values[pos]
+            applyFilter(query)
         }
+    }
+
+    /**
+     * Recomputes the filtered set and repaints the first page. A search or filter
+     * change resets the window to the top; an in-place edit / reload keeps roughly as
+     * many rows on screen as were already there ([resetWindow] = false), so the list
+     * does not collapse back to page one under the operator.
+     */
+    private fun applyFilter(q: String, resetWindow: Boolean = true) {
+        query = q.trim()
+        val index = filterColumnIndex
+        shownRows.clear()
+        shownRows.addAll(
+            allRows.filter { row ->
+                val matchesFilter = index == null || filterValue == allFilterValues ||
+                    row.cells.getOrNull(index).equals(filterValue, ignoreCase = true)
+                val matchesQuery = query.isEmpty() ||
+                    row.cells.any { it.contains(query, ignoreCase = true) }
+                matchesFilter && matchesQuery
+            }
+        )
+        // Show the first page (or keep the current depth on an in-place refresh).
+        val keep = if (resetWindow) PAGE_SIZE else maxOf(PAGE_SIZE, visibleRows.size)
+        visibleRows.clear()
+        visibleRows.addAll(shownRows.take(keep))
         adapter.notifyDataSetChanged()
+        if (resetWindow && ::rvTable.isInitialized) rvTable.scrollToPosition(0)
         tvEmpty.visibility = if (shownRows.isEmpty()) View.VISIBLE else View.GONE
         if (::cbSelectAll.isInitialized) updateSelectionUI()
+    }
+
+    /** Appends the next [PAGE_SIZE] filtered rows to the visible window, if any remain. */
+    private fun loadNextPage() {
+        if (visibleRows.size >= shownRows.size) return
+        val start = visibleRows.size
+        val end = minOf(start + PAGE_SIZE, shownRows.size)
+        for (i in start until end) visibleRows.add(shownRows[i])
+        adapter.notifyItemRangeInserted(start, end - start)
     }
 
     protected fun toast(msg: String) =
@@ -273,7 +470,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     /** Appends [row] and refreshes the visible list, keeping the active search. */
     protected fun addRow(row: DataRow) {
         allRows.add(row)
-        applyFilter(query)
+        applyFilter(query, resetWindow = false)
     }
 
     /** Replaces the cells of the row identified by [id], if it still exists. */
@@ -281,7 +478,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         val idx = allRows.indexOfFirst { it.id == id }
         if (idx >= 0) {
             allRows[idx] = DataRow(id, cells)
-            applyFilter(query)
+            applyFilter(query, resetWindow = false)
         }
     }
 
@@ -294,7 +491,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         val bitmap = row.thumbnail?.let { decodeSampledBitmap(it, PREVIEW_PX) } ?: return
         val view = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_image_preview, null)
         val dialog = AlertDialog.Builder(requireContext()).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         view.findViewById<TextView>(R.id.tvPreviewName).text =
             row.cells.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Image"
@@ -314,7 +511,11 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         allRows.clear()
         allRows.addAll(loadRows())
         selectedIds.clear()
-        applyFilter(query)
+        // The dropdown lists the values the rows actually hold, so it is rebuilt
+        // with them - a product added under a brand-new category would otherwise
+        // leave that category unofferable until the screen was reopened.
+        view?.let { setUpColumnFilter(it) }
+        applyFilter(query, resetWindow = false)
     }
 
     // ---- Actions -----------------------------------------------------------
@@ -348,7 +549,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             val idx = allRows.indexOfFirst { it.id == row.id }
             if (idx >= 0) {
                 allRows[idx] = DataRow(row.id, values)
-                applyFilter(query)
+                applyFilter(query, resetWindow = false)
                 toast("Updated")
             }
         }
@@ -403,7 +604,17 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     protected open fun deleteBlockedReason(ids: Set<String>): String? = null
 
     protected open fun onBulkPrint() {
-        val count = selectedIds.size
+        val rows = allRows.filter { it.id in selectedIds }
+        if (rows.isEmpty()) { toast("Select at least one record to print"); return }
+
+        // Master lists go to the bill printer (the general-purpose slip printer).
+        val config = ThermalPrinter.configForPurpose(requireContext(), "BILL")
+        if (config == null) {
+            toast("No printer set up — configure a bill printer first")
+            return
+        }
+
+        val count = rows.size
         DialogUtils.showConfirm(
             context = requireContext(),
             title = "Print Selected",
@@ -413,11 +624,98 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             iconRes = android.R.drawable.ic_menu_set_as,
             destructive = false
         ) {
-            toast("Printing $count record(s)...")
+            toast("Printing $count record(s)…")
+            val bitmap = buildMasterListBitmap(screenTitle, columns, rows, config.paperDots)
+            ThermalPrinter.print(requireContext(), bitmap, config) { result ->
+                if (!isAdded) return@print
+                when (result) {
+                    is ThermalPrinter.Result.Failure -> toast("Print failed: ${result.message}")
+                    else -> toast("Sent $count record(s) to the printer")
+                }
+            }
         }
     }
 
-    private class DataTableAdapter(
+    /** One rendered line of the master printout and whether it is emphasised. */
+    private data class PrintLine(val text: String, val bold: Boolean)
+
+    /** Wraps [text] to at most [maxChars] per line, breaking on spaces where it can. */
+    private fun wrapText(text: String, maxChars: Int): List<String> {
+        if (text.length <= maxChars) return listOf(text)
+        val out = ArrayList<String>()
+        var rest = text
+        while (rest.length > maxChars) {
+            val space = rest.lastIndexOf(' ', maxChars)
+            val cut = if (space > maxChars / 2) space else maxChars
+            out.add(rest.substring(0, cut).trimEnd())
+            rest = rest.substring(cut).trimStart()
+        }
+        if (rest.isNotEmpty()) out.add(rest)
+        return out
+    }
+
+    /**
+     * Renders the selected records as a printable slip: the screen's title, the date,
+     * a record count, then each record as "Column: value" lines under a bold heading.
+     * A thumbnail (image) column is skipped, since a paper list carries text only.
+     */
+    private fun buildMasterListBitmap(
+        title: String, headers: List<String>, rows: List<DataRow>, paperDots: Int
+    ): Bitmap {
+        val pad = 12f
+        // Set from PrintType, so a master list is the bill's face at the bill's
+        // sizes. These were fixed pixel sizes before, which meant the list printed
+        // at one size on a 58mm roll and a visibly different one on 80mm - the two
+        // sat side by side on the counter and did not look like the same till.
+        val body = PrintType.paint(PrintType.BODY_SP)
+        val bold = PrintType.paint(PrintType.BODY_SP, bold = true)
+        val titleP = PrintType.paint(PrintType.STORE_NAME_SP, bold = true, align = Paint.Align.CENTER)
+        // A line box a little taller than the type, so the rows breathe as they do
+        // on a bill rather than sitting on top of one another.
+        val lineH = (PrintType.dots(PrintType.BODY_SP) * 1.45f).toInt()
+        val maxChars = PrintType.charsAcross(body, paperDots, pad)
+
+        val lines = ArrayList<PrintLine>()
+        lines.add(PrintLine(SimpleDateFormat("dd-MM-yyyy HH:mm", Locale.US).format(Date()), false))
+        lines.add(PrintLine("${rows.size} record(s)", false))
+        // The same rule the bill draws, cut to the paper - not a row of "=" this
+        // slip invented for itself.
+        lines.add(PrintLine(PrintType.RULE.take(maxChars), false))
+        rows.forEachIndexed { i, row ->
+            // Use the first non-thumbnail, non-empty cell as the record's heading.
+            val nameCol = headers.indices.firstOrNull {
+                it != thumbnailColumn && !row.cells.getOrNull(it).isNullOrBlank()
+            }
+            val name = nameCol?.let { row.cells.getOrNull(it) }.orEmpty()
+            wrapText("${i + 1}. $name", maxChars).forEach { lines.add(PrintLine(it, true)) }
+            headers.forEachIndexed { c, h ->
+                if (c == thumbnailColumn || c == nameCol) return@forEachIndexed
+                val value = row.cells.getOrNull(c).orEmpty().trim()
+                if (value.isEmpty()) return@forEachIndexed
+                wrapText("   $h: $value", maxChars).forEach { lines.add(PrintLine(it, false)) }
+            }
+            lines.add(PrintLine(PrintType.RULE.take(maxChars), false))
+        }
+
+        val topMargin = lineH * 2
+        val titleH = lineH * 2
+        val bottomMargin = lineH * 3
+        val height = topMargin + titleH + lines.size * lineH + bottomMargin
+        val bitmap = Bitmap.createBitmap(paperDots, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+
+        var y = topMargin.toFloat() + lineH
+        canvas.drawText(title.uppercase(Locale.US), paperDots / 2f, y, titleP)
+        y += titleH
+        lines.forEach { line ->
+            canvas.drawText(line.text, pad, y, if (line.bold) bold else body)
+            y += lineH
+        }
+        return bitmap
+    }
+
+    private inner class DataTableAdapter(
         private val rows: List<DataRow>,
         private val columnCount: Int,
         private val selectedIds: MutableSet<String>,
@@ -426,12 +724,19 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         private val onThumbnailClick: (DataRow) -> Unit,
         private val showsThumbnails: Boolean,
         private val switchColumn: Int?,
+        private val wrappingColumns: Set<Int>,
         private val onSwitchToggled: (DataRow, Boolean) -> Unit,
         private val onEdit: (DataRow) -> Unit,
         private val onThumbClick: (DataRow) -> Unit,
         private val onSelectionChanged: () -> Unit,
         private val showsTestPrintAction: Boolean = false,
-        private val onTestPrint: (DataRow) -> Unit = {}
+        private val onTestPrint: (DataRow) -> Unit = {},
+        private val rowActionIcon: (DataRow) -> Int? = { null },
+        private val rowActionLabel: String = "Action",
+        private val onRowAction: (DataRow) -> Unit = {},
+        private val showsSelection: Boolean = true,
+        private val showsEditAction: Boolean = true,
+        private val onRowClick: ((DataRow) -> Unit)? = null
     ) : RecyclerView.Adapter<DataTableAdapter.ViewHolder>() {
 
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -440,6 +745,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             val llCells: LinearLayout = view.findViewById(R.id.llCells)
             val btnEdit: View = view.findViewById(R.id.btnRowEdit)
             val btnTestPrint: View = view.findViewById(R.id.btnRowTestPrint)
+            val btnAction: MaterialButton = view.findViewById(R.id.btnRowAction)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -465,11 +771,19 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
                 }
                 val tv = TextView(ctx)
                 tv.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                tv.text = row.cells.getOrNull(i).orEmpty()
+                val cellText = row.cells.getOrNull(i).orEmpty()
+                tv.text = formatCellText(i, row, cellText)
                 tv.setTextColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.text_main))
                 tv.textSize = 16f
-                tv.maxLines = 1
-                tv.ellipsize = android.text.TextUtils.TruncateAt.END
+                // Recycled cells carry the last row's setting, so both branches always
+                // run rather than only the one that turns wrapping on.
+                if (i in wrappingColumns) {
+                    tv.maxLines = Int.MAX_VALUE
+                    tv.ellipsize = null
+                } else {
+                    tv.maxLines = 1
+                    tv.ellipsize = android.text.TextUtils.TruncateAt.END
+                }
                 tv.setPadding(0, 0, (8 * ctx.resources.displayMetrics.density).toInt(), 0)
                 holder.llCells.addView(tv)
             }
@@ -479,12 +793,42 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
             holder.cbRow.setOnCheckedChangeListener(null)
             holder.cbRow.isChecked = selectedIds.contains(row.id)
+            // INVISIBLE, not GONE: the header reserves this width either way, so the
+            // columns beside it have to start in the same place.
+            holder.cbRow.visibility = if (showsSelection) View.VISIBLE else View.INVISIBLE
             holder.cbRow.setOnCheckedChangeListener { _, isChecked ->
                 if (isChecked) selectedIds.add(row.id) else selectedIds.remove(row.id)
                 onSelectionChanged()
             }
 
+            holder.btnEdit.visibility = if (showsEditAction) View.VISIBLE else View.GONE
             holder.btnEdit.setOnClickListener { onEdit(row) }
+
+            // Recycled rows carry the previous binding, so the listener is always set -
+            // to null when this table does not navigate, which also clears the ripple.
+            holder.itemView.setOnClickListener(
+                onRowClick?.let { click -> View.OnClickListener { click(row) } }
+            )
+            holder.itemView.isClickable = onRowClick != null
+
+            // Recycled rows carry the previous row's action, so both branches are
+            // always taken - a row with no action has to actively lose one.
+            val actionIcon = rowActionIcon(row)
+            if (actionIcon != null) {
+                holder.btnAction.visibility = View.VISIBLE
+                holder.btnAction.setIconResource(actionIcon)
+                holder.btnAction.contentDescription = rowActionLabel
+                // ThemeManager fills every MaterialButton above; this one is a
+                // secondary action and reads as outlined.
+                val accent = ThemeManager.getThemeColor(ctx)
+                holder.btnAction.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+                holder.btnAction.iconTint = ColorStateList.valueOf(accent)
+                holder.btnAction.strokeColor = ColorStateList.valueOf(accent)
+                holder.btnAction.setOnClickListener { onRowAction(row) }
+            } else {
+                holder.btnAction.visibility = View.GONE
+                holder.btnAction.setOnClickListener(null)
+            }
 
             if (showsTestPrintAction) {
                 holder.btnTestPrint.visibility = View.VISIBLE
@@ -579,11 +923,11 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         }
 
         override fun getItemCount() = rows.size
+    }
 
-        private companion object {
-            const val THUMB_PX = 120
-            /** Cell values (lowercased) that render the inline switch as ON. */
-            val ON_VALUES = setOf("on", "enabled", "yes", "active", "true")
-        }
+    companion object {
+        private const val THUMB_PX = 120
+        /** Cell values (lowercased) that render the inline switch as ON. */
+        private val ON_VALUES = setOf("on", "enabled", "yes", "active", "true")
     }
 }

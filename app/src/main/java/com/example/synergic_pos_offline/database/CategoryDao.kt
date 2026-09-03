@@ -30,7 +30,9 @@ class CategoryDao(context: Context) {
         val list = mutableListOf<Category>()
         helper.readableDatabase.query(
             table, arrayOf("id", "category_name", "category_image"),
-            null, null, null, null, "id ASC"
+            (if (currentStoreId() != null) "store_id = ?" else null),
+            currentStoreId()?.let { arrayOf(it.toString()) },
+            null, null, "id ASC"
         ).use { c ->
             val iId = c.getColumnIndexOrThrow("id")
             val iName = c.getColumnIndexOrThrow("category_name")
@@ -135,6 +137,9 @@ class CategoryDao(context: Context) {
     }
 
     private fun currentStoreId(): Long? {
+        // The signed-in user's store is the current store; the registration row is
+        // only a fallback (e.g. seeding before anyone has logged in).
+        SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
             null, null, null, null, "store_id ASC", "1"
@@ -144,7 +149,7 @@ class CategoryDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 
     private fun now(): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())

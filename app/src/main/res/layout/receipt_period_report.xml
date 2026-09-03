@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The printed shell every period report shares - Tax Report, Returned Bill Report
+  and any that follow. Laid out at 300dp for 80mm paper, the same reference width as
+  receipt_ledger.xml, and scaled from there by PeriodReportRenderer.
+
+  Nothing here names a particular report: the title, the period line and the table
+  are all filled in by the renderer from the content it is handed, so a new report
+  is a new set of columns rather than a new copy of this file.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_light">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none">
+
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardPeriodReceipt"
+            android:layout_width="300dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="28dp"
+            app:cardCornerRadius="6dp"
+            app:cardElevation="6dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="22dp">
+
+                <ImageView
+                    android:id="@+id/ivPeriodHeaderLogo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxHeight="76dp"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:layout_marginBottom="8dp"
+                    android:contentDescription="Store logo"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvPeriodStoreName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="18sp"
+                    android:textColor="#111111"
+                    android:text="STORE" />
+
+                <TextView
+                    android:id="@+id/tvPeriodStoreAddress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvPeriodStorePhone"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textSize="11sp"
+                    android:textColor="#444444"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvPeriodStoreGstin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="11sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <!-- Rules off the store block above the title. A classic slip has no
+                     store block, so the renderer hides this rather than opening the
+                     slip with a rule under nothing. -->
+                <TextView
+                    android:id="@+id/tvPeriodTitleRule"
+                    style="@style/BillDashLine" />
+
+                <!-- Which report this is - set by the renderer, not declared here. -->
+                <TextView
+                    android:id="@+id/tvPeriodTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:fontFamily="monospace"
+                    android:textStyle="bold"
+                    android:textSize="15sp"
+                    android:textColor="#111111"
+                    android:text="REPORT" />
+
+                <!-- Filled by the renderer: the range and what the period holds on a
+                     standard slip, the machine ID, clock and F.DT / TO.DT lines on a
+                     classic one. -->
+                <LinearLayout
+                    android:id="@+id/llPeriodHead"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- A header line, then a line per row (and its detail line, where
+                     the report carries one). -->
+                <LinearLayout
+                    android:id="@+id/llPeriodRows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView style="@style/BillDashLine" />
+
+                <!-- Hidden whole where the report's total is a row of the table
+                     itself rather than a block of its own. -->
+                <LinearLayout
+                    android:id="@+id/llPeriodSummaryBlock"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvPeriodSummaryHeading"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textSize="13sp"
+                        android:textColor="#111111"
+                        android:text="SUMMARY" />
+
+                    <!-- The period's totals -->
+                    <LinearLayout
+                        android:id="@+id/llPeriodSummary"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:orientation="vertical" />
+                </LinearLayout>
+
+                <!-- Closes the summary block, and goes with it: a report whose total
+                     is a row of the table has no block here, and this would then be a
+                     second rule directly under the one that already closed it. -->
+                <TextView
+                    android:id="@+id/tvPeriodSummaryRule"
+                    style="@style/BillDashLine" />
+
+                <TextView
+                    android:id="@+id/tvPeriodPrintedBy"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textColor="#333333" />
+
+                <TextView
+                    android:id="@+id/tvPeriodPrintedAt"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textColor="#333333" />
+
+                <LinearLayout
+                    android:id="@+id/llPeriodFooterLines"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="vertical" />
+
+                <ImageView
+                    android:id="@+id/ivPeriodFooterLogo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxHeight="76dp"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:layout_marginTop="8dp"
+                    android:contentDescription="Store logo"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </ScrollView>
+</FrameLayout>

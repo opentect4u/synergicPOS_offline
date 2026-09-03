@@ -29,7 +29,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="20dp"
-            android:text="Cancel bill"
+            android:text="Cancelled / Returned"
             android:textColor="@color/text_main" />
     </RadioGroup>
 
@@ -280,11 +280,13 @@
                 <TextView android:layout_width="0dp" android:layout_height="wrap_content"
                     android:layout_weight="0.7" android:text="Time"
                     android:textStyle="bold" android:textSize="14sp" android:textColor="@color/text_secondary" />
+                <!-- Margin matches the row's, so the figures sit under the label. -->
                 <TextView android:layout_width="0dp" android:layout_height="wrap_content"
-                    android:layout_weight="1" android:text="Amount" android:gravity="end"
+                    android:layout_weight="1" android:layout_marginEnd="20dp"
+                    android:text="Amount" android:gravity="end"
                     android:textStyle="bold" android:textSize="14sp" android:textColor="@color/text_secondary" />
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginStart="10dp" android:minWidth="64dp" android:text="Action" android:gravity="center"
+                <TextView android:layout_width="128dp" android:layout_height="wrap_content"
+                    android:text="Action" android:gravity="center"
                     android:textStyle="bold" android:textSize="14sp" android:textColor="@color/text_secondary" />
             </LinearLayout>
 

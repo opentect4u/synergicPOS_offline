@@ -30,8 +30,100 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "sku", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "brand", "TEXT")
+        // Rate-name master + the rate's link to it (non-destructive).
+        runCatching { db.execSQL(SQL_CREATE_MD_RATE_NAME) }
+        // The shift master, and the user's place on it. Added here rather than
+        // through a version bump for the same reason the rate-name master was: it
+        // takes nothing away, so an existing till gains it on the next open without
+        // a migration that could fail half-done.
+        runCatching { db.execSQL(SQL_CREATE_MD_SHIFTS) }
+        // The extra-charges master. Created here rather than behind a version bump,
+        // for the same reason the two above are: it takes nothing away, so a till
+        // that already exists gains it on its next open.
+        runCatching { db.execSQL(SQL_CREATE_MD_CHARGES) }
+        addColumnIfMissing(db, Tables.MD_USERS, "shift_id", "INTEGER")
+        // Which sections this user may open. Access used to be one set of flags for
+        // the whole till, which meant every general user saw the same thing; it is
+        // granted per user now, from the Add/Edit User form.
+        //
+        // Default 0: a user created before this had no access of their own, and an
+        // account that silently gained the Master section on upgrade would be worse
+        // than one an admin has to grant it to.
+        addColumnIfMissing(db, Tables.MD_USERS, "access_master", "INTEGER DEFAULT 0")
+        addColumnIfMissing(db, Tables.MD_USERS, "access_settings", "INTEGER DEFAULT 0")
+        addColumnIfMissing(db, Tables.MD_USERS, "access_reports", "INTEGER DEFAULT 0")
+        addColumnIfMissing(db, Tables.MD_USERS, "access_about_app", "INTEGER DEFAULT 0")
+        // Older installs created md_rate_name before it was store-scoped and audited;
+        // add the missing columns and attach any pre-existing rows to the registered
+        // store, so the list, add/edit/delete and store filtering all work on them.
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "store_id", "INTEGER")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "is_active", "INTEGER NOT NULL DEFAULT 1")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "created_at", "TEXT")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "modified_at", "TEXT")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "created_by", "TEXT")
+        addColumnIfMissing(db, Tables.MD_RATE_NAME, "modified_by", "TEXT")
+        runCatching {
+            db.execSQL(
+                "UPDATE ${Tables.MD_RATE_NAME} SET store_id = " +
+                    "(SELECT store_id FROM ${Tables.MD_REGISTRATION} ORDER BY store_id ASC LIMIT 1) " +
+                    "WHERE store_id IS NULL"
+            )
+        }
+        addColumnIfMissing(db, Tables.MD_PRODUCT_RATES, "rate_name_id", "INTEGER")
+        // sell_price / sale_price are duplicate columns for the selling price. Reads
+        // use COALESCE(sell_price, sale_price) and writes set both; backfill legacy
+        // rows so whichever one was populated fills the other.
+        runCatching {
+            db.execSQL("UPDATE ${Tables.MD_PRODUCT_RATES} SET sell_price = sale_price WHERE sell_price IS NULL AND sale_price IS NOT NULL")
+            db.execSQL("UPDATE ${Tables.MD_PRODUCT_RATES} SET sale_price = sell_price WHERE sale_price IS NULL AND sell_price IS NOT NULL")
+        }
+        // Restaurant-mode product attributes (Veg/Non-Veg/Egg, spice, prep time, availability).
+        addColumnIfMissing(db, Tables.MD_PRODUCTS, "food_type", "TEXT")
+        addColumnIfMissing(db, Tables.MD_PRODUCTS, "spice_level", "TEXT")
+        addColumnIfMissing(db, Tables.MD_PRODUCTS, "prep_time", "TEXT")
+        addColumnIfMissing(db, Tables.MD_PRODUCTS, "availability", "TEXT")
+        // A batch has always carried an expiry; the date it was made is captured
+        // alongside it when a product is added with stock tracking on.
+        addColumnIfMissing(db, Tables.MD_BATCH_STOCK, "mfg_date", "TEXT")
+        // Which way the stock moved - 'IN' or 'OUT'. transaction_type says what kind
+        // of movement it was (a RETURN is stock coming back out to a supplier here),
+        // which is not the same question as whether the count went up or down.
+        // Added without the CHECK the fresh schema carries: SQLite cannot attach a
+        // constraint to an existing column, and the writers are the two screens below.
+        addColumnIfMissing(db, Tables.TD_STOCK_TRANSACTIONS, "stock_flow", "TEXT")
         addColumnIfMissing(db, Tables.TD_BILLS, "bill_seq_no", "INTEGER")
         addColumnIfMissing(db, Tables.TD_BILLS, "settings_snapshot", "TEXT")
+        // Restaurant-mode bill fields: which table/section it was, dine-in vs take-away,
+        // and the service charge kept separate from generic other-charges.
+        addColumnIfMissing(db, Tables.TD_BILLS, "table_number", "TEXT")
+        // Which section that table was in. Null on every grocery bill, and on the
+        // restaurant's take-away ones; a table number repeats in every section, so
+        // without it the history cannot say which of them was served.
+        addColumnIfMissing(db, Tables.TD_BILLS, "table_section", "TEXT")
+        addColumnIfMissing(db, Tables.TD_BILLS, "order_type", "TEXT")
+        addColumnIfMissing(db, Tables.TD_BILLS, "service_charge_amount", "REAL DEFAULT 0")
+        // The delete archive mirrors the live bill, column for column.
+        addColumnIfMissing(db, Tables.TD_BILLS_DELETE, "table_section", "TEXT")
+        // Store-scope bill lines and payments directly (not only via their bill), then
+        // backfill existing rows with the store of the bill they belong to.
+        if (addColumnIfMissing(db, Tables.TD_BILL_ITEMS, "store_id", "INTEGER")) {
+            runCatching {
+                db.execSQL(
+                    "UPDATE ${Tables.TD_BILL_ITEMS} SET store_id = " +
+                        "(SELECT store_id FROM ${Tables.TD_BILLS} WHERE ${Tables.TD_BILLS}.receipt_no = ${Tables.TD_BILL_ITEMS}.bill_id) " +
+                        "WHERE store_id IS NULL"
+                )
+            }
+        }
+        if (addColumnIfMissing(db, Tables.TD_PAYMENTS, "store_id", "INTEGER")) {
+            runCatching {
+                db.execSQL(
+                    "UPDATE ${Tables.TD_PAYMENTS} SET store_id = " +
+                        "(SELECT store_id FROM ${Tables.TD_BILLS} WHERE ${Tables.TD_BILLS}.receipt_no = ${Tables.TD_PAYMENTS}.bill_id) " +
+                        "WHERE store_id IS NULL"
+                )
+            }
+        }
         // Bills created before bill_seq_no existed carried a plain receipt_no-based
         // number (see BillDao's old formatBillNumber), so that is what continuing
         // the sequence from here has to match up with.
@@ -40,8 +132,87 @@ class DatabaseHelper private constructor(context: Context) :
         }
         // Birthday / anniversary use the existing dob / dom columns; ensure they
         // exist on databases created before those columns were added.
+        db.execSQL(SQL_CREATE_MD_CAPTIONS)
         addColumnIfMissing(db, Tables.MD_CUSTOMERS, "dob", "TEXT")
         addColumnIfMissing(db, Tables.MD_CUSTOMERS, "dom", "TEXT")
+        // New restaurant sections + tables (non-destructive; created if absent).
+        runCatching { db.execSQL(SQL_CREATE_MD_SECTION) }
+        runCatching { db.execSQL(SQL_CREATE_MD_TABLE) }
+        runCatching { db.execSQL(SQL_CREATE_MD_TABLE_UNIT) }
+        runCatching { db.execSQL(SQL_CREATE_MD_SUBTABLE) }
+        runCatching { db.execSQL(SQL_CREATE_TD_ASSIGN_WAITER) }
+        runCatching { db.execSQL(SQL_CREATE_TD_RUNNING_ORDER) }
+        runCatching { db.execSQL(SQL_CREATE_TD_RUNNING_ORDER_ITEMS) }
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "order_note", "TEXT")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "merged_tables", "TEXT")
+        // The bill number RESERVED for this order when its bill was printed.
+        //
+        // A restaurant prints the bill before it is paid, and the bill row is only
+        // written at settlement - so between the two there was nothing anywhere
+        // holding the number. Every table printed the same one until somebody settled,
+        // and a table settled after another had gone through saved a different number
+        // from the slip in the customer's hand. Reserving it here makes the printed
+        // number the number, and makes it taken as far as the next table is concerned.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "bill_seq_no", "INTEGER")
+        // The WHOLE-BILL discount typed against this table, and how to read it
+        // ("A" for a flat amount, otherwise a percentage - the same convention the
+        // item rows use).
+        //
+        // On the order for the same reason bill_seq_no is: a restaurant prints the
+        // bill and settles it later, with other tables served in between, so anything
+        // the printed slip says has to survive the operator walking away from this
+        // table and coming back. Held on the screen instead, it was wiped the moment
+        // another table was opened - the slip in the guest's hand said 5% off and the
+        // settlement charged full price, with nothing on either screen looking wrong.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "bill_discount", "REAL DEFAULT 0")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER, "bill_discount_type", "TEXT")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "kot_qty", "REAL DEFAULT 0")
+        // Per-item GST captured at order time, so the bill taxes each product dynamically.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "cgst_rate", "REAL DEFAULT 0")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "sgst_rate", "REAL DEFAULT 0")
+        // A running order carried CGST and SGST but no VAT, so a VAT-rated dish
+        // lost its rate the moment it went on a table - and the bill printed from
+        // that order could not charge a tax it no longer knew about.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "vat_rate", "REAL DEFAULT 0")
+        // The product own discount, snapshotted when the line was added - Tax
+        // Settings item-wise discount. Held on the line rather than looked up at
+        // billing time so a table open across a price change is billed at what it was
+        // sold at, the same reason the tax rates above are snapshotted here.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "discount", "REAL DEFAULT 0")
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "discount_type", "TEXT")
+        // KOT lifecycle: link a KOT to its running order, and allow the CLOSED /
+        // COMPLETE statuses the restaurant flow sets (see [ensureKotStatusSchema]).
+        ensureKotStatusSchema(db)
+        ensureTableStatusSchema(db)
+        // Items already sent under the old flag must not be re-sent: mark their full
+        // quantity as already gone to the kitchen.
+        runCatching {
+            db.execSQL(
+                "UPDATE ${Tables.TD_RUNNING_ORDER_ITEMS} SET kot_qty = quantity " +
+                    "WHERE kot_printed = 1 AND kot_qty = 0"
+            )
+        }
+        addColumnIfMissing(db, Tables.MD_TABLE, "no_of_tables", "INTEGER")
+        addColumnIfMissing(db, Tables.MD_TABLE, "from_table_no", "INTEGER")
+        addColumnIfMissing(db, Tables.MD_TABLE, "to_table_no", "INTEGER")
+        addColumnIfMissing(db, Tables.MD_TABLE, "waiter_id", "INTEGER")
+        // A due collection is numbered and takes a tender mode, so its receipt can
+        // be traced back to the row that produced it. The table itself is ensured
+        // first: ALTER TABLE on one that was never created would fail the open.
+        db.execSQL(SQL_CREATE_TD_ADVANCE_PAYMENTS)
+        addColumnIfMissing(db, Tables.TD_ADVANCE_PAYMENTS, "receipt_number", "TEXT")
+        addColumnIfMissing(db, Tables.TD_ADVANCE_PAYMENTS, "payment_mode", "TEXT")
+        // Sale returns and credit recoveries share one continuous bill-number sequence
+        // with normal sales — bill_seq_no is the shared counter (see BillDao).
+        addColumnIfMissing(db, Tables.TD_ADVANCE_PAYMENTS, "bill_seq_no", "INTEGER")
+        addColumnIfMissing(db, Tables.TD_SALE_RETURNS, "bill_seq_no", "INTEGER")
+        // Audit trail for header / footer / caption masters.
+        listOf(Tables.MD_HEADERS, Tables.MD_FOOTERS, Tables.MD_CAPTIONS).forEach { t ->
+            addColumnIfMissing(db, t, "created_at", "TEXT")
+            addColumnIfMissing(db, t, "modified_at", "TEXT")
+            addColumnIfMissing(db, t, "created_by", "TEXT")
+            addColumnIfMissing(db, t, "modified_by", "TEXT")
+        }
         ensureProductsSchema(db)
         recreateProductRatesIfOldSchema(db)
         // "default" is a reserved word, so it must be quoted in the ALTER.
@@ -63,6 +234,33 @@ class DatabaseHelper private constructor(context: Context) :
                 """.trimIndent()
             )
         }
+        // And every product's sku mirrors its own id, the same way.
+        //
+        // Done in the database rather than at each insert because there are several
+        // ways a product gets created - the Add Product popup, a bulk upload, the
+        // seeder - and a rule that lives in one of them is a rule the other two get
+        // wrong. It is the id that is copied, so a product's sku is unique without
+        // anything having to allocate it.
+        runCatching {
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS trg_products_sku_from_id
+                AFTER INSERT ON ${Tables.MD_PRODUCTS}
+                FOR EACH ROW
+                BEGIN
+                    UPDATE ${Tables.MD_PRODUCTS} SET sku = NEW.id WHERE id = NEW.id;
+                END
+                """.trimIndent()
+            )
+        }
+        // Products created before that trigger existed have no sku at all; give them
+        // the same one they would have been given. Only the blanks are touched, so a
+        // product whose sku was set by hand keeps it.
+        runCatching {
+            db.execSQL(
+                "UPDATE ${Tables.MD_PRODUCTS} SET sku = id WHERE sku IS NULL OR trim(sku) = ''"
+            )
+        }
         // store_id on products and their rates is sourced from md_registration (the
         // verified store first) when the insert didn't supply one.
         runCatching { db.execSQL(storeIdTrigger("trg_products_store_id", Tables.MD_PRODUCTS)) }
@@ -71,6 +269,10 @@ class DatabaseHelper private constructor(context: Context) :
         runCatching {
             db.execSQL("DELETE FROM ${Tables.MD_APP_SETTINGS} WHERE setting_name = 'IGST'")
         }
+        // Last, and after every table it touches is known to exist: fold a device
+        // that is holding two stores back onto one, so the settings the DAOs read
+        // are the settings that were saved.
+        runCatching { repairDuplicateStores(db) }
     }
 
     /** Builds an AFTER INSERT trigger that fills a null store_id from md_registration. */
@@ -108,6 +310,134 @@ class DatabaseHelper private constructor(context: Context) :
             db.setForeignKeyConstraintsEnabled(true)
         }.onFailure { android.util.Log.e("DBMigrate", "Failed to recreate md_product_rates", it) }
     }
+
+    /**
+     * Brings td_kot / td_kot_items up to the restaurant KOT lifecycle: a
+     * `running_order_id` link and the `CLOSED` (kot) / `COMPLETE` (item) statuses.
+     * Both carry a CHECK on `status`, which SQLite can only widen by rebuilding the
+     * table, so this re-creates them (data preserved) when the stored schema is old.
+     * Foreign keys are toggled off around the rebuild, as SQLite requires.
+     */
+    private fun ensureKotStatusSchema(db: SQLiteDatabase) {
+        runCatching { db.execSQL(SQL_CREATE_TD_KOT) }
+        runCatching { db.execSQL(SQL_CREATE_TD_KOT_ITEMS) }
+        val kotSql = tableSql(db, Tables.TD_KOT)
+        val itemSql = tableSql(db, Tables.TD_KOT_ITEMS)
+        val kotOld = kotSql != null && !(kotSql.contains("CLOSED") && kotSql.contains("running_order_id"))
+        val itemOld = itemSql != null && !(itemSql.contains("COMPLETE") && itemSql.contains("CANCELLED"))
+        if (!kotOld && !itemOld) return
+        runCatching {
+            db.setForeignKeyConstraintsEnabled(false)
+            db.beginTransaction()
+            try {
+                if (kotOld) {
+                    db.execSQL("ALTER TABLE ${Tables.TD_KOT} RENAME TO td_kot_old")
+                    db.execSQL(SQL_CREATE_TD_KOT)
+                    db.execSQL(
+                        """
+                        INSERT INTO ${Tables.TD_KOT}
+                            (id, bill_id, kot_number, table_number, waiter_id, kot_date, kot_time,
+                             status, created_at, modified_at, created_by, modified_by)
+                        SELECT id, bill_id, kot_number, table_number, waiter_id, kot_date, kot_time,
+                               status, created_at, modified_at, created_by, modified_by
+                        FROM td_kot_old
+                        """.trimIndent()
+                    )
+                    db.execSQL("DROP TABLE td_kot_old")
+                }
+                if (itemOld) {
+                    db.execSQL("ALTER TABLE ${Tables.TD_KOT_ITEMS} RENAME TO td_kot_items_old")
+                    db.execSQL(SQL_CREATE_TD_KOT_ITEMS)
+                    db.execSQL(
+                        """
+                        INSERT INTO ${Tables.TD_KOT_ITEMS}
+                            (id, kot_id, product_id, quantity, special_instructions, status,
+                             created_at, modified_at, created_by, modified_by)
+                        SELECT id, kot_id, product_id, quantity, special_instructions, status,
+                               created_at, modified_at, created_by, modified_by
+                        FROM td_kot_items_old
+                        """.trimIndent()
+                    )
+                    db.execSQL("DROP TABLE td_kot_items_old")
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            db.setForeignKeyConstraintsEnabled(true)
+        }.onFailure { android.util.Log.e("DBMigrate", "Failed to rebuild KOT tables", it) }
+    }
+
+    /**
+     * Brings md_table, md_table_unit and md_subtable up to the restaurant status
+     * lifecycle by adding 'KOT Printed' to their table_status CHECK. Since SQLite
+     * cannot widen a CHECK without rebuilding, this re-creates the tables (preserving
+     * data) if they are found to be missing the new status.
+     */
+    private fun ensureTableStatusSchema(db: SQLiteDatabase) {
+        val tableSql = tableSql(db, Tables.MD_TABLE)
+        val unitSql = tableSql(db, Tables.MD_TABLE_UNIT)
+        val subSql = tableSql(db, Tables.MD_SUBTABLE)
+
+        val tableOld = tableSql != null && !tableSql.contains("KOT Printed")
+        val unitOld = unitSql != null && !unitSql.contains("KOT Printed")
+        val subOld = subSql != null && !subSql.contains("KOT Printed")
+
+        if (!tableOld && !unitOld && !subOld) return
+
+        runCatching {
+            db.setForeignKeyConstraintsEnabled(false)
+            db.beginTransaction()
+            try {
+                if (tableOld) {
+                    db.execSQL("ALTER TABLE ${Tables.MD_TABLE} RENAME TO md_table_old")
+                    db.execSQL(SQL_CREATE_MD_TABLE)
+                    db.execSQL(
+                        """
+                        INSERT INTO ${Tables.MD_TABLE} (id, store_id, outlet_id, section_id, no_of_tables, from_table_no, to_table_no, table_code, floor_no, seating_capacity, table_status, waiter_id, remarks, created_at, modified_at, created_by, modified_by)
+                        SELECT id, store_id, outlet_id, section_id, no_of_tables, from_table_no, to_table_no, table_code, floor_no, seating_capacity, table_status, waiter_id, remarks, created_at, modified_at, created_by, modified_by
+                        FROM md_table_old
+                        """.trimIndent()
+                    )
+                    db.execSQL("DROP TABLE md_table_old")
+                }
+                if (unitOld) {
+                    db.execSQL("ALTER TABLE ${Tables.MD_TABLE_UNIT} RENAME TO md_table_unit_old")
+                    db.execSQL(SQL_CREATE_MD_TABLE_UNIT)
+                    db.execSQL(
+                        """
+                        INSERT INTO ${Tables.MD_TABLE_UNIT} (id, store_id, table_id, section_id, table_code, floor_no, seating_capacity, table_status, created_at, modified_at, created_by, modified_by)
+                        SELECT id, store_id, table_id, section_id, table_code, floor_no, seating_capacity, table_status, created_at, modified_at, created_by, modified_by
+                        FROM md_table_unit_old
+                        """.trimIndent()
+                    )
+                    db.execSQL("DROP TABLE md_table_unit_old")
+                }
+                if (subOld) {
+                    db.execSQL("ALTER TABLE ${Tables.MD_SUBTABLE} RENAME TO md_subtable_old")
+                    db.execSQL(SQL_CREATE_MD_SUBTABLE)
+                    db.execSQL(
+                        """
+                        INSERT INTO ${Tables.MD_SUBTABLE} (id, store_id, table_id, parent_code, sub_code, suffix, table_status, created_at, modified_at, created_by, modified_by)
+                        SELECT id, store_id, table_id, parent_code, sub_code, suffix, table_status, created_at, modified_at, created_by, modified_by
+                        FROM md_subtable_old
+                        """.trimIndent()
+                    )
+                    db.execSQL("DROP TABLE md_subtable_old")
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            db.setForeignKeyConstraintsEnabled(true)
+        }.onFailure { android.util.Log.e("DBMigrate", "Failed to rebuild table status tables", it) }
+    }
+
+    /** The stored CREATE statement for [table], or null if it doesn't exist. */
+    private fun tableSql(db: SQLiteDatabase, table: String): String? =
+        db.rawQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", arrayOf(table)).use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
 
     /** True if [table] has a column named [column]. */
     private fun columnExists(db: SQLiteDatabase, table: String, column: String): Boolean =
@@ -193,8 +523,133 @@ class DatabaseHelper private constructor(context: Context) :
         }
     }
 
-    /** Adds [column] to [table] if it isn't already present, leaving data intact. */
-    private fun addColumnIfMissing(db: SQLiteDatabase, table: String, column: String, type: String) {
+    // ---- One device, one store ---------------------------------------------
+    //
+    // A till serves a single shop, and md_registration is meant to hold a single row
+    // for it. Everything store-scoped depends on that: settings, masters and bills
+    // are all read back with "the registered store's id", which every DAO resolves
+    // the same way - the first row of md_registration.
+    //
+    // A second row breaks all of it at once. The server issues the real store_id at
+    // verification, which is rarely the placeholder the local registration created,
+    // so the device ends up holding both. The DAOs then read under one id while the
+    // data is written and re-pointed under the other, and every setting comes back
+    // as its default - a saved Restaurant mode reads as Grocery, the mode's own
+    // default. Nothing is lost; it is simply being looked for under the wrong store.
+    //
+    // So the rule is enforced rather than assumed: the verified store absorbs any
+    // other, and the rows that named the other are carried over to it.
+
+    /** The store ids md_registration currently holds, lowest first. */
+    fun registrationStoreIds(db: SQLiteDatabase): List<Long> {
+        val ids = mutableListOf<Long>()
+        runCatching {
+            db.query(
+                Tables.MD_REGISTRATION, arrayOf("store_id"),
+                null, null, null, null, "store_id ASC"
+            ).use { c -> while (c.moveToNext()) if (!c.isNull(0)) ids.add(c.getLong(0)) }
+        }
+        return ids
+    }
+
+    /**
+     * Makes [keep] the only store on the device: every store-scoped row is carried
+     * over to it and the other registration rows are dropped.
+     *
+     * Children are re-pointed before their parent goes, so nothing is orphaned and
+     * the foreign key on md_users.store_id holds throughout. Runs in the caller's
+     * transaction - [saveVerifiedStore] does this as part of recording the store.
+     */
+    fun consolidateStores(db: SQLiteDatabase, keep: Long) {
+        val others = registrationStoreIds(db).filter { it != keep }
+        if (others.isEmpty()) return
+        val orphaned = others.joinToString(",")
+        for (t in tablesWithStoreId(db)) {
+            runCatching {
+                db.execSQL(
+                    "UPDATE $t SET store_id = ? WHERE store_id IS NULL OR store_id IN ($orphaned)",
+                    arrayOf<Any>(keep)
+                )
+            }
+        }
+        runCatching {
+            db.execSQL("DELETE FROM ${Tables.MD_REGISTRATION} WHERE store_id IN ($orphaned)")
+        }
+        dedupeAppSettings(db)
+    }
+
+    /**
+     * Collapses a device that already holds two stores, on the next open.
+     *
+     * The verified row is the one to keep: it carries the store_id the server issued
+     * and the one the signed-in user belongs to. With no verified row, the newest is
+     * kept - a placeholder that was superseded is the older of the two.
+     */
+    private fun repairDuplicateStores(db: SQLiteDatabase) {
+        val ids = registrationStoreIds(db)
+        if (ids.size < 2) return
+        val keep = verifiedStoreId(db) ?: ids.max()
+        db.beginTransaction()
+        try {
+            consolidateStores(db, keep)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun verifiedStoreId(db: SQLiteDatabase): Long? {
+        runCatching {
+            db.query(
+                Tables.MD_REGISTRATION, arrayOf("store_id"),
+                "verify_flag = 1", null, null, null, "store_id DESC", "1"
+            ).use { c -> if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0) }
+        }
+        return null
+    }
+
+    /**
+     * Every table carrying a store_id, md_ and td_ alike, except md_registration -
+     * there store_id is the primary key that identifies the store rather than a
+     * reference to it, so it is moved by [consolidateStores] and never re-stamped.
+     */
+    fun tablesWithStoreId(db: SQLiteDatabase): List<String> {
+        val tables = mutableListOf<String>()
+        runCatching {
+            db.rawQuery(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", null
+            ).use { c ->
+                while (c.moveToNext()) {
+                    val name = c.getString(0) ?: continue
+                    if (name == Tables.MD_REGISTRATION) continue
+                    if (columnExists(db, name, "store_id")) tables.add(name)
+                }
+            }
+        }
+        return tables
+    }
+
+    /**
+     * Drops the copies a split store left behind.
+     *
+     * While the two ids were live, a save read nothing under the id it looked under
+     * and so inserted where it meant to update - once per save, per setting. The
+     * newest row is the one that was last written, and is the one kept.
+     */
+    private fun dedupeAppSettings(db: SQLiteDatabase) {
+        runCatching {
+            db.execSQL(
+                "DELETE FROM ${Tables.MD_APP_SETTINGS} WHERE id NOT IN " +
+                    "(SELECT MAX(id) FROM ${Tables.MD_APP_SETTINGS} GROUP BY setting_name)"
+            )
+        }
+    }
+
+    /**
+     * Adds [column] to [table] if it isn't already present, leaving data intact.
+     * Returns true when the column was actually added (so callers can backfill it).
+     */
+    private fun addColumnIfMissing(db: SQLiteDatabase, table: String, column: String, type: String): Boolean {
         val exists = db.rawQuery("PRAGMA table_info($table)", null).use { c ->
             val nameIdx = c.getColumnIndex("name")
             generateSequence { if (c.moveToNext()) c.getString(nameIdx) else null }.any { it == column }
@@ -202,6 +657,7 @@ class DatabaseHelper private constructor(context: Context) :
         if (!exists) {
             db.execSQL("ALTER TABLE $table ADD COLUMN $column $type")
         }
+        return !exists
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -210,6 +666,8 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_MD_USERS)
         db.execSQL(SQL_CREATE_MD_CATEGORY)
         db.execSQL(SQL_CREATE_MD_UNITS)
+        db.execSQL(SQL_CREATE_MD_SHIFTS)
+        db.execSQL(SQL_CREATE_MD_RATE_NAME)
         db.execSQL(SQL_CREATE_MD_PRODUCTS)
         db.execSQL(SQL_CREATE_MD_PRODUCT_RATES)
         db.execSQL(SQL_CREATE_MD_CUSTOMERS)
@@ -217,6 +675,7 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_MD_WAITERS)
         db.execSQL(SQL_CREATE_MD_HEADERS)
         db.execSQL(SQL_CREATE_MD_FOOTERS)
+        db.execSQL(SQL_CREATE_MD_CAPTIONS)
         db.execSQL(SQL_CREATE_MD_LOGOS)
         db.execSQL(SQL_CREATE_MD_QR)
         db.execSQL(SQL_CREATE_MD_APP_SETTINGS)
@@ -228,6 +687,13 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL("UPDATE ${Tables.MD_PRINTER} SET is_selected = 1")
         addExtraPrinterTypes(db)
         db.execSQL(SQL_CREATE_MD_OPERATING_PRINTER)
+        db.execSQL(SQL_CREATE_MD_SECTION)
+        db.execSQL(SQL_CREATE_MD_TABLE)
+        db.execSQL(SQL_CREATE_MD_TABLE_UNIT)
+        db.execSQL(SQL_CREATE_MD_SUBTABLE)
+        db.execSQL(SQL_CREATE_TD_ASSIGN_WAITER)
+        db.execSQL(SQL_CREATE_TD_RUNNING_ORDER)
+        db.execSQL(SQL_CREATE_TD_RUNNING_ORDER_ITEMS)
 
         // Transaction tables
         db.execSQL(SQL_CREATE_TD_PURCHASE)
@@ -235,6 +701,8 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_TD_WRITE_OFF)
         db.execSQL(SQL_CREATE_TD_BILLS)
         db.execSQL(SQL_CREATE_TD_BILL_ITEMS)
+        db.execSQL(SQL_CREATE_TD_BILLS_DELETE)
+        db.execSQL(SQL_CREATE_TD_BILL_ITEMS_DELETE)
         db.execSQL(SQL_CREATE_TD_PAYMENTS)
         db.execSQL(SQL_CREATE_TD_SALE_RETURNS)
         db.execSQL(SQL_CREATE_TD_RETURN_ITEMS)
@@ -266,6 +734,22 @@ class DatabaseHelper private constructor(context: Context) :
             // Ensure md_printer exists before adding column in v7 if we jumped directly from < 6 to 14
             db.execSQL(SQL_CREATE_MD_PRINTER)
             addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
+        }
+        if (oldVersion < 17) {
+            db.execSQL(SQL_CREATE_TD_BILLS_DELETE)
+            db.execSQL(SQL_CREATE_TD_BILL_ITEMS_DELETE)
+        }
+        if (oldVersion < 18) {
+            addColumnIfMissing(db, Tables.MD_CHARGES, "charge_type", "TEXT DEFAULT 'PERCENTAGE'")
+        }
+        if (oldVersion < 19) {
+            addColumnIfMissing(db, Tables.MD_CHARGES, "applicability", "TEXT DEFAULT 'BOTH'")
+        }
+        if (oldVersion < 20) {
+            // Parcel Charge lives in the same table as Extra Charges, told apart by
+            // this flag - see ChargeDao.Kind. Every existing row predates the
+            // feature and is an extra charge.
+            addColumnIfMissing(db, Tables.MD_CHARGES, "charge_kind", "TEXT DEFAULT 'EXTRA'")
         }
         // gst_rate is dropped in onOpen via a portable table rebuild (see
         // dropProductGstRateIfPresent), which works on every SQLite version.
@@ -373,6 +857,47 @@ class DatabaseHelper private constructor(context: Context) :
                     arrayOf(purpose, type, purpose, type)
                 )
             }
+        }
+    }
+
+    /**
+     * Empties [Tables.MD_APP_SETTINGS] - every setting on the till, for every store.
+     *
+     * Only ever called on the way to writing the defaults back
+     * ([com.example.synergic_pos_offline.utils.DefaultSettings.restore]), which is
+     * why it takes no store id: a key written before the till was registered carries
+     * a null store and would survive a scoped delete, then sit alongside the row the
+     * restore inserts against the real store and be read back at random.
+     */
+    fun clearAppSettings() {
+        writableDatabase.delete(Tables.MD_APP_SETTINGS, null, null)
+    }
+
+    /**
+     * Puts the printers back to how a newly installed app has them.
+     *
+     * Both tables, because they are one setup: [Tables.MD_OPERATING_PRINTER] holds
+     * the shop's named printers and each points at a connection row in
+     * [Tables.MD_PRINTER], so rebuilding the connections while leaving the named
+     * printers behind would leave every one of them pointing at a row that no longer
+     * exists. They go together and are set up again together.
+     *
+     * The rebuilt state is exactly what [onCreate] lays down: WIFI for BILL, LAN for
+     * KOT and OTHERS, each with no address and no paper width, plus the unselected
+     * Bluetooth and USB alternatives.
+     */
+    fun resetPrintersToDefaults() {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete(Tables.MD_OPERATING_PRINTER, null, null)
+            db.delete(Tables.MD_PRINTER, null, null)
+            seedDefaultPrinters(db)
+            db.execSQL("UPDATE ${Tables.MD_PRINTER} SET is_selected = 1")
+            addExtraPrinterTypes(db)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
     }
 
@@ -690,12 +1215,46 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_td_kot_items_kot ON td_kot_items(kot_id)")
     }
 
+    /**
+     * Wipes the mode-specific business data when the app switches Grocery ↔ Restaurant:
+     * the product/category masters, the units and rate names those products used,
+     * restaurant masters (section/table/waiter), and all sales transactions (bills,
+     * KOTs, payments, returns, running orders). Registration, users, and settings are
+     * left intact. Children are cleared before parents.
+     */
+    fun eraseBusinessDataForModeChange() {
+        val db = writableDatabase
+        val order = listOf(
+            Tables.TD_PAYMENTS, Tables.TD_RETURN_ITEMS, Tables.TD_SALE_RETURNS,
+            Tables.TD_BILL_PRINTS, Tables.TD_BILL_ITEMS, Tables.TD_BILLS,
+            Tables.TD_BILL_ITEMS_DELETE, Tables.TD_BILLS_DELETE,
+            Tables.TD_KOT_ITEMS, Tables.TD_KOT,
+            Tables.TD_RUNNING_ORDER_ITEMS, Tables.TD_RUNNING_ORDER,
+            Tables.TD_ASSIGN_WAITER,
+            Tables.MD_SUBTABLE, Tables.MD_TABLE_UNIT, Tables.MD_TABLE, Tables.MD_SECTION,
+            Tables.MD_WAITERS,
+            // Product rates reference units and rate names, so those go after it.
+            Tables.MD_PRODUCT_RATES, Tables.MD_PRODUCTS, Tables.MD_CATEGORY,
+            Tables.MD_UNITS, Tables.MD_RATE_NAME
+        )
+        db.beginTransaction()
+        try {
+            order.forEach { runCatching { db.delete(it, null, null) } }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     /** Table names, in FK-safe creation order. */
     object Tables {
         const val MD_REGISTRATION = "md_registration"
         const val MD_USERS = "md_users"
         const val MD_CATEGORY = "md_category"
         const val MD_UNITS = "md_units"
+        const val MD_SHIFTS = "md_shifts"
+        const val MD_RATE_NAME = "md_rate_name"
+        const val MD_CHARGES = "md_charges"
         const val MD_PRODUCTS = "md_products"
         const val MD_PRODUCT_RATES = "md_product_rates"
         const val MD_CUSTOMERS = "md_customers"
@@ -703,6 +1262,7 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_WAITERS = "md_waiters"
         const val MD_HEADERS = "md_headers"
         const val MD_FOOTERS = "md_footers"
+        const val MD_CAPTIONS = "md_captions"
         const val MD_LOGOS = "md_logos"
         const val MD_QR = "md_qr"
         const val MD_APP_SETTINGS = "md_app_settings"
@@ -711,12 +1271,27 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_VERSION = "md_version"
         const val MD_PRINTER = "md_printer"
         const val MD_OPERATING_PRINTER = "md_operating_printer"
+        const val MD_SECTION = "md_section"
+        const val MD_TABLE = "md_table"
+        const val MD_TABLE_UNIT = "md_table_unit"
+        const val MD_SUBTABLE = "md_subtable"
 
         const val TD_PURCHASE = "td_purchase"
         const val TD_PURCHASE_RETURN = "td_purchase_return"
         const val TD_WRITE_OFF = "td_write_off"
         const val TD_BILLS = "td_bills"
         const val TD_BILL_ITEMS = "td_bill_items"
+
+        /**
+         * Where a deleted bill and its lines go.
+         *
+         * Deleting a bill moves it out of [TD_BILLS] rather than erasing it, so it
+         * leaves every sales report at once - each of them reads td_bills, and none
+         * of them has to learn a new exclusion - while the record of it survives for
+         * Bill History and the Void Bill Report to show.
+         */
+        const val TD_BILLS_DELETE = "td_bills_delete"
+        const val TD_BILL_ITEMS_DELETE = "td_bill_items_delete"
         const val TD_PAYMENTS = "td_payments"
         const val TD_SALE_RETURNS = "td_sale_returns"
         const val TD_RETURN_ITEMS = "td_return_items"
@@ -726,11 +1301,15 @@ class DatabaseHelper private constructor(context: Context) :
         const val TD_KOT = "td_kot"
         const val TD_KOT_ITEMS = "td_kot_items"
         const val TD_BILL_PRINTS = "td_bill_prints"
+        const val TD_ASSIGN_WAITER = "td_assign_waiter"
+        // Live restaurant billing: running (open) table orders + their items.
+        const val TD_RUNNING_ORDER = "td_running_order"
+        const val TD_RUNNING_ORDER_ITEMS = "td_running_order_items"
     }
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 16
+        private const val DATABASE_VERSION = 20
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of
@@ -754,13 +1333,15 @@ class DatabaseHelper private constructor(context: Context) :
         private val ALL_TABLES = listOf(
             Tables.MD_REGISTRATION, Tables.MD_USERS, Tables.MD_CATEGORY, Tables.MD_UNITS,
             Tables.MD_PRODUCTS, Tables.MD_PRODUCT_RATES, Tables.MD_CUSTOMERS, Tables.MD_DESCRIPTION,
-            Tables.MD_WAITERS, Tables.MD_HEADERS, Tables.MD_FOOTERS, Tables.MD_LOGOS, Tables.MD_QR,
+            Tables.MD_WAITERS, Tables.MD_HEADERS, Tables.MD_FOOTERS, Tables.MD_CAPTIONS, Tables.MD_LOGOS,
+            Tables.MD_QR,
             Tables.MD_APP_SETTINGS, Tables.MD_SUPPLIER, Tables.MD_BATCH_STOCK, Tables.MD_VERSION,
             Tables.MD_PRINTER, Tables.MD_OPERATING_PRINTER,
             Tables.TD_PURCHASE, Tables.TD_PURCHASE_RETURN, Tables.TD_WRITE_OFF, Tables.TD_BILLS,
             Tables.TD_BILL_ITEMS, Tables.TD_PAYMENTS, Tables.TD_SALE_RETURNS, Tables.TD_RETURN_ITEMS,
             Tables.TD_STOCK_TRANSACTIONS, Tables.TD_CUSTOMER_LEDGER, Tables.TD_ADVANCE_PAYMENTS,
-            Tables.TD_KOT, Tables.TD_KOT_ITEMS, Tables.TD_BILL_PRINTS
+            Tables.TD_KOT, Tables.TD_KOT_ITEMS, Tables.TD_BILL_PRINTS,
+            Tables.TD_BILLS_DELETE, Tables.TD_BILL_ITEMS_DELETE
         )
 
         // ---------------------------------------------------------------
@@ -816,6 +1397,30 @@ class DatabaseHelper private constructor(context: Context) :
             )
         """
 
+        /**
+         * The shifts a shop runs, and who is on them.
+         *
+         * from_time / to_time are stored as "HH:mm" - the clock face rather than a
+         * timestamp, because a shift is a shape of the day that repeats rather than
+         * an event that happened once. A night shift whose to_time is earlier than
+         * its from_time is one that crosses midnight, which the master accepts and
+         * nothing here has to resolve: the shift is attached to a user, and it is the
+         * user that a bill is counted under.
+         */
+        private const val SQL_CREATE_MD_SHIFTS = """
+            CREATE TABLE IF NOT EXISTS md_shifts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                shift_name TEXT,
+                from_time TEXT,
+                to_time TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
         private const val SQL_CREATE_MD_UNITS = """
             CREATE TABLE IF NOT EXISTS md_units (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -823,6 +1428,50 @@ class DatabaseHelper private constructor(context: Context) :
                 unit_name TEXT,
                 unit_symbol TEXT,
                 fraction_flag INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
+        // Master list of rate names (Rate 1 / Rate 2 / MRP …), chosen per product rate.
+        private const val SQL_CREATE_MD_RATE_NAME = """
+            CREATE TABLE IF NOT EXISTS md_rate_name (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                rate_name TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
+        /**
+         * The extra-charges master: a shop's own additions to a bill - service,
+         * packing, delivery - each a NAME and a PERCENTAGE, switched on and off one
+         * at a time.
+         *
+         * A percentage rather than a flat amount because that is what these charges
+         * are in practice: packing a large order costs more than packing a small one.
+         * What it is a percentage OF is the bill's item lines before any tax - see
+         * ChargeDao.
+         *
+         * is_enabled is deliberately separate from is_active. Active is whether the
+         * row exists at all (deleting clears it); enabled is whether a charge that
+         * exists is currently being applied. A shop that stops charging for delivery
+         * for a month wants the row back afterwards with its rate intact, not retyped.
+         */
+        private const val SQL_CREATE_MD_CHARGES = """
+            CREATE TABLE IF NOT EXISTS md_charges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                charge_name TEXT NOT NULL,
+                percentage REAL NOT NULL DEFAULT 0,
+                is_enabled INTEGER NOT NULL DEFAULT 1,
+                is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,
@@ -862,6 +1511,7 @@ class DatabaseHelper private constructor(context: Context) :
                 sku TEXT,
                 batch_no TEXT,
                 rate_name TEXT,
+                rate_name_id INTEGER,
                 rate REAL,
                 unit_id INTEGER,
                 cgst_rate REAL,
@@ -943,7 +1593,11 @@ class DatabaseHelper private constructor(context: Context) :
                 font_size TEXT CHECK(font_size IN ('SMALL','MEDIUM','BIG','EXTRA_LARGE')),
                 is_bold INTEGER NOT NULL DEFAULT 0,
                 is_enabled INTEGER NOT NULL DEFAULT 1,
-                header_type TEXT CHECK(header_type IN ('BILL','KOT'))
+                header_type TEXT CHECK(header_type IN ('BILL','KOT')),
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
             )
         """
 
@@ -956,7 +1610,33 @@ class DatabaseHelper private constructor(context: Context) :
                 font_size TEXT CHECK(font_size IN ('SMALL','MEDIUM','BIG','EXTRA_LARGE')),
                 is_bold INTEGER NOT NULL DEFAULT 0,
                 is_enabled INTEGER NOT NULL DEFAULT 1,
-                footer_type TEXT CHECK(footer_type IN ('BILL','KOT'))
+                footer_type TEXT CHECK(footer_type IN ('BILL','KOT')),
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
+        /**
+         * Captions are header/footer lines by another name - same columns, same
+         * limits - but keyed to what the slip *is* rather than where on it the line
+         * sits: an ordinary bill, a credit bill, or a reprint of one already issued.
+         */
+        private const val SQL_CREATE_MD_CAPTIONS = """
+            CREATE TABLE IF NOT EXISTS md_captions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                caption_number INTEGER CHECK(caption_number BETWEEN 1 AND 10),
+                caption_text TEXT,
+                font_size TEXT CHECK(font_size IN ('SMALL','MEDIUM','BIG','EXTRA_LARGE')),
+                is_bold INTEGER NOT NULL DEFAULT 0,
+                is_enabled INTEGER NOT NULL DEFAULT 1,
+                caption_type TEXT CHECK(caption_type IN ('BILL','DUPLICATE','CREDIT')),
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
             )
         """
 
@@ -1025,6 +1705,7 @@ class DatabaseHelper private constructor(context: Context) :
                 outlet_id INTEGER,
                 product_id INTEGER,
                 batch_no TEXT,
+                mfg_date TEXT,
                 expiry_date TEXT,
                 current_quantity REAL DEFAULT 0,
                 last_stock_update TEXT,
@@ -1064,6 +1745,148 @@ class DatabaseHelper private constructor(context: Context) :
                 print_flag INTEGER DEFAULT 0,
                 default_flag INTEGER DEFAULT 0,
                 paper_mm INTEGER DEFAULT 80
+            )
+        """
+
+        // Restaurant sections/floors. price_list_id references a product rate tier
+        // (md_product_rates.rate_name — Rate 1 / Rate 2 …) shown in a dropdown.
+        private const val SQL_CREATE_MD_SECTION = """
+            CREATE TABLE IF NOT EXISTS md_section (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                section_name TEXT NOT NULL,
+                no_of_tables INTEGER DEFAULT 0,
+                price_list_id INTEGER,
+                service_charge REAL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
+        // Restaurant tables, each belonging to a section (md_section).
+        private const val SQL_CREATE_MD_TABLE = """
+            CREATE TABLE IF NOT EXISTS md_table (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                section_id INTEGER,
+                no_of_tables INTEGER DEFAULT 0,
+                from_table_no INTEGER,
+                to_table_no INTEGER,
+                table_code TEXT,
+                floor_no TEXT,
+                seating_capacity INTEGER DEFAULT 0,
+                table_status TEXT CHECK(table_status IN
+                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked','KOT Printed')) DEFAULT 'Available',
+                waiter_id INTEGER,
+                remarks TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(section_id) REFERENCES md_section(id),
+                FOREIGN KEY(waiter_id) REFERENCES md_waiters(id)
+            )
+        """
+
+        // Assigned waiters (restaurant): only the waiter id and name are kept.
+        private const val SQL_CREATE_TD_ASSIGN_WAITER = """
+            CREATE TABLE IF NOT EXISTS td_assign_waiter (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                waiter_id INTEGER,
+                waiter_name TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(waiter_id) REFERENCES md_waiters(id)
+            )
+        """
+
+        // A running (open) table order — the live bill before payment.
+        private const val SQL_CREATE_TD_RUNNING_ORDER = """
+            CREATE TABLE IF NOT EXISTS td_running_order (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                table_code TEXT,
+                section TEXT,
+                waiter_id INTEGER,
+                order_type TEXT,
+                customer_phone TEXT,
+                cashier TEXT,
+                order_note TEXT,
+                merged_tables TEXT,
+                status TEXT NOT NULL DEFAULT 'RUNNING',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
+        // Items on a running order; kot_printed flags what has gone to the kitchen.
+        private const val SQL_CREATE_TD_RUNNING_ORDER_ITEMS = """
+            CREATE TABLE IF NOT EXISTS td_running_order_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                running_order_id INTEGER,
+                product_id INTEGER,
+                product_name TEXT,
+                quantity REAL DEFAULT 1,
+                rate REAL DEFAULT 0,
+                cgst_rate REAL DEFAULT 0,
+                sgst_rate REAL DEFAULT 0,
+                vat_rate REAL DEFAULT 0,
+                kot_printed INTEGER NOT NULL DEFAULT 0,
+                kot_qty REAL NOT NULL DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY(running_order_id) REFERENCES td_running_order(id)
+            )
+        """
+
+        // Individual tables belonging to a table allocation (md_table).
+        private const val SQL_CREATE_MD_TABLE_UNIT = """
+            CREATE TABLE IF NOT EXISTS md_table_unit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                table_id INTEGER,
+                section_id INTEGER,
+                table_code TEXT,
+                floor_no TEXT,
+                seating_capacity INTEGER DEFAULT 0,
+                table_status TEXT CHECK(table_status IN
+                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked','KOT Printed')) DEFAULT 'Available',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(table_id) REFERENCES md_table(id),
+                FOREIGN KEY(section_id) REFERENCES md_section(id)
+            )
+        """
+
+        // Split sub-tables: parts of a table (101 A, 101 B, …) created on Table Split.
+        private const val SQL_CREATE_MD_SUBTABLE = """
+            CREATE TABLE IF NOT EXISTS md_subtable (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                table_id INTEGER,
+                parent_code TEXT,
+                sub_code TEXT,
+                suffix TEXT,
+                table_status TEXT CHECK(table_status IN
+                    ('Available','Occupied','Reserved','Cleaning','Billing','Blocked','KOT Printed')) DEFAULT 'Occupied',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(table_id) REFERENCES md_table(id)
             )
         """
 
@@ -1146,6 +1969,10 @@ class DatabaseHelper private constructor(context: Context) :
                 customer_id INTEGER,
                 operator_id INTEGER,
                 waiter_id INTEGER,
+                table_number TEXT,
+                table_section TEXT,
+                order_type TEXT,
+                service_charge_amount REAL DEFAULT 0,
                 bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','VOID')),
                 settings_snapshot TEXT,
                 tot_price REAL DEFAULT 0,
@@ -1181,6 +2008,7 @@ class DatabaseHelper private constructor(context: Context) :
         private const val SQL_CREATE_TD_BILL_ITEMS = """
             CREATE TABLE IF NOT EXISTS td_bill_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
                 receipt_no INTEGER,
                 trans_dt TEXT,
                 bill_id INTEGER,
@@ -1212,9 +2040,98 @@ class DatabaseHelper private constructor(context: Context) :
             )
         """
 
+        /**
+         * A deleted bill, kept exactly as it was billed.
+         *
+         * The same columns as td_bills so a row moves across whole, but without its
+         * foreign keys: a deleted bill may outlive the customer or operator it named,
+         * and refusing the archive because a master row has since gone would leave
+         * the till unable to delete the bill at all.
+         */
+        private const val SQL_CREATE_TD_BILLS_DELETE = """
+            CREATE TABLE IF NOT EXISTS td_bills_delete (
+                receipt_no INTEGER PRIMARY KEY,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                bill_number TEXT,
+                bill_seq_no INTEGER,
+                bill_date TEXT,
+                bill_date_time TEXT,
+                customer_id INTEGER,
+                operator_id INTEGER,
+                waiter_id INTEGER,
+                table_number TEXT,
+                table_section TEXT,
+                order_type TEXT,
+                service_charge_amount REAL DEFAULT 0,
+                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','VOID')),
+                settings_snapshot TEXT,
+                tot_price REAL DEFAULT 0,
+                tot_discount_amount REAL DEFAULT 0,
+                tot_discount_percentage REAL DEFAULT 0,
+                discount_flag INTEGER NOT NULL DEFAULT 0,
+                discount_type TEXT,
+                tot_cgst_amount REAL DEFAULT 0,
+                tot_sgst_amount REAL DEFAULT 0,
+                tot_igst_amount REAL DEFAULT 0,
+                tot_vat_amount REAL DEFAULT 0,
+                tot_other_charges_amount REAL DEFAULT 0,
+                tot_round_off_amount REAL DEFAULT 0,
+                net_amount REAL DEFAULT 0,
+                amount_in_words TEXT,
+                gst_flag INTEGER NOT NULL DEFAULT 0,
+                vat_flag INTEGER NOT NULL DEFAULT 0,
+                is_mrp_billing INTEGER NOT NULL DEFAULT 0,
+                is_return_bill INTEGER NOT NULL DEFAULT 0,
+                is_duplicate INTEGER NOT NULL DEFAULT 0,
+                is_voided INTEGER NOT NULL DEFAULT 0,
+                bill_status TEXT CHECK(bill_status IN ('DRAFT','COMPLETED','CANCELLED')) DEFAULT 'DRAFT',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
+        /**
+         * A deleted bill's lines. No foreign key to td_bills for the plain reason
+         * that the bill is no longer there - it is in td_bills_delete beside these.
+         */
+        private const val SQL_CREATE_TD_BILL_ITEMS_DELETE = """
+            CREATE TABLE IF NOT EXISTS td_bill_items_delete (
+                id INTEGER PRIMARY KEY,
+                store_id INTEGER,
+                receipt_no INTEGER,
+                trans_dt TEXT,
+                bill_id INTEGER,
+                product_id INTEGER,
+                batch_id INTEGER,
+                quantity REAL,
+                unit_id INTEGER,
+                rate REAL,
+                item_subtotal REAL,
+                discount_amount REAL DEFAULT 0,
+                discount_percentage REAL DEFAULT 0,
+                cgst_rate REAL DEFAULT 0,
+                sgst_rate REAL DEFAULT 0,
+                igst_rate REAL DEFAULT 0,
+                vat_rate REAL DEFAULT 0,
+                cgst_amount REAL DEFAULT 0,
+                sgst_amount REAL DEFAULT 0,
+                igst_amount REAL DEFAULT 0,
+                vat_amount REAL DEFAULT 0,
+                item_total REAL,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
         private const val SQL_CREATE_TD_PAYMENTS = """
             CREATE TABLE IF NOT EXISTS td_payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
                 receipt_no INTEGER,
                 bill_id INTEGER,
                 payment_mode TEXT CHECK(payment_mode IN ('CASH','UPI','CARD','CHEQUE','ONLINE','CREDIT')),
@@ -1281,6 +2198,7 @@ class DatabaseHelper private constructor(context: Context) :
                 product_id INTEGER,
                 batch_id INTEGER,
                 transaction_type TEXT CHECK(transaction_type IN ('PURCHASE','SALE','RETURN','ADJUSTMENT','DAMAGE_WRITEOFF')),
+                stock_flow TEXT CHECK(stock_flow IN ('IN','OUT')),
                 quantity REAL,
                 reference_number TEXT,
                 transaction_date TEXT,
@@ -1316,9 +2234,11 @@ class DatabaseHelper private constructor(context: Context) :
             CREATE TABLE IF NOT EXISTS td_advance_payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
+                receipt_number TEXT,
                 advance_amount REAL,
                 remaining_balance REAL,
                 payment_date TEXT,
+                payment_mode TEXT,
                 notes TEXT,
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
@@ -1332,12 +2252,13 @@ class DatabaseHelper private constructor(context: Context) :
             CREATE TABLE IF NOT EXISTS td_kot (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 bill_id INTEGER,
+                running_order_id INTEGER,
                 kot_number TEXT,
                 table_number TEXT,
                 waiter_id INTEGER,
                 kot_date TEXT,
                 kot_time TEXT,
-                status TEXT CHECK(status IN ('OPEN','RECEIVED','PREPARING','READY','SERVED','CANCELLED')) DEFAULT 'OPEN',
+                status TEXT CHECK(status IN ('OPEN','RECEIVED','PREPARING','READY','SERVED','CLOSED','CANCELLED')) DEFAULT 'OPEN',
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,
@@ -1354,7 +2275,7 @@ class DatabaseHelper private constructor(context: Context) :
                 product_id INTEGER,
                 quantity REAL,
                 special_instructions TEXT,
-                status TEXT CHECK(status IN ('PENDING','PREPARED','DELIVERED')) DEFAULT 'PENDING',
+                status TEXT CHECK(status IN ('PENDING','COMPLETE','CANCELLED','PREPARED','DELIVERED')) DEFAULT 'PENDING',
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,

@@ -32,13 +32,35 @@ class UserDao(context: Context) {
     }
 
     /** A single user row (password intentionally excluded from listing). */
+    /**
+     * The sections a user may open.
+     *
+     * Held against the user rather than against the till. One shop can have a
+     * manager who needs the Master section and a counter hand who must not reach it,
+     * and a single set of flags for everyone could only ever describe one of them.
+     *
+     * An admin is not consulted - see [GeneralSettingsDao.canAccessSection], which
+     * lets an admin everywhere so they cannot lock themselves out of the screen these
+     * are granted on.
+     */
+    data class Access(
+        val master: Boolean = false,
+        val settings: Boolean = false,
+        val reports: Boolean = false,
+        val aboutApp: Boolean = false
+    )
+
     data class AppUser(
         val id: Long,
         val userId: String,
         val userName: String,
         val phone: String,
         val role: Role,
-        val blocked: Boolean
+        val blocked: Boolean,
+        /** Which shift they work, or null where the shop does not run shifts. */
+        val shiftId: Long? = null,
+        /** The sections this user may open - see [Access]. */
+        val access: Access = Access()
     ) {
         val operatorId: String get() = formatOperatorId(id)
     }
@@ -47,7 +69,10 @@ class UserDao(context: Context) {
     fun getAll(): List<AppUser> {
         val list = mutableListOf<AppUser>()
         helper.readableDatabase.query(
-            table, arrayOf("id", "user_id", "user_name", "phone_no", "role", "is_blocked"),
+            table, arrayOf(
+                "id", "user_id", "user_name", "phone_no", "role", "is_blocked", "shift_id",
+                "access_master", "access_settings", "access_reports", "access_about_app"
+            ),
             null, null, null, null, "id ASC"
         ).use { c ->
             while (c.moveToNext()) {
@@ -58,7 +83,14 @@ class UserDao(context: Context) {
                         userName = c.getString(2).orEmpty(),
                         phone = c.getString(3).orEmpty(),
                         role = Role.fromStored(c.getString(4)),
-                        blocked = c.getInt(5) == 1
+                        blocked = c.getInt(5) == 1,
+                        shiftId = if (c.isNull(6)) null else c.getLong(6),
+                        access = Access(
+                            master = c.getInt(7) == 1,
+                            settings = c.getInt(8) == 1,
+                            reports = c.getInt(9) == 1,
+                            aboutApp = c.getInt(10) == 1
+                        )
                     )
                 )
             }
@@ -78,7 +110,8 @@ class UserDao(context: Context) {
     /** Inserts a new user and returns its new row id (or -1 on failure). */
     fun insert(
         userId: String, password: String, userName: String,
-        phone: String, role: Role, blocked: Boolean
+        phone: String, role: Role, blocked: Boolean, shiftId: Long? = null,
+        access: Access = Access()
     ): Long {
         val values = ContentValues().apply {
             put("store_id", currentStoreId())
@@ -88,6 +121,8 @@ class UserDao(context: Context) {
             put("phone_no", phone)
             put("role", role.stored)
             put("is_blocked", if (blocked) 1 else 0)
+            put("shift_id", shiftId)
+            putAccess(access)
             put("created_by", currentUser())
         }
         return helper.writableDatabase.insert(table, null, values)
@@ -95,17 +130,47 @@ class UserDao(context: Context) {
 
     /** Updates profile fields (not the password) for [id]. */
     fun update(
-        id: Long, userName: String, phone: String, role: Role, blocked: Boolean
+        id: Long, userName: String, phone: String, role: Role, blocked: Boolean,
+        shiftId: Long? = null, access: Access = Access()
     ): Int {
         val values = ContentValues().apply {
             put("user_name", userName)
             put("phone_no", phone)
             put("role", role.stored)
             put("is_blocked", if (blocked) 1 else 0)
+            put("shift_id", shiftId)
+            putAccess(access)
             put("modified_at", now())
             put("modified_by", currentUser())
         }
         return helper.writableDatabase.update(table, values, "id=?", arrayOf(id.toString()))
+    }
+
+    private fun ContentValues.putAccess(access: Access) {
+        put("access_master", if (access.master) 1 else 0)
+        put("access_settings", if (access.settings) 1 else 0)
+        put("access_reports", if (access.reports) 1 else 0)
+        put("access_about_app", if (access.aboutApp) 1 else 0)
+    }
+
+    /**
+     * What the user with row id [id] may open, or nothing where the row is gone.
+     *
+     * Read straight from the row rather than from the settings cache: access is now
+     * a property of the account, and a cache keyed by till would answer the same for
+     * everyone who signs in on it.
+     */
+    fun accessFor(id: Long): Access {
+        helper.readableDatabase.query(
+            table,
+            arrayOf("access_master", "access_settings", "access_reports", "access_about_app"),
+            "id=?", arrayOf(id.toString()), null, null, null, "1"
+        ).use { c ->
+            if (c.moveToFirst()) {
+                return Access(c.getInt(0) == 1, c.getInt(1) == 1, c.getInt(2) == 1, c.getInt(3) == 1)
+            }
+        }
+        return Access()
     }
 
     /** Blocks or unblocks the user [id]. */
@@ -199,7 +264,7 @@ class UserDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 
     private fun now(): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())

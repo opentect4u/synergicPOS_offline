@@ -25,11 +25,9 @@
             android:textColor="@color/text_main"
             android:layout_marginBottom="20dp" />
 
-        <ScrollView
+        <com.example.synergic_pos_offline.utils.MaxHeightScrollView
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:minHeight="300dp"
+            android:layout_height="wrap_content"
             android:layout_marginBottom="20dp"
             android:scrollbars="vertical">
 
@@ -120,6 +118,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="textCapWords"
+                            android:maxLength="80"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
 
@@ -134,6 +133,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="text"
+                            android:maxLength="8"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
@@ -141,17 +141,27 @@
                 <!-- Row: Barcode | Category -->
                 <LinearLayout style="@style/ProductFormRow">
 
+                    <!-- Generate sits INSIDE the field as its end icon rather than as a
+                         button beside it: this row is two fields sharing the width by
+                         weight, and a third control in it would squeeze Barcode and
+                         Category to make room for something that belongs to one of
+                         them. An end icon is on the right of the box, which is where
+                         it was asked for, and costs the row no width at all. -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilBarcode"
                         style="@style/ProductFormField"
                         android:layout_marginEnd="8dp"
-                        android:hint="Barcode">
+                        android:hint="Barcode"
+                        app:endIconMode="custom"
+                        app:endIconDrawable="@drawable/ic_barcode"
+                        app:endIconContentDescription="Generate a barcode">
 
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/etBarcode"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="text"
+                            android:maxLength="40"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
 
@@ -170,8 +180,9 @@
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
-                <!-- Hidden fields kept for compatibility (Stock Alert Qty, Batch No) -->
-                <LinearLayout style="@style/ProductFormRow" android:visibility="gone">
+                <!-- Hidden field kept for compatibility (Stock Alert Qty) -->
+                <LinearLayout
+                     style="@style/ProductFormRow" android:visibility="gone">
 
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilStockAlert"
@@ -185,20 +196,160 @@
                             android:inputType="numberDecimal"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
 
-                    <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/tilBatchNo"
-                        style="@style/ProductFormField"
-                        android:layout_marginStart="8dp"
-                        android:hint="Batch No">
+                <!-- ===== Stock (shown only while the Stock flag is ON) ===== -->
+                <LinearLayout
+                    android:id="@+id/llStockDetails"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
 
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/etBatchNo"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:inputType="text"
-                            android:maxLines="1" />
-                    </com.google.android.material.textfield.TextInputLayout>
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="STOCK"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:letterSpacing="0.08"
+                        android:layout_marginTop="6dp"
+                        android:layout_marginBottom="4dp"
+                        android:textColor="@color/primary_blue" />
+
+                    <!-- Current stock. Shown only when editing: a product being added
+                         has none yet, and the opening figure below is what sets it. -->
+                    <LinearLayout
+                        android:id="@+id/llCurrentStock"
+                        style="@style/ProductFormRow"
+                        android:visibility="gone">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilCurrentStock"
+                            style="@style/ProductFormField"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Current Stock">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etCurrentStock"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:focusable="false"
+                                android:inputType="none"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- What is being received now. Beside the current count
+                             because the two are read together: this much, on top of
+                             that. Left empty, nothing is added. -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilAddStock"
+                            style="@style/ProductFormField"
+                            android:layout_marginStart="6dp"
+                            android:hint="Add Stock"
+                            app:helperText="Received now, added to the count">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etAddStock"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <!-- Opening Stock, on its own: the quantity the product starts
+                         with is the whole of what this form says about stock. -->
+                    <LinearLayout style="@style/ProductFormRow">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilOpeningStock"
+                            style="@style/ProductFormField"
+                            android:hint="Opening Stock *">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etOpeningStock"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="numberDecimal"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- ===== Restaurant details (shown only in Restaurant mode) ===== -->
+                <LinearLayout
+                    android:id="@+id/llRestaurantDetails"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="ITEM DETAILS"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:letterSpacing="0.08"
+                        android:layout_marginTop="6dp"
+                        android:layout_marginBottom="4dp"
+                        android:textColor="@color/primary_blue" />
+
+                    <!-- Row: Preparation Time | Food Type -->
+                    <LinearLayout style="@style/ProductFormRow">
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/ProductFormField"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Preparation Time (min)">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etPrepTime"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="number"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/ProductFormDropdown"
+                            android:layout_marginStart="6dp"
+                            android:hint="Veg / Non-Veg / Egg">
+                            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                                android:id="@+id/actFoodType"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:focusable="false"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+
+                    <!-- Row: Availability | Spice Level -->
+                    <LinearLayout style="@style/ProductFormRow">
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/ProductFormDropdown"
+                            android:layout_marginEnd="6dp"
+                            android:hint="Availability">
+                            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                                android:id="@+id/actAvailability"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:focusable="false"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/ProductFormDropdown"
+                            android:layout_marginStart="6dp"
+                            android:hint="Spice Level">
+                            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                                android:id="@+id/actSpiceLevel"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:focusable="false"
+                                android:maxLines="1" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
                 </LinearLayout>
 
                 <!-- ===== Rates (repeatable rows) ===== -->
@@ -493,7 +644,7 @@
                 <!-- end legacy hidden fields -->
 
             </LinearLayout>
-        </ScrollView>
+        </com.example.synergic_pos_offline.utils.MaxHeightScrollView>
 
         <LinearLayout
             android:layout_width="match_parent"

@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Print Template: the template list down the left, a sample bill in that template
+  on the right. Picking a template applies it to every bill the app prints.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:baselineAligned="false"
+    android:background="@color/bg_light"
+    android:padding="12dp">
+
+    <!-- ============ TEMPLATE SIDEBAR ============ -->
+    <com.google.android.material.card.MaterialCardView
+        android:layout_width="230dp"
+        android:layout_height="match_parent"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="2dp"
+        app:cardBackgroundColor="@color/white">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/tvTemplateHeader"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="BILL TEMPLATE"
+                android:textSize="12sp"
+                android:letterSpacing="0.08"
+                android:textStyle="bold"
+                android:textColor="@color/primary_blue" />
+
+            <TextView
+                style="@style/BillSettingSub"
+                android:layout_marginTop="4dp"
+                android:text="Used for every bill the app prints" />
+
+            <RadioGroup
+                android:id="@+id/rgTemplate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:orientation="vertical">
+
+                <RadioButton
+                    android:id="@+id/rbTemplateStandard"
+                    style="@style/BillSettingRadio"
+                    android:text="Standard" />
+
+                <RadioButton
+                    android:id="@+id/rbTemplateClassic"
+                    style="@style/BillSettingRadio"
+                    android:text="Classic" />
+
+                <RadioButton
+                    android:id="@+id/rbTemplateClubbed"
+                    style="@style/BillSettingRadio"
+                    android:text="Clubbed" />
+
+                <RadioButton
+                    android:id="@+id/rbTemplateTaxWise"
+                    style="@style/BillSettingRadio"
+                    android:text="Tax wise short" />
+            </RadioGroup>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- ============ PREVIEW PANE ============ -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:layout_marginStart="12dp"
+        android:orientation="vertical">
+
+        <!-- Paper width -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout style="@style/BillSettingRow"
+                android:paddingHorizontal="18dp"
+                android:paddingVertical="10dp">
+
+                <LinearLayout style="@style/BillSettingText">
+                    <TextView style="@style/BillSettingTitle" android:text="Paper width" />
+                    <TextView
+                        android:id="@+id/tvPaperHint"
+                        style="@style/BillSettingSub"
+                        android:text="Shows the preview at this roll size. Bills print at the width set for the printer in Connections." />
+                </LinearLayout>
+
+                <RadioGroup
+                    android:id="@+id/rgPaperWidth"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <RadioButton
+                        android:id="@+id/rbPaper58"
+                        style="@style/BillSettingRadio"
+                        android:layout_width="wrap_content"
+                        android:layout_marginEnd="16dp"
+                        android:text="2 inch (58 mm)" />
+
+                    <RadioButton
+                        android:id="@+id/rbPaper80"
+                        style="@style/BillSettingRadio"
+                        android:layout_width="wrap_content"
+                        android:text="3 inch (80 mm)" />
+                </RadioGroup>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Sample bill, or the note saying this template isn't built yet -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="12dp">
+
+            <FrameLayout
+                android:id="@+id/previewHost"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <TextView
+                android:id="@+id/tvTemplateUnavailable"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:paddingHorizontal="32dp"
+                android:textSize="15sp"
+                android:textColor="@color/text_secondary"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/tvSampleNote"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:textSize="12sp"
+            android:textColor="@color/text_secondary"
+            android:text="Sample bill. Store details, logos, header/footer lines and tax settings are your own." />
+    </LinearLayout>
+</LinearLayout>

@@ -12,6 +12,7 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.hardware.usb.UsbManager
 import android.os.Build
 import android.view.LayoutInflater
 import android.view.View
@@ -29,6 +30,7 @@ import com.example.synergic_pos_offline.database.OperatingPrinterDao
 import com.example.synergic_pos_offline.database.PrinterDao
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.example.synergic_pos_offline.utils.ThermalPrinter
+import com.example.synergic_pos_offline.utils.UsbPrinters
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.switchmaterial.SwitchMaterial
@@ -43,8 +45,9 @@ import com.google.android.material.textfield.TextInputLayout
  * whose Add/Edit popup names a printer, picks a BILL/KOT connection from
  * [DatabaseHelper.Tables.MD_PRINTER] (shown as "BILL-WIFI", "KOT-BLUETOOTH",
  * etc., but saved as that row's sl_no), asks for the address that connection
- * needs - discovering and pairing a brand-new Bluetooth device in-app when
- * that's the chosen connection - and lets it be marked the default printer
+ * needs - discovering and pairing a brand-new Bluetooth device in-app, or
+ * picking a plugged-in USB device and getting permission for it, when that's
+ * the chosen connection - and lets it be marked the default printer
  * for its purpose; [com.example.synergic_pos_offline.utils.ThermalPrinter]
  * prints BILL/KOT jobs through whichever row is marked default here.
  */
@@ -78,6 +81,9 @@ class OperatingPrinterFragment : DataTableFragment() {
 
     /** Bluetooth picker labels ("Name (AA:BB:..)") mapped to the device address. */
     private val btLabelToAddress = mutableMapOf<String, String>()
+
+    /** USB picker labels mapped to the "VVVV:PPPP" address the row is saved under. */
+    private val usbLabelToAddress = mutableMapOf<String, String>()
 
     // The Bluetooth action (scan, pair, list) to resume once the runtime
     // permission prompt returns.
@@ -161,7 +167,6 @@ class OperatingPrinterFragment : DataTableFragment() {
         val address = entry.value?.takeIf { it.isNotBlank() }
         when {
             type == null -> { toast("No connection type set for this printer"); return }
-            type.equals("USB", ignoreCase = true) -> { toast("USB test print isn't supported yet"); return }
             address.isNullOrBlank() -> { toast("No address configured for this printer"); return }
         }
         val config = ThermalPrinter.Config(
@@ -186,13 +191,14 @@ class OperatingPrinterFragment : DataTableFragment() {
     }
 
     private fun showPrinterDialog(row: DataRow?) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
         val existing = row?.let { entryCache[it.id] }
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_operating_printer, null)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
         val etName = view.findViewById<TextInputEditText>(R.id.etPrinterName)
@@ -201,6 +207,8 @@ class OperatingPrinterFragment : DataTableFragment() {
         val etIp = view.findViewById<TextInputEditText>(R.id.etIpAddress)
         val tilBt = view.findViewById<TextInputLayout>(R.id.tilBtDevice)
         val actvBt = view.findViewById<MaterialAutoCompleteTextView>(R.id.actvBtDevice)
+        val tilUsb = view.findViewById<TextInputLayout>(R.id.tilUsbDevice)
+        val actvUsb = view.findViewById<MaterialAutoCompleteTextView>(R.id.actvUsbDevice)
         val tvUsbNote = view.findViewById<TextView>(R.id.tvUsbNote)
         val rb58mm = view.findViewById<RadioButton>(R.id.rb58mm)
         val rb80mm = view.findViewById<RadioButton>(R.id.rb80mm)
@@ -213,19 +221,24 @@ class OperatingPrinterFragment : DataTableFragment() {
         val comboOptions = comboMap.keys.toList()
         actvCombo.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, comboOptions))
 
-        // actvBt intentionally has no adapter of its own: tapping it opens the
-        // scan/pair dialog below instead of a plain dropdown list.
+        // actvBt/actvUsb intentionally have no adapter of their own: tapping one opens
+        // its device picker below instead of a plain dropdown list.
         actvBt.setOnClickListener { showBluetoothPickerDialog(actvBt) }
+        actvUsb.setOnClickListener { showUsbPickerDialog(actvUsb) }
 
         // Toggles which address field is shown for the chosen combo's connection type.
         fun showFieldsFor(type: String?) {
             tilIp.visibility = View.GONE
             tilBt.visibility = View.GONE
+            tilUsb.visibility = View.GONE
             tvUsbNote.visibility = View.GONE
             when (type) {
                 "WIFI", "LAN" -> tilIp.visibility = View.VISIBLE
                 "BLUETOOTH" -> tilBt.visibility = View.VISIBLE
-                "USB" -> tvUsbNote.visibility = View.VISIBLE
+                "USB" -> {
+                    tilUsb.visibility = View.VISIBLE
+                    tvUsbNote.visibility = View.VISIBLE
+                }
             }
         }
 
@@ -234,6 +247,7 @@ class OperatingPrinterFragment : DataTableFragment() {
             showFieldsFor(type)
             // A freshly chosen combo has nothing selected yet; tapping the field opens the picker.
             if (type == "BLUETOOTH") actvBt.setText("", false)
+            if (type == "USB") actvUsb.setText("", false)
         }
 
         tvTitle.text = if (existing == null) "Add Operating Printer" else "Edit Operating Printer"
@@ -246,6 +260,7 @@ class OperatingPrinterFragment : DataTableFragment() {
         showFieldsFor(initialType)
         if (initialType == "WIFI" || initialType == "LAN") etIp.setText(existing?.value.orEmpty())
         if (initialType == "BLUETOOTH") prefillBtField(actvBt, existing?.value)
+        if (initialType == "USB") prefillUsbField(actvUsb, existing?.value)
         if ((existing?.paperMm ?: OperatingPrinterDao.DEFAULT_PAPER_MM) == 58) rb58mm.isChecked = true else rb80mm.isChecked = true
         swDefault.isChecked = existing?.isDefault ?: false
         tvDefaultState.text = if (swDefault.isChecked) "Default" else "Not default"
@@ -297,6 +312,15 @@ class OperatingPrinterFragment : DataTableFragment() {
                     }
                     address
                 }
+                "USB" -> {
+                    val label = actvUsb.text?.toString()?.trim().orEmpty()
+                    val address = usbLabelToAddress[label]
+                    if (address.isNullOrBlank()) {
+                        toast("Pick the USB printer")
+                        return@setOnClickListener
+                    }
+                    address
+                }
                 else -> null
             }
 
@@ -332,7 +356,7 @@ class OperatingPrinterFragment : DataTableFragment() {
      */
     private fun prefillBtField(actvBt: MaterialAutoCompleteTextView, address: String?) {
         if (address.isNullOrBlank()) return
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val bonded = try {
             if (hasBtPermissions() || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
                 (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)
@@ -346,6 +370,124 @@ class OperatingPrinterFragment : DataTableFragment() {
         actvBt.setText(label, false)
     }
 
+    // ---- USB ---------------------------------------------------------------
+
+    /**
+     * Shows the USB printer already saved in [actvUsb].
+     *
+     * Resolved to the device's own name when it is plugged in; otherwise the saved
+     * vendor/product pair stands in on its own, so editing a printer that is
+     * currently unplugged shows what was chosen rather than an empty field.
+     */
+    private fun prefillUsbField(actvUsb: MaterialAutoCompleteTextView, address: String?) {
+        if (address.isNullOrBlank()) return
+        val attached = UsbPrinters.find(requireContext(), address)
+        val label =
+            if (attached != null) "${UsbPrinters.labelOf(attached)}  ($address)"
+            else "$address  (not connected)"
+        usbLabelToAddress[label] = address
+        actvUsb.setText(label, false)
+    }
+
+    /**
+     * Lists the USB devices plugged into the tablet and lets one be chosen.
+     *
+     * Tapping a device asks Android for permission to talk to it there and then, so
+     * the printer is proven reachable at setup rather than at the first sale. The list
+     * refreshes as devices are plugged and unplugged, which is what an operator
+     * fumbling with an OTG adapter needs to see.
+     */
+    private fun showUsbPickerDialog(actvUsb: MaterialAutoCompleteTextView) {
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
+        val density = resources.displayMetrics.density
+
+        val printers = mutableListOf<UsbPrinters.Printer>()
+        val items = mutableListOf<String>()
+        val listAdapter = ArrayAdapter(ctx, android.R.layout.simple_list_item_1, items)
+        val statusText = TextView(ctx).apply {
+            textSize = 13f
+            setPadding(0, 0, 0, (10 * density).toInt())
+        }
+
+        fun refresh() {
+            printers.clear()
+            printers.addAll(UsbPrinters.list(ctx))
+            items.clear()
+            printers.forEach { printer ->
+                items.add(
+                    "${printer.label}  (${printer.address})\n" +
+                        if (printer.isPrinterClass) "USB printer - tap to select"
+                        else "USB device - tap to select"
+                )
+            }
+            listAdapter.notifyDataSetChanged()
+            statusText.text =
+                if (printers.isEmpty())
+                    "No USB device found. Plug the printer in - through an OTG adapter if the tablet has no full-size port - and give it a moment."
+                else "Tap the printer to use it."
+        }
+        refresh()
+
+        val listView = ListView(ctx).apply {
+            adapter = listAdapter
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, (300 * density).toInt()
+            )
+        }
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (20 * density).toInt()
+            setPadding(pad, pad, pad, 0)
+            addView(statusText)
+            addView(listView)
+        }
+
+        // Plugging a printer in while this is open should just show it.
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context, intent: Intent) = refresh()
+        }
+        val filter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        ContextCompat.registerReceiver(ctx, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
+
+        val dialog = MaterialAlertDialogBuilder(ctx)
+            .setTitle("USB Printer")
+            .setView(container)
+            .setPositiveButton("Done", null)
+            .setOnDismissListener { runCatching { ctx.unregisterReceiver(receiver) } }
+            .create()
+
+        fun select(printer: UsbPrinters.Printer) {
+            val label = "${printer.label}  (${printer.address})"
+            usbLabelToAddress[label] = printer.address
+            actvUsb.setText(label, false)
+            dialog.dismiss()
+        }
+
+        listView.setOnItemClickListener { _, _, position, _ ->
+            val printer = printers.getOrNull(position) ?: return@setOnItemClickListener
+            if (UsbPrinters.hasPermission(ctx, printer.device)) {
+                select(printer)
+                return@setOnItemClickListener
+            }
+            statusText.text = "Waiting for permission to use ${printer.label}…"
+            UsbPrinters.requestPermission(ctx, printer.device) { granted ->
+                // The answer arrives from a system dialog, by which time the operator
+                // may have walked away from this screen entirely.
+                if (!isAdded) return@requestPermission
+                if (granted) select(printer)
+                else statusText.text = "Permission refused for ${printer.label}. Tap it to ask again."
+            }
+        }
+
+        dialog.show()
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    // ---- Bluetooth ---------------------------------------------------------
+
     /**
      * Lets the operator pick an already-paired printer or pair a brand-new one,
      * all in-app: lists bonded devices immediately, starts discovery for
@@ -354,7 +496,7 @@ class OperatingPrinterFragment : DataTableFragment() {
      */
     private fun showBluetoothPickerDialog(actvBt: MaterialAutoCompleteTextView) {
         withBtPermissions {
-            val ctx = requireContext()
+            val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
             val btAdapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
             if (btAdapter == null) {
                 toast("Bluetooth is not available on this device")

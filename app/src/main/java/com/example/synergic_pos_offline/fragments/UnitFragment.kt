@@ -27,8 +27,12 @@ class UnitFragment : DataTableFragment() {
 
     override val screenTitle = "Units"
 
-    // Table columns. Cell layout per row: [code, name, symbol, fractionState].
-    override val columns = listOf("Unit Code", "Unit Name", "Symbol", "Fraction")
+    // Table columns. Cell layout per row: [code, name, shortName, fractionState].
+    //
+    // "Short Name" rather than "Symbol": what goes in it is an abbreviation the shop
+    // chooses - Kg, Ltr, Pcs - not a symbol in any formal sense, and calling it one
+    // invited entries like "kilogram" that then had nowhere to fit on a slip.
+    override val columns = listOf("Unit Code", "Unit Name", "Short Name", "Fraction")
 
     private companion object {
         const val COL_CODE = 0
@@ -63,12 +67,13 @@ class UnitFragment : DataTableFragment() {
      * keeping its original code.
      */
     private fun showUnitDialog(existing: DataRow?) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_unit, null)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
         val etCode = view.findViewById<TextInputEditText>(R.id.etUnitCode)
@@ -110,7 +115,17 @@ class UnitFragment : DataTableFragment() {
                 etName.error = "Name is required"
                 return@setOnClickListener
             }
-            val symbol = etSymbol.text?.toString()?.trim().orEmpty()
+            // Trimmed to three even though the field is capped at three: a value typed
+            // before the cap existed can still be sitting in the box on an edit, and
+            // saving it back would keep a four-character short name alive forever.
+            // OPTIONAL. Left blank, the bill falls back to the first three characters
+            // of the unit's name - see UnitDao.shortNameOf - so a shop that does not
+            // want to think about abbreviations does not have to.
+            //
+            // Still trimmed to three: a value typed before the cap existed can be
+            // sitting in the box on an edit, and saving it back would keep a longer
+            // short name alive forever.
+            val symbol = etSymbol.text?.toString()?.trim().orEmpty().take(UnitDao.SHORT_NAME_MAX)
             val fraction = swFraction.isChecked
             val state = if (fraction) "Enabled" else "Disabled"
 

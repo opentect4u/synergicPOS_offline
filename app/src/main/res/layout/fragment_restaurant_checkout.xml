@@ -1,0 +1,383 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/bg_light">
+
+    <!-- Sub-header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@color/white"
+        android:elevation="2dp"
+        android:paddingHorizontal="22dp"
+        android:paddingVertical="12dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Checkout"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_main" />
+
+        <TextView
+            android:id="@+id/tvCoTable"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="end"
+            android:text="Table: T-05     Customer: Walk-in"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary" />
+    </LinearLayout>
+
+    <!-- Content -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal">
+
+        <!-- ===== Order review ===== -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:paddingHorizontal="28dp"
+            android:paddingTop="20dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Order Review"
+                        android:textSize="20sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_main" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Adjust quantities or remove items before taking payment."
+                        android:textSize="13sp"
+                        android:textColor="@color/text_secondary" />
+                </LinearLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnReceiptPreview"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="Receipt Preview"
+                    app:cornerRadius="10dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnBackToBilling"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="10dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="Billing"
+                    app:icon="@drawable/ic_arrow_back"
+                    app:iconGravity="textStart"
+                    app:cornerRadius="10dp" />
+            </LinearLayout>
+
+            <!-- Column header -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginTop="14dp"
+                android:paddingVertical="10dp">
+
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:text="ITEM"
+                    android:textSize="11sp" android:textColor="@color/text_secondary" />
+                <TextView android:layout_width="112dp" android:layout_height="wrap_content"
+                    android:gravity="center" android:text="QTY"
+                    android:textSize="11sp" android:textColor="@color/text_secondary" />
+                <TextView android:layout_width="132dp" android:layout_height="wrap_content"
+                    android:gravity="end" android:text="RATE (₹)"
+                    android:textSize="11sp" android:textColor="@color/text_secondary" />
+                <TextView android:layout_width="112dp" android:layout_height="wrap_content"
+                    android:gravity="end" android:text="AMOUNT (₹)"
+                    android:textSize="11sp" android:textColor="@color/text_secondary" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#E4E7EB" />
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/llCheckoutItems"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </ScrollView>
+        </LinearLayout>
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:background="#E4E7EB" />
+
+        <!-- ===== Payment panel ===== -->
+        <LinearLayout
+            android:layout_width="380dp"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:background="@color/white">
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:scrollbars="none"
+                android:padding="22dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <LinearLayout style="@style/OrderSummaryRow">
+                        <TextView style="@style/OrderSummaryLabel" android:text="Subtotal" />
+                        <TextView android:id="@+id/tvSubtotal" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                    </LinearLayout>
+
+                    <!-- The discount, in the same place and the same shape the Orders
+                         panel puts it (rowOrderDiscount) - directly under Subtotal, so
+                         the two screens read alike. It was applied to the total here
+                         but never shown, which left the customer looking at a subtotal
+                         of 220 and a total of 210 with nothing on the page to say
+                         where the 10 went.
+
+                         Hidden while there is no discount: a line reading "- ₹ 0.00"
+                         on every bill is noise. -->
+                    <LinearLayout android:id="@+id/rowCheckoutDiscount" style="@style/OrderSummaryRow"
+                        android:visibility="gone">
+                        <TextView android:id="@+id/tvCheckoutDiscountLabel"
+                            style="@style/OrderSummaryLabel" android:text="Discount" />
+                        <TextView android:id="@+id/tvCheckoutDiscount" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                    </LinearLayout>
+
+                    <LinearLayout style="@style/OrderSummaryRow">
+                        <TextView style="@style/OrderSummaryLabel" android:text="Service Charge" />
+                        <TextView android:id="@+id/tvService" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                    </LinearLayout>
+
+                    <LinearLayout style="@style/OrderSummaryRow">
+                        <TextView style="@style/OrderSummaryLabel" android:text="CGST" />
+                        <TextView android:id="@+id/tvCgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                    </LinearLayout>
+
+                    <LinearLayout style="@style/OrderSummaryRow">
+                        <TextView style="@style/OrderSummaryLabel" android:text="SGST" />
+                        <TextView android:id="@+id/tvSgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                    </LinearLayout>
+
+                    <!-- Only on a bill that actually carries VAT, exactly as the Orders
+                         panel's rowOrderVat. It was missing here entirely while the VAT
+                         was still added into the total, so a VAT shop's rows did not
+                         come to its own total. -->
+                    <LinearLayout android:id="@+id/rowCheckoutVat" style="@style/OrderSummaryRow"
+                        android:visibility="gone">
+                        <TextView style="@style/OrderSummaryLabel" android:text="VAT" />
+                        <TextView android:id="@+id/tvCheckoutVat" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                    </LinearLayout>
+
+                    <!-- The shop's own extra charges - Parcel Charge among them - one
+                         row per charge handed in from the Orders screen, which already
+                         worked out which ones apply to this order. Empty and takes no
+                         height when none apply.
+
+                         LAST in the breakdown, as on the Orders panel, because that is
+                         where they join the sum: on top of the taxed goods, being the
+                         shop's own additions rather than part of what was sold. They
+                         used to sit above CGST here, so the two screens listed the same
+                         bill in a different order. -->
+                    <LinearLayout
+                        android:id="@+id/llCheckoutCharges"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginTop="8dp"
+                        android:background="#E4E7EB" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="12dp">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Total"
+                            android:textSize="22sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_main" />
+
+                        <TextView
+                            android:id="@+id/tvTotalAmount"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="₹ 0.00"
+                            android:textSize="24sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/primary_blue" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="20dp"
+                        android:text="PAYMENT METHOD"
+                        android:textSize="11sp"
+                        android:letterSpacing="0.06"
+                        android:textColor="@color/text_secondary" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="8dp">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnPayCash"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="46dp"
+                            android:layout_weight="1"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Cash"
+                            app:cornerRadius="10dp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnPayCard"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="46dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Card"
+                            app:cornerRadius="10dp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnPayOnline"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="46dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Online"
+                            app:cornerRadius="10dp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:hint="Amount Tendered (₹)"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etTendered"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="numberDecimal"
+                            android:textSize="16sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingVertical="10dp">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Change Due"
+                            android:textSize="14sp"
+                            android:textColor="@color/text_secondary" />
+
+                        <TextView
+                            android:id="@+id/tvChangeDue"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="20sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/primary_blue" />
+                    </LinearLayout>
+
+                    <include layout="@layout/view_checkout_upi_qr" />
+                </LinearLayout>
+            </ScrollView>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#E4E7EB" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnConfirmPay"
+                android:layout_width="match_parent"
+                android:layout_height="54dp"
+                android:layout_margin="18dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="Confirm Payment"
+                android:textColor="@color/white"
+                android:textSize="16sp"
+                app:cornerRadius="12dp" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

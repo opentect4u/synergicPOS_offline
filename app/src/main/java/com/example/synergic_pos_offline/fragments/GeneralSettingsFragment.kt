@@ -9,17 +9,22 @@ import android.view.ViewGroup
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.GeneralSettings
 import com.example.synergic_pos_offline.database.UserDao
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.SessionManager
+import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import android.widget.ArrayAdapter
 import android.widget.RadioGroup
 import androidx.core.view.isVisible
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.ItemRate
+import com.example.synergic_pos_offline.database.GeneralSettingsDao.LandingScreen
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.Mode
+import com.example.synergic_pos_offline.database.GeneralSettingsDao.ProductSort
+import com.example.synergic_pos_offline.database.GeneralSettingsDao.ReturnMode
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -38,11 +43,22 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
 
     private lateinit var actMode: MaterialAutoCompleteTextView
     private lateinit var swSaleReturn: SwitchMaterial
+    private lateinit var llReturnMode: View
+    private lateinit var rgReturnMode: RadioGroup
     private lateinit var llSaleReturnDays: View
     private lateinit var etSaleReturnDays: TextInputEditText
     private lateinit var swLastBillStatus: SwitchMaterial
     private lateinit var swQuantityStatus: SwitchMaterial
+    private lateinit var swCustomerInfo: SwitchMaterial
     private lateinit var rgItemRate: RadioGroup
+    private lateinit var actProductSort: MaterialAutoCompleteTextView
+    private lateinit var rgLandingScreen: RadioGroup
+    private lateinit var swStockFlag: SwitchMaterial
+    private lateinit var llStockAlert: View
+    private lateinit var swStockAlert: SwitchMaterial
+    private lateinit var llStockAlertQty: View
+    private lateinit var tilStockAlertQty: View
+    private lateinit var etStockAlertQty: TextInputEditText
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -54,54 +70,184 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
 
         actMode = view.findViewById(R.id.actMode)
         swSaleReturn = view.findViewById(R.id.swSaleReturn)
+        llReturnMode = view.findViewById(R.id.llReturnMode)
+        rgReturnMode = view.findViewById(R.id.rgReturnMode)
         llSaleReturnDays = view.findViewById(R.id.llSaleReturnDays)
         etSaleReturnDays = view.findViewById(R.id.etSaleReturnDays)
         swLastBillStatus = view.findViewById(R.id.swLastBillStatus)
         swQuantityStatus = view.findViewById(R.id.swQuantityStatus)
+        swCustomerInfo = view.findViewById(R.id.swCustomerInfo)
         rgItemRate = view.findViewById(R.id.rgItemRate)
+        actProductSort = view.findViewById(R.id.actProductSort)
+        rgLandingScreen = view.findViewById(R.id.rgLandingScreen)
+        swStockFlag = view.findViewById(R.id.swStockFlag)
+        llStockAlert = view.findViewById(R.id.llStockAlert)
+        swStockAlert = view.findViewById(R.id.swStockAlert)
+        llStockAlertQty = view.findViewById(R.id.llStockAlertQty)
+        tilStockAlertQty = view.findViewById(R.id.tilStockAlertQty)
+        etStockAlertQty = view.findViewById(R.id.etStockAlertQty)
 
         val s = dao.load()
+        // Section access is an admin-only control: only an admin sees or sets it.
         swLastBillStatus.isChecked = s.lastBillStatus
         swQuantityStatus.isChecked = s.quantityStatus
+        swCustomerInfo.isChecked = s.customerInfo
         rgItemRate.check(
             if (s.itemRate == ItemRate.MULTIPLE) R.id.rbItemRateMultiple else R.id.rbItemRateSingle
         )
+        rgLandingScreen.check(
+            if (s.landingScreen == LandingScreen.HOME) R.id.rbLandingHome else R.id.rbLandingSale
+        )
 
         // Mode dropdown (always shows every option). Displays labels; stores G / R.
-        actMode.setAdapter(NoFilterAdapter(requireContext(), Mode.values().map { it.label }))
+        actMode.setAdapter(NoFilterAdapter(requireContext(), Mode.entries.map { it.label }))
         actMode.setText(s.mode.label, false)
 
+        // Product Sorting dropdown (always shows every option). Displays labels;
+        // stores the short code.
+        actProductSort.setAdapter(NoFilterAdapter(requireContext(), ProductSort.entries.map { it.label }))
+        actProductSort.setText(s.productSort.label, false)
+
         swSaleReturn.isChecked = s.saleReturn
-        llSaleReturnDays.isVisible = s.saleReturn
+        rgReturnMode.check(
+            if (s.returnMode == ReturnMode.ITEM_WISE) R.id.rbReturnItemWise else R.id.rbReturnBillWise
+        )
         etSaleReturnDays.setText(if (s.saleReturn) s.saleReturnDays.toString() else "")
 
-        // Days section is only shown while Sale Return is on.
-        swSaleReturn.setOnCheckedChangeListener { _, on ->
-            llSaleReturnDays.isVisible = on
+        // The return type only exists while Sale Return is on, and the days limit
+        // only within bill-wise - an item-wise return has no bill to date from, so
+        // there is nothing for a limit to measure against.
+        fun applyReturnState() {
+            val on = swSaleReturn.isChecked
+            val billWise = rgReturnMode.checkedRadioButtonId != R.id.rbReturnItemWise
+            llReturnMode.isVisible = on
+            llSaleReturnDays.isVisible = on && billWise
+        }
+        applyReturnState()
+        swSaleReturn.setOnCheckedChangeListener { _, _ -> applyReturnState() }
+        rgReturnMode.setOnCheckedChangeListener { _, _ -> applyReturnState() }
+
+        // ---- Stock: each flag only opens the one below it ----------------------
+        swStockFlag.isChecked = s.stockFlag
+        swStockAlert.isChecked = s.stockFlag && s.stockAlert
+        etStockAlertQty.setText(
+            if (swStockAlert.isChecked) s.stockAlertQty.toString() else ""
+        )
+
+        // The alert has nothing to watch without stock tracking, and the quantity
+        // has nothing to bound without the alert - so each stays visible but
+        // greyed out until its parent is on, and switching a parent off clears
+        // what depends on it rather than leaving a value that no longer applies.
+        fun applyStockState() {
+            val stockOn = swStockFlag.isChecked
+            val alertOn = stockOn && swStockAlert.isChecked
+            llStockAlert.setRowEnabled(stockOn)
+            swStockAlert.isEnabled = stockOn
+            llStockAlertQty.setRowEnabled(alertOn)
+            tilStockAlertQty.isEnabled = alertOn
+            etStockAlertQty.isEnabled = alertOn
+        }
+        applyStockState()
+        swStockFlag.setOnCheckedChangeListener { _, on ->
+            if (!on) swStockAlert.isChecked = false
+            applyStockState()
+        }
+        swStockAlert.setOnCheckedChangeListener { _, on ->
+            if (!on) etStockAlertQty.setText("")
+            applyStockState()
         }
 
         view.findViewById<MaterialButton>(R.id.btnChangePassword).setOnClickListener {
             showChangePasswordDialog()
         }
         view.findViewById<MaterialButton>(R.id.btnSaveGeneral).setOnClickListener {
-            val days = if (swSaleReturn.isChecked) etSaleReturnDays.text?.toString()?.toIntOrNull() ?: 0 else 0
-            val mode = Mode.fromStored(actMode.text?.toString()) ?: Mode.GROCERY
-            dao.save(
-                GeneralSettings(
-                    mode = mode,
-                    saleReturn = swSaleReturn.isChecked,
-                    saleReturnDays = days,
-                    lastBillStatus = swLastBillStatus.isChecked,
-                    quantityStatus = swQuantityStatus.isChecked,
-                    itemRate = if (rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple)
-                        ItemRate.MULTIPLE else ItemRate.SINGLE
+            val returnMode = if (rgReturnMode.checkedRadioButtonId == R.id.rbReturnItemWise)
+                ReturnMode.ITEM_WISE else ReturnMode.BILL_WISE
+            val daysApply = swSaleReturn.isChecked && returnMode == ReturnMode.BILL_WISE
+            val days = if (daysApply) etSaleReturnDays.text?.toString()?.toIntOrNull() ?: 0 else 0
+            val modeVal = Mode.fromStored(actMode.text?.toString()) ?: Mode.GROCERY
+            
+            val isMultipleRate = rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple
+            val itemRateVal = if (isMultipleRate) ItemRate.MULTIPLE else ItemRate.SINGLE
+
+            val productSortVal = ProductSort.fromStored(actProductSort.text?.toString())
+                ?: ProductSort.SERIAL_ASC
+            
+            val isLandingHome = rgLandingScreen.checkedRadioButtonId == R.id.rbLandingHome
+            val landingScreenVal = if (isLandingHome) LandingScreen.HOME else LandingScreen.SALE
+
+            val alertApply = swStockFlag.isChecked && swStockAlert.isChecked
+            val alertQty =
+                if (alertApply) etStockAlertQty.text?.toString()?.toIntOrNull() ?: 0 else 0
+
+            val settings = GeneralSettings(
+                mode = modeVal,
+                saleReturn = swSaleReturn.isChecked,
+                returnMode = returnMode,
+                saleReturnDays = days,
+                lastBillStatus = swLastBillStatus.isChecked,
+                quantityStatus = swQuantityStatus.isChecked,
+                itemRate = itemRateVal,
+                productSort = productSortVal,
+                customerInfo = swCustomerInfo.isChecked,
+                landingScreen = landingScreenVal,
+                stockFlag = swStockFlag.isChecked,
+                stockAlert = alertApply,
+                stockAlertQty = alertQty,
+                // Section access is admin-only: take the toggles when an admin is
+                // signing off on it, otherwise keep whatever was already saved so a
+                // non-admin save can never silently change who can see what.
+                // Access is granted per user now, on the Add/Edit User form. These are
+                // carried through untouched so an older till's stored flags are not
+                // wiped by a save from a screen that no longer shows them.
+                accessMaster = s.accessMaster,
+                accessSettings = s.accessSettings,
+                accessReports = s.accessReports,
+                accessAboutApp = s.accessAboutApp
+            )
+
+            // Switching mode wipes the mode-specific business data. Because it is
+            // destructive and account-level, it is gated behind the signed-in user's
+            // password first, then the erase warning is confirmed.
+            val currentMode = dao.load().mode
+            if (modeVal != currentMode) {
+                promptPasswordThenSwitch(modeVal) {
+                    DialogUtils.showConfirm(
+                        context = requireContext(),
+                        title = "Switch to ${modeVal.label}?",
+                        message = "Changing the mode will erase all current data - products, categories, " +
+                            "sections, tables, waiters, bills, KOTs, payments, sale returns and running " +
+                            "orders. This cannot be undone.",
+                        positiveText = "Erase & Switch",
+                        negativeText = "Cancel",
+                        destructive = true,
+                        onCancel = { actMode.setText(currentMode.label, false) },
+                        onConfirm = {
+                            DatabaseHelper.getInstance(requireContext()).eraseBusinessDataForModeChange()
+                            dao.save(settings)
+                            if (modeVal == Mode.RESTAURANT) enableRestaurantDefaults()
+                            // The menus and the landing screen read the cache, so it
+                            // has to know about the new mode before the next sign-in.
+                            SettingsCache.storeFromDb(requireContext())
+                            DialogUtils.showSuccess(
+                                context = requireContext(),
+                                title = "Mode changed",
+                                message = "Switched to ${modeVal.label}. All previous data was " +
+                                    "erased. You will be signed out - sign back in and the till " +
+                                    "opens in ${modeVal.label} mode.",
+                                buttonText = "Sign out"
+                            ) { signOut() }
+                        }
+                    )
+                }
+            } else {
+                dao.save(settings)
+                DialogUtils.showSuccess(
+                    context = requireContext(),
+                    title = "Saved",
+                    message = "General settings saved successfully."
                 )
-            )
-            DialogUtils.showSuccess(
-                context = requireContext(),
-                title = "Saved",
-                message = "General settings saved successfully."
-            )
+            }
         }
 
         ThemeManager.applyTheme(view)
@@ -110,12 +256,77 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         )
     }
 
+    /**
+     * Asks the signed-in user for their password before a mode switch. On the correct
+     * password it runs [onVerified] (which then confirms the data erase); on cancel or
+     * a wrong password nothing switches and the Mode dropdown is put back to how it was.
+     */
+    private fun promptPasswordThenSwitch(targetMode: Mode, onVerified: () -> Unit) {
+        val userId = SessionManager.currentUser?.userId
+        if (userId.isNullOrBlank()) { toast("No signed-in user"); return }
+
+        val accent = ThemeManager.getThemeColor(requireContext())
+        val (dialog, view) = DialogUtils.buildCustom(requireContext(), R.layout.dialog_password_prompt)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
+        view.findViewById<android.widget.TextView>(R.id.tvPromptTitle).text = "Switch to ${targetMode.label}?"
+        view.findViewById<android.widget.TextView>(R.id.tvPromptMessage).text =
+            "Enter your password to change the mode to ${targetMode.label}."
+        val etPwd = view.findViewById<TextInputEditText>(R.id.etPromptPwd)
+
+        val btnCancel = view.findViewById<MaterialButton>(R.id.btnPromptCancel)
+        val btnConfirm = view.findViewById<MaterialButton>(R.id.btnPromptConfirm)
+        ThemeManager.styleDialogButtons(btnConfirm, btnCancel, accent)
+
+        // Cancelling leaves the mode untouched — reset the dropdown to the saved mode.
+        val revertDropdown = { actMode.setText(dao.load().mode.label, false) }
+        btnCancel.setOnClickListener { dialog.dismiss(); revertDropdown() }
+        dialog.setOnCancelListener { revertDropdown() }
+
+        btnConfirm.setOnClickListener {
+            val pwd = etPwd.text?.toString()?.trim().orEmpty()
+            when {
+                pwd.isEmpty() -> toast("Enter your password")
+                !userDao.verifyPassword(userId, pwd) -> toast("Incorrect password")
+                else -> { dialog.dismiss(); onVerified() }
+            }
+        }
+        dialog.show()
+    }
+
+    /** Turns on the restaurant App Settings by default when Restaurant mode is enabled. */
+    /**
+     * Ends the session so the new mode takes effect.
+     *
+     * The mode decides the landing screen and the whole sidebar, and both are built
+     * once when a session starts - saving the setting alone would leave the till
+     * showing the old mode's menu over the new mode's data until someone happened to
+     * sign out. The same thing Change Mode does in Calculator mode, for the same
+     * reason.
+     */
+    private fun signOut() {
+        SessionManager.logout()
+        val fm = requireActivity().supportFragmentManager
+        // The screen signed in on is the root of the stack, so there is nothing
+        // underneath to pop back to - the login form is put up outright.
+        fm.popBackStack(null, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
+        fm.beginTransaction()
+            .replace(R.id.fragment_container, LoginFragment())
+            .commit()
+    }
+
+    private fun enableRestaurantDefaults() {
+        val appDao = com.example.synergic_pos_offline.database.AppSettingsDao(requireContext())
+        val a = appDao.load()
+        appDao.save(a.copy(couponMode = true, kot = true, tableMerge = true, tableShift = true))
+    }
+
     private fun showChangePasswordDialog() {
         val userId = SessionManager.currentUser?.userId
         if (userId.isNullOrBlank()) { toast("No signed-in user"); return }
 
         val accent = ThemeManager.getThemeColor(requireContext())
         val view = layoutInflater.inflate(R.layout.dialog_change_password, null)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val etCurrent = view.findViewById<TextInputEditText>(R.id.etCurrentPwd)
         val etNew = view.findViewById<TextInputEditText>(R.id.etNewPwd)
         val etConfirm = view.findViewById<TextInputEditText>(R.id.etConfirmPwd)
@@ -159,6 +370,12 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             }
         }
         dialog.show()
+    }
+
+    /** Greys a settings row out when the flag it depends on is off. */
+    private fun View.setRowEnabled(enabled: Boolean) {
+        isEnabled = enabled
+        alpha = if (enabled) 1f else 0.45f
     }
 
     private fun toast(msg: String) =

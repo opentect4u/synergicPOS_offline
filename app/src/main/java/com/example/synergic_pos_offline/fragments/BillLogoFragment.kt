@@ -98,12 +98,12 @@ class BillLogoFragment : DataTableFragment() {
 
     /** Opens a large preview of the row's stored logo image. */
     override fun onThumbnailClick(row: DataRow) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_image_preview, null)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val iv = view.findViewById<ImageView>(R.id.ivPreview)
         val tvEmpty = view.findViewById<TextView>(R.id.tvPreviewEmpty)
@@ -130,12 +130,12 @@ class BillLogoFragment : DataTableFragment() {
     }
 
     private fun showLogoDialog(existing: DataRow?) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_logo, null)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
         val cardImage = view.findViewById<MaterialCardView>(R.id.cardImage)
@@ -212,7 +212,7 @@ class BillLogoFragment : DataTableFragment() {
     }
 
     private fun launchCamera() {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val dir = File(ctx.cacheDir, "camera").apply { mkdirs() }
         val file = File(dir, "logo_${System.currentTimeMillis()}.jpg")
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
@@ -221,13 +221,51 @@ class BillLogoFragment : DataTableFragment() {
     }
 
     private fun onImagePicked(uri: Uri) {
-        val bytes = ImageUtils.uriToJpegBytes(requireContext(), uri)
-        if (bytes == null) {
+        val bmp = ImageUtils.uriToBitmap(requireContext(), uri)
+        if (bmp == null) {
             toast("Couldn't load image")
             return
         }
-        pendingImageBytes = bytes
-        pendingImageView?.let { showPreview(it, bytes) }
+        showCropDialog(bmp)
+    }
+
+    /**
+     * Crop step before a logo is accepted: the picked/captured image is shown in a crop
+     * frame, and the selection is stored at a standard size (white-flattened, longest
+     * edge [ImageUtils.STORE_MAX_DIM]) so it prints properly on the bill.
+     */
+    private fun showCropDialog(bmp: Bitmap) {
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
+        val accent = ThemeManager.getThemeColor(ctx)
+
+        val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_crop, null)
+        val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(android.view.Gravity.CENTER)
+        }
+
+        val cropView = view.findViewById<com.example.synergic_pos_offline.utils.CropImageView>(R.id.cropView)
+        cropView.setImage(bmp)
+        val btnCrop = view.findViewById<MaterialButton>(R.id.btnCropSave)
+        val btnCancel = view.findViewById<MaterialButton>(R.id.btnCropCancel)
+        btnCrop.backgroundTintList = ColorStateList.valueOf(accent)
+        btnCancel.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+        btnCancel.setTextColor(accent)
+        btnCancel.strokeColor = ColorStateList.valueOf(accent)
+
+        btnCrop.setOnClickListener {
+            val cropped = cropView.getCroppedBitmap(ImageUtils.STORE_MAX_DIM, ImageUtils.STORE_MAX_DIM)
+            if (cropped == null) { toast("Crop failed"); return@setOnClickListener }
+            val bytes = ImageUtils.bitmapToJpegBytes(cropped)
+            pendingImageBytes = bytes
+            pendingImageView?.let { showPreview(it, bytes) }
+            dialog.dismiss()
+        }
+        btnCancel.setOnClickListener { dialog.dismiss() }
+
+        dialog.show()
     }
 
     /** Fills the square slot with an actual image (dropping the placeholder tint). */

@@ -35,10 +35,15 @@ class BillHeaderFooterFragment : DataTableFragment() {
     // The Status column renders as an inline ON/OFF switch.
     override val switchColumn: Int? = COL_STATUS
 
+    // A header or footer is a whole printed sentence, so a long one runs onto the
+    // next line here rather than being cut off - what the row says is what the paper
+    // will say, and it has to be readable without opening the row to check.
+    override val wrappingColumns: Set<Int> = setOf(COL_TEXT)
+
     private companion object {
+        const val COL_TEXT = 0
         const val COL_STATUS = 3
         const val MAX_PER_SECTION = 10
-        const val MAX_TEXT_LEN = 32
     }
 
     private val dao: BillHeaderFooterDao by lazy { BillHeaderFooterDao(requireContext()) }
@@ -91,13 +96,13 @@ class BillHeaderFooterFragment : DataTableFragment() {
         if (section == Section.HEADER) "headers" else "footers"
 
     private fun showEntryDialog(row: DataRow?) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
         val existing = row?.let { entryCache[it.id] }
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_bill_header_footer, null)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
         val etText = view.findViewById<TextInputEditText>(R.id.etText)

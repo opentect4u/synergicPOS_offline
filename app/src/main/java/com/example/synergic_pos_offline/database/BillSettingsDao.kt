@@ -58,11 +58,27 @@ class BillSettingsDao(context: Context) {
         }
     }
 
-    /** Layout format of the printed bill. Persisted as [code] (N / C / T). */
+    /**
+     * Layout format of the printed bill - what Printer Settings > Print Template
+     * picks, and the format the whole app prints in. Persisted as [code] (N / L /
+     * C / T); the codes are unchanged from when this was only a Bill Settings
+     * dropdown, so a till that already chose one keeps it.
+     *
+     * [STANDARD], [CLASSIC] and [TAX_WISE_SHORT] are built; [CLUBBED] is named here
+     * because the choice is the operator's to make and store now, but its layout is
+     * still to come.
+     */
     enum class BillFormat(val code: String, val label: String) {
-        NORMAL("N", "Normal"), CLUBBED("C", "Clubbed"), TAX_WISE_SHORT("T", "Tax wise short");
+        STANDARD("N", "Standard"),
+        CLASSIC("L", "Classic"),
+        CLUBBED("C", "Clubbed"),
+        TAX_WISE_SHORT("T", "Tax wise short");
+
+        /** True once the layout for this format exists and can be previewed/printed. */
+        val implemented: Boolean get() = this != CLUBBED
+
         companion object {
-            /** Accepts the stored code (N/C/T) or the display label. */
+            /** Accepts the stored code (N/L/C/T) or the display label. */
             fun fromStored(value: String?): BillFormat? = value?.let { v ->
                 values().firstOrNull { it.code.equals(v, true) || it.label.equals(v, true) }
             }
@@ -78,11 +94,100 @@ class BillSettingsDao(context: Context) {
         val resetMode: ResetMode = ResetMode.CONTINUE,
         val billNoCharEnabled: Boolean = false,
         val billNoCharPrefix: String = "",
+        /**
+         * Take-away token numbering - the same four settings a bill number has, kept
+         * separately because a token is not a bill.
+         *
+         * A bill number is an accounting record: it runs on, it is quoted back months
+         * later, and a shop that resets it daily has decided that on purpose. A token
+         * is a label for food waiting at a counter - it is called out, collected, and
+         * means nothing by the next morning. Three-digit tokens that climb into the
+         * thousands are a number nobody can shout across a counter.
+         *
+         * Hence DAILY by default where the bill defaults to CONTINUE: the token starts
+         * at 1 each morning, which is how a counter actually numbers its orders.
+         */
+        val startTokenNo: Int = 0,
+        val tokenResetMode: ResetMode = ResetMode.DAILY,
+        val tokenNoCharEnabled: Boolean = false,
+        val tokenNoCharPrefix: String = "",
         val hsnCode: Boolean = false,
-        val customerDetails: CustomerDetails = CustomerDetails.ONLY_MOBILE,
+        /**
+         * Whether each line is numbered on the printed bill - the SR.NO down the left
+         * of the item table.
+         *
+         * Defaults ON, which is what every till did before this was a choice: a shop
+         * that upgrades keeps printing the bill it printed yesterday, and only a shop
+         * that turns it off sees a change.
+         */
+        val productSerialNumber: Boolean = true,
+        /**
+         * Whether the time of sale is printed beside the date.
+         *
+         * The DATE has no switch and never will: a bill is a dated record, and a shop
+         * has to be able to say which day a sale happened on. The time of day is the
+         * part that is a genuine preference - a restaurant wants it to tell two
+         * sittings on the same table apart, a shop that bills a customer once a day
+         * does not, and on 58mm paper it is a line's worth of width either way.
+         *
+         * Defaults ON, which is what every till did before this was a choice: a shop
+         * that upgrades keeps printing the bill it printed yesterday, and only a shop
+         * that turns it off sees a change.
+         */
+        val timeOnBill: Boolean = true,
+        /**
+         * Which customer fields the bill prints.
+         *
+         * Defaults to mobile AND name. A bill that names the customer is the one a
+         * counter can hand to the right person out of three waiting, and a take-away
+         * is called out by name rather than by number - so a till that has never been
+         * asked should print both. The number alone was the old default and is still
+         * a choice, for a shop that would rather not put a name on paper.
+         */
+        val customerDetails: CustomerDetails = CustomerDetails.MOBILE_NAME,
         val customerAddressPrinting: Boolean = false,
         val totalAmountFontSize: FontSize = FontSize.REGULAR,
-        val billFormat: BillFormat = BillFormat.NORMAL
+        /**
+         * The layout a bill prints in, until a till chooses otherwise.
+         *
+         * CLASSIC is the default: it is the narrow-roll receipt these tills actually
+         * print on, with the bill number, date and time sharing one head line and the
+         * item table sized for 58mm paper. Standard is the wider, more spacious slip -
+         * a fine choice on 80mm, and the wrong thing to hand a shop that has not been
+         * asked which paper it has.
+         *
+         * Only tills that have never stored a format are affected: a shop that has
+         * picked one keeps it, and Print Template is where it is changed.
+         */
+        val billFormat: BillFormat = BillFormat.CLASSIC,
+        /**
+         * Whether a UPI payment QR is printed on a bill settled by UPI.
+         *
+         * Off by default, and it stays off until a [upiId] is entered - a code built
+         * without one would be a square the customer cannot pay into.
+         *
+         * A bill settled Online prints the code regardless of this: that payment mode
+         * says the customer is paying from their phone and has no other tender to pay
+         * with, so the code is the bill doing its job rather than an extra the shop
+         * opted into. This setting decides the UPI case, where the shop may already
+         * have a code on the counter and a second one per slip is only paper.
+         */
+        val upiQrEnabled: Boolean = false,
+        /** The shop's UPI address the printed code pays into - `shop@okaxis`. */
+        val upiId: String = "",
+        /**
+         * The name the payment app shows the customer before they confirm. Blank is
+         * allowed: the app then falls back to whatever the bank has on file for
+         * [upiId], which is the shop's registered name.
+         */
+        val upiPayeeName: String = "",
+        /**
+         * Whether a bill also prints a coupon per category - see `CouponPrinter`.
+         *
+         * Off by default. A shop with one counter has nothing to split: the coupons
+         * would be a second copy of the bill in pieces, on paper nobody asked for.
+         */
+        val couponSplit: Boolean = false
     )
 
     /** Reads every bill setting for the current store, applying defaults. */
@@ -97,11 +202,21 @@ class BillSettingsDao(context: Context) {
             resetMode = ResetMode.fromCode(map[KEY_RESET_MODE]) ?: d.resetMode,
             billNoCharEnabled = map[KEY_CHAR_ENABLED]?.toBool() ?: d.billNoCharEnabled,
             billNoCharPrefix = map[KEY_CHAR_PREFIX] ?: d.billNoCharPrefix,
+            startTokenNo = map[KEY_TOKEN_START_NO]?.toIntOrNull() ?: d.startTokenNo,
+            tokenResetMode = ResetMode.fromCode(map[KEY_TOKEN_RESET_MODE]) ?: d.tokenResetMode,
+            tokenNoCharEnabled = map[KEY_TOKEN_CHAR_ENABLED]?.toBool() ?: d.tokenNoCharEnabled,
+            tokenNoCharPrefix = map[KEY_TOKEN_CHAR_PREFIX] ?: d.tokenNoCharPrefix,
             hsnCode = map[KEY_HSN_CODE]?.toBool() ?: d.hsnCode,
+            productSerialNumber = map[KEY_PRODUCT_SERIAL]?.toBool() ?: d.productSerialNumber,
+            timeOnBill = map[KEY_TIME_ON_BILL]?.toBool() ?: d.timeOnBill,
             customerDetails = CustomerDetails.fromStored(map[KEY_CUSTOMER_DETAILS]) ?: d.customerDetails,
             customerAddressPrinting = map[KEY_CUSTOMER_ADDRESS_PRINTING]?.toBool() ?: d.customerAddressPrinting,
             totalAmountFontSize = FontSize.fromStored(map[KEY_TOTAL_FONT_SIZE]) ?: d.totalAmountFontSize,
-            billFormat = BillFormat.fromStored(map[KEY_BILL_FORMAT]) ?: d.billFormat
+            billFormat = BillFormat.fromStored(map[KEY_BILL_FORMAT]) ?: d.billFormat,
+            upiQrEnabled = map[KEY_UPI_QR_ENABLED]?.toBool() ?: d.upiQrEnabled,
+            upiId = map[KEY_UPI_ID] ?: d.upiId,
+            upiPayeeName = map[KEY_UPI_PAYEE_NAME] ?: d.upiPayeeName,
+            couponSplit = map[KEY_COUPON_SPLIT]?.toBool() ?: d.couponSplit
         )
     }
 
@@ -115,11 +230,55 @@ class BillSettingsDao(context: Context) {
         put(KEY_RESET_MODE, s.resetMode.code)
         put(KEY_CHAR_ENABLED, if (s.billNoCharEnabled) "1" else "0")
         put(KEY_CHAR_PREFIX, s.billNoCharPrefix.take(3))
+        put(KEY_TOKEN_START_NO, s.startTokenNo.toString())
+        put(KEY_TOKEN_RESET_MODE, s.tokenResetMode.code)
+        put(KEY_TOKEN_CHAR_ENABLED, if (s.tokenNoCharEnabled) "1" else "0")
+        put(KEY_TOKEN_CHAR_PREFIX, s.tokenNoCharPrefix.take(3))
         put(KEY_HSN_CODE, if (s.hsnCode) "1" else "0")
+        put(KEY_PRODUCT_SERIAL, if (s.productSerialNumber) "1" else "0")
+        put(KEY_TIME_ON_BILL, if (s.timeOnBill) "1" else "0")
         put(KEY_CUSTOMER_DETAILS, s.customerDetails.code.toString())
         put(KEY_CUSTOMER_ADDRESS_PRINTING, if (s.customerAddressPrinting) "1" else "0")
         put(KEY_TOTAL_FONT_SIZE, s.totalAmountFontSize.code)
         put(KEY_BILL_FORMAT, s.billFormat.code)
+        put(KEY_UPI_QR_ENABLED, if (s.upiQrEnabled) "1" else "0")
+        put(KEY_UPI_ID, s.upiId.trim())
+        put(KEY_UPI_PAYEE_NAME, s.upiPayeeName.trim())
+        put(KEY_COUPON_SPLIT, if (s.couponSplit) "1" else "0")
+        refreshCache()
+    }
+
+    /**
+     * Writes just the bill format, leaving every other bill setting as it is.
+     *
+     * The Print Template screen changes this one setting on each tap, and has no UI
+     * for the rest - going through [save] would write back whatever a stale
+     * [BillSettings] happened to hold for them.
+     */
+    fun saveBillFormat(format: BillFormat) {
+        put(KEY_BILL_FORMAT, format.code)
+        refreshCache()
+    }
+
+    /**
+     * Paper width the Print Template preview is drawn at, in mm.
+     *
+     * Kept apart from [BillSettings] deliberately: this chooses how the *preview* is
+     * laid out, not how a bill is printed. The paper actually loaded in a printer is
+     * that printer's own setting, in Printer Settings > Connections, since a till can
+     * run an 80mm bill printer and a 58mm kitchen printer at once.
+     */
+    fun loadTemplatePaperMm(): Int =
+        readAll()[KEY_TEMPLATE_PAPER]?.toIntOrNull()?.takeIf { it == 58 || it == 80 }
+            ?: DEFAULT_TEMPLATE_PAPER_MM
+
+    fun saveTemplatePaperMm(mm: Int) {
+        put(KEY_TEMPLATE_PAPER, mm.toString())
+        refreshCache()
+    }
+
+    /** Regroups the settings rows by type and republishes them to [SettingsCache]. */
+    private fun refreshCache() {
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "Bill settings save (type B)")
     }
@@ -134,21 +293,34 @@ class BillSettingsDao(context: Context) {
     /**
      * Deletes every bill and its related rows. Required when the start bill number
      * is changed while bills already exist, so numbering can restart cleanly.
+     *
+     * Sale returns and the customer ledger deliberately survive this (see
+     * [com.example.synergic_pos_offline.utils.BillErase]) and keep their
+     * `original_bill_id` / `bill_id` pointing at the bill this deletes - a dangling
+     * reference on purpose, so a credit sale's ledger entry still says which bill
+     * incurred it even after the bill itself is gone. Both columns are a hard
+     * FOREIGN KEY onto `td_bills(receipt_no)` with no `ON DELETE` action, so that
+     * dangling reference is exactly what the constraint exists to forbid - foreign
+     * keys are toggled off around the delete, as SQLite requires for this.
      */
     fun clearAllBills() {
-        helper.writableDatabase.apply {
-            beginTransaction()
+        val db = helper.writableDatabase
+        db.setForeignKeyConstraintsEnabled(false)
+        try {
+            db.beginTransaction()
             try {
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_PRINTS}")
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_PAYMENTS}")
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT_ITEMS}")
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT}")
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS}")
-                execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILLS}")
-                setTransactionSuccessful()
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_PRINTS}")
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_PAYMENTS}")
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT_ITEMS}")
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT}")
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS}")
+                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILLS}")
+                db.setTransactionSuccessful()
             } finally {
-                endTransaction()
+                db.endTransaction()
             }
+        } finally {
+            db.setForeignKeyConstraintsEnabled(true)
         }
     }
 
@@ -216,22 +388,36 @@ class BillSettingsDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
-    private companion object {
-        const val KEY_ROUND_OFF = "Bill Round Off"
-        const val KEY_AMOUNT_IN_WORDS = "Bill Amount In Words"
-        const val KEY_TWO_COPY = "Bill Two copy"
-        const val KEY_START_NO = "Bill Start No"
-        const val KEY_RESET_MODE = "Bill Reset Mode"
-        const val KEY_CHAR_ENABLED = "Bill No Char Enabled"
-        const val KEY_CHAR_PREFIX = "Bill No Char Prefix"
-        const val KEY_HSN_CODE = "Bill Hsn Code"
-        const val KEY_CUSTOMER_DETAILS = "Customer Details"
-        const val KEY_CUSTOMER_ADDRESS_PRINTING = "Customer Address Printing"
-        const val KEY_TOTAL_FONT_SIZE = "Total Amount Font Size"
-        const val KEY_BILL_FORMAT = "Bill Format"
+    companion object {
+        private const val KEY_ROUND_OFF = "Bill Round Off"
+        private const val KEY_AMOUNT_IN_WORDS = "Bill Amount In Words"
+        private const val KEY_TWO_COPY = "Bill Two copy"
+        private const val KEY_START_NO = "Bill Start No"
+        private const val KEY_RESET_MODE = "Bill Reset Mode"
+        private const val KEY_CHAR_ENABLED = "Bill No Char Enabled"
+        private const val KEY_CHAR_PREFIX = "Bill No Char Prefix"
+        private const val KEY_TOKEN_START_NO = "Token Start No"
+        private const val KEY_TOKEN_RESET_MODE = "Token Reset Mode"
+        private const val KEY_TOKEN_CHAR_ENABLED = "Token No Char Enabled"
+        private const val KEY_TOKEN_CHAR_PREFIX = "Token No Char Prefix"
+        private const val KEY_HSN_CODE = "Bill Hsn Code"
+        private const val KEY_PRODUCT_SERIAL = "Product Serial Number"
+        private const val KEY_TIME_ON_BILL = "Time On Bill"
+        private const val KEY_CUSTOMER_DETAILS = "Customer Details"
+        private const val KEY_CUSTOMER_ADDRESS_PRINTING = "Customer Address Printing"
+        private const val KEY_TOTAL_FONT_SIZE = "Total Amount Font Size"
+        private const val KEY_BILL_FORMAT = "Bill Format"
+        private const val KEY_UPI_QR_ENABLED = "Bill Upi Qr Enabled"
+        private const val KEY_UPI_ID = "Bill Upi Id"
+        private const val KEY_UPI_PAYEE_NAME = "Bill Upi Payee Name"
+        private const val KEY_COUPON_SPLIT = "Bill Coupon Split"
+        private const val KEY_TEMPLATE_PAPER = "Bill Template Paper Width"
+
+        /** 3-inch paper, the size most bill printers on this app run. */
+        const val DEFAULT_TEMPLATE_PAPER_MM = 80
     }
 }

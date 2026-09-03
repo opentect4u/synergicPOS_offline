@@ -42,6 +42,32 @@
 
                 <View style="@style/BillSettingDivider" />
 
+                <!-- Biometric Login -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Biometric Login" />
+                        <TextView android:id="@+id/tvBiometricSub" style="@style/BillSettingSub"
+                            android:text="Offer the fingerprint reader on the login screen" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swBiometricLogin" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Shift -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Shift" />
+                        <TextView style="@style/BillSettingSub"
+                            android:text="Run shifts: adds the Shifts master, puts every user on one, and enables the shift-wise report" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swShift" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
                 <!-- Cash Reception -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">
@@ -77,6 +103,112 @@
                     </LinearLayout>
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swOtherCharges" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Parcel Charge -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Parcel Charge" />
+                        <TextView style="@style/BillSettingSub" android:text="Shows the Parcel Charge tab in Extra Charges (restaurant only)" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swParcelCharge" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Direct Add to Cart -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Direct Add to Cart" />
+                        <TextView style="@style/BillSettingSub" android:text="Tap an item to add it straight to the cart, skipping the quantity popup" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swDirectAddToCart" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Restaurant-only settings (shown only when Mode = Restaurant) -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardRestaurantSettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:visibility="gone"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="RESTAURANT" android:textSize="12sp" android:letterSpacing="0.08"
+                    android:textStyle="bold" android:textColor="@color/primary_blue" />
+
+                <!-- Coupon Mode -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Coupon Mode" />
+                        <TextView style="@style/BillSettingSub" android:text="Enable coupon-based billing" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swCouponMode" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- KOT -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="KOT" />
+                        <TextView style="@style/BillSettingSub" android:text="Enable Kitchen Order Tickets" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swKot" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Table Merge -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Table Merge" />
+                        <TextView style="@style/BillSettingSub" android:text="Allow merging two tables into one bill" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swTableMerge" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Table Shift -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Table Shift" />
+                        <TextView style="@style/BillSettingSub" android:text="Allow shifting an order to another table" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swTableShift" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Table Split -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Table Split" />
+                        <TextView style="@style/BillSettingSub" android:text="Allow splitting a table's bill" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swTableSplit" style="@style/BillSettingSwitch" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

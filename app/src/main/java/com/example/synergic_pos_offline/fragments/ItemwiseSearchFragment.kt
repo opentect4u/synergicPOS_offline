@@ -323,7 +323,7 @@ class ItemwiseSearchFragment : Fragment(), TitledScreen {
                 SELECT
                     u.unit_name,
                     p.hsn_code,
-                    r.sell_price,
+                    COALESCE(r.sell_price, r.sale_price),
                     r.discount,
                     r.discount_type,
                     r.cgst_rate,
@@ -370,7 +370,7 @@ class ItemwiseSearchFragment : Fragment(), TitledScreen {
         return try {
             val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
             val sql = """
-                SELECT r.sell_price FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r
+                SELECT COALESCE(r.sell_price, r.sale_price) FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r
                 WHERE r.product_id = ?
                 LIMIT 1
             """.trimIndent()

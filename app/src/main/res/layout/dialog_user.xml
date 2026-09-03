@@ -141,6 +141,34 @@
                 </com.google.android.material.textfield.TextInputLayout>
             </LinearLayout>
 
+            <!-- Which shift this user works. Gone unless App Settings' Shift toggle
+                 is on; mandatory when it is, and editable on an existing user, since
+                 people move between shifts more often than they change anything else
+                 on this form. -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilShift"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:hint="Shift"
+                app:startIconDrawable="@drawable/ic_clock"
+                app:boxCornerRadiusTopStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusBottomEnd="12dp"
+                android:visibility="gone">
+
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                    android:id="@+id/actShift"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none"
+                    android:focusable="false"
+                    android:maxLines="1"
+                    android:textSize="16sp" />
+            </com.google.android.material.textfield.TextInputLayout>
+
             <!-- Password (Add mode only) -->
             <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/tilPassword"
@@ -226,6 +254,106 @@
                         android:layout_height="wrap_content" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
+
+            <!--
+                Access control, granted per user. It used to be one set of switches in
+                General Settings covering everyone who signed in on the till, which
+                could not describe a shop with a manager and a counter hand on the same
+                machine. Hidden for an admin, who reaches every section regardless.
+            -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardUserAccess"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="0dp"
+                app:strokeWidth="1dp"
+                app:strokeColor="#E4E7EB"
+                app:cardBackgroundColor="@color/white">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="18dp">
+
+                    <TextView
+                        android:id="@+id/tvUserAccessHeader"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="ACCESS CONTROL"
+                        android:textSize="12sp"
+                        android:letterSpacing="0.08"
+                        android:textStyle="bold"
+                        android:textColor="@color/primary_blue" />
+
+                    <TextView
+                        style="@style/BillSettingSub"
+                        android:layout_marginTop="4dp"
+                        android:text="Which sections this user may open. Everything is off until it is granted." />
+
+                    <LinearLayout style="@style/BillSettingRow">
+                        <LinearLayout style="@style/BillSettingText">
+                            <TextView style="@style/BillSettingTitle" android:text="Master" />
+                            <TextView style="@style/BillSettingSub" android:text="Access to the Master section" />
+                        </LinearLayout>
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/swAccessMaster" style="@style/BillSettingSwitch" />
+                    </LinearLayout>
+
+                    <View style="@style/BillSettingDivider" />
+
+                    <LinearLayout style="@style/BillSettingRow">
+                        <LinearLayout style="@style/BillSettingText">
+                            <TextView style="@style/BillSettingTitle" android:text="Settings" />
+                            <TextView style="@style/BillSettingSub" android:text="Access to the Settings section" />
+                        </LinearLayout>
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/swAccessSettings" style="@style/BillSettingSwitch" />
+                    </LinearLayout>
+
+                    <View style="@style/BillSettingDivider" />
+
+                    <LinearLayout style="@style/BillSettingRow">
+                        <LinearLayout style="@style/BillSettingText">
+                            <TextView style="@style/BillSettingTitle" android:text="Reports" />
+                            <TextView style="@style/BillSettingSub" android:text="Access to the Reports section" />
+                        </LinearLayout>
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/swAccessReports" style="@style/BillSettingSwitch" />
+                    </LinearLayout>
+
+                    <View style="@style/BillSettingDivider" />
+
+                    <LinearLayout style="@style/BillSettingRow">
+                        <LinearLayout style="@style/BillSettingText">
+                            <TextView style="@style/BillSettingTitle" android:text="About App" />
+                            <TextView style="@style/BillSettingSub"
+                                android:text="Access to About App - backup, restore and the actions that cannot be undone" />
+                        </LinearLayout>
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/swAccessAboutApp" style="@style/BillSettingSwitch" />
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Shown in the card's place when the user being edited is an admin.
+                 An admin reaches every section by role, so there is nothing here to
+                 grant or take away - but a form that simply ended after Block would
+                 leave an admin wondering where the access switches had gone, and
+                 whether this user had been quietly restricted. -->
+            <TextView
+                android:id="@+id/tvAccessAdminNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:padding="14dp"
+                android:background="#F4F6F8"
+                android:text="Admin — reaches every section. Access is granted per section for general users only."
+                android:textSize="12.5sp"
+                android:textColor="@color/text_secondary"
+                android:visibility="gone" />
 
             <!-- Actions -->
             <LinearLayout

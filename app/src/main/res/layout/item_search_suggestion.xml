@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One suggestion under the sale screen's search box, in both trades.
+
+  Read in one line left to right: what it is, what it costs. The name leads at
+  reading weight with the typed part picked out inside it, so the eye lands on WHY
+  this row matched rather than having to re-read the query and compare. Under it, the
+  smaller line that separates two products with near-enough the same name - its
+  category, its number, and in a restaurant how long it takes to cook.
+
+  The price is set at the end in the theme accent: it is the other half of the
+  decision, and on a counter it is often the whole of it.
+
+  Sized for a thumb on a busy counter: 56dp of row, which is the smallest target that
+  can be hit without looking while a queue waits.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="56dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingHorizontal="14dp"
+    android:paddingVertical="9dp"
+    android:background="?attr/selectableItemBackground"
+    android:baselineAligned="false">
+
+    <!-- Product photo, or the grey square that stands in for one. Small: it confirms a
+         choice the name has already made, so it is an aid and not the subject. -->
+    <FrameLayout
+        android:layout_width="38dp"
+        android:layout_height="38dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_suggestion_thumb">
+
+        <ImageView
+            android:id="@+id/ivSuggestThumb"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:contentDescription="Product photo"
+            android:visibility="gone" />
+
+        <!-- The product's initial, while it has no photo. Better than an empty square:
+             it is at least different per product, so a list of photo-less items still
+             has something to tell its rows apart by. -->
+        <TextView
+            android:id="@+id/tvSuggestInitial"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="B"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="#8A8F98" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvSuggestName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="Chicken Biryani"
+            android:textSize="15sp"
+            android:textColor="@color/text_main" />
+
+        <TextView
+            android:id="@+id/tvSuggestMeta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="Main Course  ·  #1024"
+            android:textSize="11.5sp"
+            android:textColor="@color/text_secondary" />
+    </LinearLayout>
+
+    <!-- Out of stock, or nearly. Only a grocery that tracks stock ever sets it, and
+         only when there is something to warn about - a row with stock in hand says
+         nothing here rather than saying "in stock" on every line. -->
+    <TextView
+        android:id="@+id/tvSuggestBadge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:paddingHorizontal="7dp"
+        android:paddingVertical="2dp"
+        android:background="@drawable/bg_kot_count"
+        android:maxLines="1"
+        android:text="LOW"
+        android:textSize="9.5sp"
+        android:textStyle="bold"
+        android:textAllCaps="true"
+        android:letterSpacing="0.04"
+        android:textColor="@color/white"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/tvSuggestPrice"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:maxLines="1"
+        android:text="₹ 240.00"
+        android:textSize="14.5sp"
+        android:textStyle="bold"
+        android:textColor="@color/primary_blue" />
+</LinearLayout>

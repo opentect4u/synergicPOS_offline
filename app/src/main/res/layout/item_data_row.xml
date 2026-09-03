@@ -50,6 +50,24 @@
             android:orientation="horizontal"
             android:gravity="center">
 
+            <!-- Opt-in per row (DataTableFragment.rowActionIcon); hidden where that
+                 returns null, so a screen can offer an action on some rows only. -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnRowAction"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton.Icon"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginEnd="6dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minWidth="0dp"
+                app:iconPadding="0dp"
+                app:iconGravity="textStart"
+                app:cornerRadius="8dp"
+                app:paddingStart="10dp"
+                app:paddingEnd="10dp"
+                android:visibility="gone" />
+
             <!-- Opt-in per screen (DataTableFragment.showsTestPrintAction); hidden elsewhere. -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnRowTestPrint"

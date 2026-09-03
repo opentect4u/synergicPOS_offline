@@ -13,7 +13,10 @@ import android.content.Context
  * (and the derived [OperatingPrinter.printerLabel], "BILL-WIFI" etc.) are
  * resolved via a join purely for display and for the checkout print path.
  * [OperatingPrinter.value] carries the address to use: an IP for WIFI/LAN, a
- * Bluetooth MAC for BLUETOOTH, blank for USB. [OperatingPrinter.paperMm] is
+ * Bluetooth MAC for BLUETOOTH, and the "VVVV:PPPP" vendor/product pair of the
+ * chosen device for USB (see
+ * [com.example.synergic_pos_offline.utils.UsbPrinters.addressOf]).
+ * [OperatingPrinter.paperMm] is
  * this printer's own paper width (58 = 2 inch, 80 = 3 inch) - independent of
  * whatever md_printer's connection row is set to.
  *

@@ -1,0 +1,892 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/bg_light">
+
+    <!-- No sub-header row: the page title was already on the app bar, and the order
+         type, Active Orders and Choose Table have moved down into the two rows the
+         order detail already occupies - which had empty space out to their right.
+         That is a whole bar of height handed back to the menu below. -->
+
+    <!-- Main content. A frame rather than a row: the order list slides in OVER the
+         menu instead of holding a column of the page open, so with the list closed the
+         item grid has the whole width. Elevation puts the list above the page for both
+         drawing and touch. -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <!-- ===== Slide-over: order list ===== -->
+        <LinearLayout
+            android:id="@+id/panelOrders"
+            android:layout_width="320dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="start"
+            android:elevation="12dp"
+            android:orientation="vertical"
+            android:background="@color/white">
+
+            <!-- Tabs -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="14dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="14dp"
+                android:paddingBottom="12dp">
+
+                <TextView
+                    android:id="@+id/tabActive"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:maxLines="1"
+                    android:text="Active Orders"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/primary_blue" />
+
+                <TextView
+                    android:id="@+id/badgeActive"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="5dp"
+                    android:minWidth="18dp"
+                    android:gravity="center"
+                    android:paddingHorizontal="5dp"
+                    android:paddingVertical="1dp"
+                    android:background="@drawable/bg_status_tag"
+                    android:text="7"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/white" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <!-- Choose Table lives in the top bar beside Active Orders, not here:
+                     picking a table is how you get INTO an order, so it must be
+                     reachable with this list slid off. -->
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#E4E7EB" />
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:scrollbars="none"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvNoOrders"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="40dp"
+                        android:gravity="center"
+                        android:text="No active orders.\nTap “New Order” to start."
+                        android:textSize="14sp"
+                        android:textColor="@color/text_secondary"
+                        android:visibility="gone" />
+
+                    <LinearLayout
+                        android:id="@+id/llOrderList"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+                </LinearLayout>
+            </ScrollView>
+
+            <!-- No New Order / Refresh footer.
+
+                 Both were doing a job something else already does, in a panel whose
+                 whole purpose is the list above them. New Order opened the dine-in
+                 modal, which is what Choose Table in the top bar does - and Take Away
+                 has its own button beside it, so neither kind of order needed this
+                 one. Refresh reloaded a list that reloads itself whenever this screen
+                 comes back. Gone, the list gets the panel's full height. -->
+        </LinearLayout>
+
+        <!-- Dimmed backdrop while the list is open; tapping it closes the list.
+             Above the page, below the list itself. -->
+        <View
+            android:id="@+id/vOrdersScrim"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:elevation="6dp"
+            android:background="#59000000"
+            android:visibility="gone" />
+
+        <!-- ===== The page: the order's own column on the left, the order itself
+             down the right. The order panel runs the full height rather than starting
+             below the header, so the space beside the header and the action buttons is
+             the order rather than empty page. ===== -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="horizontal">
+
+            <!-- Left: order header, its actions, and the menu beneath them -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+            <!-- Detail header -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="22dp"
+                android:paddingVertical="10dp">
+
+                <TextView
+                    android:id="@+id/tvDetailTableLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Table: "
+                    android:textSize="22sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_main" />
+
+                <TextView
+                    android:id="@+id/tvDetailTable"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="T-05"
+                    android:textSize="22sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/primary_blue" />
+
+                <TextView
+                    android:id="@+id/tvDetailCustomer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="14dp"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="5dp"
+                    android:background="@drawable/bg_status_tag"
+                    android:text="Walk-in"
+                    android:textSize="13sp"
+                    android:textColor="@color/primary_blue" />
+
+                <!-- Customer details for a TAKE-AWAY, on demand.
+                     Beside the customer tag it edits, because that tag is the thing
+                     being changed and reading "Walk-in" is what prompts the change.
+                     A take-away's customer could only be entered as the token was
+                     opened, or refused at Print Bill; a counter that took a name after
+                     the order had started had nowhere to put it.
+                     Shown for take-away only - a table's customer is the table. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAddCustomer"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="6dp"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="10dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="Add Customer"
+                    android:textSize="13sp"
+                    android:textAllCaps="false"
+                    android:visibility="gone"
+                    app:icon="@drawable/ic_plus"
+                    app:iconSize="14dp"
+                    app:iconPadding="4dp"
+                    app:cornerRadius="10dp" />
+
+                <TextView
+                    android:id="@+id/tvDetailGuests"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="14dp"
+                    android:text="4  ·  Dine In"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary" />
+
+                <!-- Reads beside the order type rather than out at the far edge. -->
+                <TextView
+                    android:id="@+id/tvDetailOrderTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="14dp"
+                    android:text="Order Time: —"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <!-- Dine In / Take Away / QSR, on the end of the line that already says
+                     what the order IS - the same question, so it reads as one row. -->
+                <com.google.android.material.button.MaterialButtonToggleGroup
+                    android:id="@+id/segOrderType"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    app:singleSelection="true"
+                    app:selectionRequired="true">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnDineIn"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingHorizontal="14dp"
+                        android:maxLines="1"
+                        android:textSize="13sp"
+                        android:letterSpacing="0"
+                        android:text="Dine In"
+                        app:cornerRadius="10dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnTakeAway"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingHorizontal="14dp"
+                        android:maxLines="1"
+                        android:textSize="13sp"
+                        android:letterSpacing="0"
+                        android:text="Take Away"
+                        app:cornerRadius="10dp" />
+
+                    <!-- QSR - the third way an order is taken. Laid out to match its
+                         two neighbours exactly (same style, height, insets, padding,
+                         text size and corner radius) so the group reads as one control
+                         of three rather than two plus an addition.
+
+                         DESIGN ONLY at this point: nothing is wired to it yet, so the
+                         segment can be checked but the screen behaves as it always has.
+                         See styleSeg, which colours whatever is in this group, and the
+                         segment listener in onViewCreated, which is where the third
+                         mode's behaviour will go. -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnQsr"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingHorizontal="14dp"
+                        android:maxLines="1"
+                        android:textSize="13sp"
+                        android:letterSpacing="0"
+                        android:text="QSR"
+                        app:cornerRadius="10dp" />
+                </com.google.android.material.button.MaterialButtonToggleGroup>
+            </LinearLayout>
+
+            <!-- One row, three jobs, read left to right: the order's own action, the
+                 rest of the table's actions behind one control, and - out at the far
+                 end where navigation belongs - the two ways in and out of an order.
+                 Transfer/Merge/Split/Cancel used to sit here as four more identical
+                 pills; seven of those in a 500dp column read as a wall and the last
+                 label was cut in half. They are the occasional actions, so they fold
+                 into a menu and leave the row legible. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="22dp"
+                android:paddingBottom="12dp">
+
+                <!-- No Add Item button: the product grid below this adds items directly.
+                     No Print KOT either - it moved down to the foot of the panel, next
+                     to Print Bill: the two of them are the same act at two moments,
+                     sending the order to the kitchen and then to the customer, and they
+                     belong together at the end of the panel rather than one at each end
+                     of it. What is left here is what the TABLE is, not what the order
+                     does. -->
+
+                <!-- Transfer, Merge, Split and Cancel Order live in here. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTableActions"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingHorizontal="12dp"
+                    android:maxLines="1"
+                    android:textSize="12.5sp"
+                    android:letterSpacing="0"
+                    android:text="Table Actions"
+                    app:icon="@drawable/ic_more_vert"
+                    app:iconSize="16dp"
+                    app:iconPadding="3dp"
+                    app:iconGravity="textEnd"
+                    app:cornerRadius="10dp" />
+
+                <!-- The product search, up here rather than over the menu below.
+                     Takes the row's spare width instead of a spacer, so it sits
+                     between the table controls and Active Orders and grows with
+                     whatever the buttons leave. Narrower than it was, which costs it
+                     nothing: it holds one line of text either way, and the height it
+                     used to occupy is now menu. -->
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="10dp"
+                    android:hint="Search / scan"
+                    app:startIconDrawable="@android:drawable/ic_menu_search"
+                    app:boxCornerRadiusTopStart="10dp"
+                    app:boxCornerRadiusTopEnd="10dp"
+                    app:boxCornerRadiusBottomStart="10dp"
+                    app:boxCornerRadiusBottomEnd="10dp">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etProductSearch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="text"
+                        android:imeOptions="actionSearch"
+                        android:maxLines="1"
+                        android:textSize="14sp" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <!-- Slides the active-order list in over the menu (and out again). -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnToggleOrders"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:layout_marginStart="10dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingHorizontal="11dp"
+                    android:maxLines="1"
+                    android:textSize="12.5sp"
+                    android:letterSpacing="0"
+                    android:text="Active Orders"
+                    app:icon="@android:drawable/ic_menu_sort_by_size"
+                    app:iconSize="15dp"
+                    app:iconPadding="5dp"
+                    app:iconGravity="textStart"
+                    app:cornerRadius="10dp" />
+
+                <!-- Choose Table -> the table-picker grid (sections as tabs, tables as cards). -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnChooseTable"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:layout_marginStart="8dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingHorizontal="11dp"
+                    android:maxLines="1"
+                    android:textSize="12.5sp"
+                    android:letterSpacing="0"
+                    android:text="Choose Table"
+                    app:icon="@android:drawable/ic_menu_mylocation"
+                    app:iconSize="15dp"
+                    app:iconPadding="5dp"
+                    app:iconGravity="textStart"
+                    app:cornerRadius="10dp" />
+            </LinearLayout>
+
+                <!-- Products: the menu, browsed in place. Tapping a tile puts the item
+                     on the selected table's order - there is no Add Item popup. Takes
+                     whatever height the header and actions above it leave. -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:paddingHorizontal="18dp">
+
+                    <!-- The search box is not here any more: it moved up into the action
+                         row, between Choose Table and Active Orders. It is narrower
+                         there, which a search box can afford - it holds one line either
+                         way - and the height it used to take goes to the menu below. -->
+
+                    <!-- Section/category tabs -->
+                    <HorizontalScrollView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:scrollbars="none">
+
+                        <LinearLayout
+                            android:id="@+id/llProductCategories"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal" />
+                    </HorizontalScrollView>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="#E4E7EB" />
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/rvProductGrid"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:layout_weight="1"
+                        android:paddingVertical="10dp"
+                        android:clipToPadding="false"
+                        android:scrollbars="none" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="match_parent"
+                android:background="#E4E7EB" />
+
+                <!-- Cart + summary: the selected table's order, full height down the
+                     right - this is what fills the space beside the header/actions. -->
+                <LinearLayout
+                    android:layout_width="352dp"
+                    android:layout_height="match_parent"
+                    android:orientation="vertical"
+                    android:background="@color/white">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingStart="18dp"
+                        android:paddingEnd="10dp"
+                        android:paddingTop="10dp"
+                        android:paddingBottom="6dp">
+
+                        <!-- Says what this list is showing. Once a round has gone to
+                             the kitchen the panel holds only what has NOT been sent,
+                             so the header names the rest rather than leaving the
+                             operator to wonder where it went. -->
+                        <TextView
+                            android:id="@+id/tvOrderItemsHeader"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="ORDER ITEMS"
+                            android:textSize="11sp"
+                            android:letterSpacing="0.08"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_secondary" />
+
+                        <!-- Opens the whole order in a roomy popup - this panel is
+                             narrow, so a long order is easier read there. -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnMoreItems"
+                            style="@style/Widget.MaterialComponents.Button.TextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="32dp"
+                            android:paddingHorizontal="8dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:text="More"
+                            android:textSize="12sp"
+                            android:textAllCaps="false"
+                            app:cornerRadius="6dp" />
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="#E4E7EB" />
+
+                    <!-- The one part that flexes; everything under it keeps its height. -->
+                    <ScrollView
+                        android:id="@+id/svOrderItems"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:layout_weight="1"
+                        android:paddingHorizontal="18dp"
+                        android:clipToPadding="false"
+                        android:scrollbars="none">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical">
+
+                            <LinearLayout
+                                android:id="@+id/llOrderItems"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical" />
+
+                            <!-- Shown when everything on the order is already with the
+                                 kitchen, so the panel is empty for a good reason. An
+                                 empty list under a table that clearly has an order on
+                                 it reads as lost items; this says where they are. -->
+                            <TextView
+                                android:id="@+id/tvCartAllSent"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:paddingVertical="22dp"
+                                android:gravity="center"
+                                android:lineSpacingExtra="3dp"
+                                android:text="All items sent to the kitchen.\nAdd a dish for the next round, or tap More to see the order."
+                                android:textSize="12.5sp"
+                                android:textColor="@color/text_secondary"
+                                android:visibility="gone" />
+                        </LinearLayout>
+                    </ScrollView>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="#E4E7EB" />
+
+                    <!-- The note and the tax breakdown, folded away by default so the
+                         items above get the whole panel to scroll in. The bar below
+                         pulls them back up; the Total and the two buttons never fold,
+                         since they are what the panel is read and used for. -->
+                    <LinearLayout
+                        android:id="@+id/llSummaryDetail"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginHorizontal="18dp"
+                            android:layout_marginTop="12dp"
+                            android:hint="Add Order Note"
+                            app:counterEnabled="true"
+                            app:counterMaxLength="200"
+                            app:boxCornerRadiusTopStart="12dp"
+                            app:boxCornerRadiusTopEnd="12dp"
+                            app:boxCornerRadiusBottomStart="12dp"
+                            app:boxCornerRadiusBottomEnd="12dp">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etOrderNote"
+                                android:layout_width="match_parent"
+                                android:layout_height="56dp"
+                                android:gravity="top"
+                                android:inputType="textMultiLine|textCapSentences"
+                                android:maxLength="200"
+                                android:textSize="14sp" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- The whole-bill discount, exactly as the grocery cart takes
+                             it: a figure and a choice of what the figure means. Shown
+                             only when Tax Settings has Discount on and set to Bill
+                             wise - item-wise prices each product's own discount into
+                             its line, leaving nothing for a bill figure to add, and a
+                             box that cannot change the total is worse than no box. -->
+                        <LinearLayout
+                            android:id="@+id/sectionOrderDiscount"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:paddingHorizontal="20dp"
+                            android:paddingTop="10dp"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="DISCOUNT"
+                                android:textSize="11sp"
+                                android:letterSpacing="0.08"
+                                android:textStyle="bold"
+                                android:textColor="@color/text_secondary" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical"
+                                android:layout_marginTop="6dp">
+
+                                <com.google.android.material.textfield.TextInputLayout
+                                    android:id="@+id/tilOrderDiscount"
+                                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:hint="Discount"
+                                    app:boxCornerRadiusTopStart="10dp"
+                                    app:boxCornerRadiusTopEnd="10dp"
+                                    app:boxCornerRadiusBottomStart="10dp"
+                                    app:boxCornerRadiusBottomEnd="10dp">
+
+                                    <com.google.android.material.textfield.TextInputEditText
+                                        android:id="@+id/etOrderDiscount"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:inputType="numberDecimal"
+                                        android:maxLines="1"
+                                        android:textSize="15sp" />
+                                </com.google.android.material.textfield.TextInputLayout>
+
+                                <RadioGroup
+                                    android:id="@+id/rgOrderDiscountMode"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginStart="10dp"
+                                    android:orientation="vertical">
+
+                                    <RadioButton
+                                        android:id="@+id/rbOrderDiscountPercent"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:minHeight="0dp"
+                                        android:checked="true"
+                                        android:text="%"
+                                        android:textSize="13sp" />
+
+                                    <RadioButton
+                                        android:id="@+id/rbOrderDiscountAmount"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:minHeight="0dp"
+                                        android:text="₹"
+                                        android:textSize="13sp" />
+                                </RadioGroup>
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:paddingHorizontal="20dp"
+                            android:paddingTop="6dp">
+
+                            <LinearLayout style="@style/OrderSummaryRow">
+                                <TextView style="@style/OrderSummaryLabel" android:text="Subtotal" />
+                                <TextView android:id="@+id/tvSubtotal" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                            </LinearLayout>
+
+                            <!-- Hidden while there is no discount, either because none
+                                 is configured or because none has been entered: a line
+                                 reading "- ₹ 0.00" on every bill is noise. -->
+                            <LinearLayout android:id="@+id/rowOrderDiscount" style="@style/OrderSummaryRow"
+                                android:visibility="gone">
+                                <TextView android:id="@+id/tvOrderDiscountLabel"
+                                    style="@style/OrderSummaryLabel" android:text="Discount" />
+                                <TextView android:id="@+id/tvOrderDiscountAmt" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                            </LinearLayout>
+
+                            <LinearLayout style="@style/OrderSummaryRow">
+                                <TextView style="@style/OrderSummaryLabel" android:text="Service Charge" />
+                                <TextView android:id="@+id/tvService" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                            </LinearLayout>
+
+                            <LinearLayout style="@style/OrderSummaryRow">
+                                <TextView style="@style/OrderSummaryLabel" android:text="CGST" />
+                                <TextView android:id="@+id/tvCgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                            </LinearLayout>
+
+                            <LinearLayout style="@style/OrderSummaryRow">
+                                <TextView style="@style/OrderSummaryLabel" android:text="SGST" />
+                                <TextView android:id="@+id/tvSgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                            </LinearLayout>
+
+                            <!-- Only on a bill that actually carries VAT. A GST till
+                                 showing an empty VAT line invites the question of why
+                                 it is there. -->
+                            <LinearLayout android:id="@+id/rowOrderVat" style="@style/OrderSummaryRow"
+                                android:visibility="gone">
+                                <TextView style="@style/OrderSummaryLabel" android:text="VAT" />
+                                <TextView android:id="@+id/tvOrderVat" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                            </LinearLayout>
+
+                            <!-- The shop's own charges - Extra Charges and the Parcel
+                                 Charge - one row each, by name, filled in by
+                                 updateTotals. They were being added to the Total and
+                                 shown nowhere, so a bill quietly came to more than the
+                                 lines above it added up to.
+
+                                 Last in the breakdown because that is where they join
+                                 the sum: on top of the taxed goods, being the shop's
+                                 own additions rather than part of what was sold. -->
+                            <LinearLayout
+                                android:id="@+id/llOrderCharges"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical" />
+                        </LinearLayout>
+
+                        <!-- The Total closes the breakdown it is the sum of, which is
+                             where it belongs and where it costs the items list nothing
+                             while folded. The figure itself never leaves the screen -
+                             it is repeated on the bar below, which is always up. -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:paddingHorizontal="20dp"
+                            android:paddingTop="10dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Total"
+                                android:textSize="22sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/text_main" />
+
+                            <TextView
+                                android:id="@+id/tvOrderTotal"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="₹ 0.00"
+                                android:textSize="24sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/primary_blue" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- The handle: says what is folded away, pulls it up, and carries
+                         the Total while it is down.
+
+                         The Total moved into the fold to give the items list its height
+                         back, but an order's amount is the one figure the counter reads
+                         off this panel continuously - folding it away would have bought
+                         the space with the number the screen is for. So it is echoed
+                         here, in the row that was already on screen, at no height at
+                         all: the bar was 38dp before and is 38dp now. -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="38dp"
+                        android:layout_marginHorizontal="14dp"
+                        android:layout_marginTop="4dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:baselineAligned="false">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnToggleSummary"
+                            style="@style/Widget.MaterialComponents.Button.TextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="1"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:minHeight="0dp"
+                            android:paddingHorizontal="8dp"
+                            android:text="Note &amp; tax details"
+                            android:textSize="12.5sp"
+                            android:textAllCaps="false"
+                            app:icon="@drawable/ic_expand_less"
+                            app:iconGravity="textStart"
+                            app:iconSize="18dp"
+                            app:cornerRadius="8dp" />
+
+                        <!-- Gone while the fold is open, where the full Total row is
+                             showing four lines below it - the same number twice, one
+                             above the other, reads as two figures to reconcile. -->
+                        <TextView
+                            android:id="@+id/tvTotalBar"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:layout_marginEnd="6dp"
+                            android:maxLines="1"
+                            android:text="₹ 0.00"
+                            android:textSize="18sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/primary_blue" />
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginHorizontal="20dp"
+                        android:background="#E4E7EB" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="18dp">
+
+                        <!-- The two prints, side by side and equally weighted: the same
+                             act at two moments - the order to the kitchen, then to the
+                             customer - and an order passes through them in that order,
+                             left to right. Sharing one row costs no height over the
+                             single Print Bill that used to sit here. -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:baselineAligned="false">
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnPrintKot"
+                                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                                android:layout_width="0dp"
+                                android:layout_height="48dp"
+                                android:layout_weight="1"
+                                android:layout_marginEnd="5dp"
+                                android:insetTop="0dp"
+                                android:insetBottom="0dp"
+                                android:paddingHorizontal="4dp"
+                                android:maxLines="1"
+                                android:letterSpacing="0"
+                                android:text="Print KOT"
+                                app:cornerRadius="12dp" />
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnBillPrint"
+                                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                                android:layout_width="0dp"
+                                android:layout_height="48dp"
+                                android:layout_weight="1"
+                                android:layout_marginStart="5dp"
+                                android:insetTop="0dp"
+                                android:insetBottom="0dp"
+                                android:paddingHorizontal="4dp"
+                                android:maxLines="1"
+                                android:letterSpacing="0"
+                                android:text="Print Bill"
+                                app:cornerRadius="12dp" />
+                        </LinearLayout>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnBillPay"
+                            android:layout_width="match_parent"
+                            android:layout_height="52dp"
+                            android:layout_marginTop="10dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Settlement"
+                            android:textColor="@color/white"
+                            android:textSize="16sp"
+                            app:cornerRadius="12dp" />
+                    </LinearLayout>
+                </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>

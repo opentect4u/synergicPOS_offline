@@ -56,6 +56,32 @@ object ReceiptPrinter {
         }.getOrNull()
     }
 
+    /**
+     * The same capture with [bottomDp] of blank paper under it.
+     *
+     * Not the same thing as the printer's own feed-before-cut, which clears the
+     * cutter's offset and is fixed for the machine. This is white space belonging to
+     * the DOCUMENT - room under the last line so a report torn off by hand at a
+     * counter is not torn through its own totals.
+     *
+     * Measured in dp through [PrintType.dots], so it is the same physical gap on a
+     * 58mm roll as on an 80mm one; a margin given as a fraction of the paper is
+     * narrower on the narrow roll, which is the one that needs it most.
+     */
+    fun captureWithBottomMargin(view: View, bottomDp: Float): Bitmap? {
+        val src = capture(view) ?: return null
+        val extra = PrintType.dots(bottomDp).toInt()
+        if (extra <= 0) return src
+        return runCatching {
+            Bitmap.createBitmap(src.width, src.height + extra, Bitmap.Config.ARGB_8888).also {
+                val canvas = Canvas(it)
+                canvas.drawColor(Color.WHITE)
+                canvas.drawBitmap(src, 0f, 0f, null)
+                src.recycle()
+            }
+        }.getOrElse { src }
+    }
+
     private class ReceiptAdapter(
         private val bitmap: Bitmap,
         private val jobName: String,

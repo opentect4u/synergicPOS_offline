@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import com.example.synergic_pos_offline.utils.AmountInWords
 import com.example.synergic_pos_offline.utils.BillPricing
+import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.BillSettingsSnapshot
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.SessionManager
@@ -25,9 +26,11 @@ import java.util.Locale
  */
 class BillDao(context: Context) {
 
+    private val appContext = context.applicationContext
     private val helper = DatabaseHelper.getInstance(context)
     private val settingsDao = BillSettingsDao(context)
     private val taxSettingsDao = TaxSettingsDao(context)
+    private val stockDao by lazy { StockDao(context) }
 
     /** A single line on the bill. */
     data class Item(
@@ -37,7 +40,14 @@ class BillDao(context: Context) {
         val rate: Double,
         val cgstRate: Double = 0.0,
         val sgstRate: Double = 0.0,
-        /** Only meaningful when Tax Settings has VAT active instead of GST. */
+        /**
+         * The product's VAT rate, off the master.
+         *
+         * Charged whenever the line carries one, whichever tax the till is set up
+         * for - see [com.example.synergic_pos_offline.utils.BillPricing]. It used to
+         * be read only under a VAT regime, which is how a VAT-rated product sold on
+         * a GST till came to be charged no VAT at all.
+         */
         val vatRate: Double = 0.0,
         /** This line's share of the bill discount; tax is charged on the remainder. */
         val discountAmount: Double = 0.0
@@ -74,7 +84,37 @@ class BillDao(context: Context) {
         val roundOffAmount: Double = 0.0,
         val waiterId: Long? = null,
         val isMrpBilling: Boolean = false,
-        val isReturnBill: Boolean = false
+        val isReturnBill: Boolean = false,
+        // Restaurant-mode fields (null/0 for grocery bills).
+        val tableNumber: String? = null,
+        /** The table's section. Null for grocery, and for take-away. */
+        val tableSection: String? = null,
+        val orderType: String? = null,
+        val serviceChargeAmount: Double = 0.0,
+        /**
+         * The number this bill was already printed under, held on the running order
+         * since Print Bill - see td_running_order.bill_seq_no.
+         *
+         * Null for a sale numbered at the moment it is saved, which is every grocery
+         * bill: the till prints and books it in one act, so there is no gap for the
+         * counter to move in. A restaurant bill has a gap of minutes, and this is what
+         * carries the number across it.
+         */
+        val reservedBillSeq: Int? = null,
+        /**
+         * Set when the shelf has ALREADY been drawn down for these items, so this
+         * bill must not draw it down again.
+         *
+         * The restaurant does this: its stock comes off at Print Bill, when the
+         * kitchen has served the order and the table is locked, rather than at
+         * payment - which can be minutes later, or never, and by then the food is
+         * gone whatever the customer does. The bill is still written at payment, and
+         * without this flag that write would take the same items off a second time.
+         *
+         * Grocery leaves it false: there is no moment between serving and paying for
+         * a shelf sale, so the bill IS the deduction, inside the same transaction.
+         */
+        val stockAlreadyMoved: Boolean = false
     )
 
     /** Result of a successful generation. */
@@ -94,7 +134,10 @@ class BillDao(context: Context) {
         val nowDateTime = now()
         val nowDate = today()
         val settings = settingsDao.load()
-        val seq = nextBillSequence(db, settings, nowDate)
+        // The number this sale was PRINTED under, where it was printed before being
+        // paid, so the books carry what the customer is holding. Only a fresh sale -
+        // one whose slip has not been cut yet - takes the next number off the counter.
+        val seq = bill.reservedBillSeq ?: nextBillSequence(db, settings, nowDate)
         val billNumber = formatBillNumber(seq, settings)
         val taxSettings = taxSettingsDao.load()
         val regime = GstCalculator.regimeFor(taxSettings.gstEnabled, taxSettings.vatEnabled)
@@ -142,6 +185,10 @@ class BillDao(context: Context) {
                 put("gst_flag", if (bill.cgstAmount + bill.sgstAmount + bill.igstAmount > 0) 1 else 0)
                 put("vat_flag", if (bill.vatAmount > 0) 1 else 0)
                 if (bill.waiterId != null) put("waiter_id", bill.waiterId)
+                bill.tableNumber?.takeIf { it.isNotBlank() }?.let { put("table_number", it) }
+                bill.tableSection?.takeIf { it.isNotBlank() }?.let { put("table_section", it) }
+                bill.orderType?.takeIf { it.isNotBlank() }?.let { put("order_type", it) }
+                put("service_charge_amount", bill.serviceChargeAmount)
                 put("is_mrp_billing", if (bill.isMrpBilling) 1 else 0)
                 put("is_return_bill", if (bill.isReturnBill) 1 else 0)
                 put("is_duplicate", 0)
@@ -173,10 +220,12 @@ class BillDao(context: Context) {
                 val vatAmt = priced.vat
                 val itemTotal = priced.itemTotal
                 val itemValues = ContentValues().apply {
+                    put("store_id", storeId)
                     put("receipt_no", receiptNo)
                     put("trans_dt", nowDateTime)
                     put("bill_id", receiptNo)
                     if (item.productId != null) put("product_id", item.productId)
+                    unitIdForProduct(db, item.productId)?.let { put("unit_id", it) }
                     put("quantity", item.quantity)
                     put("rate", item.rate)
                     put("item_subtotal", priced.subtotal)
@@ -195,6 +244,7 @@ class BillDao(context: Context) {
 
             // 3) Payment.
             val paymentValues = ContentValues().apply {
+                put("store_id", storeId)
                 put("receipt_no", receiptNo)
                 put("bill_id", receiptNo)
                 put("payment_mode", bill.payment.mode)
@@ -216,6 +266,26 @@ class BillDao(context: Context) {
             val customerId = bill.customerId ?: bill.payment.custId
             if (balance > 0.001 && customerId != null && paymentId != -1L) {
                 recordBalanceDue(db, customerId, receiptNo, paymentId, balance, nowDateTime, user)
+            }
+
+            // 5) Stock. Inside the bill's own transaction, so a sale and the stock it
+            // moved land together or not at all. Only while stock tracking is on:
+            // with the flag off the sale never touches the stock tables at all, which
+            // is how the till behaved before they were being kept.
+            //
+            // A void sold nothing and a return is stock coming back, so neither is a
+            // deduction - the return flow has its own accounting.
+            // ...and not when the caller has already moved it - see
+            // [NewBill.stockAlreadyMoved]. A restaurant takes its stock off at Print
+            // Bill; deducting again here is how one sale came off the shelf twice.
+            val movesStock = bill.billType != "VOID" && !bill.isReturnBill &&
+                !bill.stockAlreadyMoved &&
+                GeneralSettingsDao.isStockEnabled(appContext)
+            if (movesStock) {
+                bill.items.forEach { item ->
+                    val productId = item.productId?.toInt() ?: return@forEach
+                    stockDao.deductForSale(db, productId, item.quantity, billNumber)
+                }
             }
 
             db.setTransactionSuccessful()
@@ -249,6 +319,12 @@ class BillDao(context: Context) {
      * a DEBIT line on their ledger carrying the running balance, and the same total
      * on their master record.
      *
+     * The credit limit comes down by what was just put on the account, so it always
+     * reads as the credit the customer has left rather than the figure they started
+     * with. It floors at zero: a sale larger than the remaining limit exhausts it
+     * rather than turning it negative, and the full debt is still carried by the
+     * balance either way.
+     *
      * Skipped when the sale has no customer - there would be nobody to chase, and
      * the balance is still recorded on the payment row either way.
      */
@@ -261,11 +337,19 @@ class BillDao(context: Context) {
         nowDateTime: String,
         user: String?
     ) {
-        val previous = db.rawQuery(
-            "SELECT balance_amount FROM ${DatabaseHelper.Tables.MD_CUSTOMERS} WHERE id = ?",
+        var previous = 0.0
+        var previousLimit = 0.0
+        db.rawQuery(
+            "SELECT balance_amount, credit_limit FROM ${DatabaseHelper.Tables.MD_CUSTOMERS} WHERE id = ?",
             arrayOf(customerId.toString())
-        ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getDouble(0) else 0.0 }
-        val running = previous + balance
+        ).use { c ->
+            if (c.moveToFirst()) {
+                previous = if (c.isNull(0)) 0.0 else c.getDouble(0)
+                previousLimit = if (c.isNull(1)) 0.0 else c.getDouble(1)
+            }
+        }
+        val running = BillRounding.toPaise(previous + balance)
+        val remainingLimit = BillRounding.toPaise((previousLimit - balance).coerceAtLeast(0.0))
 
         db.insert(
             DatabaseHelper.Tables.TD_CUSTOMER_LEDGER, null,
@@ -282,16 +366,32 @@ class BillDao(context: Context) {
         )
         db.update(
             DatabaseHelper.Tables.MD_CUSTOMERS,
-            ContentValues().apply { put("balance_amount", running) },
+            ContentValues().apply {
+                put("balance_amount", running)
+                put("credit_limit", remainingLimit)
+            },
             "id = ?", arrayOf(customerId.toString())
         )
     }
 
     /** The bill number the next completed sale will be given, per Bill Settings. */
-    fun nextBillNumber(): String {
+    fun nextBillNumber(): String = nextNumber().number
+
+    /** A bill number and the counter behind it, taken together so they cannot disagree. */
+    data class NextNumber(val seq: Int, val number: String)
+
+    /**
+     * The number the next bill will carry, with its raw counter.
+     *
+     * Handed out as a pair because a caller that PRINTS a number has to be able to
+     * save that same one later - see [NewBill.reservedBillSeq]. Asking twice and
+     * hoping the answer has not moved is what put one number on the slip and another
+     * in the books.
+     */
+    fun nextNumber(): NextNumber {
         val settings = settingsDao.load()
         val seq = nextBillSequence(helper.readableDatabase, settings, today())
-        return formatBillNumber(seq, settings)
+        return NextNumber(seq, formatBillNumber(seq, settings))
     }
 
     /**
@@ -343,6 +443,17 @@ class BillDao(context: Context) {
         return null
     }
 
+    /** The unit_id for a product, taken from its default rate (else its first rate). */
+    private fun unitIdForProduct(db: SQLiteDatabase, productId: Long?): Long? {
+        if (productId == null) return null
+        db.rawQuery(
+            "SELECT unit_id FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} " +
+                "WHERE product_id = ? AND unit_id IS NOT NULL ORDER BY \"default\" DESC, id ASC LIMIT 1",
+            arrayOf(productId.toString())
+        ).use { c -> if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0) }
+        return null
+    }
+
     /** Looks up a customer's id by phone number, or null if not found. */
     fun findCustomerIdByPhone(phone: String?): Long? {
         if (phone.isNullOrBlank()) return null
@@ -366,23 +477,65 @@ class BillDao(context: Context) {
      * numbering continues indefinitely, or 1 when a new period is starting fresh.
      */
     private fun nextBillSequence(db: SQLiteDatabase, settings: BillSettingsDao.BillSettings, nowDate: String): Int {
-        val periodWhere = when (settings.resetMode) {
-            BillSettingsDao.ResetMode.DAILY -> "bill_date = ?" to nowDate
-            BillSettingsDao.ResetMode.MONTHLY -> "substr(bill_date, 1, 7) = ?" to nowDate.take(7)
-            BillSettingsDao.ResetMode.YEARLY -> "substr(bill_date, 1, 4) = ?" to nowDate.take(4)
-            BillSettingsDao.ResetMode.CONTINUE -> null
-        }
-        val sql = "SELECT MAX(bill_seq_no) FROM ${DatabaseHelper.Tables.TD_BILLS}" +
-            (periodWhere?.let { " WHERE ${it.first}" } ?: "")
-        val args = periodWhere?.let { arrayOf(it.second) }
-        val maxSeq = db.rawQuery(sql, args).use { c ->
-            if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null
-        }
+        // The sequence is shared across sales and sale returns, so each document's number
+        // continues on from the last of either. Each table dates its rows on its own
+        // column, but both carry the same bill_seq_no counter. Advance-payment collections
+        // are NOT part of this: they run on their own keyname sequence (see AdvancePaymentDao).
+        val maxSeq = listOfNotNull(
+            maxSeqIn(db, DatabaseHelper.Tables.TD_BILLS, "bill_date", settings.resetMode, nowDate),
+            maxSeqIn(db, DatabaseHelper.Tables.TD_SALE_RETURNS, "return_date", settings.resetMode, nowDate),
+            // Numbers already PRINTED on a bill that has not been settled yet. They
+            // are spoken for: the slip is on a table with that number on it, so the
+            // next table has to be given a different one. Not scoped to the reset
+            // period - an unsettled order that has crossed midnight still holds its
+            // number, and handing it out again would put one number on two bills,
+            // which is worse than the gap that skipping it leaves.
+            maxReservedSeq(db)
+        ).maxOrNull()
         return when {
             maxSeq != null -> maxSeq + 1
             settings.resetMode == BillSettingsDao.ResetMode.CONTINUE -> settings.startBillNo + 1
             else -> 1
         }
+    }
+
+    /** Highest bill number reserved by an order whose bill is printed but not settled. */
+    private fun maxReservedSeq(db: SQLiteDatabase): Int? = runCatching {
+        db.rawQuery(
+            "SELECT MAX(bill_seq_no) FROM ${DatabaseHelper.Tables.TD_RUNNING_ORDER}", null
+        ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null }
+    }.getOrNull()
+
+    /** Highest bill_seq_no in [table] within the reset period (dated on [dateCol]). */
+    private fun maxSeqIn(
+        db: SQLiteDatabase, table: String, dateCol: String,
+        resetMode: BillSettingsDao.ResetMode, nowDate: String
+    ): Int? {
+        val periodWhere = when (resetMode) {
+            BillSettingsDao.ResetMode.DAILY -> "$dateCol = ?" to nowDate
+            BillSettingsDao.ResetMode.MONTHLY -> "substr($dateCol, 1, 7) = ?" to nowDate.take(7)
+            BillSettingsDao.ResetMode.YEARLY -> "substr($dateCol, 1, 4) = ?" to nowDate.take(4)
+            BillSettingsDao.ResetMode.CONTINUE -> null
+        }
+        val sql = "SELECT MAX(bill_seq_no) FROM $table" + (periodWhere?.let { " WHERE ${it.first}" } ?: "")
+        val args = periodWhere?.let { arrayOf(it.second) }
+        return runCatching {
+            db.rawQuery(sql, args).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null }
+        }.getOrNull()
+    }
+
+    /** A shared bill number for a sale return / credit recovery, continuous with sales. */
+    data class SharedNumber(val seq: Int, val number: String)
+
+    /**
+     * The next continuous bill number to stamp on a sale return or credit recovery,
+     * drawn from the SAME sequence as normal sales (and advancing it). Store [seq] as
+     * that document's bill_seq_no so the next sale continues past it.
+     */
+    fun nextSharedBillNumber(): SharedNumber {
+        val settings = settingsDao.load()
+        val seq = nextBillSequence(helper.readableDatabase, settings, today())
+        return SharedNumber(seq, formatBillNumber(seq, settings))
     }
 
     private fun formatBillNumber(seq: Int, settings: BillSettingsDao.BillSettings): String {
@@ -391,6 +544,8 @@ class BillDao(context: Context) {
     }
 
     private fun currentStoreId(): Long? {
+        // The signed-in user's store is the current store; registration is a fallback.
+        SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
             null, null, null, null, "store_id ASC", "1"
@@ -401,6 +556,13 @@ class BillDao(context: Context) {
     }
 
     private fun currentOutletId(): Long? {
+        // Prefer the outlet registered for the current store; else the first row.
+        currentStoreId()?.let { store ->
+            helper.readableDatabase.rawQuery(
+                "SELECT outlet_id FROM ${DatabaseHelper.Tables.MD_REGISTRATION} WHERE store_id = ? LIMIT 1",
+                arrayOf(store.toString())
+            ).use { c -> if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0) }
+        }
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("outlet_id"),
             null, null, null, null, "store_id ASC", "1"
@@ -422,7 +584,7 @@ class BillDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 
     private fun now(): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
@@ -438,7 +600,26 @@ class BillDao(context: Context) {
         val time: String,       // HH:mm
         val total: String,      // formatted net amount, e.g. "1,285.75"
         val items: List<String>,
-        val cancelled: Boolean
+        val cancelled: Boolean,
+        /**
+         * Whether any of this bill has come back on a sale return.
+         *
+         * Derived from the returns table rather than stored on the bill: a return is
+         * its own document with its own number, and rewriting the sale's status when
+         * one is taken would change what every report reading `bill_status` counts.
+         * True for a partial return too - some of the goods are back, so the sale is
+         * no longer the plain sale it was, which is what Bill History needs to show.
+         */
+        val returned: Boolean = false,
+        /**
+         * Whether this bill has been deleted - moved out of td_bills and into the
+         * archive, so it counts towards no report.
+         *
+         * History still lists it, filed with the cancelled ones: a deleted bill is
+         * exactly the thing somebody comes looking for, and a till that simply lost it
+         * would look like a till that had lost a sale.
+         */
+        val deleted: Boolean = false
     ) {
         /** Numeric total, tolerant of thousands separators. */
         val amount: Double get() = total.replace(",", "").toDoubleOrNull() ?: 0.0
@@ -449,15 +630,34 @@ class BillDao(context: Context) {
         val itemsByBill = loadItemsByBill()
         val list = mutableListOf<Bill>()
 
+        // Store-scoped: only the current store's bills (all date filters run on top of this).
+        val store = currentStoreId()
+        val storeClause = if (store != null) "WHERE b.store_id = ?" else ""
+        // Bound twice - the store clause appears in both halves of the union below.
+        val args = store?.let { arrayOf(it.toString(), it.toString()) }
+        // Live bills and deleted ones in one list. Deleted bills are gone from every
+        // report - that is what deleting them did - but History is where somebody
+        // goes to find one, so it reads both tables and marks which is which.
         val sql = """
             SELECT b.receipt_no, b.bill_number, b.bill_date, b.bill_date_time,
-                   b.net_amount, b.bill_status, c.customer_name
+                   b.net_amount, b.bill_status, c.customer_name,
+                   EXISTS(SELECT 1 FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} r
+                          WHERE r.original_bill_id = b.receipt_no), 0
             FROM td_bills b
             LEFT JOIN md_customers c ON c.id = b.customer_id
-            ORDER BY b.receipt_no DESC
+            $storeClause
+            UNION ALL
+            SELECT b.receipt_no, b.bill_number, b.bill_date, b.bill_date_time,
+                   b.net_amount, b.bill_status, c.customer_name,
+                   EXISTS(SELECT 1 FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} r
+                          WHERE r.original_bill_id = b.receipt_no), 1
+            FROM ${DatabaseHelper.Tables.TD_BILLS_DELETE} b
+            LEFT JOIN md_customers c ON c.id = b.customer_id
+            $storeClause
+            ORDER BY 1 DESC
         """.trimIndent()
 
-        helper.readableDatabase.rawQuery(sql, null).use { c ->
+        helper.readableDatabase.rawQuery(sql, args).use { c ->
             while (c.moveToNext()) {
                 val receiptNo = c.getLong(0)
                 val billNumber = c.getString(1)?.takeIf { it.isNotBlank() } ?: receiptNo.toString()
@@ -476,7 +676,11 @@ class BillDao(context: Context) {
                         time = formatTime(rawDateTime),
                         total = String.format(Locale.US, "%,.2f", net),
                         items = itemsByBill[receiptNo].orEmpty(),
-                        cancelled = status.equals("CANCELLED", ignoreCase = true)
+                        // A deleted bill files with the cancelled ones, which is where
+                        // History looks for anything that is no longer a plain sale.
+                        cancelled = status.equals("CANCELLED", ignoreCase = true) || c.getInt(8) == 1,
+                        returned = c.getInt(7) == 1,
+                        deleted = c.getInt(8) == 1
                     )
                 )
             }
@@ -488,16 +692,27 @@ class BillDao(context: Context) {
     fun allItems(): List<String> =
         loadItemsByBill().values.flatten().distinct().sorted()
 
-    /** Maps each bill's receipt_no to the list of its product names. */
+    /** Maps each bill's receipt_no to the list of its product names (current store only). */
     private fun loadItemsByBill(): Map<Long, MutableList<String>> {
         val map = hashMapOf<Long, MutableList<String>>()
+        val store = currentStoreId()
+        // Restrict to the current store's bill lines (scoped directly by store_id).
+        val storeClause = if (store != null) "WHERE bi.store_id = ?" else ""
+        // Bound twice - once per half of the union.
+        val args = store?.let { arrayOf(it.toString(), it.toString()) }
         val sql = """
             SELECT bi.bill_id, p.product_name
             FROM td_bill_items bi
             LEFT JOIN md_products p ON p.id = bi.product_id
+            $storeClause
+            UNION ALL
+            SELECT bi.bill_id, p.product_name
+            FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS_DELETE} bi
+            LEFT JOIN md_products p ON p.id = bi.product_id
+            $storeClause
         """.trimIndent()
 
-        helper.readableDatabase.rawQuery(sql, null).use { c ->
+        helper.readableDatabase.rawQuery(sql, args).use { c ->
             while (c.moveToNext()) {
                 if (c.isNull(0)) continue
                 val billId = c.getLong(0)
@@ -524,4 +739,30 @@ class BillDao(context: Context) {
 
     private fun parse(fmt: SimpleDateFormat, text: String?) =
         try { if (text.isNullOrBlank()) null else fmt.parse(text) } catch (_: Exception) { null }
+
+    companion object {
+
+        /**
+         * SQL predicate for a bill that still counts as a sale: not voided, and with
+         * nothing returned against it.
+         *
+         * Kept here as one string because every figure the till reports has to agree
+         * on what a countable bill is. There are two dozen reports still to be built,
+         * and each one writing its own version of this is how a Day-Wise total ends up
+         * disagreeing with a Bill-Wise one over the same day.
+         *
+         * [alias] is the table alias the query gave `td_bills`, or null when its
+         * columns are unqualified.
+         *
+         * Note this drops a partly-returned bill entirely rather than netting the
+         * returned amount off it - see the returns table if a report needs the
+         * finer-grained figure.
+         */
+        fun countableBillClause(alias: String? = null): String {
+            val prefix = alias?.let { "$it." } ?: ""
+            return "${prefix}is_voided = 0 AND NOT EXISTS(" +
+                "SELECT 1 FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} r " +
+                "WHERE r.original_bill_id = ${prefix}receipt_no)"
+        }
+    }
 }

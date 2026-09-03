@@ -20,6 +20,7 @@ class WaiterDao(context: Context) {
 
     private val helper = DatabaseHelper.getInstance(context)
     private val table = DatabaseHelper.Tables.MD_WAITERS
+    private val assignTable = DatabaseHelper.Tables.TD_ASSIGN_WAITER
 
     /** A single waiter row. [tableNo] is the assigned table (may be blank). */
     data class Waiter(val id: Long, val name: String, val tableNo: String) {
@@ -31,7 +32,9 @@ class WaiterDao(context: Context) {
         val list = mutableListOf<Waiter>()
         helper.readableDatabase.query(
             table, arrayOf("id", "waiter_name", "table_no_from"),
-            null, null, null, null, "id ASC"
+            (if (currentStoreId() != null) "store_id = ?" else null),
+            currentStoreId()?.let { arrayOf(it.toString()) },
+            null, null, "id ASC"
         ).use { c ->
             val iId = c.getColumnIndexOrThrow("id")
             val iName = c.getColumnIndexOrThrow("waiter_name")
@@ -45,26 +48,43 @@ class WaiterDao(context: Context) {
 
     /** Inserts a new waiter and returns its new row id (or -1 on failure). */
     fun insert(name: String, tableNo: String): Long {
-        val values = ContentValues().apply {
+        val db = helper.writableDatabase
+        val id = db.insert(table, null, ContentValues().apply {
             put("store_id", currentStoreId())
             put("waiter_name", name)
             put("table_no_from", tableNo)
             put("table_no_to", tableNo)
             put("created_by", currentUser())
+        })
+        // Mirror the waiter into the assign-waiter table (id + name only).
+        if (id != -1L) {
+            db.insert(assignTable, null, ContentValues().apply {
+                put("store_id", currentStoreId())
+                put("waiter_id", id)
+                put("waiter_name", name)
+                put("created_by", currentUser())
+            })
         }
-        return helper.writableDatabase.insert(table, null, values)
+        return id
     }
 
     /** Updates name and assigned table for [id]. */
     fun update(id: Long, name: String, tableNo: String): Int {
-        val values = ContentValues().apply {
+        val db = helper.writableDatabase
+        val n = db.update(table, ContentValues().apply {
             put("waiter_name", name)
             put("table_no_from", tableNo)
             put("table_no_to", tableNo)
             put("modified_at", now())
             put("modified_by", currentUser())
-        }
-        return helper.writableDatabase.update(table, values, "id=?", arrayOf(id.toString()))
+        }, "id=?", arrayOf(id.toString()))
+        // Keep the mirrored assign-waiter row's name in sync.
+        db.update(assignTable, ContentValues().apply {
+            put("waiter_name", name)
+            put("modified_at", now())
+            put("modified_by", currentUser())
+        }, "waiter_id=?", arrayOf(id.toString()))
+        return n
     }
 
     /** Deletes every waiter in [ids]. */
@@ -72,7 +92,9 @@ class WaiterDao(context: Context) {
         if (ids.isEmpty()) return 0
         val placeholders = ids.joinToString(",") { "?" }
         val args = ids.map { it.toString() }.toTypedArray()
-        return helper.writableDatabase.delete(table, "id IN ($placeholders)", args)
+        val db = helper.writableDatabase
+        db.delete(assignTable, "waiter_id IN ($placeholders)", args)
+        return db.delete(table, "id IN ($placeholders)", args)
     }
 
     /** The largest existing id, or null when the table is empty. */
@@ -94,6 +116,9 @@ class WaiterDao(context: Context) {
     }
 
     private fun currentStoreId(): Long? {
+        // The signed-in user's store is the current store; the registration row is
+        // only a fallback (e.g. seeding before anyone has logged in).
+        SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
         helper.readableDatabase.query(
             DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_id"),
             null, null, null, null, "store_id ASC", "1"
@@ -103,7 +128,7 @@ class WaiterDao(context: Context) {
         return null
     }
 
-    private fun currentUser(): String? = SessionManager.currentUser?.userId
+    private fun currentUser(): String? = SessionManager.auditUser
 
     private fun now(): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())

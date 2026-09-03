@@ -110,6 +110,7 @@ object DatabaseSeeder {
                 put("cgst_rate", p.gst / 2.0)
                 put("sgst_rate", p.gst / 2.0)
                 put("sell_price", p.rate)
+                put("sale_price", p.rate)
                 put("purchase_price", p.purchase)
             }
             db.insert(DatabaseHelper.Tables.MD_PRODUCT_RATES, null, rates)
@@ -243,17 +244,17 @@ object DatabaseSeeder {
         customer(
             "Sunrise Restaurant", "Plot 7, Andheri, Mumbai", "9820011223",
             gstin = "27ABCDE1234F1Z5", creditEnabled = true,
-            creditLimit = 50000.0, creditDays = 30, balance = 12500.0
+            creditLimit = 50000.0, balance = 12500.0
         ),
         customer(
             "Green Grocers", "Sector 18, Noida", "9911002233",
             gstin = "09PQRST5678K1Z2", creditEnabled = true,
-            creditLimit = 20000.0, creditDays = 15, balance = 3200.0
+            creditLimit = 20000.0, balance = 3200.0
         ),
         customer(
             "Cafe Mocha", "Park Street, Kolkata", "9830012345",
             gstin = "19LMNOP9012Q1Z8", creditEnabled = true,
-            creditLimit = 30000.0, creditDays = 21, balance = 0.0
+            creditLimit = 30000.0, balance = 0.0
         )
     )
 
@@ -265,7 +266,6 @@ object DatabaseSeeder {
         gstin: String = "",
         creditEnabled: Boolean = false,
         creditLimit: Double = 0.0,
-        creditDays: Int = 0,
         balance: Double = 0.0
     ) = CustomerDao.Customer(
         id = 0L,
@@ -275,7 +275,6 @@ object DatabaseSeeder {
         gstin = gstin,
         creditEnabled = creditEnabled,
         creditLimit = creditLimit,
-        creditDays = creditDays,
         balance = balance
     )
 

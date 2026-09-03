@@ -181,7 +181,7 @@ class CheckoutFragment : Fragment(), TitledScreen {
         btnCancel.strokeWidth = (resources.displayMetrics.density * 1.2f).toInt()
         btnCancel.cornerRadius = (resources.displayMetrics.density * 12).toInt()
 
-        btnCancel.setOnClickListener { requireActivity().onBackPressed() }
+        btnCancel.setOnClickListener { requireActivity().onBackPressedDispatcher.onBackPressed() }
         btnSaveOrder.setOnClickListener { saveOrder() }
     }
 
@@ -289,7 +289,7 @@ class CheckoutFragment : Fragment(), TitledScreen {
                     put("tot_vat_amount", vatTotal)
                     put("net_amount", grandTotal)
                     put("bill_status", "COMPLETED")
-                    put("created_by", SessionManager.currentUser?.userId.toString())
+                    put("created_by", SessionManager.auditUser)
                 }
 
                 val billId = db.insert(DatabaseHelper.Tables.TD_BILLS, null, billValues)
@@ -313,7 +313,7 @@ class CheckoutFragment : Fragment(), TitledScreen {
                         put("igst_amount", item.igstAmount)
                         put("vat_amount", item.vatAmount)
                         put("item_total", item.finalPrice)
-                        put("created_by", SessionManager.currentUser?.userId.toString())
+                        put("created_by", SessionManager.auditUser)
                     }
                     db.insert(DatabaseHelper.Tables.TD_BILL_ITEMS, null, itemValues)
                 }
@@ -332,7 +332,7 @@ class CheckoutFragment : Fragment(), TitledScreen {
                     selectedCustomerId?.let { custId ->
                         if (custId > 0) put("cust_id", custId)
                     }
-                    put("created_by", SessionManager.currentUser?.userId.toString())
+                    put("created_by", SessionManager.auditUser)
                 }
                 db.insert(DatabaseHelper.Tables.TD_PAYMENTS, null, paymentValues)
                 android.util.Log.d("Checkout", "Payment record inserted")

@@ -25,40 +25,57 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.example.synergic_pos_offline.fragments.BillHeaderFooterFragment
-import com.example.synergic_pos_offline.fragments.BillLogoFragment
-import com.example.synergic_pos_offline.fragments.CategoryDepartmentFragment
-import com.example.synergic_pos_offline.fragments.CustomerFragment
-import com.example.synergic_pos_offline.fragments.DashboardFragment
-import com.example.synergic_pos_offline.fragments.CategoryProductsFragment
-import com.example.synergic_pos_offline.fragments.DatabaseSettingsFragment
-import com.example.synergic_pos_offline.fragments.DescriptionLedgerFragment
-import com.example.synergic_pos_offline.fragments.HeaderFooterFragment
-import com.example.synergic_pos_offline.fragments.InventoryFragment
-import com.example.synergic_pos_offline.fragments.ItemwiseSearchFragment
-import com.example.synergic_pos_offline.fragments.LoginFragment
-import com.example.synergic_pos_offline.fragments.MasterFragment
-import com.example.synergic_pos_offline.fragments.ComingSoonFragment
-import com.example.synergic_pos_offline.fragments.PosBillingFragment
-import com.example.synergic_pos_offline.fragments.ProductsFragment
-import com.example.synergic_pos_offline.fragments.RegistrationFragment
-import com.example.synergic_pos_offline.fragments.ReportsFragment
-import com.example.synergic_pos_offline.fragments.SalesFragment
-import com.example.synergic_pos_offline.fragments.SettingsFragment
-import com.example.synergic_pos_offline.fragments.BillSettingsFragment
-import com.example.synergic_pos_offline.fragments.GeneralSettingsFragment
-import com.example.synergic_pos_offline.fragments.TaxSettingsFragment
-import com.example.synergic_pos_offline.fragments.AppSettingsFragment
-import com.example.synergic_pos_offline.fragments.UnitFragment
-import com.example.synergic_pos_offline.fragments.UserManagementFragment
-import com.example.synergic_pos_offline.fragments.WaiterFragment
-import com.example.synergic_pos_offline.utils.DatabaseSeeder
-import com.example.synergic_pos_offline.utils.DialogUtils
-import com.example.synergic_pos_offline.utils.SessionManager
-import com.example.synergic_pos_offline.utils.SettingsCache
-import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.database.StockDao
+import com.example.synergic_pos_offline.fragments.*
+import com.example.synergic_pos_offline.utils.*
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        init {
+            android.util.Log.e("SynergicPOS", "MainActivity CLASS LOADED")
+        }
+
+        /**
+         * A short wait before the first automatic-backup check, so a launch is not
+         * competing with the seeder and the first screen for the database.
+         */
+        private const val AUTO_BACKUP_FIRST_CHECK_MS = 30_000L
+
+        /**
+         * How often the question is asked after that. Well under the shortest
+         * interval that can be set, so an hourly backup lands within a few minutes
+         * of its hour rather than up to an hour late.
+         */
+        private const val AUTO_BACKUP_CHECK_MS = 5 * 60_000L
+
+        /** Named once: the drawer lists this leaf by it and [handleLeaf] opens it by it. */
+        private const val CHANGE_MODE = "Change Mode"
+
+        /** Named once: the drawer lists this leaf by it and [handleLeaf] opens it by it. */
+        private const val CALCULATOR = "Calculator"
+
+        /**
+         * Header sizes, roomy and tight. Between them they take the bar from about
+         * 64dp to about 42dp - a third of it back, which on the sale screen is
+         * another row of products.
+         */
+        private const val NORMAL_TITLE_SP = 22f
+        private const val COMPACT_TITLE_SP = 17f
+        private const val NORMAL_ICON_DP = 44
+        private const val COMPACT_ICON_DP = 34
+        private const val NORMAL_BACK_DP = 40
+        private const val NORMAL_VERTICAL_PADDING_DP = 10
+        private const val COMPACT_VERTICAL_PADDING_DP = 4
+
+        /**
+         * The drawer's way back to the top. Named "Home" rather than "Dashboard"
+         * because that is what the row is *for* - the dashboard is one of the things
+         * it can land on, and in Calculator mode it is not the thing at all.
+         */
+        private const val HOME = "Home"
+    }
 
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var rvSidebar: RecyclerView
@@ -71,7 +88,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvHeaderTitle: TextView
     private lateinit var tvHeaderSubtitle: TextView
 
+    /** Title of the page currently open, used to highlight its sidebar item and keep
+     *  its parent group expanded so the drawer reflects where the user is. */
+    private var activeLeafTitle: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        android.util.Log.e("SynergicPOS", "!!! MainActivity onCreate START !!!")
         // The UI is designed light-only (hardcoded white backgrounds). Force day
         // mode so uncolored EditText input text stays dark and remains visible.
         androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
@@ -80,9 +102,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Fill the master tables with demo data on first run (idempotent: only
-        // ever fills empty tables, never overwrites hand-entered rows).
-        Thread { DatabaseSeeder.seedIfEmpty(applicationContext) }.start()
+        // The APK ships with the master table *structure* only — no demo/master
+        // data is bundled. Tables are created empty by DatabaseHelper.onCreate and
+        // filled by registration/login sync and hand entry, so nothing is seeded here.
+
+        // Automatic backup, if it is switched on. Started here and stopped in
+        // onDestroy, so it runs for as long as the till is open and not a moment
+        // after - see [AutoBackup] for what that does and does not cover.
+        startAutoBackupWatch()
 
         drawerLayout = findViewById(R.id.drawerLayout)
         rvSidebar = findViewById(R.id.rvSidebar)
@@ -98,11 +125,19 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnMenu).setOnClickListener { openDrawer() }
         btnBack.setOnClickListener { supportFragmentManager.popBackStack() }
         findViewById<View>(R.id.btnHome).setOnClickListener { goHome() }
+        findViewById<View>(R.id.btnSale).setOnClickListener { goToSale() }
         findViewById<View>(R.id.btnTheme).setOnClickListener { showThemePopup(it) }
         findViewById<View>(R.id.btnLogout).setOnClickListener { confirmLogout() }
+        // The drawer's own Logout, pinned at its foot. Asks the same question the
+        // header's power icon does rather than signing out on the tap: it is the one
+        // row in there that ends the session.
+        findViewById<View>(R.id.llSidebarLogout).setOnClickListener {
+            closeDrawer()
+            confirmLogout()
+        }
 
         rvSidebar.layoutManager = LinearLayoutManager(this)
-        rvSidebar.adapter = SidebarAdapter(buildMenuTree()) { leafTitle -> handleLeaf(leafTitle) }
+        refreshSidebar()
 
         applyThemeEverywhere()
 
@@ -120,6 +155,9 @@ class MainActivity : AppCompatActivity() {
                         headerBar.visibility = View.VISIBLE
                         drawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED)
                         updateHeader(f)
+                        // Remember which page is open so the drawer can highlight its
+                        // sidebar item (and expand its group) the next time it opens.
+                        activeLeafTitle = titleFor(f)
                         applyThemeEverywhere()
                     }
                 }
@@ -131,6 +169,65 @@ class MainActivity : AppCompatActivity() {
                 .replace(R.id.fragment_container, LoginFragment())
                 .commit()
         }
+        android.util.Log.e("SynergicPOS", "!!! MainActivity onCreate FINISHED !!!")
+    }
+
+    // ---- Automatic backup ---------------------------------------------------
+
+    private val autoBackupHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * Asks [AutoBackup] whether a backup is due, now and every [AUTO_BACKUP_CHECK_MS]
+     * after.
+     *
+     * A check rather than a timer set to the interval: the app is opened and closed
+     * through the day, and a timer started at launch would only ever fire for a till
+     * left running for the whole gap. Asking often and letting the elapsed time
+     * decide catches up a backup missed while the app was shut, on the next launch.
+     *
+     * The check itself is a single settings read on the main thread; only a backup
+     * that is actually due goes to the worker.
+     */
+    private fun startAutoBackupWatch() {
+        val tick = object : Runnable {
+            override fun run() {
+                Thread {
+                    val outcome = runCatching { AutoBackup.runIfDue(applicationContext) }
+                        .getOrElse { AutoBackup.Outcome(taken = false, error = it.message) }
+                    if (outcome.taken) {
+                        android.util.Log.i("AutoBackup", "backed up to ${outcome.savedTo}")
+                    } else outcome.error?.let {
+                        android.util.Log.e("AutoBackup", "automatic backup failed: $it")
+                    }
+                    // The retention window is applied on this tick too, not only when a
+                    // backup happens to be taken.
+                    //
+                    // Pruning used to ride along inside backupNow, which meant a till
+                    // with automatic backup OFF never cleared anything: the setting
+                    // promises backups are kept N days, and on that till they were kept
+                    // for ever. It also meant a till left open past midnight held
+                    // yesterday's expired folder until the next backup fell due.
+                    //
+                    // Cheap to repeat: with nothing expired it is one directory listing
+                    // (or one MediaStore query) and no deletes, on the worker thread the
+                    // backup itself uses.
+                    if (!outcome.taken) {
+                        val cleared = runCatching { AutoBackup.pruneOldBackups(applicationContext) }
+                            .getOrDefault(0)
+                        if (cleared > 0) {
+                            android.util.Log.i("AutoBackup", "cleared $cleared expired backup file(s)")
+                        }
+                    }
+                }.start()
+                autoBackupHandler.postDelayed(this, AUTO_BACKUP_CHECK_MS)
+            }
+        }
+        autoBackupHandler.postDelayed(tick, AUTO_BACKUP_FIRST_CHECK_MS)
+    }
+
+    override fun onDestroy() {
+        autoBackupHandler.removeCallbacksAndMessages(null)
+        super.onDestroy()
     }
 
     /** Updates the global header title/subtitle and back-button for [f]. */
@@ -138,12 +235,64 @@ class MainActivity : AppCompatActivity() {
         tvHeaderTitle.text = titleFor(f)
         val user = SessionManager.currentUser
         tvHeaderSubtitle.text = "Hello, ${user?.userId ?: "User"}"
-        // Back is hidden on the Dashboard (root), shown on sub-pages.
-        btnBack.visibility = if (f is com.example.synergic_pos_offline.fragments.DashboardFragment) {
-            View.GONE
-        } else {
-            View.VISIBLE
+        applyHeaderDensity(compact = isSaleScreen(f))
+        // Back is hidden on whatever screen is the root - the Sale screen after login,
+        // or the Dashboard after the home button - and shown on anything pushed over
+        // it. Decided from the back stack rather than by naming screens, so a screen
+        // that is the root in one place and a sub-page in another (Sale is both) gets
+        // the right answer either way.
+        btnBack.visibility =
+            if (supportFragmentManager.backStackEntryCount == 0) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * The sale screen, whichever kind of till this is.
+     *
+     * The one page that is looked at all day and the one with no room to spare: the
+     * item grid, the running order and the totals all have to be on screen at once,
+     * and every dp the header takes is a dp off the list of products. Everywhere else
+     * is a settings page or a report, where a roomy header costs nothing.
+     */
+    private fun isSaleScreen(f: Fragment): Boolean =
+        f is com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment ||
+            f is PosBillingFragment
+
+    /**
+     * Sets the header tight or roomy.
+     *
+     * Applied in code rather than by swapping in a second layout, because the two
+     * differ only in size - same views, same ids, same click handlers - and a second
+     * layout would be a copy to keep in step every time a button is added to the
+     * first.
+     *
+     * The subtitle goes entirely on the tight setting rather than shrinking: "Hello,
+     * te98" is a greeting, and who is logged in is already in the drawer header where
+     * it is looked up rather than read past. Dropping it is what lets the bar close up
+     * to one line.
+     */
+    private fun applyHeaderDensity(compact: Boolean) {
+        val density = resources.displayMetrics.density
+        fun dp(value: Int) = (value * density).toInt()
+
+        tvHeaderTitle.textSize = if (compact) COMPACT_TITLE_SP else NORMAL_TITLE_SP
+        tvHeaderSubtitle.visibility = if (compact) View.GONE else View.VISIBLE
+
+        val icon = dp(if (compact) COMPACT_ICON_DP else NORMAL_ICON_DP)
+        listOf(R.id.btnMenu, R.id.btnSale, R.id.btnHome, R.id.btnTheme, R.id.btnLogout).forEach { id ->
+            findViewById<View>(id).apply {
+                layoutParams = layoutParams.also { it.width = icon; it.height = icon }
+            }
         }
+        // Back is a shade smaller than the rest at either setting - it sits next to
+        // the hamburger rather than in the run of actions on the right.
+        val back = dp(if (compact) COMPACT_ICON_DP - 2 else NORMAL_BACK_DP)
+        btnBack.layoutParams = btnBack.layoutParams.also { it.width = back; it.height = back }
+
+        val vertical = dp(if (compact) COMPACT_VERTICAL_PADDING_DP else NORMAL_VERTICAL_PADDING_DP)
+        headerBar.setPadding(
+            headerBar.paddingStart, vertical, headerBar.paddingEnd, vertical
+        )
+        headerBar.requestLayout()
     }
 
     private fun titleFor(f: Fragment): String = when (f) {
@@ -160,6 +309,42 @@ class MainActivity : AppCompatActivity() {
         else -> "Synergic POS"
     }
 
+    /**
+     * Switches what kind of till this is, and signs out so it takes effect.
+     *
+     * The mode decides the landing screen and the whole menu, both of which are built
+     * once when a session starts - so the only honest way to apply a change is to end
+     * the session. Signing back in opens the till in whichever mode was chosen.
+     */
+    private fun chooseMode() {
+        val modes = GeneralSettingsDao.Mode.entries
+        val current = GeneralSettingsDao(this).load().mode
+        DialogUtils.showList(
+            context = this,
+            title = "Change mode",
+            items = modes.map {
+                DialogUtils.ListItem(it.label, trailing = if (it == current) "Current" else "")
+            }
+        ) { index ->
+            val chosen = modes[index]
+            if (chosen == current) return@showList
+            DialogUtils.showConfirm(
+                context = this,
+                title = "Switch to ${chosen.label}?",
+                message = "You will be signed out. Sign back in and the till opens in " +
+                    "${chosen.label} mode.",
+                positiveText = "Switch",
+                destructive = true
+            ) {
+                val dao = GeneralSettingsDao(this)
+                dao.save(dao.load().copy(mode = chosen))
+                // The menus and the landing screen read the cache, not the table.
+                SettingsCache.storeFromDb(this)
+                logout()
+            }
+        }
+    }
+
     private fun confirmLogout() {
         DialogUtils.showConfirm(
             context = this,
@@ -174,8 +359,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun logout() {
         SessionManager.logout()
-        // Clear the whole back stack to return to the login screen.
-        supportFragmentManager.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
+        // Clear the whole back stack and put the login form back up. Shown outright
+        // rather than popped back to: the screen logged into is the root of the stack,
+        // so there is nothing underneath to pop to.
+        val fm = supportFragmentManager
+        fm.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
+        fm.beginTransaction()
+            .replace(R.id.fragment_container, LoginFragment())
+            .commit()
     }
 
     // ---- Drawer control, called from any fragment's hamburger button --------
@@ -185,10 +376,38 @@ class MainActivity : AppCompatActivity() {
         tvSidebarUser.text = if (user != null) "Active User: ${user.userId}" else "Main Menu"
         
         // Refresh the menu tree in case the app mode (Grocery/Restaurant) changed.
-        rvSidebar.adapter = SidebarAdapter(buildMenuTree()) { leafTitle -> handleLeaf(leafTitle) }
+        refreshSidebar()
 
         refreshSidebarTheme()
         drawerLayout.openDrawer(GravityCompat.START)
+    }
+
+    /**
+     * Rebuilds the sidebar from the current menu tree, expanding the group that holds
+     * the open page and telling the adapter which leaf to highlight, so the drawer
+     * always reflects where the user is.
+     */
+    private fun refreshSidebar() {
+        val tree = buildMenuTree()
+        // The dashboard is what Home opens, so the Home row is what should look
+        // current while it is on screen - the tree has no node called "Dashboard".
+        val active = if (activeLeafTitle == "Dashboard") HOME else activeLeafTitle
+        active?.let { expandToActive(tree, it) }
+        rvSidebar.adapter = SidebarAdapter(tree, active) { leafTitle -> handleLeaf(leafTitle) }
+    }
+
+    /**
+     * Expands every ancestor group of the leaf titled [active] so it is visible in the
+     * drawer. Returns whether [active] was found under [nodes].
+     */
+    private fun expandToActive(nodes: List<TreeNode>, active: String): Boolean {
+        var contains = false
+        for (n in nodes) {
+            val childHasIt = n.hasChildren && expandToActive(n.children, active)
+            if (childHasIt) n.expanded = true
+            if (n.title == active || childHasIt) contains = true
+        }
+        return contains
     }
 
     /**
@@ -198,12 +417,18 @@ class MainActivity : AppCompatActivity() {
     fun onThemeColorSelected(colorHex: String) {
         ThemeManager.setThemeColor(this, colorHex)
         applyThemeEverywhere()
-        // The dashboard's cards use raw accent colors (not tracked by ThemeManager),
-        // so rebuild it when the theme changes while it is showing.
-        (supportFragmentManager.findFragmentById(R.id.fragment_container) as? DashboardFragment)?.onThemeChanged()
+        // Some screens use raw accent colors (not tracked by ThemeManager), so
+        // notify them to recolor when the theme changes while they are showing.
+        when (val f = supportFragmentManager.findFragmentById(R.id.fragment_container)) {
+            is DashboardFragment -> f.onThemeChanged()
+            is com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment -> f.onThemeChanged()
+            is com.example.synergic_pos_offline.fragments.RestaurantCheckoutFragment -> f.onThemeChanged()
+            else -> {}
+        }
     }
 
     /** Re-tints every currently inflated view + the status bar + the drawer. */
+    @Suppress("DEPRECATION")
     fun applyThemeEverywhere() {
         val color = ThemeManager.getThemeColor(this)
         window.statusBarColor = color
@@ -211,6 +436,8 @@ class MainActivity : AppCompatActivity() {
         ThemeManager.applyTheme(window.decorView)
         tvHeaderTitle.setTextColor(color)
         refreshSidebarTheme()
+        // NOTE: App language is NOT applied globally here. It only affects product names
+        // in sale screens, which are refreshed separately in PrintLanguageFragment.chooseAppLanguage()
     }
 
     /** Shows the theme-color dropdown anchored under the palette icon. */
@@ -300,29 +527,132 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Clears the back stack and shows the Dashboard as the single root screen. */
+    /**
+     * Back to the top.
+     *
+     * In Calculator mode the top *is* the calculator: there is no dashboard behind it
+     * to go back to, and sending Home there would be the one tap that escaped a mode
+     * whose whole point is that it has one screen.
+     */
     private fun goHome() {
         closeDrawer()
+        val home: Fragment =
+            if (SettingsCache.value(this, "G", "Mode") == "C") CalculatorFragment()
+            else DashboardFragment()
         val fm = supportFragmentManager
         fm.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
         fm.beginTransaction()
-            .replace(R.id.fragment_container, DashboardFragment())
+            .replace(R.id.fragment_container, home)
+            .commit()
+    }
+
+    /**
+     * The header's Sale button: straight to the till's own sale screen, from anywhere.
+     *
+     * Routed by mode, not by the button - Restaurant gets its Orders screen, Grocery
+     * its billing screen, and Calculator mode has no separate sale screen because the
+     * calculator IS one, so it goes there. The same three-way answer the sidebar's
+     * Sale row gives, and taken from the same place, so the two can never disagree
+     * about what "Sale" means on a given till.
+     *
+     * The back stack is cleared, like [goHome]. Selling is where a till lives; getting
+     * back to it should not leave a trail of the screens it was visited from, and a
+     * back press from the sale screen should leave the app rather than walk backwards
+     * through Reports.
+     */
+    private fun goToSale() {
+        closeDrawer()
+        val sale: Fragment = when (SettingsCache.value(this, "G", "Mode")) {
+            "C" -> CalculatorFragment()
+            "R" -> com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment()
+            else -> PosBillingFragment()
+        }
+        val fm = supportFragmentManager
+        fm.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
+        fm.beginTransaction()
+            .replace(R.id.fragment_container, sale)
             .commit()
     }
 
     private fun handleLeaf(title: String) {
         closeDrawer()
         when (title) {
+            // goHome() closes the drawer itself and clears the back stack, which is
+            // the difference between this and every other row here.
+            HOME -> goHome()
             "Master" -> navigateTo(MasterFragment())
             "Settings" -> navigateTo(SettingsFragment())
             "General Settings" -> navigateTo(GeneralSettingsFragment())
             "Bill Settings" -> navigateTo(BillSettingsFragment())
             "Tax Settings" -> navigateTo(TaxSettingsFragment())
             "App Settings" -> navigateTo(AppSettingsFragment())
+            // Hidden from a general user's menus when access is off - and refused here
+            // too, so a stale menu or a back-stack route cannot walk in behind that.
+            "About App" ->
+                if (GeneralSettingsDao.canAccessSection(this, GeneralSettingsDao.KEY_ACCESS_ABOUT_APP))
+                    navigateTo(AboutAppFragment())
+                else android.widget.Toast.makeText(
+                    this, "About App is not available for your login", android.widget.Toast.LENGTH_SHORT
+                ).show()
+            // Opens on Connections; the Print Template tab is the other half of it.
+            "Printer Settings" -> navigateTo(PrintSettingsFragment())
+            "Language" -> navigateTo(PrintLanguageFragment())
+            CALCULATOR -> navigateTo(CalculatorFragment())
+            CHANGE_MODE -> chooseMode()
             "Stock & Inventory" -> navigateTo(InventoryFragment())
+            "Stock In" -> navigateTo(StockListFragment.newInstance(StockListFragment.Mode.IN))
+            "Write Off" -> navigateTo(StockListFragment.newInstance(StockListFragment.Mode.OUT))
             "Reports" -> navigateTo(ReportsFragment())
-            "Sale" -> navigateTo(PosBillingFragment())
+            // Serves both modes: a settled restaurant order is written to td_bills
+            // by the same call a grocery sale is, so there is one report to open.
+            "Bill Wise Report" -> navigateTo(BillWiseReportFragment())
+            "Item Wise Report" -> navigateTo(ItemWiseReportFragment())
+            "Operator Wise Report" -> navigateTo(OperatorWiseReportFragment())
+            "Tax Report" -> navigateTo(TaxReportFragment())
+            "Payment-Wise Report" -> navigateTo(PaymentWiseReportFragment())
+            "Returned Bill Report" -> navigateTo(ReturnedBillReportFragment())
+            "Unsold Product Report" -> navigateTo(UnsoldProductReportFragment())
+            "Category/Dept Wise Bill Report" -> navigateTo(CategoryWiseReportFragment())
+            "Opr Bill Report" -> navigateTo(OperatorBilledReportFragment())
+            "Item Bill Report" -> navigateTo(ItemBillReportFragment())
+            "Time Wise Item Report" -> navigateTo(TimeWiseItemReportFragment())
+            "Duplicate Bill Report" -> navigateTo(DuplicateReportFragment())
+            "Void Bill Report" -> navigateTo(VoidBillReportFragment())
+            "Profit & Loss Report" -> navigateTo(ProfitLossReportFragment())
+            "Day-Wise Report" -> navigateTo(DayWiseReportFragment())
+            "Month Wise Report" -> navigateTo(MonthWiseReportFragment())
+            "Year Wise Report" -> navigateTo(YearWiseReportFragment())
+            "Customer Payment" -> navigateTo(CustomerPaymentReportFragment())
+            "UDF-Wise Report" -> navigateTo(UdfWiseReportFragment())
+            "UDF Wise Item Report" -> navigateTo(UdfWiseItemReportFragment())
+            "Customer Item Wise RPT" -> navigateTo(CustomerItemWiseReportFragment())
+            "KOT Cancel Report" -> navigateTo(KotCancelReportFragment())
+            "Calculator Report" -> navigateTo(CalculatorReportFragment())
+            "Stock Report" -> navigateTo(StockReportFragment())
+            "Low Stock Report" -> navigateTo(LowStockReportFragment())
+            "Shift Wise Report" -> navigateTo(ShiftWiseReportFragment())
+            "Sale" -> navigateTo(
+                if (SettingsCache.value(this, "G", "Mode") == "R")
+                    com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment()
+                else PosBillingFragment()
+            )
+            // Both trades: a settled restaurant order lands in td_bills alongside a
+            // grocery sale, so there is one history and one screen that reads it.
+            "Bill History" -> navigateTo(BillListFragment())
+            "Advance Payment" -> navigateTo(AdvancePaymentFragment())
+            "Customer Ledger" -> navigateTo(CustomerLedgerFragment())
+            "Sale Return" -> {
+                val screen = SaleReturnRouter.screenFor(this)
+                if (screen == null) {
+                    android.widget.Toast.makeText(
+                        this, SaleReturnRouter.DISABLED_MESSAGE, android.widget.Toast.LENGTH_LONG
+                    ).show()
+                } else navigateTo(screen)
+            }
             "Header & Footer" -> navigateTo(HeaderFooterFragment())
+            "Captions" -> navigateTo(CaptionFragment())
             "User Management" -> navigateTo(UserManagementFragment())
+            "Shifts" -> navigateTo(ShiftFragment())
             "Bill Header & Footer" -> navigateTo(BillHeaderFooterFragment())
             "Bill Header Footer Logo" -> navigateTo(BillLogoFragment())
             "Database Settings" -> navigateTo(DatabaseSettingsFragment())
@@ -331,7 +661,13 @@ class MainActivity : AppCompatActivity() {
             "Customers" -> navigateTo(CustomerFragment())
             "Description/Ledger" -> navigateTo(DescriptionLedgerFragment())
             "Units" -> navigateTo(UnitFragment())
+            "Rate Name" -> navigateTo(RateNameFragment())
+            "Extra Charges" -> navigateTo(ChargesFragment())
+            // Restaurant-only masters. Listed in the drawer only in Restaurant mode,
+            // and routed here to the same screens the Database Settings grid opens.
             "Waiter" -> navigateTo(WaiterFragment())
+            "Section" -> navigateTo(SectionFragment())
+            "Table" -> navigateTo(TableFragment())
             // Every other leaf routes to a clean placeholder page (no dead clicks).
             else -> navigateTo(ComingSoonFragment.newInstance(title))
         }
@@ -341,62 +677,136 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildMenuTree(): List<TreeNode> {
         val context = this
-        val isGrocery = SettingsCache.value(context, "G", "Mode") == "G"
+        // Calculator mode is one screen and two settings. Everything else the drawer
+        // offers - masters, reports, the other sale screens - belongs to a till that
+        // has products, and this one does not; listing them would open pages that
+        // could only be empty or, worse, could change what the calculator prints.
+        //
+        // What is left is what a calculator till still needs: somewhere to set the
+        // printer up, and a way back out of the mode.
+        if (SettingsCache.value(context, "G", "Mode") == "C") {
+            return listOf(
+                // The way back: Printer Settings is the only page a calculator till
+                // can reach, and without this there is nothing to reach the
+                // calculator from once it is open.
+                TreeNode(CALCULATOR),
+                TreeNode("Calculator Report"),
+                TreeNode("Settings", listOf(TreeNode("Printer Settings"), TreeNode(CHANGE_MODE)))
+            )
+        }
 
+        val isGrocery = SettingsCache.value(context, "G", "Mode") == "G"
+        // Sale Return and Advance Payment are grocery-only flows; hidden in Restaurant.
+        val isRestaurant = SettingsCache.value(context, "G", "Mode") == "R"
+
+        // Admin-set section access: a section switched off is hidden from a general
+        // user's drawer; an admin always sees all three.
+        val canMaster = GeneralSettingsDao.canAccessSection(context, GeneralSettingsDao.KEY_ACCESS_MASTER)
+        val canSettings = GeneralSettingsDao.canAccessSection(context, GeneralSettingsDao.KEY_ACCESS_SETTINGS)
+        val canReports = GeneralSettingsDao.canAccessSection(context, GeneralSettingsDao.KEY_ACCESS_REPORTS)
+        val canAboutApp = GeneralSettingsDao.canAccessSection(context, GeneralSettingsDao.KEY_ACCESS_ABOUT_APP)
+
+        // Filtered by the same rule the Reports grid filters its tiles with, so the
+        // drawer and the grid cannot disagree about which reports this till has -
+        // see [ReportsFragment.isVisible].
         val reportTitles = listOf(
             "Bill Wise Report", "Item Wise Report", "Operator Wise Report", "Void Bill Report",
-            "Tax Report", "Duplicate Bill Report", "Stock Report", "Item Bill Report",
+            "Tax Report", "Duplicate Bill Report", "Stock Report", "Low Stock Report", "Item Bill Report",
             "Returned Bill Report", "UDF-Wise Report", "Payment-Wise Report", "Unsold Product Report",
-            "Opr Bill Report", "Category/Dept Wise Bill Report", "Payment & Receipt", "Customer Payment",
+            "Opr Bill Report", "Shift Wise Report", "Category/Dept Wise Bill Report", "Payment & Receipt", "Customer Payment",
             "Customer Ledger", "Profit & Loss Report", "KOT Cancel Report", "Day-Wise Report",
             "Month Wise Report", "Year Wise Report", "UDF Wise Item Report", "Customer Item Wise RPT",
             "Time Wise Item Report"
-        )
+        ).filter { ReportsFragment.isVisible(context, it) }
 
+        // The masters, in the order and on the conditions [DatabaseSettingsFragment]
+        // builds its tile grid with - the drawer and the grid are two ways into the
+        // same screens, and a master that is on one and not the other is a master
+        // that is "hidden" depending on how it is looked for. Rate Name, Section and
+        // Table were on the grid only.
         val databaseSettingsNodes = mutableListOf(
             TreeNode("Category/Department"),
             TreeNode("Products"),
             TreeNode("Customers"),
             TreeNode("Description/Ledger"),
-            TreeNode("Units")
+            TreeNode("Units"),
+            TreeNode("Rate Name"),
+            TreeNode("Extra Charges")
         )
+        // Only where the shop runs shifts. Off, there is nothing to put in the master
+        // and nothing that reads it - see App Settings' Shift toggle.
+        if (com.example.synergic_pos_offline.database.ShiftDao.isEnabled(context)) {
+            databaseSettingsNodes.add(TreeNode("Shifts"))
+        }
+        // Restaurant-only masters: a grocery has no floor to seat anyone on and nobody
+        // to wait it. Keyed off !isGrocery, exactly as the tile grid is, so Calculator
+        // mode - which never reaches this branch anyway - cannot drift from it.
         if (!isGrocery) {
             databaseSettingsNodes.add(TreeNode("Waiter"))
+            databaseSettingsNodes.add(TreeNode("Section"))
+            databaseSettingsNodes.add(TreeNode("Table"))
         }
 
-        return listOf(
-            TreeNode("Master", listOf(
-                TreeNode("Header & Footer", listOf(
-                    TreeNode("Bill Header & Footer"),
-                    TreeNode("KOT Header & Footer"),
-                    TreeNode("Bill Header Footer Logo"),
-                    TreeNode("KOT Header Footer Logo")
-                )),
+        // Stock & Inventory only exists while stock tracking is on - the drawer has
+        // to agree with the menu grid, or the tile is "hidden" in one place only.
+        val stockNodes = if (GeneralSettingsDao.isStockEnabled(context)) listOf(
+            // Matches the Stock & Inventory tile grid: only the two built screens are
+            // listed, and the rest stay parked in [InventoryFragment] until they are.
+            TreeNode("Stock & Inventory", listOf(
+                TreeNode("Stock In"),
+                TreeNode("Write Off")
+            ))
+        ) else emptyList()
+
+        return buildList {
+            // First, because it is the way back rather than a section of its own.
+            add(TreeNode(HOME))
+            if (canMaster) add(TreeNode("Master", listOf(
+                TreeNode("Captions"),
+                TreeNode("Header & Footer", buildList {
+                    // Bill header/footer + logo always; the KOT pair only in Restaurant.
+                    add(TreeNode("Bill Header & Footer"))
+                    if (isRestaurant) add(TreeNode("KOT Header & Footer"))
+                    add(TreeNode("Bill Header Footer Logo"))
+                    if (isRestaurant) add(TreeNode("KOT Header Footer Logo"))
+                }),
                 TreeNode("User Management"),
                 TreeNode("Database Settings", databaseSettingsNodes)
-            )),
-            TreeNode("Settings", listOf(
-                TreeNode("General Settings"),
-                TreeNode("Bill Settings"),
-                TreeNode("Tax Settings"),
-               // TreeNode("Inventory & Stock Settings"),
-                TreeNode("App Settings")
-            )),
-            TreeNode("Stock & Inventory", listOf(
-                TreeNode("Purchase Item"),
-                TreeNode("Purchase Return"),
-                TreeNode("Generate Barcode"),
-                TreeNode("Print Barcode"),
-                TreeNode("Write Off Damage Item"),
-                TreeNode("Reset Stock")
-            )),
-            TreeNode("Sale"),
-            TreeNode("Sale Return"),
-            TreeNode("Advance Payment"),
-            // TreeNode("Duplicate Bill"),
-            // TreeNode("Delete Bill"),
-            TreeNode("Reports", reportTitles.map { TreeNode(it) })
-        )
+            )))
+            if (canSettings) add(TreeNode("Settings", buildList {
+                add(TreeNode("General Settings"))
+                add(TreeNode("Bill Settings"))
+                add(TreeNode("Tax Settings"))
+               // add(TreeNode("Inventory & Stock Settings"))
+                // Same position it holds in the Settings tile grid, so the two ways
+                // in list the screens in one order.
+                add(TreeNode("Printer Settings"))
+                add(TreeNode("App Settings"))
+                // Both languages - what the screens read in and what the paper prints
+                // in - live on one page, and the drawer is the only way to it now that
+                // the dashboard's Menu tab is gone.
+                add(TreeNode("Language"))
+                // About App is granted on its own - it carries the irreversible actions.
+                if (canAboutApp) add(TreeNode("About App"))
+            }))
+            addAll(stockNodes)
+            add(TreeNode("Sale"))
+            // Bill History sits straight after Sale, the way it does on the card menu:
+            // it is the record of the thing above it, and it is the one row from that
+            // menu the drawer never carried. Unconditional there and unconditional
+            // here - a settled restaurant order is written to td_bills by the same
+            // call a grocery sale is, so both trades have a history to open, and it
+            // is not behind Reports access: it is the till's own record of what it
+            // rang up, which is a different thing from the reporting section.
+            add(TreeNode("Bill History"))
+            // Sale Return + Advance Payment are grocery-only; omitted in Restaurant.
+            if (!isRestaurant) {
+                add(TreeNode("Sale Return"))
+                add(TreeNode("Advance Payment"))
+            }
+            // TreeNode("Duplicate Bill"); TreeNode("Delete Bill")
+            if (canReports) add(TreeNode("Reports", reportTitles.map { TreeNode(it) }))
+        }
     }
 
     class TreeNode(
@@ -411,6 +821,7 @@ class MainActivity : AppCompatActivity() {
 
     private inner class SidebarAdapter(
         private val roots: List<TreeNode>,
+        private val activeTitle: String?,
         private val onLeafClick: (String) -> Unit
     ) : RecyclerView.Adapter<SidebarAdapter.ViewHolder>() {
 
@@ -462,6 +873,8 @@ class MainActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val vn = visible[position]
+            // App language only affects product names in sale screens - the sidebar
+            // stays in English regardless of the app language setting.
             holder.tvTitle.text = vn.node.title
 
             val themeColor = ThemeManager.getThemeColor(this@MainActivity)
@@ -481,12 +894,25 @@ class MainActivity : AppCompatActivity() {
                 holder.ivChevron.visibility = View.INVISIBLE
             }
 
-            holder.tvTitle.setTextColor(
-                ContextCompat.getColor(
-                    this@MainActivity,
-                    if (vn.depth == 0) R.color.text_main else R.color.text_secondary
+            // The open page's leaf is highlighted (accent tint + accent bold text) so
+            // the drawer shows where the user is; every other row uses its normal style.
+            val isActive = !vn.node.hasChildren && vn.node.title == activeTitle
+            if (isActive) {
+                holder.root.setBackgroundColor(
+                    androidx.core.graphics.ColorUtils.setAlphaComponent(themeColor, 28)
                 )
-            )
+                holder.tvTitle.setTextColor(themeColor)
+                holder.tvTitle.setTypeface(null, android.graphics.Typeface.BOLD)
+            } else {
+                holder.root.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                holder.tvTitle.setTextColor(
+                    ContextCompat.getColor(
+                        this@MainActivity,
+                        if (vn.depth == 0) R.color.text_main else R.color.text_secondary
+                    )
+                )
+                holder.tvTitle.setTypeface(null, android.graphics.Typeface.NORMAL)
+            }
         }
 
         override fun getItemCount() = visible.size

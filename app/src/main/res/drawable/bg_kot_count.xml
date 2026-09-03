@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The pill behind the sent-to-kitchen count on a table card.
+
+  Fully rounded rather than the 6dp of bg_status_tag: at 18dp tall this holds one or
+  two digits, and a capsule reads as a count where a small rounded rectangle reads as
+  a cut-off label. White, because it sits on a card already filled with the table's
+  status colour and has to lift off green, red and blue alike; the digits inside are
+  tinted at bind time.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FFFFFF" />
+    <corners android:radius="20dp" />
+</shape>

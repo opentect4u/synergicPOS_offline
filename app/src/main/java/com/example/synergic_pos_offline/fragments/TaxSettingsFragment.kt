@@ -105,23 +105,31 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         swVat.isChecked = s.vatEnabled
         rgVatMode.isVisible = s.vatEnabled
         rgVatMode.check(if (s.vatMode == GstMode.INCLUSIVE) R.id.rbVatInclusive else R.id.rbVatExclusive)
+        // What was saved, not what the type implies.
+        rgDiscountPosition.check(
+            when (s.discountPosition) {
+                DiscountPosition.POST_TAX -> R.id.rbPosPost
+                else -> R.id.rbPosPre
+            }
+        )
         syncDiscountPosition()
     }
 
     /**
-     * Keeps the (hidden) position radio on whatever the selected type implies, so it
-     * never contradicts what is saved. The block itself stays hidden: the position is
-     * no longer a choice - see [TaxSettingsDao.effectivePosition].
+     * Shows the Pre-tax / Post-tax choice whenever discount is on.
+     *
+     * It was hidden and re-checked from the discount type on every change, which made
+     * it a label for a rule rather than a control: item-wise meant pre-tax, bill-wise
+     * meant post-tax, and there was nothing to decide. It is a decision again - a shop
+     * that takes its bill-wise discount off before tax is charged, or its item-wise one
+     * after, says so here and the whole app calculates that way.
+     *
+     * Only the VISIBILITY is set here now. What is checked comes from what was saved,
+     * in [bind], and re-checking it on a type change would quietly overwrite the
+     * operator's choice the moment they touched the radio above it.
      */
     private fun syncDiscountPosition() {
-        llDiscountPosition.isVisible = false
-        val type = selectedDiscountType()
-        rgDiscountPosition.check(
-            when (TaxSettingsDao.effectivePosition(type)) {
-                DiscountPosition.PRE_TAX -> R.id.rbPosPre
-                DiscountPosition.POST_TAX -> R.id.rbPosPost
-            }
-        )
+        llDiscountPosition.isVisible = swDiscount.isChecked
     }
 
     private fun selectedDiscountType(): DiscountType = when (rgDiscountType.checkedRadioButtonId) {
@@ -134,8 +142,15 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         return TaxSettings(
             discountEnabled = swDiscount.isChecked,
             discountType = type,
-            // Fixed by the type: item-wise pre-tax, bill-wise post-tax.
-            discountPosition = TaxSettingsDao.effectivePosition(type),
+            // Whichever the operator selected. It used to be fixed by the type -
+            // item-wise pre-tax, bill-wise post-tax - which left these two buttons on
+            // the screen doing nothing. A shop that takes a bill-wise discount before
+            // tax, or an item-wise one after it, can now say so and be obeyed.
+            discountPosition = if (rgDiscountPosition.checkedRadioButtonId == R.id.rbPosPost) {
+                DiscountPosition.POST_TAX
+            } else {
+                DiscountPosition.PRE_TAX
+            },
             gstEnabled = swGst.isChecked,
             gstMode = if (rgGstMode.checkedRadioButtonId == R.id.rbInclusive) GstMode.INCLUSIVE else GstMode.EXCLUSIVE,
             vatEnabled = swVat.isChecked,

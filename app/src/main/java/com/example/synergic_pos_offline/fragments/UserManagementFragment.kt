@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.ShiftDao
 import com.example.synergic_pos_offline.database.UserDao
 import com.example.synergic_pos_offline.database.UserDao.Role
 import com.example.synergic_pos_offline.utils.DialogUtils
@@ -42,12 +43,34 @@ class UserManagementFragment : DataTableFragment() {
 
     // ---- Data --------------------------------------------------------------
 
+    /**
+     * ADMINS ARE NOT LISTED TO A GENERAL USER.
+     *
+     * A general user who can reach this screen is here to look after the people below
+     * them, not the people above. Listing an admin puts their login name and their
+     * status in front of somebody who cannot act on either - and the row is not inert:
+     * it opens for edit, so a name, a phone number and a shift on an admin's account
+     * would be editable by a counter hand.
+     *
+     * They are filtered out of [cache] as well as the table, not hidden in the view.
+     * Anything that later resolves a row back to a user - edit, delete, a restored
+     * selection - reads that map, and a row nobody can see should not be reachable
+     * through it either.
+     */
     override fun loadRows(): MutableList<DataRow> {
         cache.clear()
-        val users = dao.getAll()
+        val users = dao.getAll().filter { SessionManager.isAdmin() || it.role == Role.GENERAL }
         for (u in users) cache[u.id.toString()] = u
         return users.map { it.toRow() }.toMutableList()
     }
+
+    /**
+     * Only an admin may add users - the + is not shown to anyone else.
+     *
+     * Gone rather than disabled: a greyed + reads as something that might become
+     * available, and this one never will for a general user.
+     */
+    override val showsAddAction: Boolean get() = SessionManager.isAdmin()
 
     private fun UserDao.AppUser.toRow(): DataRow = DataRow(
         id.toString(),
@@ -56,7 +79,16 @@ class UserManagementFragment : DataTableFragment() {
 
     // ---- Custom Add / Edit popups -----------------------------------------
 
-    override fun onAddRow() = showUserDialog(null)
+    // Checked again here rather than trusting the hidden +: this is the call that
+    // actually creates a user, and it is the one that has to refuse. The same reason
+    // onBulkDelete re-checks below.
+    override fun onAddRow() {
+        if (!SessionManager.isAdmin()) {
+            toast("Only admin can add users")
+            return
+        }
+        showUserDialog(null)
+    }
 
     override fun onEditRow(row: DataRow) = showUserDialog(cache[row.id])
 
@@ -74,12 +106,13 @@ class UserManagementFragment : DataTableFragment() {
     }
 
     private fun showUserDialog(existing: UserDao.AppUser?) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_user, null)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
         val etOperatorId = view.findViewById<TextInputEditText>(R.id.etOperatorId)
@@ -90,7 +123,40 @@ class UserManagementFragment : DataTableFragment() {
         val tilPassword = view.findViewById<TextInputLayout>(R.id.tilPassword)
         val etPassword = view.findViewById<TextInputEditText>(R.id.etPassword)
         val btnResetPassword = view.findViewById<MaterialButton>(R.id.btnResetPassword)
+        val tilShift = view.findViewById<TextInputLayout>(R.id.tilShift)
+        val actShift = view.findViewById<android.widget.AutoCompleteTextView>(R.id.actShift)
         val swBlock = view.findViewById<SwitchMaterial>(R.id.swBlock)
+        val cardAccess = view.findViewById<View>(R.id.cardUserAccess)
+        val swAccessMaster = view.findViewById<SwitchMaterial>(R.id.swAccessMaster)
+        val swAccessSettings = view.findViewById<SwitchMaterial>(R.id.swAccessSettings)
+        val swAccessReports = view.findViewById<SwitchMaterial>(R.id.swAccessReports)
+        val swAccessAboutApp = view.findViewById<SwitchMaterial>(R.id.swAccessAboutApp)
+
+        // Who may see the access switches, and for whom they mean anything.
+        //
+        // WHO: an admin. A general user editing their own details must not be able to
+        // hand themselves the Master section.
+        //
+        // FOR WHOM: general users only. An admin already reaches every section by
+        // role - GeneralSettingsDao.canAccessSection lets them through without ever
+        // consulting these flags - so offering the switches on an admin's own record
+        // is offering a control that does nothing. Worse, it reads as though it does:
+        // an admin shown four switches turned off would take it that this user is
+        // locked out of Reports and About App, when they are not.
+        //
+        // The note takes the card's place rather than leaving a gap, so the absence is
+        // explained rather than looking like something failed to load.
+        val editedRole = existing?.role ?: UserDao.Role.GENERAL
+        val perSectionApplies = editedRole == UserDao.Role.GENERAL
+        val canGrant = com.example.synergic_pos_offline.utils.SessionManager.isAdmin()
+        cardAccess.visibility = if (canGrant && perSectionApplies) View.VISIBLE else View.GONE
+        view.findViewById<TextView>(R.id.tvAccessAdminNote).visibility =
+            if (canGrant && !perSectionApplies) View.VISIBLE else View.GONE
+        val access = existing?.access ?: UserDao.Access()
+        swAccessMaster.isChecked = access.master
+        swAccessSettings.isChecked = access.settings
+        swAccessReports.isChecked = access.reports
+        swAccessAboutApp.isChecked = access.aboutApp
         val tvBlockState = view.findViewById<TextView>(R.id.tvBlockState)
         val btnSave = view.findViewById<MaterialButton>(R.id.btnFormPositive)
         val btnCancel = view.findViewById<MaterialButton>(R.id.btnFormNegative)
@@ -102,6 +168,27 @@ class UserManagementFragment : DataTableFragment() {
         etPhone.setText(existing?.phone.orEmpty())
         etUserName.setText(existing?.userName.orEmpty())
         btnSave.text = if (existing == null) "Add" else "Update"
+
+        // The shift, where the shop runs shifts. Hidden outright when it does not -
+        // a field asking which of nothing somebody is on would be unanswerable - and
+        // required when it does, on an edit as much as on an add, since people move
+        // between shifts more often than they change anything else on this form.
+        val shiftsOn = ShiftDao.isEnabled(requireContext())
+        val shifts = if (shiftsOn) ShiftDao(requireContext()).getAll() else emptyList()
+        tilShift.visibility = if (shiftsOn) View.VISIBLE else View.GONE
+        if (shiftsOn) {
+            actShift.setAdapter(
+                android.widget.ArrayAdapter(ctx, android.R.layout.simple_list_item_1, shifts.map { it.label })
+            )
+            shifts.firstOrNull { it.id == existing?.shiftId }?.let { actShift.setText(it.label, false) }
+            actShift.setOnClickListener { actShift.showDropDown() }
+            actShift.setOnItemClickListener { _, _, _, _ -> tilShift.error = null }
+            // Nothing to choose from yet. Said on the field, where the operator is
+            // stuck, rather than left to be inferred from an empty dropdown.
+            if (shifts.isEmpty()) {
+                tilShift.error = "Add a shift first, in Master › Shifts"
+            }
+        }
 
         // Password is set inline on add; changed via a separate dialog on edit.
         if (existing == null) {
@@ -193,23 +280,61 @@ class UserManagementFragment : DataTableFragment() {
             if (userId.isEmpty()) { etUserId.error = "User ID is required"; return@setOnClickListener }
             if (userName.isEmpty()) { etUserName.error = "Name is required"; return@setOnClickListener }
 
+            // Mandatory while the shop runs shifts: a report that divides the day's
+            // takings by shift cannot account for a user who is on none.
+            val shiftId = if (!shiftsOn) null else {
+                val picked = shifts.firstOrNull { it.label == actShift.text?.toString()?.trim() }
+                if (picked == null) {
+                    tilShift.error = if (shifts.isEmpty())
+                        "Add a shift first, in Master › Shifts" else "Shift is required"
+                    return@setOnClickListener
+                }
+                tilShift.error = null
+                picked.id
+            }
+
+            // What the form is granting - read off the switches ONLY when the switches
+            // were on screen. A save that could not have touched them carries what the
+            // user already had rather than a row of offs, which is what an unshown
+            // card full of unchecked switches would otherwise write. That covers both
+            // ways the card can be absent: a non-admin editing details, and an admin's
+            // own record, where the flags are not consulted but should not be wiped
+            // either - a role can be changed later, and the record should still say
+            // what it said.
+            val grantedAccess = if (cardAccess.visibility == View.VISIBLE) {
+                UserDao.Access(
+                    master = swAccessMaster.isChecked,
+                    settings = swAccessSettings.isChecked,
+                    reports = swAccessReports.isChecked,
+                    aboutApp = swAccessAboutApp.isChecked
+                )
+            } else {
+                access
+            }
+
             if (existing == null) {
                 val password = etPassword.text?.toString().orEmpty()
                 if (password.isEmpty()) { etPassword.error = "Password is required"; return@setOnClickListener }
                 if (dao.userIdExists(userId)) { etUserId.error = "User ID already exists"; return@setOnClickListener }
                 // Managed users are always created as General User.
-                val id = dao.insert(userId, password, userName, phone, Role.GENERAL, blocked)
+                val id = dao.insert(
+                    userId, password, userName, phone, Role.GENERAL, blocked, shiftId, grantedAccess
+                )
                 if (id == -1L) { toast("Save failed"); return@setOnClickListener }
                 dialog.dismiss()
-                val created = UserDao.AppUser(id, userId, userName, phone, Role.GENERAL, blocked)
+                val created =
+                    UserDao.AppUser(id, userId, userName, phone, Role.GENERAL, blocked, shiftId, grantedAccess)
                 cache[id.toString()] = created
                 addRow(created.toRow())
                 toast("User added (${created.operatorId})")
             } else {
                 // Keep the existing role; managed edits don't change it.
-                dao.update(existing.id, userName, phone, existing.role, blocked)
+                dao.update(existing.id, userName, phone, existing.role, blocked, shiftId, grantedAccess)
                 dialog.dismiss()
-                val updated = existing.copy(userName = userName, phone = phone, blocked = blocked)
+                val updated = existing.copy(
+                    userName = userName, phone = phone, blocked = blocked,
+                    shiftId = shiftId, access = grantedAccess
+                )
                 cache[existing.id.toString()] = updated
                 updateRow(existing.id.toString(), updated.toRow().cells)
                 toast("User updated")
@@ -225,12 +350,13 @@ class UserManagementFragment : DataTableFragment() {
     }
 
     private fun showResetPasswordDialog(user: UserDao.AppUser) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_reset_password, null)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvSubtitle = view.findViewById<TextView>(R.id.tvResetSubtitle)
         val etNew = view.findViewById<TextInputEditText>(R.id.etNewPassword)

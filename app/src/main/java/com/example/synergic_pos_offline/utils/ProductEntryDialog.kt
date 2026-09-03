@@ -10,6 +10,7 @@ import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import android.graphics.Bitmap
 import com.example.synergic_pos_offline.R
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -34,6 +35,15 @@ object ProductEntryDialog {
         val price: Double,
         val hsn: String = "0000",
         val unit: String = "pcs",
+        /** Whether this product's unit allows fractional quantities (unit fraction_flag). */
+        val allowFraction: Boolean = false,
+        /**
+         * The product's picture, already decoded by whichever screen is showing the
+         * grid - those screens keep a cache of them for the tiles, and decoding the
+         * same JPEG again to open a dialog would be work for nothing. Null where the
+         * product has no image, and the slot then takes no space.
+         */
+        val photo: Bitmap? = null,
         val cgst: Double = 0.0,
         val sgst: Double = 0.0,
         val vat: Double = 0.0,
@@ -42,7 +52,11 @@ object ProductEntryDialog {
         val discValue: Double = 0.0,
         val discType: String? = null,
         /** All sellable rates for this product; drives the rate dropdown when >1. */
-        val rates: List<Rate> = emptyList()
+        val rates: List<Rate> = emptyList(),
+        /** Stock state for the badge - see [StockBadge]. "off" while untracked. */
+        val stock: String = StockBadge.OFF,
+        /** Quantity on hand. Meaningless unless [stock] is not "off". */
+        val stockQty: Double = 0.0
     ) {
         val gst: Double get() = cgst + sgst
     }
@@ -69,24 +83,39 @@ object ProductEntryDialog {
         inflater: LayoutInflater,
         product: Product,
         startRate: Double = product.price,
-        startQty: Int = 1,
+        startQty: Double = 1.0,
         confirmLabel: String = "Add to cart",
         focusQty: Boolean = false,
         focusRate: Boolean = false,
         rateEditable: Boolean = true,
+        /** When false the quantity is fixed (to [startQty]) and can't be typed into -
+         *  driven by the "Enter Quantity" general setting. */
+        qtyEditable: Boolean = true,
         taxRegime: GstCalculator.TaxRegime = GstCalculator.TaxRegime.GST,
         taxInclusive: Boolean = false,
         /** Tax Settings' Discount on and set to Item wise - each product's own
          *  pre-configured discount applies, priced per [discountPreTax]. */
         itemwiseDiscountActive: Boolean = false,
         discountPreTax: Boolean = true,
-        onConfirm: (qty: Int, rate: Double) -> Unit
+        onConfirm: (qty: Double, rate: Double) -> Unit
     ) {
         val accent = ThemeManager.getThemeColor(context)
         val view = inflater.inflate(R.layout.dialog_product_entry, null)
 
+        view.findViewById<android.widget.ImageView>(R.id.ivDialogPhoto).apply {
+            if (product.photo != null) {
+                setImageBitmap(product.photo)
+                visibility = android.view.View.VISIBLE
+            } else {
+                setImageDrawable(null)
+                visibility = android.view.View.GONE
+            }
+        }
         view.findViewById<TextView>(R.id.tvDialogTitle).text = product.name
         view.findViewById<TextView>(R.id.tvDialogCategory).text = product.category
+        // What is left, stated where the quantity is actually being chosen - the tile
+        // said it, and the operator is now typing against it.
+        StockBadge.apply(view.findViewById(R.id.tvDialogStock), product.stock, product.stockQty)
         view.findViewById<TextView>(R.id.tvDetSku).text = product.sku
         view.findViewById<TextView>(R.id.tvDetHsn).text = product.hsn
         view.findViewById<TextView>(R.id.tvDetUnit).text = product.unit
@@ -145,13 +174,29 @@ object ProductEntryDialog {
 
         val etRate = view.findViewById<TextInputEditText>(R.id.etRate)
         val etQty = view.findViewById<TextInputEditText>(R.id.etQty)
+        val tilQty = view.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilQty)
         val tvTaxable = view.findViewById<TextView>(R.id.tvTaxable)
         val tvCgstAmt = view.findViewById<TextView>(R.id.tvCgstAmt)
         val tvSgstAmt = view.findViewById<TextView>(R.id.tvSgstAmt)
         val tvAmount = view.findViewById<TextView>(R.id.tvLineAmount)
 
         etRate.setText(String.format("%.2f", startRate))
-        etQty.setText(startQty.toString())
+        etQty.setText(qtyText(startQty))
+        // A unit that allows fractions accepts decimals; otherwise whole numbers only.
+        //
+        // THREE DECIMAL PLACES, and the field enforces it rather than the Add button
+        // complaining afterwards. Three is what the trade weighs in: a gram is 0.001kg
+        // and a millilitre 0.001L, so three places says everything a scale can, and a
+        // fourth is a figure no shop can measure, no customer can check and no printed
+        // slip has room for. Capped at entry so what is typed is what is charged -
+        // rounding it later would price a line differently from the number on screen.
+        etQty.inputType = if (product.allowFraction)
+            (android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL)
+        else android.text.InputType.TYPE_CLASS_NUMBER
+        if (product.allowFraction) {
+            etQty.filters = arrayOf(DecimalPlacesFilter(QTY_DECIMALS))
+            tilQty?.helperText = "Up to $QTY_DECIMALS decimals (${product.unit})"
+        }
 
         // Manual rate off: the rate is fixed to the product's price and can't be edited.
         if (!rateEditable) {
@@ -161,9 +206,18 @@ object ProductEntryDialog {
             etRate.keyListener = null
         }
 
+        // Enter Quantity off: the quantity is fixed to what the dialog opened with
+        // (1 for a fresh add) and can't be typed into.
+        if (!qtyEditable) {
+            etQty.isFocusable = false
+            etQty.isFocusableInTouchMode = false
+            etQty.isCursorVisible = false
+            etQty.keyListener = null
+        }
+
         fun refreshAmount() {
             val rate = etRate.text?.toString()?.toDoubleOrNull() ?: 0.0
-            val qty = etQty.text?.toString()?.toIntOrNull() ?: 0
+            val qty = etQty.text?.toString()?.toDoubleOrNull() ?: 0.0
             val mrp = rate * qty
             val combinedRate = curCgst + curSgst
 
@@ -232,6 +286,16 @@ object ProductEntryDialog {
 
         val dialog = AlertDialog.Builder(context).setView(view).create()
         dialog.setCanceledOnTouchOutside(false)
+        // Show the custom card (its own rounded background), centred - the same look as
+        // every other popup, not the default Material dialog panel.
+        dialog.window?.apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            setLayout(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            setGravity(android.view.Gravity.CENTER)
+        }
 
         val btnCancel = view.findViewById<MaterialButton>(R.id.btnDialogCancel)
         val btnAdd = view.findViewById<MaterialButton>(R.id.btnDialogAdd)
@@ -243,10 +307,12 @@ object ProductEntryDialog {
         btnCancel.setOnClickListener { dialog.dismiss() }
         btnAdd.setOnClickListener {
             val rate = etRate.text?.toString()?.toDoubleOrNull()
-            val qty = etQty.text?.toString()?.toIntOrNull()
+            val qty = etQty.text?.toString()?.toDoubleOrNull()
             when {
                 rate == null || rate <= 0 -> toast(context, "Enter a valid rate")
                 qty == null || qty <= 0 -> toast(context, "Enter a valid quantity")
+                !product.allowFraction && qty % 1.0 != 0.0 ->
+                    toast(context, "Whole quantity only for ${product.unit}")
                 else -> {
                     onConfirm(qty, rate)
                     dialog.dismiss()
@@ -266,6 +332,44 @@ object ProductEntryDialog {
             focusQty -> { etQty.requestFocus(); etQty.selectAll() }
         }
     }
+
+    /** Whole quantities show without decimals; fractional ones keep up to 3 places. */
+    /**
+     * How many decimal places a fractional quantity may carry.
+     *
+     * Three, because that is what the trade weighs in: a gram is 0.001kg and a
+     * millilitre 0.001L. A fourth place is a figure no shop can measure, no customer
+     * can check, and no slip has the width to print.
+     */
+    const val QTY_DECIMALS = 3
+
+    /**
+     * Stops a decimal field taking more than [max] places.
+     *
+     * At the FIELD rather than on the way out. A quantity rounded after it was typed
+     * charges a line at a number the operator never saw, and a quantity refused only
+     * when Add is pressed makes them delete digits they were allowed to type. Here,
+     * the fourth keystroke simply does not land.
+     *
+     * Whole numbers, a lone ".", and pasted text are all handled by measuring what the
+     * field WOULD hold after the edit rather than the keystroke on its own.
+     */
+    class DecimalPlacesFilter(private val max: Int) : android.text.InputFilter {
+        override fun filter(
+            source: CharSequence, start: Int, end: Int,
+            dest: android.text.Spanned, dstart: Int, dend: Int
+        ): CharSequence? {
+            val result = dest.substring(0, dstart) + source.subSequence(start, end) + dest.substring(dend)
+            val dot = result.indexOf('.')
+            // No decimal point yet, or nothing after it - nothing to limit.
+            if (dot < 0 || result.length - dot - 1 <= max) return null
+            return ""   // reject this edit, leave the field as it was
+        }
+    }
+
+    private fun qtyText(v: Double): String =
+        if (v % 1.0 == 0.0) v.toLong().toString()
+        else v.toString().trimEnd('0').trimEnd('.')
 
     private fun money(v: Double): String = "₹" + String.format("%.2f", v)
 

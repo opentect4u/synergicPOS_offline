@@ -1,0 +1,24 @@
+<!-- A dining table: the top, its two legs and the stretcher between them. Tinted
+     per table status on the Choose Table cards. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Table top -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M2,8h20v2.6H2z" />
+    <!-- Legs -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M4.4,10.6h2.2V20H4.4z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17.4,10.6h2.2V20h-2.2z" />
+    <!-- Stretcher -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M6.6,13.4h10.8v1.8H6.6z" />
+</vector>

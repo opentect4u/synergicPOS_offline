@@ -114,18 +114,26 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:hint="Symbol (Kg, Ltr, Pcs)"
+                    android:hint="Short Name (Kg, Ltr, Pcs)"
                     app:startIconDrawable="@android:drawable/ic_menu_info_details"
+                    app:counterEnabled="true"
+                    app:counterMaxLength="3"
                     app:boxCornerRadiusTopStart="12dp"
                     app:boxCornerRadiusTopEnd="12dp"
                     app:boxCornerRadiusBottomStart="12dp"
                     app:boxCornerRadiusBottomEnd="12dp">
 
+                    <!-- Three characters, because this is what gets printed beside a
+                         quantity on a slip and shown on a cart line, where there is
+                         room for a mark and not for a word: "1.5 Ltr", not
+                         "1.5 Litres". The limit is on the field so it cannot be
+                         over-typed and then silently truncated somewhere later. -->
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etUnitSymbol"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:inputType="text"
+                        android:maxLength="3"
                         android:maxLines="1"
                         android:textSize="16sp" />
                 </com.google.android.material.textfield.TextInputLayout>

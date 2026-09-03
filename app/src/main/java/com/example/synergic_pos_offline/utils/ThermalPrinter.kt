@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -19,12 +18,14 @@ import java.util.concurrent.Executors
 import print.Print
 
 /**
- * Prints a receipt to a PR-55 style ESC/POS thermal printer over WiFi.
+ * Prints a receipt to a PR-55 style ESC/POS thermal printer over WiFi/LAN,
+ * Bluetooth or USB.
  *
- * The printer listens on a TCP socket (9100 by convention), so every call here
- * blocks and must stay off the main thread. Connections are opened per job and
- * closed again: a till may be shared, and holding the socket open would lock
- * other devices out of the printer between sales.
+ * Every call here blocks - a network printer listens on a TCP socket (9100 by
+ * convention), and a USB one is written to over a bulk endpoint - so all of it must
+ * stay off the main thread. Connections are opened per job and closed again: a till
+ * may be shared, and holding the socket open would lock other devices out of the
+ * printer between sales.
  */
 object ThermalPrinter {
 
@@ -75,9 +76,10 @@ object ThermalPrinter {
     private val main = Handler(Looper.getMainLooper())
 
     /**
-     * A printer to send to. [address] is an IP for WIFI/LAN or a device MAC for
-     * BLUETOOTH; [connection] selects which transport is opened. Paper width is held
-     * in mm - what the operator knows - and derived to dots.
+     * A printer to send to. [ip] is an IP for WIFI/LAN, a device MAC for BLUETOOTH or
+     * a "VVVV:PPPP" vendor/product pair for USB ([UsbPrinters.addressOf]);
+     * [connection] selects which transport is opened. Paper width is held in mm -
+     * what the operator knows - and derived to dots.
      */
     data class Config(
         val ip: String,
@@ -87,6 +89,15 @@ object ThermalPrinter {
     ) {
         val paperDots: Int get() = dotsForMm(paperMm)
         val isBluetooth: Boolean get() = connection.equals("BLUETOOTH", ignoreCase = true)
+        val isUsb: Boolean get() = connection.equals("USB", ignoreCase = true)
+
+        /**
+         * How this printer reads to an operator. A network printer is known by its
+         * address, which is worth showing - it is what they typed in and what they
+         * would check. A USB printer's address is a vendor/product pair that means
+         * nothing to anyone, so it is named by the port it is on instead.
+         */
+        val description: String get() = if (isUsb) "the USB printer" else ip
     }
 
     sealed class Result {
@@ -118,6 +129,28 @@ object ThermalPrinter {
                 "port=${config.port} paperMm=${config.paperMm} paperDots=${config.paperDots} " +
                 "bitmap=${receipt.width}x${receipt.height} ===="
         )
+        // A USB printer cannot be opened until the user has allowed this app to talk
+        // to that device, and the prompt that asks is Android's own - it needs a live
+        // main thread, so it is dealt with here rather than from the print worker. It
+        // is asked for once per plug-in, so an operator sees it when they connect the
+        // printer and not again for the rest of the shift.
+        if (config.isUsb) {
+            UsbPrinters.ensurePermission(context, config.ip) { granted, reason ->
+                if (!granted) {
+                    PrintLog.d(context, TAG, "USB not available: $reason")
+                    copy.recycle()
+                    onResult(Result.Failure(reason))
+                } else {
+                    dispatch(context, copy, config, onResult)
+                }
+            }
+            return
+        }
+        dispatch(context, copy, config, onResult)
+    }
+
+    /** Queues an already-owned bitmap on the print worker. */
+    private fun dispatch(context: Context, copy: Bitmap, config: Config, onResult: (Result) -> Unit) {
         worker.execute {
             val result = runCatching { sendWithRetry(context, copy, config) }
                 .getOrElse { e ->
@@ -144,17 +177,34 @@ object ThermalPrinter {
      * whichever one failed), so a caller written for a single [print] call needs
      * no change to use this instead.
      */
-    fun printCopies(context: Context, receipt: Bitmap, config: Config, copies: Int, onResult: (Result) -> Unit) {
-        fun sendOne(remaining: Int) {
-            print(context, receipt, config) { result ->
-                if (result is Result.Failure || remaining <= 1) {
+    fun printCopies(context: Context, receipt: Bitmap, config: Config, copies: Int, onResult: (Result) -> Unit) =
+        printSequence(context, List(copies.coerceAtLeast(1)) { receipt }, config, onResult)
+
+    /**
+     * Sends [receipts] one after another, as separate jobs, stopping at the first
+     * failure and reporting the last result.
+     *
+     * Separate from [printCopies] because the slips are no longer necessarily the
+     * same slip: a two-copy bill is the ORIGINAL followed by a DUPLICATE, which are
+     * two different renders of the same sale rather than one render sent twice. See
+     * [BillPrinter.copiesFor].
+     *
+     * Sequential, not batched: a thermal head takes one job at a time, and sending
+     * the second before the first has been acknowledged is how two bills come out
+     * interleaved on one length of paper.
+     */
+    fun printSequence(context: Context, receipts: List<Bitmap>, config: Config, onResult: (Result) -> Unit) {
+        if (receipts.isEmpty()) { onResult(Result.Failure("Nothing to print")); return }
+        fun sendFrom(index: Int) {
+            print(context, receipts[index], config) { result ->
+                if (result is Result.Failure || index >= receipts.lastIndex) {
                     onResult(result)
                 } else {
-                    sendOne(remaining - 1)
+                    sendFrom(index + 1)
                 }
             }
         }
-        sendOne(copies.coerceAtLeast(1))
+        sendFrom(0)
     }
 
     /**
@@ -171,7 +221,7 @@ object ThermalPrinter {
 
     private fun buildTestPrintBitmap(purpose: String, config: Config): Bitmap {
         val width = config.paperDots
-        val lineHeight = 34
+        val lineHeight = (PrintType.dots(PrintType.BODY_SP) * 1.45f).toInt()
         val lines = listOf(
             "Purpose : $purpose",
             "Type    : ${config.connection}",
@@ -187,17 +237,10 @@ object ThermalPrinter {
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE)
 
-        val bodyPaint = Paint().apply {
-            color = Color.BLACK
-            isAntiAlias = true
-            typeface = Typeface.MONOSPACE
-            textSize = 26f
-        }
-        val titlePaint = Paint(bodyPaint).apply {
-            textSize = 34f
-            isFakeBoldText = true
-            textAlign = Paint.Align.CENTER
-        }
+        // The sample slip is set like everything else the till prints - it is meant
+        // to show what this printer's output looks like, so it has to be that.
+        val bodyPaint = PrintType.paint(PrintType.BODY_SP)
+        val titlePaint = PrintType.paint(PrintType.STORE_NAME_SP, bold = true, align = Paint.Align.CENTER)
 
         var y = lineHeight * 1.5f
         canvas.drawText("TEST PRINT", width / 2f, y, titlePaint)
@@ -253,21 +296,43 @@ object ThermalPrinter {
 
         // Open the transport the printer is set to; 0 means connected. Bluetooth
         // takes the device MAC (the SDK prepends "Bluetooth,"); WiFi/LAN take the
-        // "WiFi,<ip>,<port>" descriptor. The close below must cover this too: a failed
-        // open can still leave a half-open connection behind, so each retry would
-        // wedge the printer further.
+        // "WiFi,<ip>,<port>" descriptor; USB takes the attached UsbDevice itself,
+        // resolved from the saved vendor/product pair. The close below must cover this
+        // too: a failed open can still leave a half-open connection behind, so each
+        // retry would wedge the printer further.
         try {
             PrintLog.d(
                 context, TAG,
-                if (config.isBluetooth) "opening Bluetooth port to ${config.ip}"
-                else "opening WiFi port to ${config.ip}:${config.port}"
+                when {
+                    config.isUsb -> "opening USB port to ${config.ip}"
+                    config.isBluetooth -> "opening Bluetooth port to ${config.ip}"
+                    else -> "opening WiFi port to ${config.ip}:${config.port}"
+                }
             )
-            val opened =
-                if (config.isBluetooth) Print.portOpenBT(context, config.ip)
-                else Print.PortOpen(context, "WiFi,${config.ip},${config.port}")
+            // The device is re-resolved per attempt rather than held: it may have been
+            // unplugged and plugged back in between them, which hands out a different
+            // UsbDevice for the same printer.
+            val usbDevice = if (config.isUsb) UsbPrinters.find(context, config.ip) else null
+            if (config.isUsb && usbDevice == null) {
+                return Attempt(
+                    Result.Failure("USB printer not connected - plug it in and try again"),
+                    retryable = false
+                )
+            }
+            val opened = when {
+                // The SDK keeps this context in a static field for the life of the
+                // process, so it gets the application's, never an Activity's.
+                usbDevice != null -> Print.PortOpen(context.applicationContext, usbDevice)
+                config.isBluetooth -> Print.portOpenBT(context, config.ip)
+                else -> Print.PortOpen(context, "WiFi,${config.ip},${config.port}")
+            }
             PrintLog.d(context, TAG, "port open result=$opened (0 = connected)")
             if (opened != 0) {
-                val where = if (config.isBluetooth) config.ip else "${config.ip}:${config.port}"
+                val where = when {
+                    config.isUsb -> "USB ${config.ip}"
+                    config.isBluetooth -> config.ip
+                    else -> "${config.ip}:${config.port}"
+                }
                 return Attempt(
                     Result.Failure("Cannot reach printer at $where"),
                     retryable = true
@@ -420,14 +485,24 @@ object ThermalPrinter {
         )
     }
 
+    /** Builds a [Config] from a chosen operating-printer row, or null if unusable. */
+    fun configFor(printer: OperatingPrinterDao.OperatingPrinter): Config? {
+        val type = printer.printerType?.takeIf { it.isNotBlank() } ?: return null
+        val address = printer.value?.takeIf { it.isNotBlank() } ?: return null
+        return Config(
+            ip = address, port = DEFAULT_PORT, paperMm = printer.paperMm, connection = type.uppercase()
+        )
+    }
+
     /** The Operating Printer screen's default row for [purpose]'s flag, if fully configured. */
     private fun operatingDefaultConfig(context: Context, purpose: String): Config? {
         val flag = OperatingPrinterDao.flagFor(purpose)
         if (flag.isEmpty()) return null
         val printer = OperatingPrinterDao(context).getDefault(flag) ?: return null
         val type = printer.printerType?.takeIf { it.isNotBlank() } ?: return null
-        // USB has no address to open a socket against yet.
-        if (type.equals("USB", ignoreCase = true)) return null
+        // An address is what every transport is opened by, USB included - for it, the
+        // vendor/product pair of the device that was picked when the printer was set
+        // up. A row saved without one is not usable, whatever its type.
         val address = printer.value?.takeIf { it.isNotBlank() } ?: return null
         return Config(
             ip = address,

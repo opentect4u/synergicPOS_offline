@@ -1,10 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  One product on the sale grid, in both trades (grocery's shelf and the restaurant's
+  menu), seven to a row at least - see ProductGrid, which counts the columns from the
+  width and treats seven as a floor rather than a fixed number.
+
+  Because the column count is not fixed, the tile cannot assume a width. The photo is
+  given as a RATIO rather than a fixed height, so it stays a 4:3 window on every
+  screen instead of towering over a narrow card; and the name is allowed two lines but
+  held to exactly two (minLines = maxLines), so a one-word product and a four-word one
+  make tiles of the same height and the grid does not step.
+
+  The name is set at 13sp: it is what the tile is actually read for, and at the 11sp
+  it used to be it was losing to the price beneath it at a counter's arm's length. The
+  line spacing is pulled in a point to pay for the size, so two lines of a longer name
+  still fit the same block.
+-->
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="6dp"
-    app:cardCornerRadius="12dp"
+    android:layout_margin="4dp"
+    app:cardCornerRadius="10dp"
     app:cardElevation="1dp"
     app:strokeWidth="1dp"
     app:strokeColor="#E0E0E0"
@@ -13,16 +29,20 @@
     android:focusable="true"
     android:foreground="?attr/selectableItemBackground">
 
-    <LinearLayout
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:layout_height="wrap_content">
 
-        <!-- Product photo; the caption shows through when a product has none -->
+        <!-- Product photo; the caption shows through when a product has none. Height
+             follows the tile's own width, so it never crowds out the name and price. -->
         <FrameLayout
             android:id="@+id/vBanner"
-            android:layout_width="match_parent"
-            android:layout_height="96dp"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            app:layout_constraintDimensionRatio="H,4:3"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
             android:background="#EAE9E9">
 
             <TextView
@@ -30,7 +50,7 @@
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
                 android:text="no photo"
-                android:textSize="9sp"
+                android:textSize="8sp"
                 android:fontFamily="monospace"
                 android:textColor="#8A8A8A" />
 
@@ -47,21 +67,68 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="top|start"
-                android:layout_margin="8dp"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="3dp"
+                android:layout_margin="5dp"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="2dp"
+                android:maxLines="1"
+                android:ellipsize="end"
                 android:text="Low stock"
-                android:textSize="10sp"
+                android:textSize="8.5sp"
                 android:textColor="@color/text_main"
                 android:background="@color/white"
+                android:visibility="gone" />
+
+            <!-- Restaurant-only markers. Laid on the photo the way the stock badge is,
+                 so the tile is one design in both trades: a grocery never sets them and
+                 they stay gone, a restaurant turns on whichever the dish has. -->
+            <ImageView
+                android:id="@+id/ivFoodType"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_gravity="top|end"
+                android:layout_margin="5dp"
+                android:src="@drawable/ic_food_veg"
+                android:contentDescription="Food type"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/tvPrepBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|start"
+                android:layout_margin="5dp"
+                android:paddingHorizontal="5dp"
+                android:paddingVertical="1dp"
+                android:maxLines="1"
+                android:text="15 min"
+                android:textSize="8.5sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_main"
+                android:background="@color/white"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/llSpice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="5dp"
+                android:paddingHorizontal="4dp"
+                android:paddingVertical="1dp"
+                android:background="@color/white"
+                android:orientation="horizontal"
                 android:visibility="gone" />
         </FrameLayout>
 
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            app:layout_constraintTop_toBottomOf="@id/vBanner"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
             android:orientation="vertical"
-            android:padding="10dp">
+            android:padding="7dp">
 
             <TextView
                 android:id="@+id/tvName"
@@ -73,13 +140,15 @@
                 android:maxLines="2"
                 android:minLines="2"
                 android:ellipsize="end"
+                android:lineSpacingExtra="-1dp"
                 android:textColor="@color/text_main" />
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="4dp"
                 android:orientation="horizontal"
+                android:baselineAligned="false"
                 android:gravity="bottom">
 
                 <TextView
@@ -87,8 +156,10 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:maxLines="1"
+                    android:ellipsize="end"
                     android:text="₹ 0"
-                    android:textSize="17sp"
+                    android:textSize="13sp"
                     android:textStyle="bold"
                     android:textColor="@color/text_main" />
 
@@ -96,11 +167,14 @@
                     android:id="@+id/tvSku"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="3dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
                     android:text="0000"
-                    android:textSize="10sp"
+                    android:textSize="8.5sp"
                     android:fontFamily="monospace"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
         </LinearLayout>
-    </LinearLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 </com.google.android.material.card.MaterialCardView>

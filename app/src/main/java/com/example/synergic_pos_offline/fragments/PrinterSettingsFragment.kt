@@ -31,14 +31,15 @@ import com.example.synergic_pos_offline.database.PrinterDao
 import com.example.synergic_pos_offline.utils.PrintLog
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.example.synergic_pos_offline.utils.ThermalPrinter
+import com.example.synergic_pos_offline.utils.UsbPrinters
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
 /**
  * Printer Settings: one card per print purpose (BILL / KOT / OTHERS). Each has a
  * dropdown to choose which connection to use (WIFI / LAN / BLUETOOTH / USB), and
- * tapping the card configures that connection - an IP for WIFI/LAN, or a paper
- * width plus a (not-yet-wired) connect step for BLUETOOTH/USB.
+ * tapping the card configures that connection - an IP for WIFI/LAN, a paired device
+ * for BLUETOOTH, a plugged-in device for USB - plus that printer's paper width.
  */
 class PrinterSettingsFragment : Fragment(), TitledScreen {
 
@@ -164,10 +165,6 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
 
     /** Test Print from the card itself: whatever is already saved for [printer]. */
     private fun testPrint(printer: PrinterDao.Printer) {
-        if (printer.type.equals("USB", ignoreCase = true)) {
-            toast("USB printing isn't connected yet - choose WIFI, LAN or Bluetooth to test")
-            return
-        }
         val address = printer.ip?.takeIf { it.isNotBlank() }
         if (address == null) {
             toast("Tap the card to set up ${printer.purpose}'s connection first")
@@ -186,7 +183,7 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
 
     /** Sends a test print to [config] - see [ThermalPrinter.testPrint]. */
     private fun testPrint(purpose: String, config: ThermalPrinter.Config) {
-        toast("Sending test print to ${config.ip}…")
+        toast("Sending test print to ${config.description}…")
         ThermalPrinter.testPrint(requireContext(), purpose, config) { result ->
             if (!isAdded) return@testPrint
             when (result) {
@@ -207,7 +204,8 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
             if (!p.ip.isNullOrBlank()) "Paired: ${p.ip}" + (p.paperMm?.let { "  ·  $it mm" } ?: "")
             else "Tap to pair a device"
         "USB" ->
-            p.paperMm?.let { "$it mm  ·  tap to connect" } ?: "Tap to connect"
+            if (!p.ip.isNullOrBlank()) "USB: ${p.ip}" + (p.paperMm?.let { "  ·  $it mm" } ?: "")
+            else "Tap to pick a USB printer"
         else -> "Tap to configure"
     }
 
@@ -216,8 +214,75 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
         when (printer.type.uppercase()) {
             "WIFI", "LAN" -> askForIp(printer)
             "BLUETOOTH" -> askBluetooth(printer)
-            "USB" -> askConnect(printer, "USB")
+            "USB" -> askUsb(printer)
             else -> askForIp(printer)
+        }
+    }
+
+    // ---- USB ---------------------------------------------------------------
+
+    /**
+     * Picks one of the plugged-in USB devices, asking Android for access to it, then
+     * goes on to the paper width. Two steps rather than one dialog: permission is
+     * granted per device in a system prompt, so the device has to be settled before
+     * anything can be saved against it.
+     */
+    private fun askUsb(printer: PrinterDao.Printer) {
+        val ctx = requireContext()
+        val devices = UsbPrinters.list(ctx)
+        if (devices.isEmpty()) {
+            toast("No USB device found - plug the printer in and try again")
+            return
+        }
+        val labels = devices.map { "${it.label}\n${it.address}" }.toTypedArray()
+        MaterialAlertDialogBuilder(ctx)
+            .setTitle("${printer.purpose} printer (USB)")
+            .setItems(labels) { _, which ->
+                val picked = devices[which]
+                if (UsbPrinters.hasPermission(ctx, picked.device)) {
+                    askUsbPaper(printer, picked)
+                    return@setItems
+                }
+                UsbPrinters.requestPermission(ctx, picked.device) { granted ->
+                    if (!isAdded) return@requestPermission
+                    if (granted) askUsbPaper(printer, picked)
+                    else toast("USB access was not allowed for ${picked.label}")
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Paper width for a chosen USB printer; saving stores its address + the width. */
+    private fun askUsbPaper(printer: PrinterDao.Printer, picked: UsbPrinters.Printer) {
+        val ctx = requireContext()
+        val header = TextView(ctx).apply { text = "USB printer: ${picked.label}" }
+        val rb58 = RadioButton(ctx).apply { id = View.generateViewId(); text = "58 mm" }
+        val rb80 = RadioButton(ctx).apply { id = View.generateViewId(); text = "80 mm" }
+        val container = paperContainer(ctx, printer, rb58, rb80, header = header)
+
+        val dialog = MaterialAlertDialogBuilder(ctx)
+            .setTitle("${printer.purpose} printer (USB)")
+            .setView(container)
+            .setPositiveButton("Save") { _, _ ->
+                dao.updateConfig(printer.slNo, picked.address, if (rb58.isChecked) 58 else 80)
+                renderPurposes()
+                toast("USB printer saved: ${picked.label}")
+            }
+            .setNegativeButton("Cancel", null)
+            .setNeutralButton("Test Print", null)
+            .show()
+
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            testPrint(
+                printer.purpose,
+                ThermalPrinter.Config(
+                    ip = picked.address,
+                    port = ThermalPrinter.defaultPort(),
+                    paperMm = if (rb58.isChecked) 58 else 80,
+                    connection = "USB"
+                )
+            )
         }
     }
 
@@ -360,36 +425,6 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
                     connection = printer.type.uppercase()
                 )
             )
-        }
-    }
-
-    /**
-     * Bluetooth/USB: lets the paper width be chosen and saved now; the actual
-     * pairing/connection is left for later (no SDK wired up yet).
-     */
-    private fun askConnect(printer: PrinterDao.Printer, label: String) {
-        val ctx = requireContext()
-        val message = TextView(ctx).apply {
-            text = "Connect the $label printer for ${printer.purpose}?"
-        }
-        val rb58 = RadioButton(ctx).apply { id = View.generateViewId(); text = "58 mm" }
-        val rb80 = RadioButton(ctx).apply { id = View.generateViewId(); text = "80 mm" }
-        val container = paperContainer(ctx, printer, rb58, rb80, header = message)
-
-        val dialog = MaterialAlertDialogBuilder(ctx)
-            .setTitle("${printer.purpose} printer ($label)")
-            .setView(container)
-            .setPositiveButton("Connect") { _, _ ->
-                dao.updatePaper(printer.slNo, if (rb58.isChecked) 58 else 80)
-                renderPurposes()
-                Toast.makeText(ctx, "$label connection coming soon", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Cancel", null)
-            .setNeutralButton("Test Print", null)
-            .show()
-
-        dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
-            toast("$label printing isn't connected yet - there's nothing to test")
         }
     }
 

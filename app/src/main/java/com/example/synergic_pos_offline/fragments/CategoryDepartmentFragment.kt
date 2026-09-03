@@ -107,12 +107,12 @@ class CategoryDepartmentFragment : DataTableFragment() {
 
     /** Opens a large preview of the row's stored image. */
     override fun onThumbnailClick(row: DataRow) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_image_preview, null)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val iv = view.findViewById<ImageView>(R.id.ivPreview)
         val tvEmpty = view.findViewById<TextView>(R.id.tvPreviewEmpty)
@@ -146,12 +146,13 @@ class CategoryDepartmentFragment : DataTableFragment() {
      * row while keeping its original code and pre-loading its stored image.
      */
     private fun showCategoryDialog(existing: DataRow?) {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
         val view = LayoutInflater.from(ctx).inflate(R.layout.dialog_category_department, null)
+        com.example.synergic_pos_offline.utils.InputLimits.applyDefaults(view)
         val dialog = AlertDialog.Builder(ctx).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
         val cardImage = view.findViewById<MaterialCardView>(R.id.cardImage)
@@ -233,7 +234,7 @@ class CategoryDepartmentFragment : DataTableFragment() {
     }
 
     private fun launchCamera() {
-        val ctx = requireContext()
+        val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val dir = File(ctx.cacheDir, "camera").apply { mkdirs() }
         val file = File(dir, "cat_${System.currentTimeMillis()}.jpg")
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)

@@ -17,6 +17,14 @@ object ApiClient {
     const val PATH_REGISTER = "/admin/reg_user"
     const val PATH_CHECK_USER = "/admin/check_user"
 
+    /**
+     * Moves a store's registration onto different hardware: `{ id, device_id }`,
+     * where `id` is the user's row id and `device_id` the tablet now running the
+     * till. Called after a backup has been restored onto a replacement device - see
+     * [DeviceIdentity.publish].
+     */
+    const val PATH_EDIT_DEVICE = "/admin/edit_device"
+
     data class ApiResult(
         val ok: Boolean,
         val status: Int,

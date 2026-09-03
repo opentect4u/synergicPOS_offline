@@ -129,7 +129,45 @@
                         android:id="@+id/swSaleReturn" style="@style/BillSettingSwitch" />
                 </LinearLayout>
 
-                <!-- Sale Return days (shown only when Sale Return is ON) -->
+                <!-- How the return is taken (shown only when Sale Return is ON) -->
+                <LinearLayout
+                    android:id="@+id/llReturnMode"
+                    style="@style/BillSettingRow"
+                    android:visibility="gone">
+
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Return Type" />
+                        <TextView style="@style/BillSettingSub"
+                            android:text="Bill-wise returns lines off the original bill; item-wise returns an item on its own, with no bill behind it" />
+                    </LinearLayout>
+
+                    <RadioGroup
+                        android:id="@+id/rgReturnMode"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <RadioButton
+                            android:id="@+id/rbReturnBillWise"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:checked="true"
+                            android:text="Bill-wise"
+                            android:textColor="@color/text_main" />
+
+                        <RadioButton
+                            android:id="@+id/rbReturnItemWise"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="16dp"
+                            android:text="Item-wise"
+                            android:textColor="@color/text_main" />
+                    </RadioGroup>
+                </LinearLayout>
+
+                <!-- Sale Return days (Sale Return ON *and* bill-wise: an item-wise
+                     return has no bill date to measure a limit from) -->
                 <LinearLayout
                     android:id="@+id/llSaleReturnDays"
                     android:layout_width="match_parent"
@@ -191,6 +229,51 @@
 
                 <View style="@style/BillSettingDivider" />
 
+                <!-- Customer Info -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Customer Info" />
+                        <TextView style="@style/BillSettingSub"
+                            android:text="Capture the customer during a sale. Off, the till never asks and the receipt prints no customer - except on a credit sale, which always does." />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swCustomerInfo" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- After Login -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="After Login" />
+                        <TextView style="@style/BillSettingSub" android:text="Which screen a login opens on: the Sale screen, or the Home screen with the dashboard and menu" />
+                    </LinearLayout>
+                    <RadioGroup
+                        android:id="@+id/rgLandingScreen"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:orientation="horizontal">
+                        <RadioButton
+                            android:id="@+id/rbLandingSale"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textSize="15sp"
+                            android:textColor="@color/text_main"
+                            android:text="Sale" />
+                        <RadioButton
+                            android:id="@+id/rbLandingHome"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:textSize="15sp"
+                            android:textColor="@color/text_main"
+                            android:text="Home" />
+                    </RadioGroup>
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
                 <!-- Item Rate -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">
@@ -219,6 +302,113 @@
                             android:textColor="@color/text_main"
                             android:text="Multiple" />
                     </RadioGroup>
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Product Sorting -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Product Sorting" />
+                        <TextView style="@style/BillSettingSub" android:text="Order products are shown in on the sale page" />
+                    </LinearLayout>
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:minWidth="190dp"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/actProductSort"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none"
+                            android:focusable="false"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ============ INVENTORY ============ -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <!-- Header wording differs from the "Stock" row title on purpose, so a
+                     search for Stock lands on the row rather than this header. -->
+                <TextView android:id="@+id/tvStockHeader"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="INVENTORY" android:textSize="12sp" android:letterSpacing="0.08"
+                    android:textStyle="bold" android:textColor="@color/primary_blue" />
+
+                <!-- Stock -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Stock" />
+                        <TextView style="@style/BillSettingSub" android:text="Track the quantity on hand for each item" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swStockFlag" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Stock Alert (only available while Stock is ON) -->
+                <LinearLayout
+                    android:id="@+id/llStockAlert"
+                    style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Stock Alert" />
+                        <TextView style="@style/BillSettingSub" android:text="Warn when an item runs low on stock" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swStockAlert" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Alert quantity (only available while Stock Alert is ON) -->
+                <LinearLayout
+                    android:id="@+id/llStockAlertQty"
+                    style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Alert Quantity" />
+                        <TextView style="@style/BillSettingSub" android:text="Alert once an item's stock falls to this quantity or below" />
+                    </LinearLayout>
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilStockAlertQty"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="110dp"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:hint="Qty"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etStockAlertQty"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:gravity="end"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

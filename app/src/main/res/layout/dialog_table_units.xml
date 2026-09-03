@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_margin="24dp"
+    app:cardCornerRadius="24dp"
+    app:cardElevation="16dp"
+    app:cardBackgroundColor="@color/white">
+
+    <com.example.synergic_pos_offline.utils.MaxHeightScrollView
+        android:layout_width="760dp"
+        android:layout_height="wrap_content"
+        android:maxHeight="880dp"
+        android:minHeight="480dp"
+        android:fillViewport="true"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="32dp">
+
+            <TextView
+                android:id="@+id/tvDialogTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Edit Tables"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:textColor="@color/text_main" />
+
+            <TextView
+                android:id="@+id/tvUnitsInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="14dp"
+                android:gravity="center"
+                android:textSize="16sp"
+                android:textColor="@color/text_secondary" />
+
+            <!-- Waiter for this section (editable dropdown) -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilUnitsWaiter"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                android:layout_width="360dp"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="18dp"
+                android:hint="Waiter Name"
+                app:boxCornerRadiusTopStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusBottomEnd="12dp">
+                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                    android:id="@+id/actUnitsWaiter"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none"
+                    android:focusable="false"
+                    android:maxLines="1" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fillViewport="true"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center_horizontal">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <!-- Column header -->
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:background="#ECEFF1"
+                        android:paddingVertical="12dp">
+
+                        <TextView android:layout_width="60dp" android:layout_height="wrap_content"
+                            android:gravity="center" android:text="ID" android:textStyle="bold"
+                            android:textSize="15sp" android:textColor="@color/text_secondary" />
+                        <TextView android:layout_width="92dp" android:layout_height="wrap_content"
+                            android:gravity="center" android:text="Section" android:textStyle="bold"
+                            android:textSize="15sp" android:textColor="@color/text_secondary"
+                            android:visibility="gone" />
+                        <TextView android:layout_width="228dp" android:layout_height="wrap_content"
+                            android:gravity="center" android:text="Table Code" android:textStyle="bold"
+                            android:textSize="15sp" android:textColor="@color/text_secondary" />
+                        <TextView android:layout_width="70dp" android:layout_height="wrap_content"
+                            android:gravity="center" android:text="Floor" android:textStyle="bold"
+                            android:textSize="15sp" android:textColor="@color/text_secondary"
+                            android:visibility="gone" />
+                        <TextView android:layout_width="70dp" android:layout_height="wrap_content"
+                            android:gravity="center" android:text="Seat Cap" android:textStyle="bold"
+                            android:textSize="15sp" android:textColor="@color/text_secondary"
+                            android:visibility="gone" />
+                        <TextView android:layout_width="248dp" android:layout_height="wrap_content"
+                            android:gravity="center" android:text="Status" android:textStyle="bold"
+                            android:textSize="15sp" android:textColor="@color/text_secondary" />
+                        <TextView android:layout_width="48dp" android:layout_height="wrap_content"
+                            android:text="" />
+                    </LinearLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp"
+                        android:background="#D8DCE0" />
+
+                    <LinearLayout
+                        android:id="@+id/llTableUnits"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+                </LinearLayout>
+                </LinearLayout>
+            </HorizontalScrollView>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnAddUnit"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="+ Add Table"
+                android:visibility="gone"
+                app:cornerRadius="10dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="end"
+                android:layout_marginTop="22dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnFormNegative"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Cancel"
+                    app:cornerRadius="12dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnFormPositive"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="24dp"
+                    android:text="Save"
+                    android:textColor="@color/white"
+                    app:cornerRadius="12dp" />
+            </LinearLayout>
+        </LinearLayout>
+    </com.example.synergic_pos_offline.utils.MaxHeightScrollView>
+</com.google.android.material.card.MaterialCardView>

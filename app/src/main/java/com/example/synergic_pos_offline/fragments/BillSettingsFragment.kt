@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.fragments
 
 import android.content.res.ColorStateList
+import android.net.Uri
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -8,8 +9,11 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import android.widget.ImageView
 import android.widget.RadioGroup
 import android.widget.TextView
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
@@ -22,6 +26,7 @@ import com.example.synergic_pos_offline.database.BillSettingsDao.FontSize
 import com.example.synergic_pos_offline.database.BillSettingsDao.ResetMode
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.UpiQr
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -42,17 +47,48 @@ class BillSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swRoundOff: SwitchMaterial
     private lateinit var swAmountWords: SwitchMaterial
     private lateinit var swHsn: SwitchMaterial
+    private lateinit var swProductSerial: SwitchMaterial
+    private lateinit var swBillTime: SwitchMaterial
     private lateinit var swTwoCopy: SwitchMaterial
+    private lateinit var swCouponSplit: SwitchMaterial
     private lateinit var etStartBillNo: TextInputEditText
     private lateinit var rgReset: RadioGroup
     private lateinit var swBillNoChar: SwitchMaterial
     private lateinit var tilPrefix: TextInputLayout
     private lateinit var etPrefix: TextInputEditText
+
+    // Token numbering — the same four controls for the take-away token.
+    private lateinit var etStartTokenNo: TextInputEditText
+    private lateinit var rgTokenReset: RadioGroup
+    private lateinit var swTokenNoChar: SwitchMaterial
+    private lateinit var tilTokenPrefix: TextInputLayout
+    private lateinit var etTokenPrefix: TextInputEditText
+    private lateinit var tvTokenPreview: TextView
     private lateinit var tvPreview: TextView
     private lateinit var actCustomerDetails: MaterialAutoCompleteTextView
     private lateinit var swCustomerAddress: SwitchMaterial
     private lateinit var actTotalFontSize: MaterialAutoCompleteTextView
-    private lateinit var actBillFormat: MaterialAutoCompleteTextView
+    private lateinit var swUpiQr: SwitchMaterial
+    private lateinit var llUpiFields: View
+    private lateinit var tilUpiId: TextInputLayout
+    private lateinit var etUpiId: TextInputEditText
+    private lateinit var etUpiName: TextInputEditText
+    private lateinit var ivUpiQrPreview: ImageView
+    private lateinit var tvUpiPreviewNote: TextView
+    // Bill format is no longer editable here; keep whatever was stored on save.
+    private var currentFormat: BillFormat = BillFormat.CLASSIC
+
+    /**
+     * Reads the UPI ID out of a QR image the operator picked.
+     *
+     * Registered here rather than opened on demand because a launcher has to exist
+     * before the fragment is STARTED - the same reason every other picker on this
+     * app is a field.
+     */
+    private val pickUpiQr: ActivityResultLauncher<String> =
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            uri?.let { onUpiQrPicked(it) }
+        }
 
     /** The start number that was persisted when the screen opened. */
     private var savedStartNo = 0
@@ -68,17 +104,32 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         swRoundOff = view.findViewById(R.id.swRoundOff)
         swAmountWords = view.findViewById(R.id.swAmountWords)
         swHsn = view.findViewById(R.id.swHsn)
+        swProductSerial = view.findViewById(R.id.swProductSerial)
+        swBillTime = view.findViewById(R.id.swBillTime)
         swTwoCopy = view.findViewById(R.id.swTwoCopy)
+        swCouponSplit = view.findViewById(R.id.swCouponSplit)
         etStartBillNo = view.findViewById(R.id.etStartBillNo)
         rgReset = view.findViewById(R.id.rgReset)
         swBillNoChar = view.findViewById(R.id.swBillNoChar)
         tilPrefix = view.findViewById(R.id.tilPrefix)
         etPrefix = view.findViewById(R.id.etPrefix)
         tvPreview = view.findViewById(R.id.tvBillNoPreview)
+        etStartTokenNo = view.findViewById(R.id.etStartTokenNo)
+        rgTokenReset = view.findViewById(R.id.rgTokenReset)
+        swTokenNoChar = view.findViewById(R.id.swTokenNoChar)
+        tilTokenPrefix = view.findViewById(R.id.tilTokenPrefix)
+        etTokenPrefix = view.findViewById(R.id.etTokenPrefix)
+        tvTokenPreview = view.findViewById(R.id.tvTokenNoPreview)
         actCustomerDetails = view.findViewById(R.id.actCustomerDetails)
         swCustomerAddress = view.findViewById(R.id.swCustomerAddress)
         actTotalFontSize = view.findViewById(R.id.actTotalFontSize)
-        actBillFormat = view.findViewById(R.id.actBillFormat)
+        swUpiQr = view.findViewById(R.id.swUpiQr)
+        llUpiFields = view.findViewById(R.id.llUpiFields)
+        tilUpiId = view.findViewById(R.id.tilUpiId)
+        etUpiId = view.findViewById(R.id.etUpiId)
+        etUpiName = view.findViewById(R.id.etUpiName)
+        ivUpiQrPreview = view.findViewById(R.id.ivUpiQrPreview)
+        tvUpiPreviewNote = view.findViewById(R.id.tvUpiPreviewNote)
 
         // Dropdowns (always show every option).
         actCustomerDetails.setAdapter(
@@ -86,9 +137,6 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         )
         actTotalFontSize.setAdapter(
             NoFilterAdapter(requireContext(), FontSize.values().map { it.label })
-        )
-        actBillFormat.setAdapter(
-            NoFilterAdapter(requireContext(), BillFormat.values().map { it.label })
         )
 
         bind(dao.load())
@@ -106,6 +154,41 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         etStartBillNo.addTextChangedListener(watcher)
         etPrefix.addTextChangedListener(watcher)
 
+        // Token numbering, wired the same way as the bill's above.
+        swTokenNoChar.setOnCheckedChangeListener { _, on ->
+            tilTokenPrefix.isVisible = on
+            updateTokenPreview()
+        }
+        val tokenWatcher = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = updateTokenPreview()
+            override fun afterTextChanged(s: Editable?) {}
+        }
+        etStartTokenNo.addTextChangedListener(tokenWatcher)
+        etTokenPrefix.addTextChangedListener(tokenWatcher)
+        // The reset period changes which tokens count as already issued, so the
+        // preview has to be recomputed when it moves.
+        rgTokenReset.setOnCheckedChangeListener { _, _ -> updateTokenPreview() }
+
+        // The UPI fields only mean anything once the QR is switched on.
+        swUpiQr.setOnCheckedChangeListener { _, on ->
+            llUpiFields.isVisible = on
+            if (on) updateUpiPreview()
+        }
+        val upiWatcher = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
+                tilUpiId.error = null
+                updateUpiPreview()
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        }
+        etUpiId.addTextChangedListener(upiWatcher)
+        etUpiName.addTextChangedListener(upiWatcher)
+        view.findViewById<MaterialButton>(R.id.btnUploadUpiQr).setOnClickListener {
+            pickUpiQr.launch("image/*")
+        }
+
         view.findViewById<MaterialButton>(R.id.btnSaveSettings).setOnClickListener { onSave() }
 
         // Applies the theme accent to switches, radios, headers, button, inputs.
@@ -120,7 +203,10 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         swRoundOff.isChecked = s.roundOff
         swAmountWords.isChecked = s.amountInWords
         swHsn.isChecked = s.hsnCode
+        swProductSerial.isChecked = s.productSerialNumber
+        swBillTime.isChecked = s.timeOnBill
         swTwoCopy.isChecked = s.twoCopyBill
+        swCouponSplit.isChecked = s.couponSplit
         etStartBillNo.setText(s.startBillNo.toString())
         swBillNoChar.isChecked = s.billNoCharEnabled
         tilPrefix.isVisible = s.billNoCharEnabled
@@ -133,17 +219,36 @@ class BillSettingsFragment : Fragment(), TitledScreen {
                 ResetMode.CONTINUE -> R.id.rbContinue
             }
         )
+        etStartTokenNo.setText(s.startTokenNo.toString())
+        swTokenNoChar.isChecked = s.tokenNoCharEnabled
+        tilTokenPrefix.isVisible = s.tokenNoCharEnabled
+        etTokenPrefix.setText(s.tokenNoCharPrefix)
+        rgTokenReset.check(
+            when (s.tokenResetMode) {
+                ResetMode.DAILY -> R.id.rbTokenDaily
+                ResetMode.MONTHLY -> R.id.rbTokenMonthly
+                ResetMode.YEARLY -> R.id.rbTokenYearly
+                ResetMode.CONTINUE -> R.id.rbTokenContinue
+            }
+        )
         actCustomerDetails.setText(s.customerDetails.label, false)
         swCustomerAddress.isChecked = s.customerAddressPrinting
         actTotalFontSize.setText(s.totalAmountFontSize.label, false)
-        actBillFormat.setText(s.billFormat.label, false)
+        swUpiQr.isChecked = s.upiQrEnabled
+        llUpiFields.isVisible = s.upiQrEnabled
+        etUpiId.setText(s.upiId)
+        etUpiName.setText(s.upiPayeeName)
+        currentFormat = s.billFormat
         updatePreview()
+        updateTokenPreview()
+        updateUpiPreview()
     }
 
     private fun collect(): BillSettings = BillSettings(
         roundOff = swRoundOff.isChecked,
         amountInWords = swAmountWords.isChecked,
         twoCopyBill = swTwoCopy.isChecked,
+        couponSplit = swCouponSplit.isChecked,
         startBillNo = etStartBillNo.text?.toString()?.toIntOrNull() ?: 0,
         resetMode = when (rgReset.checkedRadioButtonId) {
             R.id.rbDaily -> ResetMode.DAILY
@@ -153,12 +258,31 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         },
         billNoCharEnabled = swBillNoChar.isChecked,
         billNoCharPrefix = etPrefix.text?.toString()?.trim().orEmpty().take(3),
+        startTokenNo = etStartTokenNo.text?.toString()?.toIntOrNull() ?: 0,
+        // Daily is the fallback here, not Continue: an unreadable radio group should
+        // land on what a counter actually wants, and it is the same answer the stored
+        // default gives - see BillSettings.tokenResetMode.
+        tokenResetMode = when (rgTokenReset.checkedRadioButtonId) {
+            R.id.rbTokenContinue -> ResetMode.CONTINUE
+            R.id.rbTokenMonthly -> ResetMode.MONTHLY
+            R.id.rbTokenYearly -> ResetMode.YEARLY
+            else -> ResetMode.DAILY
+        },
+        tokenNoCharEnabled = swTokenNoChar.isChecked,
+        tokenNoCharPrefix = etTokenPrefix.text?.toString()?.trim().orEmpty().take(3),
         hsnCode = swHsn.isChecked,
+        productSerialNumber = swProductSerial.isChecked,
+        timeOnBill = swBillTime.isChecked,
         customerDetails = CustomerDetails.fromStored(actCustomerDetails.text?.toString()) ?: CustomerDetails.ONLY_MOBILE,
         customerAddressPrinting = swCustomerAddress.isChecked,
         totalAmountFontSize = FontSize.fromStored(actTotalFontSize.text?.toString()) ?: FontSize.REGULAR,
-        billFormat = BillFormat.fromStored(actBillFormat.text?.toString()) ?: BillFormat.NORMAL
+        billFormat = currentFormat,
+        upiQrEnabled = swUpiQr.isChecked,
+        upiId = upiIdText(),
+        upiPayeeName = etUpiName.text?.toString()?.trim().orEmpty()
     )
+
+    private fun upiIdText(): String = etUpiId.text?.toString()?.trim().orEmpty()
 
     /** Shows what the next bill number will look like with the current inputs. */
     private fun updatePreview() {
@@ -167,8 +291,112 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         tvPreview.text = "Next bill no.: $prefix${start + 1}"
     }
 
+    /**
+     * Shows the token the next take-away order would actually take with the current
+     * inputs - not start + 1.
+     *
+     * The two differ, and only for tokens. Under a reset period the Start No. is not
+     * used at all once a token has been issued in that period: the counter carries on
+     * from the highest one today. A preview that showed start + 1 under Daily would be
+     * telling the operator a number the till will not hand out.
+     */
+    private fun updateTokenPreview() {
+        val start = etStartTokenNo.text?.toString()?.toIntOrNull() ?: 0
+        val prefix = if (swTokenNoChar.isChecked) etTokenPrefix.text?.toString()?.trim().orEmpty().take(3) else ""
+        val mode = when (rgTokenReset.checkedRadioButtonId) {
+            R.id.rbTokenContinue -> ResetMode.CONTINUE
+            R.id.rbTokenMonthly -> ResetMode.MONTHLY
+            R.id.rbTokenYearly -> ResetMode.YEARLY
+            else -> ResetMode.DAILY
+        }
+        // Only the token fields matter to the count; the rest of the record is left at
+        // its defaults rather than read off half-bound controls.
+        val seq = runCatching {
+            com.example.synergic_pos_offline.database.TokenNumberDao(requireContext()).nextSequence(
+                BillSettings(
+                    startTokenNo = start,
+                    tokenResetMode = mode,
+                    tokenNoCharEnabled = swTokenNoChar.isChecked,
+                    tokenNoCharPrefix = prefix
+                )
+            )
+        }.getOrDefault(start + 1)
+        tvTokenPreview.text = "Next token no.: $prefix$seq"
+    }
+
+    /**
+     * Fills the UPI ID in from a QR the shop already has, so nobody has to read a
+     * payment address off a screen and retype it.
+     *
+     * Only the address is taken. The picture is not kept and never printed: a saved
+     * QR is a static one with no amount in it, and printing it would leave the
+     * customer typing the total by hand - which is the thing generating a code per
+     * bill exists to avoid.
+     */
+    private fun onUpiQrPicked(uri: Uri) {
+        val payee = UpiQr.readPayee(requireContext(), uri)
+        if (payee == null) {
+            DialogUtils.showSuccess(
+                context = requireContext(),
+                title = "No UPI QR found",
+                message = "That image does not hold a UPI payment QR. Pick the QR your " +
+                    "payment app gave you, or type the UPI ID in below.",
+                iconRes = android.R.drawable.ic_dialog_alert
+            )
+            return
+        }
+        etUpiId.setText(payee.vpa)
+        // Only fill the name in when the code carried one and nothing is typed yet -
+        // a name the operator entered is theirs, not the QR's to overwrite.
+        if (payee.name.isNotBlank() && etUpiName.text?.toString().isNullOrBlank()) {
+            etUpiName.setText(payee.name)
+        }
+        tilUpiId.error = null
+        updateUpiPreview()
+    }
+
+    /**
+     * Redraws the sample code under the fields.
+     *
+     * It is drawn for [PREVIEW_AMOUNT] rather than left blank, because the amount is
+     * the point of the whole feature and the preview is where an operator can see
+     * for themselves that it is carried: scan this one and the payment app opens
+     * showing that figure.
+     */
+    private fun updateUpiPreview() {
+        val vpa = upiIdText()
+        if (!UpiQr.isValidVpa(vpa)) {
+            ivUpiQrPreview.setImageDrawable(null)
+            ivUpiQrPreview.isVisible = false
+            tvUpiPreviewNote.text =
+                if (vpa.isEmpty()) "Enter a UPI ID to see the code"
+                else "That does not look like a UPI ID. It reads name@bank, e.g. shop@okaxis."
+            return
+        }
+        val uri = UpiQr.payUri(
+            vpa, etUpiName.text?.toString()?.trim().orEmpty(), PREVIEW_AMOUNT, "Bill 1"
+        )
+        val px = (PREVIEW_QR_DP * resources.displayMetrics.density).toInt()
+        val bitmap = UpiQr.bitmap(uri, px)
+        ivUpiQrPreview.setImageBitmap(bitmap)
+        ivUpiQrPreview.isVisible = bitmap != null
+        tvUpiPreviewNote.text = if (bitmap == null) {
+            "The code could not be drawn for this UPI ID."
+        } else {
+            "Sample for \u20B9 " + String.format(java.util.Locale.US, "%.2f", PREVIEW_AMOUNT) +
+                " \u2014 every bill prints its own code carrying that bill's total."
+        }
+    }
+
     private fun onSave() {
         val s = collect()
+        // A QR built without a payable address is a square nobody can pay into, so
+        // the setting cannot be switched on until there is one.
+        if (s.upiQrEnabled && !UpiQr.isValidVpa(s.upiId)) {
+            tilUpiId.error = "Enter a valid UPI ID, e.g. shop@okaxis"
+            etUpiId.requestFocus()
+            return
+        }
         // Changing the start number when bills exist requires erasing them.
         if (s.startBillNo != savedStartNo && dao.hasBills()) {
             AlertDialog.Builder(requireContext())
@@ -197,6 +425,14 @@ class BillSettingsFragment : Fragment(), TitledScreen {
             title = "Saved",
             message = "Bill settings saved successfully."
         )
+    }
+
+    private companion object {
+        /** The figure the sample code under the UPI fields is drawn for. */
+        const val PREVIEW_AMOUNT = 100.0
+
+        /** Side of the preview code, matching ivUpiQrPreview in the layout. */
+        const val PREVIEW_QR_DP = 168
     }
 
     /** Dropdown adapter that never filters, so the full option list always shows. */

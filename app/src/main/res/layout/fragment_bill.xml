@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -13,7 +13,7 @@
 
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/cardReceipt"
-            android:layout_width="360dp"
+            android:layout_width="300dp"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
             android:layout_marginTop="20dp"
@@ -48,7 +48,7 @@
                     android:layout_height="wrap_content"
                     android:text="JAI HANUMAN"
                     android:gravity="center"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textStyle="bold"
                     android:textSize="18sp"
                     android:textColor="#111111" />
@@ -59,7 +59,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="11sp"
                     android:textColor="#444444"
                     android:visibility="gone" />
@@ -69,7 +69,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="11sp"
                     android:textColor="#444444"
                     android:visibility="gone" />
@@ -80,7 +80,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
                     android:gravity="center"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textStyle="bold"
                     android:textSize="11sp"
                     android:textColor="#222222"
@@ -89,6 +89,17 @@
                 <!-- Configurable header lines (md_headers) -->
                 <LinearLayout
                     android:id="@+id/llBillHeaderLines"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <!-- Captions (md_captions): the operator's own lines for what this
+                     slip is - an ordinary bill, one on credit, a reprint of one
+                     already issued. Sits under the whole header block, so the store
+                     identity reads first and the caption qualifies it. Empty unless
+                     captions have been set up. -->
+                <LinearLayout
+                    android:id="@+id/llBillCaptions"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
@@ -107,7 +118,7 @@
                         android:layout_weight="1"
                         android:text="17-07-2026"
                         android:gravity="center"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textSize="13sp"
                         android:textColor="#333333" />
 
@@ -116,7 +127,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="13:18"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textSize="13sp"
                         android:textColor="#333333" />
                 </LinearLayout>
@@ -129,16 +140,30 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="BILL NO: 3"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="13sp"
                     android:textColor="#222222" />
 
                 <!-- Customer details, shown per Bill Settings' "Customer Details" mode -->
+                <!-- The table this bill was served on. Restaurant only, and not
+                     governed by the Customer Details setting: which table a bill
+                     belongs to is part of the bill, not a detail about the guest. -->
+                <TextView
+                    android:id="@+id/tvBillTable"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="TABLE : 5"
+                    android:fontFamily="@font/roboto_mono_regular"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
                 <TextView
                     android:id="@+id/tvCustMobile"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="13sp"
                     android:textColor="#222222"
                     android:visibility="gone" />
@@ -148,7 +173,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="NAME  : SOMNATH"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="13sp"
                     android:textColor="#222222"
                     android:visibility="gone" />
@@ -157,7 +182,7 @@
                     android:id="@+id/tvCustGstin"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="13sp"
                     android:textColor="#222222"
                     android:visibility="gone" />
@@ -167,85 +192,100 @@
                     android:id="@+id/tvCustAddress"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <!-- What the customer owes once this bill is on their account.
+                     Credit sales only - a settled sale leaves nothing outstanding. -->
+                <TextView
+                    android:id="@+id/tvCustOutstanding"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/roboto_mono_regular"
+                    android:textStyle="bold"
                     android:textSize="13sp"
                     android:textColor="#222222"
                     android:visibility="gone" />
 
                 <TextView style="@style/BillDashLine" />
 
-                <!-- Items header: the item name sits on its own row, so the header
-                     is a name label above the value columns that line up under it. -->
+                <!-- Items header. One row, the same five columns the Classic slip
+                     uses and in the same proportions: BillReceiptRenderer lays these
+                     out to CLASSIC_COLUMNS at inflation and sets the rows beneath
+                     them from the same array, so a figure cannot end up under the
+                     wrong label. The weights here are the 3-inch ones and are
+                     present so the layout can be previewed. -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical">
+                    android:orientation="horizontal">
 
                     <TextView
-                        android:layout_width="match_parent"
+                        android:id="@+id/tvColSrItem"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_weight="3.8"
                         android:text="SR.NO ITEM"
-                        android:fontFamily="monospace"
+                        android:fontFamily="@font/roboto_mono_regular"
                         android:textStyle="bold"
                         android:textSize="12sp"
                         android:textColor="#222222" />
 
-                    <LinearLayout
-                        android:layout_width="match_parent"
+                    <TextView
+                        android:id="@+id/tvColQty"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal">
+                        android:layout_weight="2"
+                        android:text="QTY"
+                        android:gravity="center"
+                        android:fontFamily="@font/roboto_mono_regular"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
 
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1.8"
-                            android:text="QTY"
-                            android:gravity="center"
-                            android:fontFamily="monospace"
-                            android:textStyle="bold"
-                            android:textSize="12sp"
-                            android:textColor="#222222" />
+                    <TextView
+                        android:id="@+id/tvColPrice"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1.9"
+                        android:text="PRICE"
+                        android:gravity="end"
+                        android:fontFamily="@font/roboto_mono_regular"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
 
-                        <!-- Weighted wide enough to keep the label on one line. -->
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="3"
-                            android:text="PER UNIT PRICE"
-                            android:gravity="end"
-                            android:fontFamily="monospace"
-                            android:textStyle="bold"
-                            android:textSize="12sp"
-                            android:textColor="#222222" />
+                    <!-- Hidden by the renderer when no line carries a discount - a
+                         bill-wise discount comes off the total, not the lines, so
+                         its column would be nothing but dashes. -->
+                    <TextView
+                        android:id="@+id/tvColDisc"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1.7"
+                        android:text="DISC"
+                        android:gravity="end"
+                        android:fontFamily="@font/roboto_mono_regular"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222"
+                        android:visibility="gone" />
 
-                        <!-- Hidden by the renderer when no line carries a discount -
-                             a bill-wise discount comes off the total, not the lines,
-                             so its column would be nothing but dashes. -->
-                        <TextView
-                            android:id="@+id/tvColDisc"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1.8"
-                            android:text="DISC"
-                            android:gravity="end"
-                            android:fontFamily="monospace"
-                            android:textStyle="bold"
-                            android:textSize="12sp"
-                            android:textColor="#222222" />
-
-                        <!-- The line's gross less its discount - what it actually
-                             contributes to the bill. -->
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="2.4"
-                            android:text="NET AMT"
-                            android:gravity="end"
-                            android:fontFamily="monospace"
-                            android:textStyle="bold"
-                            android:textSize="12sp"
-                            android:textColor="#222222" />
-                    </LinearLayout>
+                    <!-- The line's gross less its discount - what it actually
+                         contributes to the bill. -->
+                    <TextView
+                        android:id="@+id/tvColNet"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2.3"
+                        android:text="AMOUNT"
+                        android:gravity="end"
+                        android:fontFamily="@font/roboto_mono_regular"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:textColor="#222222" />
                 </LinearLayout>
 
                 <TextView style="@style/BillDashLine" />
@@ -277,7 +317,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="11sp"
                     android:lineSpacingExtra="2dp"
                     android:textColor="#333333"
@@ -290,6 +330,59 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
 
+                <!--
+                    Scan-to-pay UPI QR. Built per bill from the UPI ID in Bill
+                    Settings and carrying this bill&apos;s total, so the payment app
+                    opens with the amount already filled in. Hidden unless the bill
+                    was settled by UPI and the setting is on.
+                -->
+                <LinearLayout
+                    android:id="@+id/llUpiQr"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center_horizontal"
+                    android:layout_marginTop="8dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/tvUpiQrCaption"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="SCAN TO PAY"
+                        android:fontFamily="@font/roboto_mono_regular"
+                        android:textStyle="bold"
+                        android:textSize="13sp"
+                        android:textColor="#111111" />
+
+                    <ImageView
+                        android:id="@+id/ivUpiQr"
+                        android:layout_width="150dp"
+                        android:layout_height="150dp"
+                        android:layout_marginTop="4dp"
+                        android:scaleType="fitCenter"
+                        android:contentDescription="UPI payment QR" />
+
+                    <TextView
+                        android:id="@+id/tvUpiQrAmount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="@font/roboto_mono_regular"
+                        android:textStyle="bold"
+                        android:textSize="13sp"
+                        android:textColor="#111111" />
+
+                    <TextView
+                        android:id="@+id/tvUpiQrVpa"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:fontFamily="@font/roboto_mono_regular"
+                        android:textSize="11sp"
+                        android:textColor="#222222" />
+                </LinearLayout>
+
                 <!-- Who rang the sale up -->
                 <TextView
                     android:id="@+id/tvBillCreatedBy"
@@ -297,7 +390,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="Created by: ---"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="12sp"
                     android:textColor="#222222" />
 
@@ -328,27 +421,46 @@
                     android:layout_marginTop="6dp"
                     android:text=""
                     android:gravity="center"
-                    android:fontFamily="monospace"
+                    android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="12sp"
                     android:textColor="#555555" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
     </ScrollView>
 
-    <!-- Floats over the receipt so it stays reachable while the bill scrolls -->
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnPrintBill"
+    <!-- Floats over the receipt so the actions stay reachable while it scrolls -->
+    <LinearLayout
+        android:id="@+id/llBillActions"
         android:layout_width="wrap_content"
-        android:layout_height="46dp"
+        android:layout_height="wrap_content"
         android:layout_gravity="top|end"
         android:layout_margin="16dp"
-        android:insetTop="0dp"
-        android:insetBottom="0dp"
-        android:minHeight="0dp"
-        android:text="Print"
-        android:textColor="@color/white"
-        app:icon="@drawable/ic_print"
-        app:iconTint="@color/white"
-        app:cornerRadius="12dp"
-        app:elevation="4dp" />
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnPrintBill"
+            android:layout_width="wrap_content"
+            android:layout_height="46dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minHeight="0dp"
+            android:text="Print"
+            android:textColor="@color/white"
+            app:icon="@drawable/ic_print"
+            app:iconTint="@color/white"
+            app:cornerRadius="12dp"
+            app:elevation="4dp" />
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnDeleteBill"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="46dp"
+            android:layout_marginStart="8dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minHeight="0dp"
+            android:text="Delete"
+            app:cornerRadius="12dp"
+            app:elevation="4dp" />
+    </LinearLayout>
 </FrameLayout>

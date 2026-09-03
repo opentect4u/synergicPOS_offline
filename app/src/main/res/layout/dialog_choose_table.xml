@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Choose Table: the floor plan as cards, its sections as the categories across the
+  top, and a legend along the foot keying each colour to a status.
+
+  Full screen by design - the card fills the window edge to edge, so the floor gets
+  the whole display whatever its size and whether or not there is a table to show.
+-->
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:cardCornerRadius="0dp"
+    app:cardElevation="0dp"
+    app:cardBackgroundColor="@color/white">
+
+    <LinearLayout
+        android:id="@+id/llDialogContent"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingTop="18dp">
+
+        <!-- Title + search + close -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="20dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="16dp"
+                android:text="Choose Table"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_main" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:hint="Search table or section"
+                app:startIconDrawable="@android:drawable/ic_menu_search"
+                app:boxCornerRadiusTopStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusBottomEnd="12dp">
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etTableSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:textSize="17sp" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <ImageButton
+                android:id="@+id/btnCloseChooseTable"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="10dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                app:tint="@color/text_secondary"
+                android:contentDescription="Close" />
+        </LinearLayout>
+
+        <!-- What the floor adds up to, for whatever section is being shown. Answers
+             "is there anything free?" without counting green cards by eye. -->
+        <LinearLayout
+            android:id="@+id/llTableCounts"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:baselineAligned="false"
+            android:paddingHorizontal="20dp"
+            android:paddingTop="14dp" />
+
+        <!-- The rooms, as the categories of this grid. Gone for a store that has not
+             set any up: one unnamed room is not a choice to offer. -->
+        <HorizontalScrollView
+            android:id="@+id/svTableSections"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:paddingHorizontal="20dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
+            android:clipToPadding="false">
+
+            <LinearLayout
+                android:id="@+id/llTableSections"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E4E7EB" />
+
+        <!-- The floor. Takes every pixel between the sections and the legend, so the
+             grid is as tall as the screen allows. -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvTables"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:paddingHorizontal="13dp"
+            android:paddingVertical="14dp"
+            android:clipToPadding="false"
+            android:scrollbars="none" />
+
+        <!-- Stands in for the grid, and holds the same space, when there is none -->
+        <TextView
+            android:id="@+id/tvNoTables"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:paddingVertical="28dp"
+            android:gravity="center"
+            android:text="No tables set up yet.\nAdd them in Master ▸ Table."
+            android:textSize="16sp"
+            android:textColor="@color/text_secondary"
+            android:visibility="gone" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E4E7EB" />
+
+        <!-- Legend: what each colour on the cards above means. Scrolls rather than
+             squeezing, so the KOT keys can sit beside the table statuses. -->
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:background="@color/bg_light"
+            android:paddingHorizontal="20dp"
+            android:paddingVertical="12dp"
+            android:clipToPadding="false">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <View
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:background="@drawable/bg_legend_dot"
+                    android:backgroundTint="#16A34A" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="7dp"
+                    android:layout_marginEnd="18dp"
+                    android:text="Available Table"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary" />
+
+                <View
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:background="@drawable/bg_legend_dot"
+                    android:backgroundTint="#DC2626" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="7dp"
+                    android:layout_marginEnd="18dp"
+                    android:text="Occupied Table"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary" />
+
+                <!-- No Reserved key: nothing in the app books a table ahead, so the
+                     Table master no longer offers that status and no card can be in
+                     it. A key for a colour that never appears is a colour to look
+                     for on the floor plan and never find. -->
+                <View
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:background="@drawable/bg_legend_dot"
+                    android:backgroundTint="#2563EB" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="7dp"
+                    android:layout_marginEnd="22dp"
+                    android:text="Bill Pending"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary" />
+
+                <!-- Cleaning and Blocked. Both are statuses the Table master sets, so
+                     both DO appear on the grid - they were the two colours on the
+                     floor plan with nothing here to name them, which is the half of a
+                     legend that sends the eye back to the cards guessing. -->
+                <View
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:background="@drawable/bg_legend_dot"
+                    android:backgroundTint="#F59E0B" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="7dp"
+                    android:layout_marginEnd="18dp"
+                    android:text="Cleaning"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary" />
+
+                <View
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:background="@drawable/bg_legend_dot"
+                    android:backgroundTint="#475569" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="7dp"
+                    android:layout_marginEnd="22dp"
+                    android:text="Blocked"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary" />
+
+                <!-- No KOT keys. The cards no longer take a kitchen colour, so a
+                     purple and a teal key here would name two colours that never
+                     appear on the floor plan - and a legend listing colours the grid
+                     cannot show is worse than no legend, because it sends the eye
+                     looking for them. Where an order stands with the kitchen is on
+                     the ticket and on the order panel. -->
+            </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

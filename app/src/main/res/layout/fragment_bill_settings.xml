@@ -67,6 +67,34 @@
 
                 <View style="@style/BillSettingDivider" />
 
+                <!-- Product serial number -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Product Serial Number" />
+                        <TextView style="@style/BillSettingSub" android:text="Number each item line on the bill (SR.NO)" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swProductSerial" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Time on the bill. The DATE is not optional and has no switch: a
+                     bill is a dated record and a shop is required to be able to say
+                     which day a sale happened on. The time of day is the part that is
+                     genuinely a preference - a restaurant wants it to tell two of the
+                     same table apart, a shop billing once a customer often does not. -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Time on Bill" />
+                        <TextView style="@style/BillSettingSub" android:text="Print the time of sale beside the date. Off prints the date alone" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swBillTime" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
                 <!-- Two copy bill -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">
@@ -78,6 +106,16 @@
                 </LinearLayout>
 
                 <View style="@style/BillSettingDivider" />
+
+                <!-- Coupon splitting -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Coupon Splitting" />
+                        <TextView style="@style/BillSettingSub" android:text="Print a coupon per category with every bill, each on its own half-cut slip - so a customer can take one to each counter." />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swCouponSplit" style="@style/BillSettingSwitch" />
+                </LinearLayout>
 
                 <!-- Total amount font size -->
                 <LinearLayout style="@style/BillSettingRow">
@@ -105,33 +143,6 @@
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
-                <View style="@style/BillSettingDivider" />
-
-                <!-- Bill format -->
-                <LinearLayout style="@style/BillSettingRow">
-                    <LinearLayout style="@style/BillSettingText">
-                        <TextView style="@style/BillSettingTitle" android:text="Bill format" />
-                        <TextView style="@style/BillSettingSub" android:text="Layout format of the printed bill" />
-                    </LinearLayout>
-                    <com.google.android.material.textfield.TextInputLayout
-                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="center_vertical"
-                        android:minWidth="160dp"
-                        app:boxCornerRadiusTopStart="12dp"
-                        app:boxCornerRadiusTopEnd="12dp"
-                        app:boxCornerRadiusBottomStart="12dp"
-                        app:boxCornerRadiusBottomEnd="12dp">
-                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
-                            android:id="@+id/actBillFormat"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:inputType="none"
-                            android:focusable="false"
-                            android:maxLines="1" />
-                    </com.google.android.material.textfield.TextInputLayout>
-                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -252,6 +263,130 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- ============ TOKEN NUMBERING ============
+             The same four settings as BILL NUMBERING above, for the take-away token,
+             and separate from it because a token is not a bill. A bill number is an
+             accounting record that gets quoted back months later; a token is a label
+             for food waiting at a counter, called out and then finished with. That is
+             why the default below is Daily where the bill's is Continue - a token that
+             has climbed into the thousands is a number nobody can shout across a
+             counter. -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView android:id="@+id/tvTokenNumberingHeader"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="TOKEN NUMBERING" android:textSize="12sp" android:letterSpacing="0.08"
+                    android:textStyle="bold" android:textColor="@color/primary_blue" />
+
+                <!-- Set Token No. -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Set Token No." />
+                        <TextView style="@style/BillSettingSub" android:text="Start number of the take-away token (default 0)." />
+                        <TextView
+                            android:id="@+id/tvTokenNoPreview"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text="Next token no.: 1"
+                            android:textStyle="bold"
+                            android:textSize="14sp"
+                            android:textColor="@color/text_main" />
+                    </LinearLayout>
+                    <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="110dp"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:hint="Start"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etStartTokenNo"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:gravity="end"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Reset Token No. -->
+                <TextView style="@style/BillSettingTitle" android:text="Reset Token No."
+                    android:layout_marginTop="14dp" />
+                <TextView style="@style/BillSettingSub"
+                    android:text="When the token number should reset to 1" />
+
+                <RadioGroup
+                    android:id="@+id/rgTokenReset"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="6dp">
+
+                    <RadioButton android:id="@+id/rbTokenContinue" style="@style/BillSettingRadio"
+                        android:text="Continue — continue token no. serially" />
+                    <RadioButton android:id="@+id/rbTokenDaily" style="@style/BillSettingRadio"
+                        android:text="Daily — reset to 1 every day (default)" />
+                    <RadioButton android:id="@+id/rbTokenMonthly" style="@style/BillSettingRadio"
+                        android:text="Monthly — reset to 1 every month" />
+                    <RadioButton android:id="@+id/rbTokenYearly" style="@style/BillSettingRadio"
+                        android:text="Yearly — reset to 1 every year" />
+                </RadioGroup>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Token No. Character -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Token No. Character" />
+                        <TextView style="@style/BillSettingSub" android:text="Allow characters (max 3) before every token no." />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swTokenNoChar" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/tilTokenPrefix"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:hint="Prefix characters (max 3)"
+                    android:visibility="gone"
+                    app:counterEnabled="true"
+                    app:counterMaxLength="3"
+                    app:boxCornerRadiusTopStart="12dp"
+                    app:boxCornerRadiusTopEnd="12dp"
+                    app:boxCornerRadiusBottomStart="12dp"
+                    app:boxCornerRadiusBottomEnd="12dp">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etTokenPrefix"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textCapCharacters"
+                        android:maxLength="3"
+                        android:maxLines="1" />
+                </com.google.android.material.textfield.TextInputLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- ============ CUSTOMER ============ -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
@@ -308,6 +443,141 @@
                     </LinearLayout>
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swCustomerAddress" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ============ UPI PAYMENT QR ============ -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView android:id="@+id/tvUpiHeader"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="UPI PAYMENT QR" android:textSize="12sp" android:letterSpacing="0.08"
+                    android:textStyle="bold" android:textColor="@color/primary_blue" />
+
+                <!-- Print UPI QR -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="UPI QR on bill" />
+                        <TextView style="@style/BillSettingSub" android:text="Print a scan-to-pay QR on every bill settled by UPI, carrying that bill&apos;s amount so the customer never types it in. A bill paid Online prints one either way." />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swUpiQr" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llUpiFields"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <View style="@style/BillSettingDivider" />
+
+                    <TextView style="@style/BillSettingTitle" android:text="UPI ID"
+                        android:layout_marginTop="14dp" />
+                    <TextView style="@style/BillSettingSub"
+                        android:text="The UPI address the money is paid into, e.g. shop@okaxis. Upload the QR you already have and it is filled in for you." />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilUpiId"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:hint="UPI ID"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etUpiId"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textEmailAddress"
+                            android:maxLength="120"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilUpiName"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:hint="Payee name (optional)"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etUpiName"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textCapWords"
+                            android:maxLength="50"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnUploadUpiQr"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:layout_marginTop="12dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minHeight="0dp"
+                        android:text="Upload QR image"
+                        android:textSize="14sp"
+                        app:cornerRadius="12dp" />
+
+                    <TextView style="@style/BillSettingSub"
+                        android:id="@+id/tvUpiUploadHint"
+                        android:layout_marginTop="6dp"
+                        android:text="The picture itself is never printed. A saved QR has no amount in it, so the bill carries a fresh code built for that bill&apos;s total." />
+
+                    <TextView
+                        android:id="@+id/tvUpiPreviewLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:text="PREVIEW"
+                        android:textSize="12sp"
+                        android:letterSpacing="0.08"
+                        android:textStyle="bold"
+                        android:gravity="center"
+                        android:textColor="@color/primary_blue" />
+
+                    <ImageView
+                        android:id="@+id/ivUpiQrPreview"
+                        android:layout_width="168dp"
+                        android:layout_height="168dp"
+                        android:layout_gravity="center_horizontal"
+                        android:layout_marginTop="8dp"
+                        android:scaleType="fitCenter"
+                        android:contentDescription="UPI payment QR preview" />
+
+                    <TextView
+                        android:id="@+id/tvUpiPreviewNote"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center"
+                        android:textSize="12sp"
+                        android:text="Enter a UPI ID to see the code" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

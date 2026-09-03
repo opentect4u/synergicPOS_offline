@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One of the shop's own extra charges (Parcel, Packing, Delivery, ...) on the
+     order summary - inflated once per enabled, applicable charge by
+     RestaurantOrdersFragment.updateTotals(), the same set BillReceiptRenderer
+     prints as its own lines. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/OrderSummaryRow">
+
+    <TextView
+        android:id="@+id/tvChargeLabel"
+        style="@style/OrderSummaryLabel" />
+
+    <TextView
+        android:id="@+id/tvChargeValue"
+        style="@style/OrderSummaryValue"
+        android:text="₹ 0.00" />
+
+</LinearLayout>

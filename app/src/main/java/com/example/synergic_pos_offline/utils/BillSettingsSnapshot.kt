@@ -5,8 +5,9 @@ import org.json.JSONObject
 
 /**
  * The Bill Settings fields that change how a bill is *displayed* - HSN column,
- * customer details mode, address line, total amount font size, the round-off row,
- * amount-in-words, and which tax regime (GST/VAT) was active - as opposed to the
+ * line numbering, customer details mode, address line, total amount font size, the
+ * round-off row, amount-in-words, and which tax regime (GST/VAT) was active - as
+ * opposed to the
  * ones that only affect how it was *calculated* (already baked into the stored
  * amounts, so nothing to snapshot there).
  *
@@ -18,6 +19,10 @@ object BillSettingsSnapshot {
 
     data class Snapshot(
         val hsnCode: Boolean,
+        /** Whether the item lines were numbered when this bill was made. */
+        val productSerialNumber: Boolean,
+        /** Whether the time of sale was printed beside the date. */
+        val timeOnBill: Boolean,
         val customerDetails: BillSettingsDao.CustomerDetails,
         val customerAddressPrinting: Boolean,
         val totalAmountFontSize: BillSettingsDao.FontSize,
@@ -40,6 +45,8 @@ object BillSettingsSnapshot {
     ): String =
         JSONObject().apply {
             put("hsnCode", settings.hsnCode)
+            put("productSerialNumber", settings.productSerialNumber)
+            put("timeOnBill", settings.timeOnBill)
             put("customerDetails", settings.customerDetails.name)
             put("customerAddressPrinting", settings.customerAddressPrinting)
             put("totalAmountFontSize", settings.totalAmountFontSize.name)
@@ -57,6 +64,12 @@ object BillSettingsSnapshot {
             val o = JSONObject(json)
             Snapshot(
                 hsnCode = o.optBoolean("hsnCode"),
+                // Bills made before this was a choice were all numbered, so their
+                // reprints stay numbered rather than quietly changing shape.
+                productSerialNumber = o.optBoolean("productSerialNumber", true),
+                // Bills taken before this was a setting were all printed WITH the
+                // time, so that is what a reprint of one has to show.
+                timeOnBill = o.optBoolean("timeOnBill", true),
                 customerDetails = runCatching { BillSettingsDao.CustomerDetails.valueOf(o.getString("customerDetails")) }
                     .getOrDefault(BillSettingsDao.CustomerDetails.ONLY_MOBILE),
                 customerAddressPrinting = o.optBoolean("customerAddressPrinting"),
