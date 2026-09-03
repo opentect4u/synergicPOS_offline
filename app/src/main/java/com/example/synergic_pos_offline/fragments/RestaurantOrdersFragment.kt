@@ -307,6 +307,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     ) {
         /** What [charges] adds to the order. */
         val chargesTotal: Double get() = charges.sumOf { it.amount }
+
+        /** [charges]' own Parcel Charge share, for the bill's own column - see
+         *  ChargeDao.Kind.PARCEL. */
+        val parcelChargeTotal: Double get() =
+            charges.filter { it.kind == com.example.synergic_pos_offline.database.ChargeDao.Kind.PARCEL }
+                .sumOf { it.amount }
     }
 
     /**
@@ -4602,6 +4608,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     // The shop's own extra charges (Parcel Charge among them) - not the
                     // service charge, which has its own column just below.
                     otherChargesAmount = b.chargesTotal,
+                    parcelChargeAmount = b.parcelChargeTotal,
                     waiterId = waiterId,
                     tableNumber = order.id,
                     tableSection = order.section,

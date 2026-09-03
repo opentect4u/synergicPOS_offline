@@ -81,6 +81,9 @@ class BillDao(context: Context) {
         val igstAmount: Double = 0.0,
         val vatAmount: Double = 0.0,
         val otherChargesAmount: Double = 0.0,
+        /** [otherChargesAmount]'s own Parcel Charge share - see ChargeDao.Kind.PARCEL.
+         *  Zero on a grocery bill, which a Parcel Charge never reaches. */
+        val parcelChargeAmount: Double = 0.0,
         val roundOffAmount: Double = 0.0,
         val waiterId: Long? = null,
         val isMrpBilling: Boolean = false,
@@ -175,6 +178,7 @@ class BillDao(context: Context) {
                 put("tot_igst_amount", bill.igstAmount)
                 put("tot_vat_amount", bill.vatAmount)
                 put("tot_other_charges_amount", bill.otherChargesAmount)
+                put("parcel_charge_amount", bill.parcelChargeAmount)
                 put("tot_round_off_amount", bill.roundOffAmount)
                 put("net_amount", bill.netAmount)
                 put("amount_in_words", AmountInWords.of(bill.netAmount))

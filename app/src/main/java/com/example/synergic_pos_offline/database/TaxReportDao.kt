@@ -88,8 +88,10 @@ class TaxReportDao(context: Context) {
         val isEmpty: Boolean get() = lines.isEmpty()
     }
 
-    /** A period's Service Charge and other extra charges, summed from `td_bills`. */
-    data class BillCharges(val service: Double, val other: Double)
+    /** A period's Service Charge and other extra charges, summed from `td_bills`.
+     *  [other] is non-parcel - [parcel] is Parcel Charge's own share, broken out
+     *  separately (see ChargeDao.Kind.PARCEL) rather than folded into [other]. */
+    data class BillCharges(val service: Double, val other: Double, val parcel: Double = 0.0)
 
     /** What one slab has accumulated so far, before it becomes a [Line]. */
     private class Sum {
@@ -248,7 +250,8 @@ class TaxReportDao(context: Context) {
             }
             db.rawQuery(
                 """
-                SELECT COALESCE(SUM(service_charge_amount), 0), COALESCE(SUM(tot_other_charges_amount), 0)
+                SELECT COALESCE(SUM(service_charge_amount), 0), COALESCE(SUM(tot_other_charges_amount), 0),
+                       COALESCE(SUM(parcel_charge_amount), 0)
                 FROM ${DatabaseHelper.Tables.TD_BILLS}
                 WHERE substr(bill_date, 1, 10) BETWEEN ? AND ?
                   AND COALESCE(is_voided, 0) = 0
@@ -259,7 +262,9 @@ class TaxReportDao(context: Context) {
                 args.toTypedArray()
             ).use { c ->
                 return if (c.moveToFirst()) {
-                    BillCharges(BillRounding.toPaise(c.getDouble(0)), BillRounding.toPaise(c.getDouble(1)))
+                    val parcel = BillRounding.toPaise(c.getDouble(2))
+                    val other = (BillRounding.toPaise(c.getDouble(1)) - parcel).coerceAtLeast(0.0)
+                    BillCharges(BillRounding.toPaise(c.getDouble(0)), other, parcel)
                 } else {
                     BillCharges(0.0, 0.0)
                 }

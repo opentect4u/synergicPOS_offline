@@ -37,9 +37,12 @@ class CalendarReportDao(context: Context) {
         val totalDiscount: Double,
         /** The restaurant section's own flat charge - zero on a grocery bill. */
         val totalServiceCharge: Double = 0.0,
-        /** The shop's other extra charges - Parcel Charge among them - added
-         *  together, since only the sum is stored per bill, not each by name. */
+        /** The shop's other extra charges, Parcel Charge excluded - see
+         *  [totalParcelCharge]. */
         val totalOtherCharges: Double = 0.0,
+        /** Parcel Charge's own share, broken out from [totalOtherCharges] - see
+         *  ChargeDao.Kind.PARCEL. Zero on a bill sold before this was tracked. */
+        val totalParcelCharge: Double = 0.0,
         /** What those bills came to - their net. */
         val totalAmount: Double
     ) {
@@ -79,6 +82,7 @@ class CalendarReportDao(context: Context) {
         val totalDiscount: Double get() = BillRounding.toPaise(lines.sumOf { it.totalDiscount })
         val totalServiceCharge: Double get() = BillRounding.toPaise(lines.sumOf { it.totalServiceCharge })
         val totalOtherCharges: Double get() = BillRounding.toPaise(lines.sumOf { it.totalOtherCharges })
+        val totalParcelCharge: Double get() = BillRounding.toPaise(lines.sumOf { it.totalParcelCharge })
         val totalAmount: Double get() = BillRounding.toPaise(lines.sumOf { it.totalAmount })
 
         /** The best period of the range, for the summary to name. Null when empty. */
@@ -120,6 +124,7 @@ class CalendarReportDao(context: Context) {
                    COALESCE(SUM(b.tot_discount_amount), 0),
                    COALESCE(SUM(b.service_charge_amount), 0),
                    COALESCE(SUM(b.tot_other_charges_amount), 0),
+                   COALESCE(SUM(b.parcel_charge_amount), 0),
                    COALESCE(SUM(b.net_amount), 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             WHERE $period BETWEEN ? AND ?
@@ -147,8 +152,9 @@ class CalendarReportDao(context: Context) {
                         vat = BillRounding.toPaise(c.getDouble(5)),
                         totalDiscount = BillRounding.toPaise(c.getDouble(6)),
                         totalServiceCharge = BillRounding.toPaise(c.getDouble(7)),
-                        totalOtherCharges = BillRounding.toPaise(c.getDouble(8)),
-                        totalAmount = BillRounding.toPaise(c.getDouble(9))
+                        totalOtherCharges = (BillRounding.toPaise(c.getDouble(8)) - BillRounding.toPaise(c.getDouble(9))).coerceAtLeast(0.0),
+                        totalParcelCharge = BillRounding.toPaise(c.getDouble(9)),
+                        totalAmount = BillRounding.toPaise(c.getDouble(10))
                     )
                 )
             }

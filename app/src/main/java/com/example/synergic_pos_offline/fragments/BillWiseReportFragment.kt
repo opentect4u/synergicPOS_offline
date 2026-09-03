@@ -224,6 +224,7 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         // charges Service or an Extra Charge should not read a zero row saying so.
         if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
         if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
+        if (r.totalParcelCharge > 0.005) add("Parcel Charge" to money(r.totalParcelCharge))
     }
 
     /** The screen as a downloadable table: the columns and rows it is drawing. */
@@ -277,6 +278,7 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
                 if (r.hasVat) add("VAT Amount" to money(r.totalVat))
                 if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
                 if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
+                if (r.totalParcelCharge > 0.005) add("Parcel Charge" to money(r.totalParcelCharge))
                 add("Total Amount" to money(r.totalAmount))
                 add("Round Off Amount" to money(r.totalRoundOff))
             }.map { (label, value) -> label.uppercase().padEnd(LABEL_WIDTH) + " :" to value },

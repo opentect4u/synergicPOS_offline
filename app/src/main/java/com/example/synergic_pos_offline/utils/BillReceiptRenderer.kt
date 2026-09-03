@@ -349,7 +349,10 @@ class BillReceiptRenderer(context: Context) {
      * Totals accumulated from the line items rather than read back from the
      * `td_bills` header, so the printed receipt always adds up to what is listed
      * on it. [discount] is the one figure the items cannot supply: it is stored
-     * per bill, not per line, so it is passed in from the header.
+     * per bill, not per line, so it is passed in from the header - and printed
+     * exactly as stored, via [totalDiscount], so a bill's DISCOUNT line can never
+     * read differently on its own slip than it does in Bill Wise Report or any
+     * other reading of `tot_discount_amount`.
      *
      * A pre-tax discount is spread across the lines at billing time, so it already
      * shows up inside [itemsSubtotal] via each line's own `discount_amount`
@@ -366,7 +369,6 @@ class BillReceiptRenderer(context: Context) {
         val otherTax: Double = 0.0,
         val discount: Double = 0.0,
         val itemDiscountApplied: Double = 0.0,
-        val itemDiscountListed: Double = 0.0,
         val grossMrp: Double = 0.0,
         val qtyCount: Double = 0.0,
         val itemCount: Int = 0
@@ -377,13 +379,17 @@ class BillReceiptRenderer(context: Context) {
         val grandTotal: Double get() = (base + tax - remainingDiscount).coerceAtLeast(0.0)
 
         /**
-         * The whole discount the customer got, stated against the listed prices it
-         * came off: what the lines already priced in ([itemDiscountListed]) plus any
-         * bill-level discount not folded into them ([remainingDiscount]). Printed
-         * against the summary's own listed-price AMT, so the two chain: AMT less this
-         * discount, plus the tax below it, is the TOTAL.
+         * The whole discount the customer got, printed exactly as [discount] is
+         * stored - not restated against the lines' listed prices, which an item-wise
+         * discount (still individually applied per line even under the till's
+         * locked Post-tax position) can genuinely differ from: a discount configured
+         * against a line's pre-tax base and one measured against its listed, taxed
+         * price are two different numbers under inclusive pricing or a discount
+         * computed post-tax, and only the pre-tax-base one is what got stored - and
+         * so what a customer's slip must agree with everywhere else that figure is
+         * read from.
          */
-        val totalDiscount: Double get() = itemDiscountListed + remainingDiscount
+        val totalDiscount: Double get() = discount
     }
 
     /**
@@ -695,6 +701,14 @@ class BillReceiptRenderer(context: Context) {
             var roundOff = 0.0
             var serviceCharge = 0.0
             /**
+             * The bill's own recorded CGST/SGST/VAT, off its own row - null for a
+             * draft, which has none yet. Reconciled against, not trusted outright -
+             * see the reprint read below and [reconcileWithStoredTax].
+             */
+            var storedCgst = 0.0
+            var storedSgst = 0.0
+            var storedVat = 0.0
+            /**
              * The extra charges this bill actually carried, off its own row.
              *
              * Null for a draft, which has not been saved and carries its charges on
@@ -725,7 +739,9 @@ class BillReceiptRenderer(context: Context) {
                        tot_discount_amount, net_amount, operator_id, created_by, bill_type,
                        tot_round_off_amount, amount_in_words, settings_snapshot,
                        COALESCE(service_charge_amount, 0),
-                       COALESCE(tot_other_charges_amount, 0)
+                       COALESCE(tot_other_charges_amount, 0),
+                       COALESCE(tot_cgst_amount, 0), COALESCE(tot_sgst_amount, 0),
+                       COALESCE(tot_vat_amount, 0)
                 FROM ${billsTableFor(db, receiptNo)} WHERE receipt_no = ?
                 """.trimIndent(),
                 arrayOf(receiptNo.toString())
@@ -733,6 +749,9 @@ class BillReceiptRenderer(context: Context) {
                 if (!c.moveToFirst()) return
                 serviceCharge = c.getDouble(12)
                 storedCharges = c.getDouble(13)
+                storedCgst = c.getDouble(14)
+                storedSgst = c.getDouble(15)
+                storedVat = c.getDouble(16)
                 billNumber = c.getString(0) ?: receiptNo.toString()
                 dateTime = c.getString(1) ?: c.getString(2) ?: ""
                 customerId = if (c.isNull(3)) null else c.getLong(3)
@@ -1192,12 +1211,11 @@ class BillReceiptRenderer(context: Context) {
             val chargesTotal = if (useStored) BillRounding.toPaise(storedCharges) else recomputedTotal
             val breakdownAgrees = kotlin.math.abs(recomputedTotal - chargesTotal) < 0.01
 
-            // THE CHARGES' OWN TAX, for a fresh sale only.
+            // THE CHARGES' OWN TAX.
             //
-            // A reprint (draft == null) must read exactly as it did on the day - see
-            // "A SAVED BILL CARRIES ITS OWN CHARGE TOTAL" above, and payable below,
-            // which already keep that path pinned to what was actually stored. This
-            // pass never runs for one.
+            // A fresh sale (draft != null) has no stored figure yet to read, so its
+            // charge-tax is worked out live, the same way CartMath.totals() worked
+            // it out for the screen that quoted it - see [inflateForCharges].
             //
             // Not folded into loadItems() itself: for a grocery draft, chargesTotal
             // above is only known AFTER totals.itemsSubtotal exists (it is what the
@@ -1208,6 +1226,22 @@ class BillReceiptRenderer(context: Context) {
                 val (inflatedTotals, inflatedSlabs) = inflateForCharges(partRaws, totals, taxSlabs, chargesTotal)
                 totals = inflatedTotals
                 taxSlabs = inflatedSlabs
+            }
+            // A reprint (draft == null) reads exactly as it did on the day - not by
+            // recomputing the charge-tax again (a second, independent formula can
+            // only ever agree with the first by luck - see BillWiseReportDao's own
+            // note on the same problem), but by reconciling against what the bill's
+            // OWN header row already carries. Loading td_bill_items never picked
+            // this up: a line's own cgst_amount/sgst_amount/vat_amount is deliberately
+            // goods-only (see BillDao's item-insert loop), so a bill whose extra
+            // charges were taxed had a header total this per-line sum fell short of -
+            // which is exactly what made a reprint's CGST/SGST disagree with the same
+            // bill's own Bill Wise Report row, and with the fresh print of it.
+            if (draft == null) {
+                val (reconciled, reconciledSlabs) =
+                    reconcileWithStoredTax(totals, taxSlabs, storedCgst, storedSgst, storedVat)
+                totals = reconciled
+                taxSlabs = reconciledSlabs
             }
             val chargeLines: List<Pair<String, Double>> = when {
                 !useStored || breakdownAgrees -> recomputed
@@ -1834,7 +1868,6 @@ class BillReceiptRenderer(context: Context) {
         var sgstSum = 0.0
         var vatSum = 0.0
         var itemDiscountSum = 0.0
-        var itemDiscountListedSum = 0.0
         var grossSum = 0.0
         var qtySum = 0.0
         // Taxed base/tax grouped by combined rate (scaled x100 for a clean key), so
@@ -1906,7 +1939,6 @@ class BillReceiptRenderer(context: Context) {
                 val lineNetListed = if (inclusive) itemTotal else lineNet
                 val lineDiscountListed = (subtotal - lineNetListed).coerceAtLeast(0.0)
                 itemDiscountSum += lineDiscount
-                itemDiscountListedSum += lineDiscountListed
                 val hsn = raw.hsn
                 val disc = if (lineDiscountListed > 0.005) money(lineDiscountListed) else null
 
@@ -1941,7 +1973,6 @@ class BillReceiptRenderer(context: Context) {
             sgst = sgstSum,
             vat = vatSum,
             itemDiscountApplied = itemDiscountSum,
-            itemDiscountListed = itemDiscountListedSum,
             grossMrp = grossSum,
             qtyCount = qtySum,
             itemCount = list.size
@@ -2023,6 +2054,64 @@ class BillReceiptRenderer(context: Context) {
             sgst = totals.sgst + sgstAdd,
             vat = totals.vat + vatAdd
         ) to inflatedSlabs
+    }
+
+    /**
+     * Reconciles a REPRINT's per-line CGST/SGST/VAT against the bill's own header
+     * row - `td_bill_items` is deliberately goods-only (see [inflateForCharges]),
+     * so a bill whose extra charges were taxed has a header total this sum falls
+     * short of, and a reprint that only ever read the lines under-quoted the tax
+     * every other reading of the same bill (Bill Wise Report, a fresh print) shows.
+     *
+     * A no-op for the ordinary bill and for every bill sold before charges were
+     * ever taxed - [storedCgst]/[storedSgst]/[storedVat] already equal the line sum
+     * for both, so there is nothing to add and nothing here can move an old bill's
+     * printed figures. It only fires on the gap this specific bill's own row proves
+     * exists, never on a live setting that has since changed.
+     *
+     * The gap is spread across the existing slabs by each one's own share of the
+     * tax already in it - not re-derived from the charge principal at each line's
+     * rate, the way [inflateForCharges] does it for a fresh sale, because that is a
+     * SECOND formula and a second formula can only ever match the header's stored
+     * figure by luck (a different rounding order, as that function's own note on
+     * itself says). Spreading the bill's own already-correct gap instead makes the
+     * totals equal the header EXACTLY, by construction, whichever way the figure
+     * now in [totals] was arrived at when the sale was made.
+     */
+    private fun reconcileWithStoredTax(
+        totals: BillTotals,
+        taxSlabs: List<TaxSlab>,
+        storedCgst: Double,
+        storedSgst: Double,
+        storedVat: Double
+    ): Pair<BillTotals, List<TaxSlab>> {
+        val deltaCgst = BillRounding.toPaise(storedCgst - totals.cgst)
+        val deltaSgst = BillRounding.toPaise(storedSgst - totals.sgst)
+        val deltaVat = BillRounding.toPaise(storedVat - totals.vat)
+        if (kotlin.math.abs(deltaCgst) < 0.01 && kotlin.math.abs(deltaSgst) < 0.01 &&
+            kotlin.math.abs(deltaVat) < 0.01
+        ) {
+            return totals to taxSlabs
+        }
+
+        val reconciledTotals = totals.copy(cgst = storedCgst, sgst = storedSgst, vat = storedVat)
+        val taxedTaxSum = taxSlabs.sumOf { it.cgst + it.sgst + it.vat }
+        // No taxed slab to hang the gap on (every line was zero-rated) - the total
+        // above still has to read what the header does, but there is no row to put
+        // the difference against.
+        if (taxedTaxSum <= 0.0) return reconciledTotals to taxSlabs
+
+        val reconciledSlabs = taxSlabs.map { slab ->
+            val slabTax = slab.cgst + slab.sgst + slab.vat
+            if (slabTax <= 0.0) return@map slab
+            val share = slabTax / taxedTaxSum
+            slab.copy(
+                cgst = slab.cgst + BillRounding.toPaise(deltaCgst * share),
+                sgst = slab.sgst + BillRounding.toPaise(deltaSgst * share),
+                vat = slab.vat + BillRounding.toPaise(deltaVat * share)
+            )
+        }
+        return reconciledTotals to reconciledSlabs
     }
 
     /**

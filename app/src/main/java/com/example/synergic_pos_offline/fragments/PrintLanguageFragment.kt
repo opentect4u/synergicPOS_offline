@@ -31,13 +31,17 @@ import com.example.synergic_pos_offline.utils.ThemeManager
  * The radios are built from [PrintLanguage.Language] rather than declared in the
  * layout - a language exists once it has a row in the dictionary, and this screen
  * should not be a second place it also has to be added.
+ *
+ * The app's own screen language - [com.example.synergic_pos_offline.utils.AppLanguage]
+ * - used to have a second radio group here; it now lives on the Products screen
+ * instead, right above the product list it actually changes, so see
+ * [ProductsFragment.buildHeaderExtra] for that control.
  */
 class PrintLanguageFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Language"
 
     private lateinit var group: RadioGroup
-    private lateinit var appGroup: RadioGroup
 
     /** Held so the writes below are not attributed to whatever fires the listener. */
     private var applying = false
@@ -61,18 +65,6 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
         group.setOnCheckedChangeListener { _, checkedId ->
             if (applying) return@setOnCheckedChangeListener
             PrintLanguage.Language.values().getOrNull(checkedId - 1)?.let { choosePrintLanguage(it) }
-        }
-
-        // The app's own screens, chosen separately from the paper. Its radio ids are
-        // offset past the print group's so the two sets cannot collide in one tree.
-        appGroup = view.findViewById(R.id.rgAppLanguage)
-        PrintLanguage.Language.values().forEach { language ->
-            appGroup.addView(radioFor(language, accent).also { it.id = appIdOf(language) })
-        }
-        appGroup.check(appIdOf(com.example.synergic_pos_offline.utils.AppLanguage.of(requireContext())))
-        appGroup.setOnCheckedChangeListener { _, checkedId ->
-            if (applying) return@setOnCheckedChangeListener
-            PrintLanguage.Language.values().getOrNull(checkedId - APP_ID_BASE)?.let { chooseAppLanguage(it) }
         }
 
         showProductNames(view, current)
@@ -114,9 +106,6 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
             }
         }
 
-    /** Radio id for [language] in the app-language group. */
-    private fun appIdOf(language: PrintLanguage.Language): Int = APP_ID_BASE + language.ordinal
-
     /**
      * Stores the screen language and relabels the app there and then.
      *
@@ -147,34 +136,6 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
             showScope(it, now)
         }
         toast("Bills will print in ${now.englishName}")
-    }
-
-    private fun chooseAppLanguage(language: PrintLanguage.Language) {
-        val stored = runCatching {
-            android.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
-                .edit().putString(com.example.synergic_pos_offline.utils.AppLanguage.SETTING_KEY, language.code).commit()
-        }.getOrDefault(false)
-
-        val now = if (stored) language else com.example.synergic_pos_offline.utils.AppLanguage.of(requireContext())
-        applying = true
-        appGroup.check(appIdOf(now))
-        applying = false
-
-        if (!stored) {
-            toast("Could not save the language")
-            return
-        }
-        view?.let {
-            showProductNames(it, now)
-        }
-        // App language only affects product names in sale screens - do not change other UI labels.
-        // Notify sale fragments to refresh their product name display without detaching.
-        // This avoids triggering any global language application that would change the entire UI.
-        val fm = parentFragmentManager
-        (fm.findFragmentById(R.id.fragment_container) as? com.example.synergic_pos_offline.fragments.PosBillingFragment)?.refreshProductDisplay()
-        (fm.findFragmentById(R.id.fragment_container) as? com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment)?.refreshProductDisplay()
-
-        toast("Product names will be in ${now.englishName}")
     }
 
     /**
@@ -311,14 +272,6 @@ class PrintLanguageFragment : Fragment(), TitledScreen {
         android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_SHORT).show()
 
     private companion object {
-        /**
-         * Where the app-language radios start numbering.
-         *
-         * Far enough past the print group's ids (ordinal + 1) that the two sets of
-         * radios can share one view tree without either finding the other's.
-         */
-        const val APP_ID_BASE = 101
-
         const val TAG = "PrintLanguage"
     }
 }

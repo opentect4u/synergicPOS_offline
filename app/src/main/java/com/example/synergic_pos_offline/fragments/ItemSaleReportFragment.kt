@@ -68,6 +68,7 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
             if (report.hasVat) add("Total VAT" to money(report.totalVat))
             if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
             if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
+            if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
         }
 
     /** The one figure the report is read for. */
@@ -105,6 +106,7 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
                 if (report.hasVat) add("TOTAL VAT " to money(report.totalVat))
                 if (report.totalServiceCharge > 0.005) add("SERVICE CHG" to money(report.totalServiceCharge))
                 if (report.totalOtherCharges > 0.005) add("EXTRA CHGS" to money(report.totalOtherCharges))
+                if (report.totalParcelCharge > 0.005) add("PARCEL CHG" to money(report.totalParcelCharge))
                 add("TOTAL AMT " to money(report.totalAmount))
             }.map { (label, value) -> "$label:" to value },
             emptyNote = "Nothing was sold in this period."

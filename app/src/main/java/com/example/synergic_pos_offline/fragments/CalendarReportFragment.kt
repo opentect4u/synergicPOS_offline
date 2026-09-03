@@ -69,6 +69,7 @@ abstract class CalendarReportFragment : PeriodReportFragment<CalendarReportDao.R
             // charges Service or an Extra Charge should not read a zero row saying so.
             if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
             if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
+            if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
         }
 
     /** The one figure the report is read for. */
@@ -128,6 +129,7 @@ abstract class CalendarReportFragment : PeriodReportFragment<CalendarReportDao.R
                 add("TOTAL DISC. :" to money(report.totalDiscount))
                 if (report.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(report.totalServiceCharge))
                 if (report.totalOtherCharges > 0.005) add("EXTRA CHGS  :" to money(report.totalOtherCharges))
+                if (report.totalParcelCharge > 0.005) add("PARCEL CHG  :" to money(report.totalParcelCharge))
             },
             total = "TOTAL AMOUNT:" to money(report.totalAmount),
             emptyNote = "No bills in this range."

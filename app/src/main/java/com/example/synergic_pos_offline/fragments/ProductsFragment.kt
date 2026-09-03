@@ -16,6 +16,7 @@ import androidx.core.widget.addTextChangedListener
 import android.view.LayoutInflater
 import android.widget.ArrayAdapter
 import android.widget.AutoCompleteTextView
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -30,6 +31,7 @@ import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.database.StockDao
 import com.example.synergic_pos_offline.utils.AppLanguage
 import com.example.synergic_pos_offline.utils.DialogUtils
+import com.example.synergic_pos_offline.utils.PrintLanguage
 import com.example.synergic_pos_offline.utils.ProductName
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.Downloads
@@ -37,6 +39,7 @@ import com.example.synergic_pos_offline.utils.ProductCsvExport
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.example.synergic_pos_offline.utils.SettingsCache
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import java.io.ByteArrayOutputStream
@@ -180,6 +183,73 @@ class ProductsFragment : DataTableFragment() {
             }
             else -> text
         }
+    }
+
+    /**
+     * The app-language picker - moved here from Settings › Language, since this
+     * list of product names is the one place picking a language actually shows
+     * something: [formatCellText] above already reads [AppLanguage] fresh on every
+     * row, so all this has to do is store the choice and ask the table to repaint.
+     *
+     * A dropdown rather than [ChargesFragment]'s tab strip - eleven languages is too
+     * many buttons to fit one row - built from [PrintLanguage.Language] the same way
+     * the old settings screen did, so a language added there needs no second entry
+     * here.
+     */
+    override fun buildHeaderExtra(container: FrameLayout) {
+        val ctx = requireContext()
+        val languages = PrintLanguage.Language.values().toList()
+
+        // Inflated rather than built via the constructor: the ExposedDropdownMenu
+        // style's click-to-open behaviour is applied by the layout inflater reading
+        // the `style=` attribute, and TextInputLayout has no public constructor that
+        // takes a style RESOURCE directly (only a theme ATTRIBUTE) to do the same
+        // from code - see item_product_language_picker.xml.
+        val row = LayoutInflater.from(ctx).inflate(R.layout.item_product_language_picker, container, false)
+        val act = row.findViewById<MaterialAutoCompleteTextView>(R.id.actProductLanguage)
+        act.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, languages.map { languageLabel(it) }))
+        act.setText(languageLabel(AppLanguage.of(ctx)), false)
+        act.setOnItemClickListener { _, _, position, _ ->
+            languages.getOrNull(position)?.let { chooseAppLanguage(it) }
+        }
+        // Non-focusable (set in the layout, so the field shows the chosen value
+        // rather than a cursor) defeats the click-to-open an AutoCompleteTextView
+        // gets for free, so it is asked directly.
+        act.setOnClickListener { act.showDropDown() }
+
+        container.addView(row)
+        container.visibility = android.view.View.VISIBLE
+    }
+
+    /** "Tamil  ·  தமிழ்" - the same row text [PrintLanguageFragment] used to show. */
+    private fun languageLabel(language: PrintLanguage.Language): String = when {
+        language == AppLanguage.DEFAULT -> "${language.englishName} (Default)"
+        language.nativeName == language.englishName -> language.englishName
+        else -> "${language.englishName}  ·  ${language.nativeName}"
+    }
+
+    /**
+     * Stores the app language and repaints this list there and then - the same
+     * SharedPreferences key [PrintLanguageFragment] used to write, so a till upgraded
+     * from an older build keeps whatever it had already chosen.
+     */
+    private fun chooseAppLanguage(language: PrintLanguage.Language) {
+        val stored = runCatching {
+            android.preference.PreferenceManager.getDefaultSharedPreferences(requireContext())
+                .edit().putString(AppLanguage.SETTING_KEY, language.code).commit()
+        }.getOrDefault(false)
+        if (!stored) {
+            toast("Could not save the language")
+            return
+        }
+        refreshRows()
+        // The live sale screens read the same setting for their own product tiles -
+        // poked so one already open shows the new language without being reopened,
+        // the same notification PrintLanguageFragment used to send from Settings.
+        val fm = parentFragmentManager
+        (fm.findFragmentById(R.id.fragment_container) as? PosBillingFragment)?.refreshProductDisplay()
+        (fm.findFragmentById(R.id.fragment_container) as? RestaurantOrdersFragment)?.refreshProductDisplay()
+        toast("Product names will be in ${language.englishName}")
     }
 
     override fun onAddRow() = showProductDialog(null)

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The app-language dropdown ProductsFragment adds above its product list (see
+  ProductsFragment.buildHeaderExtra). A layout file rather than built in code, like
+  fragment_data_table.xml's own tilFilter/actFilter - an ExposedDropdownMenu's click-
+  to-open behaviour comes from this style attribute, and a widget built by calling
+  its constructor directly has no defStyleRes slot to pass a style resource into.
+-->
+<com.google.android.material.textfield.TextInputLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/tilProductLanguage"
+    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:hint="Product Name Language"
+    app:boxCornerRadiusTopStart="12dp"
+    app:boxCornerRadiusTopEnd="12dp"
+    app:boxCornerRadiusBottomStart="12dp"
+    app:boxCornerRadiusBottomEnd="12dp">
+
+    <com.google.android.material.textfield.MaterialAutoCompleteTextView
+        android:id="@+id/actProductLanguage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="none"
+        android:focusable="false"
+        android:maxLines="1" />
+</com.google.android.material.textfield.TextInputLayout>
