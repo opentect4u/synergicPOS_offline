@@ -45,6 +45,7 @@ class CustomerItemWiseReportDao(context: Context) {
     ) {
         val totalServiceCharge: Double get() = charges.service
         val totalOtherCharges: Double get() = charges.other
+        val totalParcelCharge: Double get() = charges.parcel
 
         val isEmpty: Boolean get() = items.isEmpty()
     }

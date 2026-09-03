@@ -22,44 +22,6 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="14dp"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="2dp"
-            app:cardBackgroundColor="@color/white">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="18dp">
-
-                <TextView
-                    android:id="@+id/tvAppLanguageHeader"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="APP LANGUAGE"
-                    android:textSize="12sp"
-                    android:letterSpacing="0.08"
-                    android:textStyle="bold"
-                    android:textColor="@color/primary_blue" />
-
-                <TextView
-                    style="@style/BillSettingSub"
-                    android:layout_marginTop="4dp"
-                    android:text="The language this app&apos;s own screens are labelled in - everywhere except the login screen. One choice covers the screens and the printer both, so picking here picks below too." />
-
-                <RadioGroup
-                    android:id="@+id/rgAppLanguage"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
-                    android:orientation="vertical" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
             app:cardCornerRadius="16dp"
             app:cardElevation="2dp"
             app:cardBackgroundColor="@color/white">
@@ -83,7 +45,7 @@
                 <TextView
                     style="@style/BillSettingSub"
                     android:layout_marginTop="4dp"
-                    android:text="The language bills and reports are printed in. The same choice as above - a till prints and reads in one language. Takes effect on the next slip; nothing already printed changes." />
+                    android:text="The language bills and reports are printed in. Takes effect on the next slip; nothing already printed changes. The app&apos;s own screen language is a separate choice, on the Products screen." />
 
                 <RadioGroup
                     android:id="@+id/rgPrintLanguage"

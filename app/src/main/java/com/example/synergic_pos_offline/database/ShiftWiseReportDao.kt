@@ -55,9 +55,11 @@ class ShiftWiseReportDao(context: Context) {
         val roundOff: Double,
         /** The restaurant section's own flat charge - zero on a grocery bill. */
         val serviceCharge: Double = 0.0,
-        /** The shop's other extra charges - Parcel Charge among them - added
-         *  together, since only the sum is stored per bill, not each by name. */
+        /** The shop's other extra charges, Parcel Charge excluded - see [parcelCharge]. */
         val otherCharges: Double = 0.0,
+        /** Parcel Charge's own share, broken out from [otherCharges] - see
+         *  ChargeDao.Kind.PARCEL. Zero on a bill sold before this was tracked. */
+        val parcelCharge: Double = 0.0,
         val netAmount: Double,
         val regime: GstCalculator.TaxRegime
     ) {
@@ -85,6 +87,7 @@ class ShiftWiseReportDao(context: Context) {
         val totalDiscount: Double get() = total { it.discount }
         val totalServiceCharge: Double get() = total { it.serviceCharge }
         val totalOtherCharges: Double get() = total { it.otherCharges }
+        val totalParcelCharge: Double get() = total { it.parcelCharge }
         val totalAmount: Double get() = total { it.netAmount }
 
         /** How many people on the shift actually billed over the period. */
@@ -133,6 +136,7 @@ class ShiftWiseReportDao(context: Context) {
                    COALESCE(b.tot_vat_amount, 0),
                    COALESCE(b.tot_discount_amount, 0), COALESCE(b.tot_round_off_amount, 0),
                    COALESCE(b.service_charge_amount, 0), COALESCE(b.tot_other_charges_amount, 0),
+                   COALESCE(b.parcel_charge_amount, 0),
                    COALESCE(b.net_amount, 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             JOIN ${DatabaseHelper.Tables.MD_USERS} u ON u.id = b.operator_id
@@ -174,8 +178,9 @@ class ShiftWiseReportDao(context: Context) {
                         discount = c.getDouble(9),
                         roundOff = c.getDouble(10),
                         serviceCharge = c.getDouble(11),
-                        otherCharges = c.getDouble(12),
-                        netAmount = c.getDouble(13),
+                        otherCharges = (c.getDouble(12) - c.getDouble(13)).coerceAtLeast(0.0),
+                        parcelCharge = c.getDouble(13),
+                        netAmount = c.getDouble(14),
                         // The same rule the Bill Wise Report applies, from the one
                         // place it lives - see [BillWiseReportDao.regimeOf].
                         regime = BillWiseReportDao.regimeOf(cgst + sgst + igst, vat)

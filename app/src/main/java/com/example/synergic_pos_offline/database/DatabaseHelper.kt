@@ -102,6 +102,13 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.TD_BILLS, "table_section", "TEXT")
         addColumnIfMissing(db, Tables.TD_BILLS, "order_type", "TEXT")
         addColumnIfMissing(db, Tables.TD_BILLS, "service_charge_amount", "REAL DEFAULT 0")
+        // Parcel Charge's own share of tot_other_charges_amount, so a report can read
+        // it apart from the shop's other extra charges - see ChargeDao.Kind.PARCEL.
+        // Migrated onto both tables: BillDeleteDao.archive() copies a deleted bill by
+        // intersecting each side's actual columns, so a column missing from either one
+        // on an upgraded install is silently dropped when a bill is deleted.
+        addColumnIfMissing(db, Tables.TD_BILLS, "parcel_charge_amount", "REAL DEFAULT 0")
+        addColumnIfMissing(db, Tables.TD_BILLS_DELETE, "parcel_charge_amount", "REAL DEFAULT 0")
         // The delete archive mirrors the live bill, column for column.
         addColumnIfMissing(db, Tables.TD_BILLS_DELETE, "table_section", "TEXT")
         // Store-scope bill lines and payments directly (not only via their bill), then
@@ -1985,6 +1992,7 @@ class DatabaseHelper private constructor(context: Context) :
                 tot_igst_amount REAL DEFAULT 0,
                 tot_vat_amount REAL DEFAULT 0,
                 tot_other_charges_amount REAL DEFAULT 0,
+                parcel_charge_amount REAL DEFAULT 0,
                 tot_round_off_amount REAL DEFAULT 0,
                 net_amount REAL DEFAULT 0,
                 amount_in_words TEXT,
@@ -2076,6 +2084,7 @@ class DatabaseHelper private constructor(context: Context) :
                 tot_igst_amount REAL DEFAULT 0,
                 tot_vat_amount REAL DEFAULT 0,
                 tot_other_charges_amount REAL DEFAULT 0,
+                parcel_charge_amount REAL DEFAULT 0,
                 tot_round_off_amount REAL DEFAULT 0,
                 net_amount REAL DEFAULT 0,
                 amount_in_words TEXT,

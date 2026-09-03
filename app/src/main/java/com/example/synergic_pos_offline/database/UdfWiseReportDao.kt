@@ -36,9 +36,12 @@ class UdfWiseReportDao(context: Context) {
         val discount: Double,
         /** The section's own flat charge. */
         val serviceCharge: Double = 0.0,
-        /** The shop's other extra charges - Parcel Charge among them - added
-         *  together, since only the sum is stored per bill, not each by name. */
+        /** The shop's other extra charges, Parcel Charge excluded - see
+         *  [parcelCharge]. */
         val otherCharges: Double = 0.0,
+        /** Parcel Charge's own share, broken out from [otherCharges] - see
+         *  ChargeDao.Kind.PARCEL. Zero on a bill sold before this was tracked. */
+        val parcelCharge: Double = 0.0,
         val billAmount: Double
     ) {
         /** Everything this group charged in tax, however the regime split it. */
@@ -57,6 +60,7 @@ class UdfWiseReportDao(context: Context) {
         val totalDiscount: Double,
         val totalServiceCharge: Double = 0.0,
         val totalOtherCharges: Double = 0.0,
+        val totalParcelCharge: Double = 0.0,
         val totalBillAmount: Double
     ) {
         /** Every tax the range charged, however the regimes split it. */
@@ -88,6 +92,7 @@ class UdfWiseReportDao(context: Context) {
                    SUM(COALESCE(b.tot_discount_amount,0)) AS disc,
                    SUM(COALESCE(b.service_charge_amount,0)) AS svc,
                    SUM(COALESCE(b.tot_other_charges_amount,0)) AS other,
+                   SUM(COALESCE(b.parcel_charge_amount,0)) AS parcel,
                    SUM(COALESCE(b.net_amount,0)) AS billamt
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
@@ -111,8 +116,9 @@ class UdfWiseReportDao(context: Context) {
                         vat = BillRounding.toPaise(c.getDouble(6)),
                         discount = BillRounding.toPaise(c.getDouble(7)),
                         serviceCharge = BillRounding.toPaise(c.getDouble(8)),
-                        otherCharges = BillRounding.toPaise(c.getDouble(9)),
-                        billAmount = BillRounding.toPaise(c.getDouble(10))
+                        otherCharges = (BillRounding.toPaise(c.getDouble(9)) - BillRounding.toPaise(c.getDouble(10))).coerceAtLeast(0.0),
+                        parcelCharge = BillRounding.toPaise(c.getDouble(10)),
+                        billAmount = BillRounding.toPaise(c.getDouble(11))
                     )
                 )
             }
@@ -129,6 +135,7 @@ class UdfWiseReportDao(context: Context) {
             totalDiscount = BillRounding.toPaise(rows.sumOf { it.discount }),
             totalServiceCharge = BillRounding.toPaise(rows.sumOf { it.serviceCharge }),
             totalOtherCharges = BillRounding.toPaise(rows.sumOf { it.otherCharges }),
+            totalParcelCharge = BillRounding.toPaise(rows.sumOf { it.parcelCharge }),
             totalBillAmount = BillRounding.toPaise(rows.sumOf { it.billAmount })
         )
     }

@@ -36,10 +36,13 @@ class VoidBillReportDao(context: Context) {
         /** The restaurant section's own flat charge it would have carried - zero
          *  on a grocery bill. */
         val serviceCharge: Double = 0.0,
-        /** The shop's other extra charges it would have carried - Parcel Charge
-         *  among them - added together, since only the sum is stored, not each
-         *  by name. */
+        /** The shop's other extra charges it would have carried, Parcel Charge
+         *  excluded - see [parcelCharge]. */
         val otherCharges: Double = 0.0,
+        /** Parcel Charge's own share it would have carried, broken out from
+         *  [otherCharges] - see ChargeDao.Kind.PARCEL. Zero on a bill sold before
+         *  this was tracked. */
+        val parcelCharge: Double = 0.0,
         /** What it would have come to - the bill's own net. */
         val total: Double
     ) {
@@ -72,6 +75,7 @@ class VoidBillReportDao(context: Context) {
         val hasVat: Boolean get() = lines.any { it.vat > 0.0 }
         val totalServiceCharge: Double get() = total { it.serviceCharge }
         val totalOtherCharges: Double get() = total { it.otherCharges }
+        val totalParcelCharge: Double get() = total { it.parcelCharge }
 
         /** What was taken out of the takings - what the report is read for. */
         val grandTotal: Double get() = total { it.total }
@@ -102,6 +106,7 @@ class VoidBillReportDao(context: Context) {
             COALESCE(b.tot_cgst_amount, 0), COALESCE(b.tot_sgst_amount, 0),
             COALESCE(b.tot_igst_amount, 0), COALESCE(b.tot_vat_amount, 0),
             COALESCE(b.service_charge_amount, 0), COALESCE(b.tot_other_charges_amount, 0),
+            COALESCE(b.parcel_charge_amount, 0),
             COALESCE(b.net_amount, 0), b.receipt_no
         """.trimIndent()
 
@@ -121,7 +126,7 @@ class VoidBillReportDao(context: Context) {
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
               AND COALESCE(b.is_voided, 0) = 1
               $storeClause
-            ORDER BY 10 ASC
+            ORDER BY 11 ASC
         """.trimIndent()
 
         val half = mutableListOf(fromDate, toDate).apply {
@@ -141,8 +146,9 @@ class VoidBillReportDao(context: Context) {
                         igst = BillRounding.toPaise(c.getDouble(4)),
                         vat = BillRounding.toPaise(c.getDouble(5)),
                         serviceCharge = BillRounding.toPaise(c.getDouble(6)),
-                        otherCharges = BillRounding.toPaise(c.getDouble(7)),
-                        total = c.getDouble(8)
+                        otherCharges = (BillRounding.toPaise(c.getDouble(7)) - BillRounding.toPaise(c.getDouble(8))).coerceAtLeast(0.0),
+                        parcelCharge = BillRounding.toPaise(c.getDouble(8)),
+                        total = c.getDouble(9)
                     )
                 )
             }

@@ -45,9 +45,11 @@ class BillWiseReportDao(context: Context) {
         val roundOff: Double,
         /** The restaurant section's own flat charge - zero on a grocery bill. */
         val serviceCharge: Double = 0.0,
-        /** The shop's other extra charges - Parcel Charge among them - added
-         *  together, since only the sum is stored per bill, not each by name. */
+        /** The shop's other extra charges, Parcel Charge excluded - see [parcelCharge]. */
         val otherCharges: Double = 0.0,
+        /** Parcel Charge's own share, broken out from [otherCharges] - see
+         *  ChargeDao.Kind.PARCEL. Zero on a bill sold before this was tracked. */
+        val parcelCharge: Double = 0.0,
         /** What the customer actually paid - the bill's net. */
         val netAmount: Double,
         /**
@@ -94,6 +96,7 @@ class BillWiseReportDao(context: Context) {
         val totalRoundOff: Double get() = total { it.roundOff }
         val totalServiceCharge: Double get() = total { it.serviceCharge }
         val totalOtherCharges: Double get() = total { it.otherCharges }
+        val totalParcelCharge: Double get() = total { it.parcelCharge }
         val totalAmount: Double get() = total { it.netAmount }
 
         /**
@@ -144,6 +147,7 @@ class BillWiseReportDao(context: Context) {
                    COALESCE(b.tot_vat_amount, 0),
                    COALESCE(b.tot_discount_amount, 0), COALESCE(b.tot_round_off_amount, 0),
                    COALESCE(b.service_charge_amount, 0), COALESCE(b.tot_other_charges_amount, 0),
+                   COALESCE(b.parcel_charge_amount, 0),
                    COALESCE(b.net_amount, 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
@@ -177,8 +181,9 @@ class BillWiseReportDao(context: Context) {
                         discount = c.getDouble(8),
                         roundOff = c.getDouble(9),
                         serviceCharge = c.getDouble(10),
-                        otherCharges = c.getDouble(11),
-                        netAmount = c.getDouble(12),
+                        otherCharges = (c.getDouble(11) - c.getDouble(12)).coerceAtLeast(0.0),
+                        parcelCharge = c.getDouble(12),
+                        netAmount = c.getDouble(13),
                         regime = regimeOf(cgst + sgst + igst, vat)
                     )
                 )
