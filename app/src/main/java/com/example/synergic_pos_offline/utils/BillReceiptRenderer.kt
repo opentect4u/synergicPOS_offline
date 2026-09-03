@@ -1327,7 +1327,7 @@ class BillReceiptRenderer(context: Context) {
 
             val modes = draft?.paymentModes ?: paymentModes(db, receiptNo, billType)
             renderPayment(view, modes, narrow)
-            renderUpiQr(view, modes, payable, billNumber, isRestaurant = tableLine != null)
+            renderUpiQr(view, modes, payable, billNumber)
 
             renderFixedLines(
                 db, view, R.id.llBillFooterLines,
@@ -2261,59 +2261,60 @@ class BillReceiptRenderer(context: Context) {
      * app opens with [payable] already in the amount field and the customer only
      * confirms - nothing is typed at the counter and nothing can be mistyped.
      *
-     * Printed on a bill settled over UPI rails, and on one not settled at all - the
-     * provisional slip a restaurant puts on the table before the guest pays, where a
-     * code is the point rather than an afterthought. NOT on a restaurant bill that
-     * names cash or a card there: the money is already in, and a code would be an
-     * invitation to pay a second time.
+     * ## What decides whether it prints
      *
-     * On a GROCERY bill, though, once a QR is saved in Bill Settings ([Applied.upiQrEnabled])
-     * it prints regardless of payment mode - cash, card or credit included. A grocery
-     * sale is settled once, at the counter, in front of the customer; the code is not
-     * a second invitation to pay, it is simply the shop's UPI code the way it would be
-     * stuck to the counter, and printing it costs no more paper on a cash bill than on
-     * any other.
+     * Bill Settings' "UPI QR on bill", and nothing else. On, and every bill carries the
+     * code - grocery or restaurant, cash, card, credit, UPI, or the provisional slip
+     * that has not been paid at all. Off, and none does.
+     *
+     * It is simply the shop's UPI code, printed the way it would be stuck to the
+     * counter. It costs no more paper on a cash bill than on any other, and a slip
+     * that names CASH beside it has plainly been paid.
+     *
+     * ONLINE is the one override: it prints even with the setting off, because
+     * choosing it at checkout says the customer is paying from their phone and has
+     * nothing else to pay against.
+     *
+     * A UPI ID has to be set up in Bill Settings for any of this - with none saved,
+     * or one that is not a readable address, there is no code to draw.
      *
      * Read from the live settings rather than the bill's snapshot, deliberately: the
      * snapshot exists so a reprint *reads* as it did on the day, but a payment
      * address is not a matter of how the slip looked - it is where the money goes,
      * and money owed today goes to the account the shop banks with today.
      */
-    private fun renderUpiQr(view: View, modes: List<String>, payable: Double, billNumber: String, isRestaurant: Boolean) {
+    private fun renderUpiQr(view: View, modes: List<String>, payable: Double, billNumber: String) {
         val container = view.findViewById<LinearLayout>(R.id.llUpiQr) ?: return
         container.visibility = View.GONE
 
         if (payable <= 0.0) return
         val online = modes.any { it.equals("ONLINE", true) }
-        val upi = modes.any { it.equals("UPI", true) }
-        // A bill with NO payment mode on it has not been paid by anything yet - it is
-        // the provisional slip that goes to a restaurant table before the customer
-        // settles. That is the one bill a payment code is most use on: the guest reads
-        // the total, scans, and pays without the floor coming back. It is also the one
-        // case where a code cannot be "an invitation to pay a second time", because
-        // nothing has been paid a first time.
-        val unpaid = modes.isEmpty()
 
         val settings = runCatching { BillSettingsDao(ctx).load() }.getOrNull() ?: return
         if (!UpiQr.isValidVpa(settings.upiId)) return
 
-        // ONLINE prints the code whether or not the setting is on. Choosing it at
+        // THE SETTING DECIDES, AND IT IS THE ONLY THING THAT DOES.
+        //
+        // "UPI QR on bill" on means the code goes on the bill - every bill, whatever
+        // it was paid by.
+        //
+        // It used to depend on the payment mode as well, and only on a RESTAURANT
+        // bill: cash and card printed nothing there, on the reasoning that the money
+        // was already in and a code invites a second payment. Two things were wrong
+        // with it. A grocery bill never followed that rule - it printed on a cash sale
+        // with the setting on - so one switch meant two things depending on which till
+        // rang it up. And it made the setting untrustworthy: a shop switched it on,
+        // printed a cash bill, and got no code with nothing on screen to say why.
+        //
+        // The second-payment worry is what a receipt is for. A slip that names CASH
+        // and carries a code is a slip that has been paid; nobody is invited by it,
+        // and a shop that disagrees has a switch to turn off.
+        //
+        // ONLINE still prints whether or not the setting is on. Choosing it at
         // checkout says the customer is paying from their phone and has nothing else
         // to pay against - no card machine, no cash drawer - so a bill without a code
         // leaves them keying an address and a figure in by hand.
-        //
-        // Otherwise, a GROCERY bill prints once the QR is saved (the toggle is on),
-        // whatever the mode - cash, card, credit, UPI or unpaid all qualify. A
-        // RESTAURANT bill keeps to UPI or unpaid only, cash/card still printing
-        // nothing: the floor has already been paid, and a second code invites a
-        // second payment.
-        val shouldPrint = when {
-            online -> true
-            !settings.upiQrEnabled -> false
-            isRestaurant -> upi || unpaid
-            else -> true
-        }
-        if (!shouldPrint) return
+        if (!online && !settings.upiQrEnabled) return
 
         val uri = UpiQr.payUri(
             settings.upiId, settings.upiPayeeName, payable,

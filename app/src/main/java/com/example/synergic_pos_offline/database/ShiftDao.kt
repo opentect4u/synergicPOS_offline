@@ -14,10 +14,15 @@ import java.util.Locale
  * A shift is a shape of the working day rather than an event: "Morning, 06:00 to
  * 14:00" describes every morning, not one of them. So the times are stored as "HH:mm"
  * clock faces and never as timestamps, and a shift whose end reads earlier than its
- * start is simply one that crosses midnight - which the master accepts without
- * resolving, because nothing downstream reads the times to decide anything. What a
- * bill is counted under is the *operator* who rang it up and the shift they are on;
- * the times are there so a person can tell the shifts apart.
+ * start is simply one that crosses midnight.
+ *
+ * ## The times decide something now
+ *
+ * They used to decide nothing - a bill was counted under the operator who rang it up
+ * and the shift they were on, and the clock faces were there so a person could tell
+ * the shifts apart. [coversNow] changed that: a general user on a shift can only sign
+ * in while their shift is running, so the same two strings that label a shift now also
+ * bound who may open the till. See LoginFragment.
  */
 class ShiftDao(context: Context) {
 
@@ -37,6 +42,40 @@ class ShiftDao(context: Context) {
         val label: String
             get() = if (fromTime.isBlank() && toTime.isBlank()) name
             else "$name  ·  $fromTime - $toTime"
+
+        /** "06:00 - 14:00", for a message that has to say when the shift runs. */
+        val hours: String get() = "$fromTime - $toTime"
+
+        /**
+         * Whether this shift is running at [minutesOfDay] - minutes since midnight.
+         *
+         * ## The two shapes a shift takes
+         *
+         * A shift that starts before it ends (06:00-14:00) is the half-open range
+         * between them. One whose end reads EARLIER than its start (22:00-06:00) is a
+         * shift that crosses midnight, and covers the two pieces at either end of the
+         * day - from 22:00 to the end of it, and from the start of the next to 06:00.
+         * Read as a plain range, a night shift would cover nothing at all and lock its
+         * operator out for the whole of it.
+         *
+         * ## The end is exclusive
+         *
+         * At exactly 14:00 the morning shift is over. Treating the end as inclusive
+         * would leave two shifts both live for the minute they change over, and a shift
+         * whose end is the next one's start - which is how a day is usually divided -
+         * would have no clean handover at all.
+         *
+         * A shift missing either time covers everything: the master allows a shift with
+         * no hours on it, and that is a shift nobody meant to bound rather than one
+         * nobody may work.
+         */
+        fun coversNow(minutesOfDay: Int): Boolean {
+            val from = minutesOf(fromTime) ?: return true
+            val to = minutesOf(toTime) ?: return true
+            if (from == to) return true          // a full day, however it was typed
+            return if (from < to) minutesOfDay >= from && minutesOfDay < to
+            else minutesOfDay >= from || minutesOfDay < to   // crosses midnight
+        }
     }
 
     /** Every shift for this store, oldest first so the codes read in order. */
@@ -125,6 +164,53 @@ class ShiftDao(context: Context) {
     companion object {
         /** "SH001" - the same shape the other masters' derived codes take. */
         fun formatCode(id: Long): String = "SH%03d".format(id)
+
+        /** Minutes since midnight for an "HH:mm" clock face, or null if unreadable. */
+        fun minutesOf(clock: String?): Int? {
+            val parts = clock?.trim()?.split(":") ?: return null
+            if (parts.size != 2) return null
+            val h = parts[0].toIntOrNull() ?: return null
+            val m = parts[1].toIntOrNull() ?: return null
+            if (h !in 0..23 || m !in 0..59) return null
+            return h * 60 + m
+        }
+
+        /** Minutes since midnight, right now, on the device's own clock. */
+        fun nowMinutes(): Int {
+            val c = java.util.Calendar.getInstance()
+            return c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
+        }
+
+        /**
+         * The shift a user is on, read WITHOUT a signed-in session.
+         *
+         * [getAll] and [byId] scope themselves by [SessionManager]'s store, which at
+         * the login screen is nobody - so they would come back empty exactly when this
+         * is needed. This joins from the user instead, which carries its own store, and
+         * is the only way to ask the question before anyone has signed in.
+         *
+         * Null when the user has no shift, or the shift has since been deleted.
+         */
+        fun forUser(context: Context, userSerialNo: Long): Shift? {
+            val db = DatabaseHelper.getInstance(context).readableDatabase
+            return runCatching {
+                db.rawQuery(
+                    "SELECT s.id, s.shift_name, s.from_time, s.to_time " +
+                        "FROM ${DatabaseHelper.Tables.MD_USERS} u " +
+                        "JOIN ${DatabaseHelper.Tables.MD_SHIFTS} s ON s.id = u.shift_id " +
+                        "WHERE u.id = ? LIMIT 1",
+                    arrayOf(userSerialNo.toString())
+                ).use { c ->
+                    if (!c.moveToFirst()) null
+                    else Shift(
+                        id = c.getLong(0),
+                        name = c.getString(1).orEmpty(),
+                        fromTime = c.getString(2).orEmpty(),
+                        toTime = c.getString(3).orEmpty()
+                    )
+                }
+            }.getOrNull()
+        }
 
         /**
          * Whether this till runs shifts at all - the App Settings switch, and nothing

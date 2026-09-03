@@ -636,10 +636,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 order.items.isEmpty() -> toast("Add items before printing the bill")
                 order.completed -> toast("Table already billed")
                 // Belt and braces behind the greying in [setBillPrintEnabled], and it
-                // has to ask the same question that does. QSR sends no KOT, so this
-                // refused every QSR bill with "Send the KOT first" - a ticket the mode
-                // has no button to send - while the button above it sat enabled.
-                !order.qsr && !kotSent(order) ->
+                // asks the same question that does. Only a TABLE reaches here - both
+                // counter modes hide this button - so the KOT rule holds with no
+                // exception to carve out.
+                !kotSent(order) ->
                     toast("Send the KOT first — the bill goes to the table after the kitchen has the order")
                 else -> resolveBillPrinterThenPrint(order)
             }
@@ -684,18 +684,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             when {
                 order == null -> toast("Select a table order first")
                 order.items.isEmpty() -> toast("Add items before billing")
-                // A TAKE-AWAY IS SETTLED WHERE IT WAS RUNG UP, not on a screen of its
-                // own. Its one button prints and settles together, so the customer is
-                // standing there paying as it is pressed - listing the order back to
-                // them is a page to get past on the way to taking the money, and it
-                // costs the counter the order it was working on and a trip back.
+                // A COUNTER ORDER IS SETTLED WHERE IT WAS RUNG UP, not on a screen of
+                // its own - take-away and QSR alike. One press prints and settles, so
+                // the customer is standing there paying as it happens; listing the
+                // order back to them is a page to get past on the way to taking the
+                // money, and it costs the counter the order it was working on and a
+                // trip back.
                 //
-                // QSR IS NOT THAT, and falls through to the page below with the tables.
-                // It has already printed a bill as its own step, so by this point the
-                // slip is in the customer's hand and the checkout page is where it is
-                // read back and paid against - which is the grocery till's flow, and
-                // the reason the mode exists.
-                order.takeAway ->
+                // The checkout page below is for a TABLE, where the bill is read,
+                // queried and argued over minutes before it is paid. QSR was routed
+                // there at first, on the reasoning that it bills like the grocery till;
+                // it does not, because nobody sits down. It is a counter.
+                order.counter ->
                     showQuickPayment(order)
                 else -> {
                     val names = ArrayList(order.items.map { it.name })
@@ -1027,13 +1027,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // payment just taken, so asking the counter to press two buttons in a row is
         // asking it to split an act that is not divided.
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPrint)
-            .visibility = if (takeAway) View.GONE else View.VISIBLE
-        // QSR HAS ONE BUTTON TOO, and it is the other one.
+            .visibility = if (counter) View.GONE else View.VISIBLE
+        // QSR HAS ONE BUTTON, and it is Print & Settlement.
         //
-        // Quick service is rung up and handed over: there is no ticket to send ahead
-        // to a kitchen that is standing at the same counter, so Print KOT has nothing
-        // to do on a QSR order and goes. What is left is Print Bill, then Settlement -
-        // the grocery till's two steps, which is what this mode is.
+        // Quick service is rung up and handed over across the same counter. There is no
+        // ticket to send ahead to a kitchen standing at that counter, so Print KOT has
+        // nothing to do; and the slip handed over IS the receipt for the money just
+        // taken, so a separate Print Bill would print the same bill twice - once
+        // unpaid, once as part of settling.
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnPrintKot)
             .visibility = if (order.qsr) View.GONE else View.VISIBLE
         root.findViewById<TextView>(R.id.tvDetailGuests).text =
@@ -1492,16 +1493,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * next thing that happens to the table, and a gap where it sits reads as the screen
      * having lost it.
      *
-     * Take Away does not come through here to any effect - its Print Bill button is
-     * hidden outright ([showOrderDetail]), because "Print & Settlement" IS its bill.
+     * A COUNTER ORDER NEVER REACHES THIS. Take-away and QSR both hide Print Bill
+     * outright ([showOrderDetail]), because "Print & Settlement" is their bill - so
+     * this is a table rule, and the KOT it waits for is one a table actually sends.
      */
     private fun setBillPrintEnabled(root: View, order: OrderCard?) {
-        // QSR WAITS FOR ITEMS, NOT FOR A KOT. It sends none - the kitchen is the
-        // counter - so a rule about the ticket having gone would grey this button for
-        // ever and leave the mode with no way to bill at all. What it waits for instead
-        // is something to bill: an empty order has no slip to print.
-        val ready = order != null && !order.completed &&
-            if (order.qsr) order.items.isNotEmpty() else kotSent(order)
+        val ready = order != null && !order.completed && kotSent(order)
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnBillPrint)?.apply {
             isEnabled = ready
             alpha = if (ready) 1f else 0.4f
@@ -1538,11 +1535,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // Take-away settles where it was rung up, so the ticket having gone is the
             // only step before it - the one press prints and settles together.
             order.takeAway -> kotSent
-            // QSR follows the grocery order of events: ring it up, print the bill,
-            // take the money. No KOT is involved, so the printed bill is the whole
-            // gate - and it is a real one, because Settlement opens the checkout page
-            // and that page prices what the slip already said.
-            order.qsr -> order.completed
+            // QSR settles the same way, and waits for nothing but something to sell.
+            // It sends no KOT, and Print & Settlement IS its bill, so there is no
+            // earlier step for this to wait on - requiring one would leave the mode
+            // with a button that never lights.
+            order.qsr -> true
             // A table: the ticket to the kitchen, then the bill to the table, then
             // money. Both steps, in that order.
             else -> kotSent && order.completed
@@ -1599,8 +1596,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * the slip.
      */
     private fun settlementLabel(order: OrderCard?, total: Double): String {
-        val what = if (order?.takeAway == true) "Print & Settlement"
-        else "Settlement"
+        // A COUNTER ORDER SETTLES WHERE IT WAS RUNG UP, and its one press does both:
+        // the slip the customer is handed IS the receipt for the payment just taken.
+        // A table is billed and paid as two acts minutes apart, so its button is the
+        // second of two and says only what it does.
+        val what = if (order?.counter == true) "Print & Settlement" else "Settlement"
         return "$what  ( ₹ ${money(total)} )"
     }
 
@@ -4072,11 +4072,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             }
             // Tendered and change belong to cash alone - a card or a UPI transfer is
             // paid to the penny by the machine, so the box would be asking a question
-            // with only one answer. The QR appears on the same rule, in reverse.
+            // with only one answer.
+            //
+            // The QR no longer follows that rule in reverse. It is how a customer
+            // DECIDES to pay by phone, so it stands whatever mode is selected - see
+            // [CheckoutUpiQr].
             llCash.visibility = if (payMethod == "Cash") View.VISIBLE else View.GONE
-            com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(
-                v, total, online = payMethod == "Online"
-            )
+            com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(v, total)
         }
         methods.forEach { (id, name) ->
             v.findViewById<com.google.android.material.button.MaterialButton>(id).setOnClickListener {
