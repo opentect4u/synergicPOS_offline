@@ -51,9 +51,10 @@ class TaxSettingsDao(context: Context) {
      * Full tax/discount configuration.
      *
      * Discount: [discountEnabled] gates a single [discountType], radio-selected when
-     * discount is on. [discountPosition] is not a choice at all right now - Pre-tax is
-     * disabled, so this is always Post-tax - and is carried here only because it is
-     * what the rest of the app calculates against.
+     * discount is on. [discountPosition] says whether the discount comes off before or
+     * after tax - a real choice under an exclusive price, and forced to Post-tax under
+     * MRP, where the tax is already inside the price. It is what the rest of the app
+     * prices against, so [load] is where that rule is enforced rather than the screen.
      *
      * Tax: [taxEnabled] switches tax on or off store-wide; [taxMode] is the one
      * shared Inclusive/Exclusive setting. Which tax a given sale carries - GST or
@@ -71,8 +72,8 @@ class TaxSettingsDao(context: Context) {
     )
 
     /**
-     * Reads every tax setting for the current store, applying defaults. The
-     * discount position is always Post-tax - see
+     * Reads every tax setting for the current store, applying defaults - including
+     * the saved discount position, bounded by the tax mode it was saved under; see
      * [discountPosition][TaxSettings.discountPosition].
      *
      * [taxEnabled]/[taxMode] fall back to the old separate GST/VAT keys when the
@@ -86,16 +87,33 @@ class TaxSettingsDao(context: Context) {
         val type = DiscountType.fromCode(m[KEY_DISCOUNT_TYPE]) ?: d.discountType
         val legacyVatOn = m[KEY_LEGACY_VAT_ENABLED]?.toBool() == true
         val legacyGstOn = m[KEY_LEGACY_GST_ENABLED]?.toBool() == true
+        val taxMode = GstMode.fromCode(m[KEY_TAX_MODE])
+            ?: GstMode.fromCode(if (legacyVatOn) m[KEY_LEGACY_VAT_MODE] else m[KEY_LEGACY_GST_MODE])
+            ?: d.taxMode
+        // WHAT WAS PICKED. This used to be pinned to POST_TAX here, from when Pre-tax
+        // was disabled outright - and it stayed pinned after the screen made Pre-tax a
+        // real choice again. [save] wrote the operator's answer and this threw it away
+        // on the way back in, so Tax Settings reopened on Post-tax however Pre-tax was
+        // set, and every consumer priced post-tax because they all read it from here.
+        //
+        // "0" is what [save] writes when discount is off, and fromCode has no 0 - so
+        // that falls to the default, which is what a bill with no discount would use
+        // anyway.
+        val position = DiscountPosition.fromCode(m[KEY_DISCOUNT_POSITION]) ?: d.discountPosition
         return TaxSettings(
             discountEnabled = m[KEY_DISCOUNT_ENABLED]?.toBool() ?: d.discountEnabled,
             discountType = type,
-            // Pre-tax discount is disabled for now - every store calculates Post-tax,
-            // regardless of what an older save on this store holds.
-            discountPosition = DiscountPosition.POST_TAX,
+            // PRE-TAX NEEDS AN EXCLUSIVE PRICE, and that is settled here rather than
+            // only on the settings screen. Under MRP the tax is already inside the
+            // price, so there is no before-tax figure to discount - see
+            // TaxSettingsFragment.syncDiscountPosition, which greys the option for the
+            // same reason. The screen cannot save the two together, but a row written
+            // before it enforced that can still hold the pair, and every caller that
+            // prices a sale reads this rather than the screen.
+            discountPosition = if (taxMode == GstMode.INCLUSIVE) DiscountPosition.POST_TAX
+            else position,
             taxEnabled = m[KEY_TAX_ENABLED]?.toBool() ?: (legacyGstOn || legacyVatOn),
-            taxMode = GstMode.fromCode(m[KEY_TAX_MODE])
-                ?: GstMode.fromCode(if (legacyVatOn) m[KEY_LEGACY_VAT_MODE] else m[KEY_LEGACY_GST_MODE])
-                ?: d.taxMode
+            taxMode = taxMode
         )
     }
 
