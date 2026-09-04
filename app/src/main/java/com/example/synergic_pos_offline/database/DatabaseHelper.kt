@@ -55,6 +55,20 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "regional_name", "TEXT")
         runCatching { db.execSQL(SQL_CREATE_MD_PRODUCT_NAMES) }
         migrateRegionalNamesToTable(db)
+        // WHAT THE LINE WAS SOLD AS. A bill line recorded a product_id and nothing
+        // else, and the name was fetched back by joining md_products at print time -
+        // so the name on a reprint was never the bill's own, it was whatever the
+        // master says today. A product deleted since, or a line that never had a
+        // product to point at (a Calculator bill, an item rung up free-hand), joins
+        // to nothing and reprints from Bill History as the word "Item".
+        //
+        // Written at the sale and read first on every reprint. The bill then carries
+        // its own names, which is what a bill is for: a record of what was sold, not
+        // a query against a catalogue that has moved on since.
+        addColumnIfMissing(db, Tables.TD_BILL_ITEMS, "product_name", "TEXT")
+        // The archive too, or a cancelled bill loses on the way in exactly what the
+        // live table just gained - BillDeleteDao copies the columns the two share.
+        addColumnIfMissing(db, Tables.TD_BILL_ITEMS_DELETE, "product_name", "TEXT")
         // Rate-name master + the rate's link to it (non-destructive).
         runCatching { db.execSQL(SQL_CREATE_MD_RATE_NAME) }
         // The shift master, and the user's place on it. Added here rather than
@@ -2128,6 +2142,11 @@ class DatabaseHelper private constructor(context: Context) :
                 trans_dt TEXT,
                 bill_id INTEGER,
                 product_id INTEGER,
+                -- What this line was SOLD as. The bill's own record of the name,
+                -- not a pointer into a catalogue that may have moved on - see the
+                -- note in onOpen. Nullable: bills written before it existed have
+                -- none, and fall back to the join as they always did.
+                product_name TEXT,
                 batch_id INTEGER,
                 quantity REAL,
                 unit_id INTEGER,
@@ -2221,6 +2240,9 @@ class DatabaseHelper private constructor(context: Context) :
                 trans_dt TEXT,
                 bill_id INTEGER,
                 product_id INTEGER,
+                -- Carried over with the line it archives, so a cancelled bill still
+                -- knows what it sold. See td_bill_items.
+                product_name TEXT,
                 batch_id INTEGER,
                 quantity REAL,
                 unit_id INTEGER,

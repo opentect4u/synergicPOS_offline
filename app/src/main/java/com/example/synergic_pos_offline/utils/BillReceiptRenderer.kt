@@ -1782,7 +1782,20 @@ class BillReceiptRenderer(context: Context) {
         val raws = mutableListOf<RawLine>()
         db.rawQuery(
             """
-            SELECT i.product_id, i.quantity, i.rate, i.item_subtotal, i.item_total, p.product_name,
+            SELECT i.product_id, i.quantity, i.rate, i.item_subtotal, i.item_total,
+                   -- THE BILL'S OWN NAME FIRST, the master's only as a fallback.
+                   --
+                   -- A line records what it was sold as (td_bill_items.product_name),
+                   -- so a reprint says what the bill said. The join behind it is for
+                   -- bills written before that column existed - and only for those:
+                   -- reading the master first is what made a reprint print "Item" for
+                   -- a product deleted since, or for a line that never pointed at one.
+                   --
+                   -- Either way the name comes out of here in ENGLISH, as the master
+                   -- holds it, and is put into the shop's language afterwards by
+                   -- productName(). That is why changing the language still changes a
+                   -- reprint: what is stored is the name, not the rendering of it.
+                   COALESCE(NULLIF(TRIM(i.product_name), ''), p.product_name),
                    i.discount_amount, i.cgst_amount, i.sgst_amount, i.igst_amount, i.vat_amount, p.hsn_code,
                    i.cgst_rate, i.sgst_rate, i.vat_rate,
                    -- The unit as it prints: its short name, or the first three

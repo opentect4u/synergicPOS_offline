@@ -2680,7 +2680,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val accent = ThemeManager.getThemeColor(ctx)
 
         val etSearch = root.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etProductSearch)
-        val llCats = root.findViewById<LinearLayout>(R.id.llProductCategories)
+        val llCats = root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProductCategories)
         val rv = root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProductGrid)
 
         var selectedCat = "All"
@@ -2701,27 +2701,47 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         // Category tabs, rebuilt whenever the catalogue is re-read so a newly added
         // category cannot be missing from the tabs until the screen is reopened.
-        fun rebuildTabs() {
-            val catNames = listOf("All") +
-                allProducts.map { it.product.category }.filter { it.isNotBlank() }.distinct()
-            if (catNames.none { it == selectedCat }) selectedCat = "All"
-            llCats.removeAllViews()
-            val tabViews = linkedMapOf<String, TextView>()
-            catNames.forEach { c ->
-                val tv = TextView(ctx).apply {
-                    text = c
-                    textSize = 15f
-                    setPadding(dp(10), dp(10), dp(10), dp(12))
-                    setOnClickListener {
-                        selectedCat = c
-                        styleCats(tabViews, selectedCat, accent)
-                        refreshProducts?.invoke()
-                    }
-                }
-                tabViews[c] = tv
-                llCats.addView(tv)
+        // The tabs are their own little list now, so the strip can be dragged into a
+        // new order the same way the grocery screen's is. `catNames` IS the order -
+        // the adapter reads it, the drag reorders it, and [rebuildTabs] refills it.
+        val catNames = mutableListOf<String>()
+        val catAdapter = ProductsCategoryTabs(catNames, accent, { selectedCat }) { picked ->
+            selectedCat = picked
+            refreshProducts?.invoke()
+        }
+        llCats.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(
+            ctx, androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL, false
+        )
+        llCats.adapter = catAdapter
+
+        // Hold a tab to pick it up and drag it along the strip. Wired once, here -
+        // not per rebuild - because the RecyclerView outlives the tabs in it.
+        // "All" is position 0 and stays put: it is the way back to the whole menu
+        // rather than a category of it, and the one tab a drag could not put back.
+        com.example.synergic_pos_offline.utils.CategoryOrder.attach(
+            recycler = llCats,
+            firstMovable = 1,
+            onMove = { from, to ->
+                catNames.add(to, catNames.removeAt(from))
+                catAdapter.notifyItemMoved(from, to)
+            },
+            onDropped = {
+                com.example.synergic_pos_offline.utils.CategoryOrder.remember(catNames.drop(1))
             }
-            styleCats(tabViews, selectedCat, accent)
+        )
+
+        fun rebuildTabs() {
+            // The menu hands these back in whatever order the dishes loaded in; the
+            // shop may have dragged them into a selling order since. Applying it here
+            // means re-reading the menu cannot quietly undo a drag - see [CategoryOrder].
+            val fresh = listOf("All") +
+                com.example.synergic_pos_offline.utils.CategoryOrder.ordered(
+                    allProducts.map { it.product.category }.filter { it.isNotBlank() }.distinct()
+                )
+            if (fresh.none { it == selectedCat }) selectedCat = "All"
+            catNames.clear()
+            catNames.addAll(fresh)
+            catAdapter.notifyDataSetChanged()
         }
 
         refreshProducts = {
@@ -3459,14 +3479,54 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         override fun getItemCount() = items.size
     }
 
-    /** Selected category shows an accent underline; the rest are muted. */
-    private fun styleCats(tabs: Map<String, TextView>, selected: String, accent: Int) {
-        tabs.forEach { (name, tv) ->
-            val on = name == selected
-            tv.setTextColor(if (on) accent else 0xFF9AA0A6.toInt())
-            tv.setTypeface(null, if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-            tv.background = if (on) underline(accent) else null
+    /**
+     * The menu's category tabs.
+     *
+     * Built as a list rather than as views dropped into a row so the strip can be
+     * reordered by holding a tab - see [com.example.synergic_pos_offline.utils.CategoryOrder].
+     * The tabs themselves are made exactly as they were when this was a LinearLayout,
+     * down to the padding and the underline, so only the way they are held changed.
+     *
+     * [names] is the live order: the drag reorders that list, and the strip follows.
+     */
+    private inner class ProductsCategoryTabs(
+        private val names: List<String>,
+        private val accent: Int,
+        private val selected: () -> String,
+        private val onPick: (String) -> Unit
+    ) : androidx.recyclerview.widget.RecyclerView.Adapter<ProductsCategoryTabs.VH>() {
+
+        inner class VH(val tv: TextView) :
+            androidx.recyclerview.widget.RecyclerView.ViewHolder(tv)
+
+        override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): VH =
+            VH(TextView(parent.context).apply {
+                textSize = 15f
+                setPadding(dp(10), dp(10), dp(10), dp(12))
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            })
+
+        /** Selected category shows an accent underline; the rest are muted. */
+        override fun onBindViewHolder(holder: VH, position: Int) {
+            val name = names[position]
+            val on = name == selected()
+            holder.tv.text = name
+            holder.tv.setTextColor(if (on) accent else 0xFF9AA0A6.toInt())
+            holder.tv.setTypeface(
+                null,
+                if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL
+            )
+            holder.tv.background = if (on) underline(accent) else null
+            holder.tv.setOnClickListener {
+                onPick(name)
+                notifyDataSetChanged()
+            }
         }
+
+        override fun getItemCount() = names.size
     }
 
     /** A thin accent line drawn along the bottom edge, for the active tab. */

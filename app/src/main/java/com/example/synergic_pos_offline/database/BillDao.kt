@@ -225,6 +225,16 @@ class BillDao(context: Context) {
                     put("trans_dt", nowDateTime)
                     put("bill_id", receiptNo)
                     if (item.productId != null) put("product_id", item.productId)
+                    // The name this line was sold under, recorded ON THE BILL.
+                    //
+                    // It was only ever a product_id, with the name joined back out of
+                    // md_products at print time - so a reprint from Bill History showed
+                    // whatever the master says now, and showed the word "Item" when
+                    // there was nothing to join to: a product deleted since, or a line
+                    // that never had one. Kept here, the bill can always say what it
+                    // sold. See BillReceiptRenderer.readRawLines, which reads this
+                    // first and falls back to the join for bills written before it.
+                    put("product_name", item.name.trim().takeIf { it.isNotEmpty() })
                     unitIdForProduct(db, item.productId)?.let { put("unit_id", it) }
                     put("quantity", item.quantity)
                     put("rate", item.rate)
@@ -700,13 +710,17 @@ class BillDao(context: Context) {
         val storeClause = if (store != null) "WHERE bi.store_id = ?" else ""
         // Bound twice - once per half of the union.
         val args = store?.let { arrayOf(it.toString(), it.toString()) }
+        // The line's own name first, the master's only where it has none - the same
+        // order the receipt reads them in, so History's item filter offers exactly the
+        // names its bills print. Without it, a product deleted since drops out of the
+        // filter entirely and the bills that sold it cannot be found by item.
         val sql = """
-            SELECT bi.bill_id, p.product_name
+            SELECT bi.bill_id, COALESCE(NULLIF(TRIM(bi.product_name), ''), p.product_name)
             FROM td_bill_items bi
             LEFT JOIN md_products p ON p.id = bi.product_id
             $storeClause
             UNION ALL
-            SELECT bi.bill_id, p.product_name
+            SELECT bi.bill_id, COALESCE(NULLIF(TRIM(bi.product_name), ''), p.product_name)
             FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS_DELETE} bi
             LEFT JOIN md_products p ON p.id = bi.product_id
             $storeClause
