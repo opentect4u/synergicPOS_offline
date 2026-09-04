@@ -28,6 +28,7 @@ import androidx.core.content.FileProvider
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.database.ProductNameDao
 import com.example.synergic_pos_offline.database.StockDao
 import com.example.synergic_pos_offline.utils.AppLanguage
 import com.example.synergic_pos_offline.utils.DialogUtils
@@ -337,6 +338,15 @@ class ProductsFragment : DataTableFragment() {
             db.delete(
                 DatabaseHelper.Tables.MD_PRODUCT_RATES, "product_id IN ($placeholders)", args
             )
+            // And so are the shop's own names for it - one row per language it has
+            // been named in, all of them going with the product.
+            //
+            // Without this, naming a product is what makes it undeletable: the
+            // foreign key refuses to drop a product that still has a name row, and
+            // the catch below reports it as a product used in existing records. A
+            // shop that has just re-entered its catalogue in Bangla would find it
+            // could no longer delete any of the products it had got through.
+            ProductNameDao(requireContext()).deleteFor(ids)
             db.delete(
                 DatabaseHelper.Tables.MD_PRODUCTS,
                 "id IN ($placeholders) AND store_id = ?",
@@ -375,6 +385,7 @@ class ProductsFragment : DataTableFragment() {
         bindOptions(actCategory, categories, existing?.categoryId)
 
         view.findViewById<TextInputEditText>(R.id.etName).setText(existing?.name.orEmpty())
+        bindRegionalName(view, existing?.regionalName.orEmpty())
         view.findViewById<TextInputEditText>(R.id.etHsn).setText(existing?.hsn.orEmpty())
         val etBarcode = view.findViewById<TextInputEditText>(R.id.etBarcode)
         etBarcode.setText(existing?.barcode.orEmpty())
@@ -506,6 +517,7 @@ class ProductsFragment : DataTableFragment() {
 
             val form = ProductForm(
                 name = name,
+                regionalName = text(view, R.id.etRegionalName),
                 hsn = text(view, R.id.etHsn),
                 barcode = text(view, R.id.etBarcode),
                 stockAlert = text(view, R.id.etStockAlert),
@@ -1121,8 +1133,98 @@ class ProductsFragment : DataTableFragment() {
         purchasePrice = text(row, R.id.etRatePurchase)
     )
 
+    /**
+     * Wires the Regional Name field: the language it is asking for, and the suggestion
+     * it offers while nobody has written one.
+     *
+     * ## Suggested, then left alone
+     *
+     * Typing the product name fills this in, translated into the master's language, so
+     * the common case costs nothing - the operator types "TATA SALT" and reads back
+     * "टाटा नमक" without touching this box. The moment they DO touch it, the suggesting
+     * stops for the rest of the dialog: what they wrote is the answer, and a box that
+     * kept overwriting it whenever the name above was corrected would be arguing with
+     * them.
+     *
+     * An edit opens on the saved name and never suggests over it, for the same reason -
+     * a name the shop wrote once is not a draft.
+     *
+     * ## ALWAYS ON SCREEN, whatever the master's language
+     *
+     * It was hidden under English, on the reasoning that the regional name would just
+     * be the product name again. That hid DATA: a name written while the master was on
+     * Hindi vanished from the form the moment somebody moved the selector to English -
+     * still saved, still printing on every bill, and nowhere to be seen or corrected.
+     *
+     * The field is the shop's own name for the product. Whether the app can SUGGEST
+     * one is a question about the language; whether the shop may keep one is not.
+     *
+     * Only the suggestion depends on the language, and the hint says so: it names the
+     * language while there is one to translate into, and reads plainly when there is
+     * not - so an English master offers an empty box to type in rather than a promise
+     * to fill it.
+     */
+    private fun bindRegionalName(view: android.view.View, saved: String) {
+        val til = view.findViewById<TextInputLayout>(R.id.tilRegionalName)
+        val etRegional = view.findViewById<TextInputEditText>(R.id.etRegionalName)
+        val etName = view.findViewById<TextInputEditText>(R.id.etName)
+        val language = AppLanguage.of(requireContext())
+        val translates = ProductName.applies(language)
+
+        til.visibility = android.view.View.VISIBLE
+        til.hint =
+            if (translates) "Regional Name (${language.englishName})" else "Regional Name"
+
+        // SUGGESTED ON OPEN, not only while typing.
+        //
+        // The suggestion used to hang off the name field's watcher alone, which never
+        // fires on an EDIT: the product name is put in the box before this runs, so
+        // opening an existing product showed an empty Regional Name and left the
+        // operator to type from scratch what the app could have written for them.
+        //
+        // So the box is seeded here from whatever the name field already holds. On Add
+        // that is empty and this does nothing; on Edit it is the product's name, and
+        // the field opens with its translation ready to keep or correct.
+        //
+        // A SAVED name always wins. That one the shop wrote, and it is not a
+        // suggestion to be overwritten by the lexicon's opinion of the same product.
+        val suggestion =
+            if (!translates) ""
+            else etName.text?.toString()?.trim().orEmpty()
+                .takeIf { it.isNotEmpty() }
+                ?.let { ProductName.inPrintLanguage(language, it) }
+                .orEmpty()
+        etRegional.setText(saved.ifBlank { suggestion })
+
+        // Nothing to suggest FROM in English, so the box is left to be typed in. The
+        // saved name above is already showing, which is the point of getting here.
+        if (!translates) return
+
+        // True once the operator has typed in this box, or when it arrived with a
+        // saved name. Either way the suggestion stops.
+        //
+        // A seeded suggestion does NOT count as written - it is the app's guess, so
+        // correcting the product name above still refreshes it, exactly as on Add.
+        var written = saved.isNotBlank()
+        var suggesting = false
+        etRegional.addTextChangedListener {
+            if (!suggesting) written = true
+        }
+        etName.addTextChangedListener { text ->
+            if (written) return@addTextChangedListener
+            val source = text?.toString()?.trim().orEmpty()
+            suggesting = true
+            etRegional.setText(
+                if (source.isEmpty()) "" else ProductName.inPrintLanguage(language, source)
+            )
+            suggesting = false
+        }
+    }
+
     private class ProductForm(
         val name: String,
+        /** The shop's own name for it, in the master's language - see [RegionalName]. */
+        val regionalName: String,
         val hsn: String,
         val barcode: String,
         val stockAlert: String,
@@ -1137,7 +1239,8 @@ class ProductsFragment : DataTableFragment() {
     )
 
     private class ExistingProduct(
-        val name: String, val hsn: String, val barcode: String, val stockAlert: String,
+        val name: String, val regionalName: String,
+        val hsn: String, val barcode: String, val stockAlert: String,
         val categoryId: Int?, val image: ByteArray?,
         val foodType: String, val spiceLevel: String,
         val prepTime: String, val availability: String,
@@ -1246,6 +1349,8 @@ class ProductsFragment : DataTableFragment() {
                 spiceLevel = c.getString(7).orEmpty(),
                 prepTime = c.getString(8).orEmpty(),
                 availability = c.getString(9).orEmpty(),
+                regionalName = ProductNameDao(requireContext())
+                    .nameFor(productId, AppLanguage.of(requireContext()).code).orEmpty(),
                 rates = rates
             )
         }
@@ -1304,6 +1409,13 @@ class ProductsFragment : DataTableFragment() {
                 productId.toLong()
             }
             if (id == -1L) return
+
+            // THIS LANGUAGE'S NAME ONLY. Written against the language the Products
+            // master is on, so switching the master to another one and typing there
+            // adds a second name rather than replacing this one - see ProductNameDao.
+            // Blank removes just this language's row and leaves the others alone.
+            ProductNameDao(requireContext())
+                .save(id.toInt(), AppLanguage.of(requireContext()).code, form.regionalName)
 
             // Replace this product's rate cards wholesale (delete then re-insert), so
             // added/removed rows stay in sync. sku (=rate id) is set by a DB trigger.

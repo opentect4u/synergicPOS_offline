@@ -51,7 +51,14 @@ object KotPrinter {
             report("KOT printer '${printer.printerName}' is not fully configured")
             return
         }
-        val bitmap = render(batch, config.paperDots, PrintLanguage.of(context))
+        val language = PrintLanguage.of(context)
+        // PRODUCT NAMES come out in the Products master's language, not this one.
+        // `language` above sets the ticket's own words - KOT NO, ITEM, QUANTITY - and
+        // what the dishes are CALLED is the master's question. See [RegionalName].
+        val bitmap = render(
+            batch, config.paperDots, language,
+            RegionalName.language(context), RegionalName.map(context)
+        )
         ThermalPrinter.print(context, bitmap, config) { result ->
             when (result) {
                 is ThermalPrinter.Result.Success -> report("${batch.kotNumber} printed at ${printer.printerName}")
@@ -150,7 +157,15 @@ object KotPrinter {
     fun render(
         batch: RunningOrderDao.KotBatch,
         width: Int,
-        language: PrintLanguage.Language = PrintLanguage.Language.ENGLISH
+        language: PrintLanguage.Language = PrintLanguage.Language.ENGLISH,
+        // The language the DISHES are named in - the Products master's. Separate from
+        // [language], which is the ticket's own words; see [RegionalName].
+        productLanguage: PrintLanguage.Language = language,
+        // The shop's own names for its products, keyed as [RegionalName.map] keys them.
+        // Passed IN rather than read here, so this stays free of a Context - it is the
+        // one function on this object a test can call. Empty means none is saved, which
+        // falls back to translating each name, exactly as this always did.
+        regionalNames: Map<String, String> = emptyMap()
     ): Bitmap {
         // Set from [PrintType], so the ticket carries the same face and the same
         // sizes as the bill. These used to be fractions of the paper width, which
@@ -235,7 +250,8 @@ object KotPrinter {
                 item.measureText("0000.00"), sub.measureText(t("QUANTITY"))
             ) + gap * 2
             val wrapped = wrapToWidth(
-                ProductName.inPrintLanguage(language, name), item, width - padX * 2 - qtyCol
+                RegionalName.forPrint(regionalNames, productLanguage, name),
+                item, width - padX * 2 - qtyCol
             )
             return wrapped.mapIndexed { i, part ->
                 Line(part, item, right = if (i == 0) qtyText else null)

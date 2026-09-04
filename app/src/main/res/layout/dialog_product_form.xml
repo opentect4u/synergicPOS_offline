@@ -138,6 +138,34 @@
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
+                <!-- Row: Regional Name.
+                     Directly under the name it is a translation OF, and full width
+                     rather than sharing a row: a name in Devanagari or Tamil is wider
+                     than its English source, and half a row would cut the one field on
+                     this form whose whole purpose is to be read.
+
+                     Its hint carries the language chosen at the top of the master, so
+                     the form says which language it is asking for rather than leaving
+                     the operator to remember. Filled in code - see
+                     ProductsFragment.bindRegionalName. -->
+                <LinearLayout style="@style/ProductFormRow">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilRegionalName"
+                        style="@style/ProductFormField"
+                        android:layout_width="match_parent"
+                        android:hint="Regional Name">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etRegionalName"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="text"
+                            android:maxLength="80"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
                 <!-- Row: Barcode | Category -->
                 <LinearLayout style="@style/ProductFormRow">
 

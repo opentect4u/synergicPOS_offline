@@ -282,7 +282,26 @@ class BillReceiptRenderer(context: Context) {
      * because it is the Latin name that has a case to change - the scripts it becomes
      * have none.
      */
-    private fun productName(name: String): String = ProductName.inPrintLanguage(lang, name.uppercase())
+    private fun productName(name: String): String =
+        RegionalName.forPrint(regionalNames, productLang, name.uppercase())
+
+    /**
+     * The shop's own product names, read once for the whole slip.
+     *
+     * `by lazy` so a bill in English - where no name is translated at all - never runs
+     * the query, and a bill that does run it runs it once however many lines it has.
+     * See [RegionalName.map] for why this is one query rather than a lookup per item.
+     */
+    private val regionalNames: Map<String, String> by lazy { RegionalName.map(ctx) }
+
+    /**
+     * The language PRODUCT NAMES come out in - the Products master's, not [lang].
+     *
+     * [lang] is the PRINT language and sets the slip's own words: ITEM, QUANTITY,
+     * TOTAL. What the goods are CALLED is the master's question, and the two are
+     * deliberately separate - see [RegionalName].
+     */
+    private val productLang: PrintLanguage.Language by lazy { RegionalName.language(ctx) }
 
     /**
      * The bill's typeface — the bundled Roboto Mono font (res/font/roboto_mono_regular.ttf).

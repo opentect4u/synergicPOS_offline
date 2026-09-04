@@ -13,6 +13,14 @@ import android.database.sqlite.SQLiteOpenHelper
 class DatabaseHelper private constructor(context: Context) :
     SQLiteOpenHelper(context.applicationContext, DATABASE_NAME, null, DATABASE_VERSION) {
 
+    /**
+     * Kept for the one migration that needs to ask the app a question rather than the
+     * database - see [migrateRegionalNamesToTable], which has to know which language
+     * the Products master is set to. The application context, so holding it cannot
+     * leak an Activity.
+     */
+    private val appContext: Context = context.applicationContext
+
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         // A pending migration has to rebuild a parent table, which SQLite only
@@ -30,6 +38,23 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_APP_SETTINGS, "device_id", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "sku", "TEXT")
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "brand", "TEXT")
+        // The product's name in the shop's own language, as the Products master's
+        // language selector was set when it was typed.
+        //
+        // A name the shop WROTE, not one the app guessed. Product names have always
+        // been machine-translated at print time (see ProductName.inPrintLanguage),
+        // which is right for a catalogue nobody has been through and wrong for the
+        // names a shop actually uses: a lexicon does not know the local word for a
+        // regional sweet, and a brand transliterated letter by letter is not what is
+        // on the packet. This column is where the shop's answer lives once it has
+        // given one.
+        //
+        // Nullable, and blank on every product until somebody fills it in - the
+        // renderers fall back to the machine translation, so a catalogue that has
+        // never been edited prints exactly as it did before.
+        addColumnIfMissing(db, Tables.MD_PRODUCTS, "regional_name", "TEXT")
+        runCatching { db.execSQL(SQL_CREATE_MD_PRODUCT_NAMES) }
+        migrateRegionalNamesToTable(db)
         // Rate-name master + the rate's link to it (non-destructive).
         runCatching { db.execSQL(SQL_CREATE_MD_RATE_NAME) }
         // The shift master, and the user's place on it. Added here rather than
@@ -592,6 +617,51 @@ class DatabaseHelper private constructor(context: Context) :
      * and the one the signed-in user belongs to. With no verified row, the newest is
      * kept - a placeholder that was superseded is the older of the two.
      */
+    /**
+     * Moves any name written into the old single `md_products.regional_name` column
+     * into [Tables.MD_PRODUCT_NAMES], under the language the Products master is set to.
+     *
+     * ## The language is a guess, and the best one available
+     *
+     * The old column recorded a name and not the language it was in - which is the
+     * fault the table exists to fix - so nothing in the database can say what those
+     * names are. What CAN be said is that they were typed under whatever the master's
+     * selector was on, and unless that has since been moved, it still is.
+     *
+     * A shop that has already changed the selector and re-typed some names would have
+     * the untouched ones stamped with the new language. That is the same mixing the
+     * old column suffered from, and this cannot undo it - but it happens ONCE, and
+     * every name written from here on carries its own language. The names are visible
+     * and editable in the master, so a wrong stamp is a correction rather than a loss.
+     *
+     * Runs on every open and is idempotent: the INSERT skips a product that already
+     * has a row for that language, and the source column is cleared as it goes, so a
+     * second pass finds nothing to do.
+     */
+    private fun migrateRegionalNamesToTable(db: SQLiteDatabase) {
+        runCatching {
+            val pending = db.rawQuery(
+                "SELECT COUNT(*) FROM ${Tables.MD_PRODUCTS} " +
+                    "WHERE regional_name IS NOT NULL AND TRIM(regional_name) <> ''",
+                null
+            ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+            if (pending == 0) return
+
+            val lang = com.example.synergic_pos_offline.utils.AppLanguage.of(appContext).code
+            db.execSQL(
+                "INSERT OR IGNORE INTO ${Tables.MD_PRODUCT_NAMES} " +
+                    "(store_id, product_id, lang_code, regional_name) " +
+                    "SELECT store_id, id, ?, TRIM(regional_name) FROM ${Tables.MD_PRODUCTS} " +
+                    "WHERE regional_name IS NOT NULL AND TRIM(regional_name) <> ''",
+                arrayOf<Any>(lang)
+            )
+            // Emptied so this runs once. The column is left in place rather than
+            // dropped - SQLite makes that a table rebuild, and an unused column costs
+            // a byte a row.
+            db.execSQL("UPDATE ${Tables.MD_PRODUCTS} SET regional_name = NULL")
+        }
+    }
+
     private fun repairDuplicateStores(db: SQLiteDatabase) {
         val ids = registrationStoreIds(db)
         if (ids.size < 2) return
@@ -1282,6 +1352,8 @@ class DatabaseHelper private constructor(context: Context) :
         const val MD_TABLE = "md_table"
         const val MD_TABLE_UNIT = "md_table_unit"
         const val MD_SUBTABLE = "md_subtable"
+        /** A product name in one language - see SQL_CREATE_MD_PRODUCT_NAMES. */
+        const val MD_PRODUCT_NAMES = "md_product_names"
 
         const val TD_PURCHASE = "td_purchase"
         const val TD_PURCHASE_RETURN = "td_purchase_return"
@@ -1879,6 +1951,41 @@ class DatabaseHelper private constructor(context: Context) :
         """
 
         // Split sub-tables: parts of a table (101 A, 101 B, …) created on Table Split.
+        /**
+         * A product's name in one language - one row per product per language.
+         *
+         * ## Why a table and not a column
+         *
+         * It began as `md_products.regional_name`, a single box holding whatever the
+         * shop last typed. That works until the shop changes the Products master's
+         * language: with one slot, writing the Bangla name DESTROYS the Hindi one, and
+         * a catalogue half-way through being re-entered holds some rows in each with
+         * nothing saying which is which - so one bill prints both languages.
+         *
+         * A row per language costs a table and settles all of it. Switching the master
+         * to Bangla shows an empty box for Bangla and leaves the Hindi row alone;
+         * switching back brings the Hindi names straight back, because they were never
+         * overwritten.
+         *
+         * UNIQUE(product_id, lang_code) is the whole point - it is what makes a name
+         * belong to a language rather than to a product.
+         */
+        private const val SQL_CREATE_MD_PRODUCT_NAMES = """
+            CREATE TABLE IF NOT EXISTS md_product_names (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                product_id INTEGER NOT NULL,
+                lang_code TEXT NOT NULL,
+                regional_name TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                UNIQUE(product_id, lang_code),
+                FOREIGN KEY(product_id) REFERENCES md_products(id)
+            )
+        """
+
         private const val SQL_CREATE_MD_SUBTABLE = """
             CREATE TABLE IF NOT EXISTS md_subtable (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

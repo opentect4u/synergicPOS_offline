@@ -287,12 +287,24 @@ object ThermalPrinter {
     }
 
     private fun runJob(context: Context, receipt: Bitmap, config: Config): Attempt {
-        // Close before opening. The SDK keeps its socket in a static field, so a job
-        // that died without closing - a crash, a killed process - leaves the previous
-        // one dangling, and these modules serve a single client: the stale socket
-        // locks every later job out until the printer times it out on its own.
-        runCatching { Print.PortClose() }
-        PrintLog.d(context, TAG, "closed any previous port")
+        val portKey = "${config.connection}:${config.ip}"
+        // A Bluetooth port the last job left open on this same printer - see
+        // [keepPortOpen]. Reusing it skips the SDP lookup and RFCOMM connect, which is
+        // where a Bluetooth receipt spends most of its time before a dot is printed.
+        val reusing = config.isBluetooth && openPort == portKey
+        var keepOpen = false
+
+        if (reusing) {
+            PrintLog.d(context, TAG, "reusing the Bluetooth port already open to ${config.ip}")
+        } else {
+            // Close before opening. The SDK keeps its socket in a static field, so a job
+            // that died without closing - a crash, a killed process - leaves the previous
+            // one dangling, and these modules serve a single client: the stale socket
+            // locks every later job out until the printer times it out on its own.
+            runCatching { Print.PortClose() }
+            openPort = null
+            PrintLog.d(context, TAG, "closed any previous port")
+        }
 
         // Open the transport the printer is set to; 0 means connected. Bluetooth
         // takes the device MAC (the SDK prepends "Bluetooth,"); WiFi/LAN take the
@@ -301,48 +313,56 @@ object ThermalPrinter {
         // too: a failed open can still leave a half-open connection behind, so each
         // retry would wedge the printer further.
         try {
-            PrintLog.d(
-                context, TAG,
-                when {
-                    config.isUsb -> "opening USB port to ${config.ip}"
-                    config.isBluetooth -> "opening Bluetooth port to ${config.ip}"
-                    else -> "opening WiFi port to ${config.ip}:${config.port}"
-                }
-            )
-            // The device is re-resolved per attempt rather than held: it may have been
-            // unplugged and plugged back in between them, which hands out a different
-            // UsbDevice for the same printer.
-            val usbDevice = if (config.isUsb) UsbPrinters.find(context, config.ip) else null
-            if (config.isUsb && usbDevice == null) {
-                return Attempt(
-                    Result.Failure("USB printer not connected - plug it in and try again"),
-                    retryable = false
+            if (!reusing) {
+                PrintLog.d(
+                    context, TAG,
+                    when {
+                        config.isUsb -> "opening USB port to ${config.ip}"
+                        config.isBluetooth -> "opening Bluetooth port to ${config.ip}"
+                        else -> "opening WiFi port to ${config.ip}:${config.port}"
+                    }
                 )
-            }
-            val opened = when {
-                // The SDK keeps this context in a static field for the life of the
-                // process, so it gets the application's, never an Activity's.
-                usbDevice != null -> Print.PortOpen(context.applicationContext, usbDevice)
-                config.isBluetooth -> Print.portOpenBT(context, config.ip)
-                else -> Print.PortOpen(context, "WiFi,${config.ip},${config.port}")
-            }
-            PrintLog.d(context, TAG, "port open result=$opened (0 = connected)")
-            if (opened != 0) {
-                val where = when {
-                    config.isUsb -> "USB ${config.ip}"
-                    config.isBluetooth -> config.ip
-                    else -> "${config.ip}:${config.port}"
+                // The device is re-resolved per attempt rather than held: it may have been
+                // unplugged and plugged back in between them, which hands out a different
+                // UsbDevice for the same printer.
+                val usbDevice = if (config.isUsb) UsbPrinters.find(context, config.ip) else null
+                if (config.isUsb && usbDevice == null) {
+                    return Attempt(
+                        Result.Failure("USB printer not connected - plug it in and try again"),
+                        retryable = false
+                    )
                 }
-                return Attempt(
-                    Result.Failure("Cannot reach printer at $where"),
-                    retryable = true
-                )
+                val opened = when {
+                    // The SDK keeps this context in a static field for the life of the
+                    // process, so it gets the application's, never an Activity's.
+                    usbDevice != null -> Print.PortOpen(context.applicationContext, usbDevice)
+                    config.isBluetooth -> Print.portOpenBT(context, config.ip)
+                    else -> Print.PortOpen(context, "WiFi,${config.ip},${config.port}")
+                }
+                PrintLog.d(context, TAG, "port open result=$opened (0 = connected)")
+                if (opened != 0) {
+                    val where = when {
+                        config.isUsb -> "USB ${config.ip}"
+                        config.isBluetooth -> config.ip
+                        else -> "${config.ip}:${config.port}"
+                    }
+                    return Attempt(
+                        Result.Failure("Cannot reach printer at $where"),
+                        retryable = true
+                    )
+                }
             }
 
             // Handshake. ESC @ first, or the job inherits whatever state the last one
             // left behind - page mode, a half-finished raster - and prints nothing.
             // A module that resets here has taken none of the receipt, so the job can
             // safely start over.
+            //
+            // It is also what makes reusing a Bluetooth port safe. A printer switched
+            // off since the last receipt leaves a socket that looks open and is not,
+            // and this is where that shows - before any of the bill has been sent.
+            // The failure is retryable, the port is closed on the way out, and the
+            // retry opens a fresh one.
             try {
                 Print.Initialize()
                 Print.SetPrintDensity(DENSITY)
@@ -376,6 +396,13 @@ object ThermalPrinter {
             Print.PrintAndFeed(FEED_AFTER_PRINT)
             PrintLog.d(context, TAG, "fed $FEED_AFTER_PRINT dots")
 
+            // The connection has now carried a whole receipt, so it is worth keeping
+            // for the next one. Set here rather than at each return below so that a
+            // reported paper-out or cover-open - a healthy link with an unhappy
+            // printer - keeps it too: the operator is about to close the lid and
+            // reprint, and should not wait on a second connect to do it.
+            keepOpen = config.isBluetooth
+
             // Not every unit has a cutter fitted, and one without it should still
             // produce the receipt rather than fail the job over a tear-off.
             runCatching { Print.CutPaper(PARTIAL_CUT) }
@@ -388,8 +415,8 @@ object ThermalPrinter {
             // A receipt raster is hundreds of KB, and closing the socket while it is
             // still in flight loses the tail. A status reply only comes back once the
             // printer has drained what it was sent, so it doubles as the drain wait.
-            PrintLog.d(context, TAG, "awaiting drain / status (up to ${DRAIN_ATTEMPTS * DRAIN_INTERVAL_MS}ms)")
-            val after = awaitDrain()
+            PrintLog.d(context, TAG, "awaiting drain / status")
+            val after = awaitDrain(context, config)
             PrintLog.d(context, TAG, "drain result status=$after (null = printer never answered)")
             if (after != null) {
                 faultOf(after)?.let {
@@ -401,10 +428,79 @@ object ThermalPrinter {
             // Nothing answered, so the receipt was sent but never acknowledged.
             return Attempt(Result.Sent, retryable = false)
         } finally {
-            // Always release the socket, including when the job threw part-way.
-            runCatching { Print.PortClose() }
-            PrintLog.d(context, TAG, "port closed")
+            if (keepOpen) {
+                keepPortOpen(portKey)
+                PrintLog.d(context, TAG, "Bluetooth port held open for ${BT_IDLE_KEEP_MS}ms")
+            } else {
+                // Release the socket, including when the job threw part-way.
+                runCatching { Print.PortClose() }
+                openPort = null
+                PrintLog.d(context, TAG, "port closed")
+            }
         }
+    }
+
+    // ---- Holding the Bluetooth port open -------------------------------------
+
+    /**
+     * The printer [runJob] has left a port open on, or null when nothing is open.
+     *
+     * ## Why only Bluetooth
+     *
+     * Opening a port is not the same price on every transport. USB is all but free.
+     * A TCP connection to a WiFi module is quick. Bluetooth is neither: the SDK's
+     * BTOperator cancels discovery, does an SDP lookup for the serial-port service,
+     * waits out any discovery still running and only then connects RFCOMM - one and a
+     * half to three seconds before a single dot is printed, and it was being paid on
+     * every receipt, including once per copy of a two-copy bill.
+     *
+     * The per-job open and close is right for WiFi and LAN and stays: several tills
+     * can be pointed at one IP, and these modules serve a single client, so a socket
+     * held between sales locks the others out. Bluetooth is a weaker case for it. A
+     * printer paired to two tills can still only carry one RFCOMM channel at a time,
+     * so they were already taking turns; holding the port changes when the printer
+     * comes free, not whether. That is the trade [BT_IDLE_KEEP_MS] is sized for.
+     *
+     * ## Held, not kept
+     *
+     * Only for [BT_IDLE_KEEP_MS] after the last receipt. Long enough to cover what
+     * actually comes in bursts - the second copy of a bill, a KOT following its bill,
+     * one sale after another - and short enough that a till which has stopped printing
+     * is not sitting on the printer, and a socket that has gone stale unnoticed is not
+     * kept for long.
+     */
+    @Volatile private var openPort: String? = null
+
+    /**
+     * Which hold is current. The idle close is scheduled ahead of time, so by the time
+     * it runs another receipt may have used the port and asked to keep it - this is
+     * how that close knows it has been superseded and should do nothing.
+     */
+    @Volatile private var portGeneration = 0L
+
+    private const val BT_IDLE_KEEP_MS = 12_000L
+
+    private val idleCloser = Executors.newSingleThreadScheduledExecutor()
+    private var pendingClose: java.util.concurrent.ScheduledFuture<*>? = null
+
+    /** Leaves the port open, and books its release for [BT_IDLE_KEEP_MS] from now. */
+    private fun keepPortOpen(key: String) {
+        openPort = key
+        val generation = ++portGeneration
+        pendingClose?.cancel(false)
+        // Closed ON THE PRINT WORKER, never on the timer's own thread. The worker runs
+        // one job at a time, so a close queued there cannot land in the middle of a
+        // receipt - at worst it waits behind one and finds itself superseded.
+        pendingClose = idleCloser.schedule(
+            { worker.execute { closeIfStillIdle(generation) } },
+            BT_IDLE_KEEP_MS, java.util.concurrent.TimeUnit.MILLISECONDS
+        )
+    }
+
+    private fun closeIfStillIdle(generation: Long) {
+        if (generation != portGeneration) return
+        runCatching { Print.PortClose() }
+        openPort = null
     }
 
     // ---- Printer status ----------------------------------------------------
@@ -431,17 +527,81 @@ object ThermalPrinter {
         else -> null
     }
 
-    /** Polls until the printer answers, i.e. until it has consumed the receipt. */
-    private fun awaitDrain(): Int? {
-        repeat(DRAIN_ATTEMPTS) {
-            readStatus()?.let { return it }
-            Thread.sleep(DRAIN_INTERVAL_MS)
+    /**
+     * Printers that have never answered a status query, by address.
+     *
+     * This is why LAN/WiFi and Bluetooth printing was slower than USB, and the gap was
+     * not in the transports. Asking a send-only module for its status is neither free
+     * nor quick: the SDK's GetRealTimeStatus drains for 500ms, writes DLE EOT, blocks a
+     * full second for a reply, writes the query AGAIN and blocks another second before
+     * giving up - two and a half seconds to be told nothing. [awaitDrain] used to do
+     * that six times over with a 400ms sleep between each, so every receipt sent to a
+     * send-only printer ended in about SEVENTEEN SECONDS of waiting for an answer that
+     * was never coming.
+     *
+     * A USB printer answers the first ask and returns at once, which is exactly why USB
+     * felt fast and the other two did not. The receipt itself goes out in a single
+     * WriteData call on every transport; nothing about them differs by anything like
+     * that margin.
+     *
+     * So the question is asked once per printer per app run and the answer kept here. A
+     * module that stays silent is never asked again - it gets [SEND_ONLY_SETTLE_MS] to
+     * clear its buffer and the job ends.
+     *
+     * Deliberately not persisted. A printer swapped for one that does answer should
+     * start answering again after a restart rather than being written off for good.
+     */
+    private val sendOnlyPrinters = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Time allowed for the tail of the receipt to clear a send-only printer before the
+     * port is closed.
+     *
+     * Margin for the module's own buffer, not for the transfer. The SDK flushes as it
+     * writes - Bluetooth in 1KB chunks, WiFi in one socket write - so the raster has
+     * left the app by the time PrintBitmap returns. That is why this is a quarter of a
+     * second rather than the seconds the old status loop spent.
+     */
+    private const val SEND_ONLY_SETTLE_MS = 250L
+
+    /**
+     * Waits for the printer to take the receipt, and reports its status if it has one.
+     *
+     * A status reply only comes back once the printer has drained what it was sent, so
+     * on a printer that answers, the reply doubles as the drain wait - a receipt raster
+     * is hundreds of KB and closing the socket with the tail in flight loses the end of
+     * the bill.
+     *
+     * ONE ASK, not six. GetRealTimeStatus already writes the query twice and waits a
+     * second for each, so the old loop was re-running a retry that had already been
+     * run, at 2.5 seconds a turn. A printer that has ignored two queries over two and a
+     * half seconds will not answer the third.
+     *
+     * A printer already known to be send-only is not asked at all - see
+     * [sendOnlyPrinters]. That is what takes the cost from every receipt down to the
+     * first one after the app starts.
+     */
+    private fun awaitDrain(context: Context, config: Config): Int? {
+        val key = "${config.connection}:${config.ip}"
+        if (key in sendOnlyPrinters) {
+            PrintLog.d(
+                context, TAG,
+                "known send-only printer - settling ${SEND_ONLY_SETTLE_MS}ms rather than asking"
+            )
+            Thread.sleep(SEND_ONLY_SETTLE_MS)
+            return null
         }
+        readStatus()?.let { return it }
+        // Silent, and the ask above has already been retried inside the SDK. Remember
+        // it so no later receipt to this printer pays for the same silence again.
+        sendOnlyPrinters.add(key)
+        PrintLog.d(
+            context, TAG,
+            "printer never answered a status query - send-only, will not be asked again"
+        )
+        Thread.sleep(SEND_ONLY_SETTLE_MS)
         return null
     }
-
-    private const val DRAIN_ATTEMPTS = 6
-    private const val DRAIN_INTERVAL_MS = 400L
 
     /** Fits the receipt to the paper width, preserving aspect ratio. */
     private fun scaleToPaper(source: Bitmap, paperDots: Int): Bitmap {
