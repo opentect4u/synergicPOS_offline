@@ -427,18 +427,20 @@
                          there, which a search box can afford - it holds one line either
                          way - and the height it used to take goes to the menu below. -->
 
-                    <!-- Section/category tabs -->
-                    <HorizontalScrollView
+                    <!-- Section/category tabs.
+                         A RecyclerView rather than the scrolled LinearLayout it began
+                         as, so that holding a tab and dragging it to reorder the strip
+                         runs on ItemTouchHelper - the same mechanism the grocery sale
+                         screen's tabs use, rather than a second hand-rolled one that
+                         has to get drag shadows, gap animation and edge scrolling
+                         right on its own. See ProductsCategoryTabs. It scrolls
+                         horizontally by itself, so the scroller it replaces is gone. -->
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/rvProductCategories"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:scrollbars="none">
-
-                        <LinearLayout
-                            android:id="@+id/llProductCategories"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal" />
-                    </HorizontalScrollView>
+                        android:clipToPadding="false"
+                        android:scrollbars="none" />
 
                     <View
                         android:layout_width="match_parent"

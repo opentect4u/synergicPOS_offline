@@ -376,6 +376,25 @@ class PosBillingFragment : Fragment(), TitledScreen {
         categoryAdapter = CategoryAdapter()
         rvCategories.adapter = categoryAdapter
 
+        // Hold a tab to pick it up and drag it along the strip - see [CategoryOrder].
+        // Position 0 is "All" and stays put; it is the way back to the whole shelf
+        // rather than a category, and it is the one tab a drag could not put back.
+        com.example.synergic_pos_offline.utils.CategoryOrder.attach(
+            recycler = rvCategories,
+            firstMovable = 1,
+            onMove = { from, to ->
+                // The strip IS the order, so the list moves with the finger and the
+                // adapter is told about that one move - not redrawn wholesale, which
+                // would drop the tab being carried out from under it.
+                categories.add(to, categories.removeAt(from))
+                categoryAdapter.notifyItemMoved(from, to)
+            },
+            onDropped = {
+                com.example.synergic_pos_offline.utils.CategoryOrder
+                    .remember(categories.drop(1))
+            }
+        )
+
         // Products - seven to a row AT LEAST, and more wherever the width allows, so
         // the shelf shows as much of the catalogue as it can at once instead of one
         // screenful of oversized tiles. See ProductGrid for why seven is a floor
@@ -726,7 +745,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
         categories.add("All")
         categoryItems.clear()
 
-        for (cat in dbCategories) {
+        // The catalogue comes back in creation order; the shop may have dragged the
+        // tabs into a different one. Re-reading the products must not quietly undo
+        // that, so the remembered order is applied here rather than only at the drop.
+        val order = com.example.synergic_pos_offline.utils.CategoryOrder
+            .ordered(dbCategories.map { it.name })
+        val byName = dbCategories.associateBy { it.name }
+
+        for (name in order) {
+            val cat = byName[name] ?: continue
             categories.add(cat.name)
             categoryItems.add(CategoryItem(cat.id, cat.name))
         }
