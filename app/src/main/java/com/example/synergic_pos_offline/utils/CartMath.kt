@@ -263,7 +263,13 @@ object CartMath {
         // Tax off means the till charges no tax at all, whatever rate a line carries
         // on file - see BillPricing.price's own note on this - so a charge is not
         // taxed there either.
-        if (cfg.taxEnabled) {
+        //
+        // Nor is it taxed under MRP (inclusive) Post-Tax: the charge's principal
+        // still joins the bill once, untaxed, via Totals.total's chargesTotal, but
+        // nothing further is added to cgst/sgst/vat for it - a ₹40 service charge
+        // on an inclusive Post-Tax sale is exactly ₹40, not ₹42 with GST folded in
+        // on top of it.
+        if (cfg.taxEnabled && !(cfg.inclusive && !cfg.discountPreTax)) {
             val chargesPrincipal = charges.sumOf { it.amount }
             if (chargesPrincipal > 0.0 && sub > 0.0) {
                 lines.forEach { line ->
