@@ -65,11 +65,29 @@ object ProductCsvExport {
         """.trimIndent()
 
         return """
-            SELECT p.product_name, c.category_name, p.hsn_code, p.bar_code,
-                   r.rate_name, r.rate, u.unit_symbol, r.cgst_rate, r.sgst_rate,
+            SELECT p.product_name,
+                   -- The Dept Code, built the way CategoryDao.formatCode builds it,
+                   -- so what comes out is what the Category master shows and what the
+                   -- import reads back. An uncategorised product exports blank rather
+                   -- than "DEPT" with nothing after it.
+                   CASE WHEN c.id IS NULL THEN ''
+                        ELSE 'DEPT' || SUBSTR('000' || c.id, -3, 3) END AS category_code,
+                   p.hsn_code, p.bar_code,
+                   -- The rate name master's id, not its text - what the import now
+                   -- reads. Falls back to nothing rather than to the loose rate_name
+                   -- string beside it: a rate never linked to the master has no id to
+                   -- export, and inventing one would point at the wrong row.
+                   COALESCE(r.rate_name_id, '') AS rate_name_id,
+                   r.rate, u.unit_symbol, r.cgst_rate, r.sgst_rate,
                    r.igst_rate, r.vat_rate,
                    r.discount, r.discount_type, COALESCE(r.sell_price, r.sale_price), r.purchase_price,
-                   '' AS regional_language
+                   '' AS regional_language,
+                   -- The shop's own name for this product in the language the till is
+                   -- on, so a downloaded catalogue comes back with the names already
+                   -- in it rather than blank for every row that has one. Bound rather
+                   -- than inlined; the code is an enum's, but this is still a query.
+                   (SELECT n.regional_name FROM ${DatabaseHelper.Tables.MD_PRODUCT_NAMES} n
+                     WHERE n.product_id = p.id AND n.lang_code = ?) AS regional_name
                    $stockCell
             FROM $products p
             LEFT JOIN $rates r ON r.product_id = p.id
@@ -84,7 +102,7 @@ object ProductCsvExport {
         val withStock = GeneralSettingsDao.isStockEnabled(context)
         val columns = ProductCsvTemplate.columns(context)
         val out = StringBuilder(columns.joinToString(",")).append("\n")
-        DatabaseHelper.getInstance(context).readableDatabase.rawQuery(sql(withStock), null).use { c ->
+        DatabaseHelper.getInstance(context).readableDatabase.rawQuery(sql(withStock), arrayOf(AppLanguage.of(context).code)).use { c ->
             val stockIndex = if (withStock) c.columnCount - 1 else -1
             val languageIndex = c.getColumnIndex("regional_language")
             val currentLanguage = AppLanguage.of(context).englishName

@@ -1414,7 +1414,9 @@ class BillReceiptRenderer(context: Context) {
 
             val modes = draft?.paymentModes ?: paymentModes(db, receiptNo, billType)
             renderPayment(view, modes, narrow)
-            renderUpiQr(view, modes, payable, billNumber)
+            // No modes passed: whether the code prints is the setting's business and
+            // not the payment mode's - see renderUpiQr.
+            renderUpiQr(view, payable, billNumber)
 
             renderFixedLines(
                 db, view, R.id.llBillFooterLines,
@@ -2498,9 +2500,21 @@ class BillReceiptRenderer(context: Context) {
      * counter. It costs no more paper on a cash bill than on any other, and a slip
      * that names CASH beside it has plainly been paid.
      *
-     * ONLINE is the one override: it prints even with the setting off, because
-     * choosing it at checkout says the customer is paying from their phone and has
-     * nothing else to pay against.
+     * ## Why ONLINE is no longer an exception
+     *
+     * It used to print regardless of the setting whenever the mode was ONLINE, on the
+     * reasoning that a customer paying from their phone needs something to scan. At the
+     * counter that is precisely backwards. Picking Online in the take-away and QSR
+     * settle dialog puts a code ON SCREEN for the customer to scan, and the bill is
+     * printed AFTER they have paid it - so the override was printing a second code onto
+     * the receipt for money already in the till, on tills whose owner had switched the
+     * code off.
+     *
+     * It also made one switch mean two things: off still meant a code on any bill that
+     * happened to be paid online. A shop that turns "UPI QR on bill" off has said
+     * plainly what it wants, and an override that knows better is a setting that cannot
+     * be trusted. A shop that does want scan-to-pay turns it on, and then ONLINE bills
+     * carry the code like every other.
      *
      * A UPI ID has to be set up in Bill Settings for any of this - with none saved,
      * or one that is not a readable address, there is no code to draw.
@@ -2510,12 +2524,11 @@ class BillReceiptRenderer(context: Context) {
      * address is not a matter of how the slip looked - it is where the money goes,
      * and money owed today goes to the account the shop banks with today.
      */
-    private fun renderUpiQr(view: View, modes: List<String>, payable: Double, billNumber: String) {
+    private fun renderUpiQr(view: View, payable: Double, billNumber: String) {
         val container = view.findViewById<LinearLayout>(R.id.llUpiQr) ?: return
         container.visibility = View.GONE
 
         if (payable <= 0.0) return
-        val online = modes.any { it.equals("ONLINE", true) }
 
         val settings = runCatching { BillSettingsDao(ctx).load() }.getOrNull() ?: return
         if (!UpiQr.isValidVpa(settings.upiId)) return
@@ -2523,7 +2536,9 @@ class BillReceiptRenderer(context: Context) {
         // THE SETTING DECIDES, AND IT IS THE ONLY THING THAT DOES.
         //
         // "UPI QR on bill" on means the code goes on the bill - every bill, whatever
-        // it was paid by.
+        // it was paid by. Off means no bill carries it, whatever it was paid by. The
+        // payment mode is not consulted here at all; see the note above for why the
+        // ONLINE exception that used to live on this line was wrong at the counter.
         //
         // It used to depend on the payment mode as well, and only on a RESTAURANT
         // bill: cash and card printed nothing there, on the reasoning that the money
@@ -2536,12 +2551,7 @@ class BillReceiptRenderer(context: Context) {
         // The second-payment worry is what a receipt is for. A slip that names CASH
         // and carries a code is a slip that has been paid; nobody is invited by it,
         // and a shop that disagrees has a switch to turn off.
-        //
-        // ONLINE still prints whether or not the setting is on. Choosing it at
-        // checkout says the customer is paying from their phone and has nothing else
-        // to pay against - no card machine, no cash drawer - so a bill without a code
-        // leaves them keying an address and a figure in by hand.
-        if (!online && !settings.upiQrEnabled) return
+        if (!settings.upiQrEnabled) return
 
         val uri = UpiQr.payUri(
             settings.upiId, settings.upiPayeeName, payable,
