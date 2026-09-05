@@ -1245,14 +1245,18 @@ class BillReceiptRenderer(context: Context) {
             //
             // A fresh sale (draft != null) has no stored figure yet to read, so its
             // charge-tax is worked out live, the same way CartMath.totals() worked
-            // it out for the screen that quoted it - see [inflateForCharges].
+            // it out for the screen that quoted it - see [inflateForCharges]. Not
+            // under MRP (inclusive) Post-Tax, though - see CartMath.totals()'s own
+            // note on why a charge is not taxed there at all - which this has to
+            // match, or a fresh print quotes tax on the charge that the same sale's
+            // own reprint (reading the header's already-untaxed figure back) does not.
             //
             // Not folded into loadItems() itself: for a grocery draft, chargesTotal
             // above is only known AFTER totals.itemsSubtotal exists (it is what the
             // charge is computed against), so the charges principal cannot be known
             // before loadItems() runs for every caller - a pass after both are built
             // is the only ordering that works uniformly.
-            if (draft != null && chargesTotal > 0.0 && taxEnabled) {
+            if (draft != null && chargesTotal > 0.0 && taxEnabled && !(inclusive && !discountPreTax)) {
                 val (inflatedTotals, inflatedSlabs) = inflateForCharges(partRaws, totals, taxSlabs, chargesTotal)
                 totals = inflatedTotals
                 taxSlabs = inflatedSlabs

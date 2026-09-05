@@ -204,6 +204,31 @@ class CartMathTest {
     }
 
     /**
+     * The same ₹600 + ₹200 INCLUSIVE cart, 10% bill-wise POST-tax discount, plus a
+     * ₹40 extra charge (5% of the ₹800 subtotal) - printed GRAND TOTAL 762.00,
+     * ₹2.00 too much, because the charge's own GST (5% of ₹40) was folded into
+     * cgst/sgst on top of it. Under MRP (inclusive) Post-Tax a charge is not taxed
+     * at all - its principal joins the total once, untouched, at exactly what it
+     * was configured as.
+     */
+    @Test
+    fun `a charge is not taxed on an inclusive post-tax bill`() {
+        val lines = listOf(
+            CartMath.Line(qty = 1.0, rate = 600.0, cgstRate = 2.5, sgstRate = 2.5),
+            CartMath.Line(qty = 1.0, rate = 200.0, cgstRate = 2.5, sgstRate = 2.5)
+        )
+        val c = CartMath.Config(
+            taxEnabled = true, inclusive = true, discountPreTax = false,
+            itemwiseDiscount = false, billwiseDiscount = true
+        )
+        val totals = CartMath.totals(
+            lines, c, GstCalculator.DiscountMode.PERCENT, 10.0, charges = listOf(charge(40.0))
+        )
+        assertEquals(40.0, totals.chargesTotal, delta)
+        assertEquals(760.0, totals.total, delta)
+    }
+
+    /**
      * The cart this pins down: a ₹200 line and a ₹600 line, both 5% off item-wise,
      * inclusive of 5% GST, post-tax - showed "Discount (item-wise)" as -₹40.01
      * instead of -₹40.00 on screen.
