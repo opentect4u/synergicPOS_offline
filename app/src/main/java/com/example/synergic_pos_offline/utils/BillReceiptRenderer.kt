@@ -371,14 +371,19 @@ class BillReceiptRenderer(context: Context) {
      * per bill, not per line, so it is passed in from the header - and printed
      * exactly as stored, via [totalDiscount], so a bill's DISCOUNT line can never
      * read differently on its own slip than it does in Bill Wise Report or any
-     * other reading of `tot_discount_amount`.
+     * other reading of `tot_discount_amount`. It is the customer-facing figure -
+     * see [CartMath.Totals.discount] - not the raw one lines are priced against.
      *
-     * A pre-tax discount is spread across the lines at billing time, so it already
-     * shows up inside [itemsSubtotal] via each line's own `discount_amount`
-     * ([itemDiscountApplied] is that spread total). A post-tax discount instead
-     * leaves every line untouched and applies once, after tax, at the bill level -
-     * [remainingDiscount] is whichever part of [discount] the lines have not
-     * already accounted for, so it is never subtracted twice.
+     * [itemDiscountApplied] is a different denomination entirely: the sum of each
+     * line's own STORED `discount_amount`, always against that line's raw pre-tax
+     * base (see [CartMath.lineDiscount]) - never grossed up to match [discount].
+     * It exists only to tell [remainingDiscount] apart, not to be compared to
+     * [discount] by subtraction: item-wise, or a bill-wise discount spread pre-tax,
+     * writes a nonzero figure to every discounted line, and [grandTotal] must add
+     * nothing further since each line's own total already reflects it in full. Only
+     * a bill-wise POST-TAX discount leaves every line's `discount_amount` at zero -
+     * lineDiscount deliberately skips it there, since it comes off the bill's total
+     * once instead - which is the one case [remainingDiscount] still has to subtract.
      */
     private data class BillTotals(
         val itemsSubtotal: Double = 0.0,
@@ -394,20 +399,21 @@ class BillReceiptRenderer(context: Context) {
     ) {
         val base: Double get() = itemsSubtotal
         val tax: Double get() = cgst + sgst + vat + otherTax
-        val remainingDiscount: Double get() = (discount - itemDiscountApplied).coerceAtLeast(0.0)
-        val grandTotal: Double get() = (base + tax - remainingDiscount).coerceAtLeast(0.0)
 
         /**
-         * The whole discount the customer got, printed exactly as [discount] is
-         * stored - not restated against the lines' listed prices, which an item-wise
-         * discount (still individually applied per line even under the till's
-         * locked Post-tax position) can genuinely differ from: a discount configured
-         * against a line's pre-tax base and one measured against its listed, taxed
-         * price are two different numbers under inclusive pricing or a discount
-         * computed post-tax, and only the pre-tax-base one is what got stored - and
-         * so what a customer's slip must agree with everywhere else that figure is
-         * read from.
+         * Whichever part of [discount] the lines have not already accounted for -
+         * see the class doc. NOT `discount - itemDiscountApplied`: the two are
+         * different denominations once [discount] is the customer-facing figure, so
+         * subtracting one from the other is meaningless arithmetic, not a partial
+         * amount - a ₹40.00 item-wise discount minus its own ₹38.10-equivalent raw
+         * stored total would leave ₹1.90 "remaining" that was never actually owed,
+         * double-subtracting a sliver of a discount every line's own total already
+         * carries in full.
          */
+        val remainingDiscount: Double get() = if (itemDiscountApplied > 0.005) 0.0 else discount
+        val grandTotal: Double get() = (base + tax - remainingDiscount).coerceAtLeast(0.0)
+
+        /** The whole discount the customer got, printed exactly as [discount] is stored. */
         val totalDiscount: Double get() = discount
     }
 
@@ -854,6 +860,8 @@ class BillReceiptRenderer(context: Context) {
                 ?: (TaxSettingsDao(ctx).load().discountPosition == TaxSettingsDao.DiscountPosition.PRE_TAX)
             val inclusive = snapshot?.inclusive
                 ?: (TaxSettingsDao(ctx).load().taxMode == TaxSettingsDao.GstMode.INCLUSIVE)
+            val itemwiseDiscount = snapshot?.itemwiseDiscount
+                ?: (TaxSettingsDao(ctx).load().discountType == TaxSettingsDao.DiscountType.ITEM_WISE)
 
             // Which layout this is being drawn into. The format is a live setting
             // rather than part of the bill's snapshot - it is how this till prints,
@@ -971,14 +979,17 @@ class BillReceiptRenderer(context: Context) {
                 roundOff = 0.0
                 serviceCharge = 0.0
             }
-            val (items, lineTotals, initialTaxSlabs) = loadItems(partRaws, inclusive)
+            val (items, lineTotals, initialTaxSlabs) = loadItems(partRaws, inclusive, discountPreTax, itemwiseDiscount)
             var taxSlabs = initialTaxSlabs
             val llItems = view.findViewById<LinearLayout>(R.id.llItems)
             llItems.removeAllViews()
-            // The DISC column earns its place only when a line actually carries a
-            // discount. A bill-wise discount comes off the taxed total instead, so it
-            // leaves every line alone and the column would print nothing but dashes.
-            val showDisc = items.any { it.discount != null }
+            // The DISC column earns its place only under an ITEM-WISE discount - a
+            // bill-wise one is a property of the whole sale, not of any one line
+            // (see loadItems' own note on [lineNetListed]), so it never gets a
+            // column of its own even when a pre-tax bill-wise discount does spread
+            // a nonzero share into a line's own stored figures to keep the tax
+            // right - that spread is bookkeeping, not something to print per row.
+            val showDisc = itemwiseDiscount && items.any { it.discount != null }
             view.findViewById<TextView>(R.id.tvColDisc).visibility =
                 if (showDisc) View.VISIBLE else View.GONE
 
@@ -1095,7 +1106,7 @@ class BillReceiptRenderer(context: Context) {
                     else -> CLASSIC_GRAND_TOTAL_SP
                 }
                 fun sectionSummary(sectionRaws: List<RawLine>) {
-                    val (_, secTotals, secTaxSlabs) = loadItems(sectionRaws, inclusive)
+                    val (_, secTotals, secTaxSlabs) = loadItems(sectionRaws, inclusive, discountPreTax, itemwiseDiscount)
                     val secShowDiscount = secTotals.totalDiscount > 0.005
                     val secSummary = LinearLayout(ctx).apply {
                         layoutParams = LinearLayout.LayoutParams(
@@ -1893,7 +1904,9 @@ class BillReceiptRenderer(context: Context) {
 
     /** Turns priced lines into the printed rows, the receipt totals and the tax
      *  slabs, in one pass. */
-    private fun loadItems(raws: List<RawLine>, inclusive: Boolean): Triple<List<BillItem>, BillTotals, List<TaxSlab>> {
+    private fun loadItems(
+        raws: List<RawLine>, inclusive: Boolean, discountPreTax: Boolean, itemwiseDiscount: Boolean
+    ): Triple<List<BillItem>, BillTotals, List<TaxSlab>> {
         val list = mutableListOf<BillItem>()
         var subtotalSum = 0.0
         var cgstSum = 0.0
@@ -1956,20 +1969,46 @@ class BillReceiptRenderer(context: Context) {
                     acc[6] += vatAmt
                 }
 
-                // The discount the customer got, stated against the line's listed
-                // price - the terms it was set in - so a "3% off 100" reads as 3.00
-                // whichever way the price is taxed. That means comparing like with
-                // like: an inclusive price already carries tax, so it is measured
-                // against the line total; an exclusive one is measured pre-tax,
-                // against the taxable net. Taking the drop in the tax-inclusive
-                // total instead would gross an exclusive 3.00 up to 3.15.
+                // AMOUNT/NET AMT is what this line actually costs, tax included -
+                // itemTotal - under an ITEM-WISE discount, so what you see per row
+                // is what that item's OWN discount left it costing. Under BILL-WISE,
+                // inclusive or exclusive, a line has no discount or tax of its own
+                // to report at all - the whole-bill figure is a property of the
+                // SALE, not of any one line, whichever position it is taken off in
+                // (a pre-tax one, or an inclusive post-tax one, still spreads a
+                // share into this line's own taxable so the tax comes out right -
+                // see CartMath.lineDiscount's own note - but that is bookkeeping for
+                // the tax total, not something this row is meant to show) - so it
+                // stays the bare, untaxed [subtotal] there: what the row lists for,
+                // full stop, with tax and discount both worked out once in the
+                // summary below rather than folded into a row that never priced
+                // either of its own.
                 //
-                // Both sides come from the stored figures, so the column still
-                // reconciles with the totals rather than being re-derived from the
-                // configured rate.
+                // The DISC beside it is a separate figure entirely on an exclusive
+                // line - what the product's own configured discount comes to
+                // against the rate as it was typed in (₹30 off a ₹600 line at 5%,
+                // never grossed up by that line's own tax on top), not "PRICE minus
+                // AMOUNT": once AMOUNT is tax-inclusive, PRICE less DISC is the line's
+                // ex-tax net, which still needs its own tax added to reach AMOUNT -
+                // that addition just is not spelled out on this row (see CGST/SGST
+                // below), the same way an inclusive line's tax is already folded into
+                // its MRP without a row of its own either.
+                //
+                // [lineDiscount] (raw.discountAmount) is stored against whatever
+                // base GstCalculator.itemDiscountAgainstRawBase divided it down
+                // against - grossed back up by the line's own tax factor to recover
+                // the true "5% of..." figure, EXCEPT for an exclusive PRE-TAX line,
+                // whose raw figure already IS that figure with nothing divided out
+                // (its pre-tax base is the rate itself, not a stripped-down fraction
+                // of it) - see CartMath.Totals.discount's own doc for why pre-tax is
+                // the one case measured against the untaxed rate rather than the
+                // taxed price.
                 val lineDiscount = raw.discountAmount
-                val lineNetListed = if (inclusive) itemTotal else lineNet
-                val lineDiscountListed = (subtotal - lineNetListed).coerceAtLeast(0.0)
+                val combinedRate = cgstRate + sgstRate + vatRate
+                val lineNetListed = if (!itemwiseDiscount) subtotal else itemTotal
+                val exclusivePreTax = !inclusive && discountPreTax
+                val lineDiscountListed =
+                    if (exclusivePreTax) lineDiscount else lineDiscount * (1.0 + combinedRate / 100.0)
                 itemDiscountSum += lineDiscount
                 val hsn = raw.hsn
                 val disc = if (lineDiscountListed > 0.005) money(lineDiscountListed) else null

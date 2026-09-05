@@ -37,14 +37,21 @@ object BillSettingsSnapshot {
         val discountPreTax: Boolean,
         /** Whether the listed price already included tax - decides whether the
          *  displayed discount is read off the price alone or the price plus tax. */
-        val inclusive: Boolean
+        val inclusive: Boolean,
+        /** Whether the discount was item-wise (one product's own configured share)
+         *  or bill-wise (one figure entered against the whole sale) when this bill
+         *  was made - decides which of [CartMath]'s two discount calculations a
+         *  reprint's DISC column and DISC-column visibility follow, the same way
+         *  [discountPreTax]/[inclusive] decide the calculation itself. */
+        val itemwiseDiscount: Boolean
     )
 
     fun serialize(
         settings: BillSettingsDao.BillSettings,
         taxEnabled: Boolean,
         discountPreTax: Boolean,
-        inclusive: Boolean
+        inclusive: Boolean,
+        itemwiseDiscount: Boolean
     ): String =
         JSONObject().apply {
             put("hsnCode", settings.hsnCode)
@@ -58,6 +65,7 @@ object BillSettingsSnapshot {
             put("taxEnabled", taxEnabled)
             put("discountPreTax", discountPreTax)
             put("inclusive", inclusive)
+            put("itemwiseDiscount", itemwiseDiscount)
         }.toString()
 
     /** Null when [json] is blank or unreadable - an older bill saved before this existed. */
@@ -88,7 +96,11 @@ object BillSettingsSnapshot {
                         .getOrNull()?.let { it != GstCalculator.TaxRegime.NONE } ?: true
                 },
                 discountPreTax = o.optBoolean("discountPreTax", true),
-                inclusive = o.optBoolean("inclusive", false)
+                inclusive = o.optBoolean("inclusive", false),
+                // Bills made before this was captured default to item-wise, matching
+                // TaxSettingsDao.TaxSettings' own default - the choice most likely to
+                // have been active before this field existed to record it.
+                itemwiseDiscount = o.optBoolean("itemwiseDiscount", true)
             )
         }.getOrNull()
     }

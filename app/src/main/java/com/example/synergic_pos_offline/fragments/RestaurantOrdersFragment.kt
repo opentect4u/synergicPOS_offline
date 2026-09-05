@@ -274,24 +274,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         /** What tax was charged on, once any pre-tax discount came off. */
         val taxable: Double = 0.0,
         /**
-         * The discount taken off this order - the bill-wise figure typed on the cart
-         * page, or the sum of the lines' own under item-wise discount, ALWAYS
-         * against the lines' raw pre-tax base. This is what is written to the bill,
-         * per line as `td_bill_items.discount_amount` and per bill as
-         * `tot_discount_amount` - see the per-line figure sent alongside it at each
-         * call site. [BillReceiptRenderer] re-derives the customer-facing, taxed
-         * figure from those stored amounts itself; handing it an already-grossed
-         * total here would double the gross-up, which is what [discountDisplay]
-         * exists to avoid doing on screen instead.
+         * The discount this order's lines are actually PRICED against - the bill-wise
+         * figure typed on the cart page, or the sum of the lines' own under item-wise
+         * discount, ALWAYS against the lines' raw pre-tax base. This is what a caller
+         * spreads per line with (see the per-line figure sent alongside it at each
+         * call site) - never what gets shown or written as the bill's headline
+         * discount; see [discountDisplay] for that.
          */
         val discount: Double = 0.0,
         /**
-         * [discount], but grossed up the way a post-tax item-wise discount actually
-         * lands on the customer's total - for the panel only. A pre-tax discount
-         * reduces the taxable value directly, so it IS [discount]; a post-tax one
-         * comes off the taxed price instead, so what the customer sees knocked off
-         * is [discount] plus the tax it would otherwise have carried. Never written
-         * anywhere - see [discount] for why the stored figure has to stay raw.
+         * What the customer was actually discounted, in listed-price terms - one
+         * number, correct under item-wise or bill-wise and either tax position (see
+         * [CartMath.Totals.discount]). This is what is shown on the panel AND what is
+         * written to the bill, per bill as `tot_discount_amount` - so the screen, the
+         * printed slip and every report that reads that column agree on one figure.
+         * NOT what a line is priced against - see [discount] for that; the two used
+         * to be conflated, which is why the printed DISCOUNT line and this panel's
+         * own figure could disagree for a post-tax item-wise discount.
          */
         val discountDisplay: Double = discount,
         /** How that discount was entered, for the record written to the bill. */
@@ -402,16 +401,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // sent to checkout/the slip below, so a post-tax bill's stored total
             // still equals the sum of what each line stored, and the receipt does
             // not gross the same discount up twice (once per line, again here).
-            // Under bill-wise it is the one that was typed.
-            discount = if (itemwiseDiscountActive) itemwiseDiscountTotal(lines) else totals.discount,
-            // The panel's own figure, which - unlike the stored one above - SHOULD
-            // read post-tax as the taxed reduction the customer sees, not the raw
-            // pre-tax figure: see discountDisplay's own doc.
-            discountDisplay = when {
-                !itemwiseDiscountActive -> totals.discount
-                discountPreTax -> itemwiseDiscountTotal(lines)
-                else -> totals.itemwiseDiscount
-            },
+            // Under bill-wise it is [CartMath.Totals.billWiseDiscount] - not
+            // totals.discount, which is a different (listed) denomination for a
+            // post-tax bill-wise discount and would spread the wrong figure.
+            discount = if (itemwiseDiscountActive) itemwiseDiscountTotal(lines) else totals.billWiseDiscount,
+            // The customer-facing figure, correct under every combination already -
+            // see CartMath.Totals.discount - so nothing further to branch on here.
+            discountDisplay = totals.discount,
             discountIsPercent = discountMode == com.example.synergic_pos_offline.utils.GstCalculator.DiscountMode.PERCENT,
             discountPercent = com.example.synergic_pos_offline.utils.CartMath
                 .discountPercent(lines, cartConfig(), totals.discount),
@@ -451,22 +447,22 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     )
 
     /**
-     * What the lines' own discounts came to under a PRE-tax item-wise discount - the
-     * sum of each line's own [CartMath.lineDiscount], the figure actually taken off
-     * its pre-tax base, the same one [BillDao] stores against the line and the same
-     * shape a GST bill reports a discount in. [totals.itemwiseDiscount][CartMath.Totals.itemwiseDiscount]
-     * is the post-tax counterpart, already worked out where a bill needs that one.
+     * What the lines' own item-wise discounts come to for STORAGE/SPREADING - the sum
+     * of each line's own [CartMath.lineDiscount], always against its raw pre-tax base,
+     * the same shape [BillDao] stores against the line and a GST bill reports a
+     * discount in. Used for BOTH tax positions: whichever position is active, the
+     * per-line stored `discount_amount` is always this raw figure - only the
+     * CUSTOMER-FACING total ([CartMath.Totals.discount], via [BillBreakdown.discountDisplay])
+     * differs between the two.
      *
-     * NOT the gap between the full taxed line and what it actually sells for. Under
-     * a pre-tax discount that gap is bigger than the discount itself by the tax the
+     * NOT the gap between the full taxed line and what it actually sells for. Under a
+     * pre-tax discount that gap is bigger than the discount itself by the tax the
      * discount also saved - 10% off a 240.00 line at 5% GST sells for 5.34 less than
-     * the discount alone would suggest (216.00 taxed vs. 228.00 taxed), so reading
-     * the discount back that way reports 112.34 for a bill where 107.00 was actually
-     * configured and charged. [CartMath.lineDiscount] is exact regardless, since it
-     * is the pre-tax figure everything else - the taxable value, the tax, the row
-     * sent to checkout - is already built from. That gap IS the right figure post-tax,
-     * which is exactly what [CartMath.Totals.itemwiseDiscount] already is - see the
-     * call site, which reads for pre-tax only.
+     * the discount alone would suggest (216.00 taxed vs. 228.00 taxed), so reading the
+     * discount back that way reports 112.34 for a bill where 107.00 was actually
+     * configured and charged. [CartMath.lineDiscount] is exact regardless, since it is
+     * the pre-tax figure everything else - the taxable value, the tax, the row sent to
+     * checkout - is already built from.
      */
     private fun itemwiseDiscountTotal(lines: List<com.example.synergic_pos_offline.utils.CartMath.Line>): Double {
         val cfg = cartConfig()
@@ -4509,8 +4505,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             ),
             table = billTable,
             items = items,
-            // The slip shows what came off, whichever way it was arrived at.
-            discount = b.discount, roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
+            // The slip shows what came off, whichever way it was arrived at - the
+            // customer-facing figure, not the raw one the lines above are priced
+            // against (see BillBreakdown.discount vs .discountDisplay).
+            discount = b.discountDisplay, roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
             paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),
             serviceCharge = b.service,   // shown as its own totals line, not an item
             // The figures already quoted on the order panel, handed to the slip rather
@@ -4659,7 +4657,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                         custPhone = order.phone.takeIf { it.isNotBlank() }, custId = custId
                     ),
                     totalPrice = b.subtotal,
-                    discountAmount = b.discount,
+                    // The bill's headline discount - the customer-facing figure (see
+                    // BillBreakdown.discountDisplay), so tot_discount_amount reads the
+                    // same number the panel showed and the slip printed. NOT b.discount:
+                    // that is the raw figure the lines above are priced/spread against.
+                    discountAmount = b.discountDisplay,
                     discountPercentage = b.discountPercent,
                     discountIsPercent = b.discountIsPercent,
                     cgstAmount = b.cgst,

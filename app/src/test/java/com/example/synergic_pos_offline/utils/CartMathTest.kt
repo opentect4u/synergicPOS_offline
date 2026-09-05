@@ -153,4 +153,123 @@ class CartMathTest {
         assertEquals(21.0, withoutCharge.discount, delta)
         assertEquals(withoutCharge.discount, withCharge.discount, delta)
     }
+
+    /**
+     * A ₹600 + ₹200 exclusive cart, 5% GST, 5% bill-wise PRE-tax: the discount is a
+     * share of the raw ₹800 the two lines list for (₹40.00), taken off before tax -
+     * so GST is charged on the remaining ₹760.00 (₹19.00 CGST + ₹19.00 SGST), not
+     * on the ₹840 those lines come to once taxed (which is what a POST-tax bill-
+     * wise discount - a different, already-correct calculation - is a share of).
+     */
+    @Test
+    fun `a bill-wise pre-tax discount on an exclusive cart is a share of the raw subtotal`() {
+        val lines = listOf(
+            CartMath.Line(qty = 1.0, rate = 600.0, cgstRate = 2.5, sgstRate = 2.5),
+            CartMath.Line(qty = 1.0, rate = 200.0, cgstRate = 2.5, sgstRate = 2.5)
+        )
+        val c = cfg(discountPreTax = true, billwiseDiscount = true)
+        val totals = CartMath.totals(lines, c, GstCalculator.DiscountMode.PERCENT, 5.0)
+        assertEquals(40.0, totals.discount, delta)
+        assertEquals(19.0, totals.cgst, delta)
+        assertEquals(19.0, totals.sgst, delta)
+        assertEquals(798.0, totals.total, delta)
+    }
+
+    /**
+     * A ₹600 + ₹200 INCLUSIVE (MRP) cart, 5% GST, 5% bill-wise POST-tax: GST is
+     * charged on the discounted value - the same rule an item-wise post-tax
+     * discount already follows - so each line's own CGST comes to 13.57 and 4.52
+     * (₹18.09 summed, each line already rounded to its own paisa - the same
+     * summing convention every other CGST/SGST total already uses), not the
+     * ₹19.05+₹19.05 = ₹38.10 combined tax that charging on the full, undiscounted
+     * ₹800 gives. The bill-wise discount total itself is unaffected - still
+     * ₹40.00, since MRP pricing already collapses pre/post-tax to the same figure
+     * (see [CartMath.Totals.discount]'s own doc).
+     */
+    @Test
+    fun `a bill-wise post-tax discount on an inclusive cart is charged on the discounted value`() {
+        val lines = listOf(
+            CartMath.Line(qty = 1.0, rate = 600.0, cgstRate = 2.5, sgstRate = 2.5),
+            CartMath.Line(qty = 1.0, rate = 200.0, cgstRate = 2.5, sgstRate = 2.5)
+        )
+        val c = CartMath.Config(
+            taxEnabled = true, inclusive = true, discountPreTax = false,
+            itemwiseDiscount = false, billwiseDiscount = true
+        )
+        val totals = CartMath.totals(lines, c, GstCalculator.DiscountMode.PERCENT, 5.0)
+        assertEquals(40.0, totals.discount, delta)
+        assertEquals(18.09, totals.cgst, delta)
+        assertEquals(18.09, totals.sgst, delta)
+        assertEquals(760.0, totals.total, delta)
+    }
+
+    /**
+     * The cart this pins down: a ₹200 line and a ₹600 line, both 5% off item-wise,
+     * inclusive of 5% GST, post-tax - showed "Discount (item-wise)" as -₹40.01
+     * instead of -₹40.00 on screen.
+     *
+     * The cause: [CartMath.Totals.discount] used to be worked out as
+     * `taxable + cgst + sgst + vat - itemTotal` - CGST and SGST each rounded to
+     * their own paisa before being added back, which can land a paisa off that same
+     * line's own itemTotal (the identical fault [BillPricing.price]'s own note
+     * fixed itemTotal against). One line absorbed the excess and the aggregate read
+     * a paisa short of the ₹30 + ₹10 the two lines were actually discounted by.
+     */
+    @Test
+    fun `an item-wise post-tax discount matches to the paisa across the whole cart`() {
+        val lines = listOf(
+            CartMath.Line(qty = 1.0, rate = 200.0, cgstRate = 2.5, sgstRate = 2.5, discValue = 5.0, discType = "P"),
+            CartMath.Line(qty = 1.0, rate = 600.0, cgstRate = 2.5, sgstRate = 2.5, discValue = 5.0, discType = "P")
+        )
+        val c = CartMath.Config(
+            taxEnabled = true, inclusive = true, discountPreTax = false,
+            itemwiseDiscount = true, billwiseDiscount = false
+        )
+        val totals = CartMath.totals(lines, c, GstCalculator.DiscountMode.PERCENT, 0.0)
+        assertEquals(40.0, totals.discount, delta)
+        assertEquals(760.0, totals.total, delta)
+    }
+
+    /**
+     * The same ₹200/₹600 item-wise 5% cart, EXCLUSIVE PRE-TAX this time, printed
+     * ₹42.00 as DISCOUNT - the operator configured 5% off each product's own
+     * ₹200/₹600 rate as typed in (₹10 + ₹30 = ₹40.00, exactly what the DISC column
+     * beside each line already printed), not 5% off a line grossed up by its own
+     * tax on top of the discount. Pre-tax has nothing to do with a taxed price at
+     * all - see [CartMath.Totals.discount]'s own doc for why POST-tax exclusive is
+     * different (the next test).
+     */
+    @Test
+    fun `an item-wise pre-tax discount on an exclusive cart is not grossed up by its own tax`() {
+        val lines = listOf(
+            CartMath.Line(qty = 1.0, rate = 200.0, cgstRate = 2.5, sgstRate = 2.5, discValue = 5.0, discType = "P"),
+            CartMath.Line(qty = 1.0, rate = 600.0, cgstRate = 2.5, sgstRate = 2.5, discValue = 5.0, discType = "P")
+        )
+        val c = CartMath.Config(
+            taxEnabled = true, inclusive = false, discountPreTax = true,
+            itemwiseDiscount = true, billwiseDiscount = false
+        )
+        val totals = CartMath.totals(lines, c, GstCalculator.DiscountMode.PERCENT, 0.0)
+        assertEquals(40.0, totals.discount, delta)
+    }
+
+    /**
+     * The same cart, EXCLUSIVE POST-TAX: "post-tax" means the discount comes off a
+     * price that already has tax figured into it, so 5% off ₹200/₹600 is measured
+     * against ₹210/₹630 (each rate plus its own 5% GST) - ₹10.50 + ₹31.50 = ₹42.00,
+     * not the ₹40.00 a pre-tax discount on the same cart comes to.
+     */
+    @Test
+    fun `an item-wise post-tax discount on an exclusive cart is measured against the taxed price`() {
+        val lines = listOf(
+            CartMath.Line(qty = 1.0, rate = 200.0, cgstRate = 2.5, sgstRate = 2.5, discValue = 5.0, discType = "P"),
+            CartMath.Line(qty = 1.0, rate = 600.0, cgstRate = 2.5, sgstRate = 2.5, discValue = 5.0, discType = "P")
+        )
+        val c = CartMath.Config(
+            taxEnabled = true, inclusive = false, discountPreTax = false,
+            itemwiseDiscount = true, billwiseDiscount = false
+        )
+        val totals = CartMath.totals(lines, c, GstCalculator.DiscountMode.PERCENT, 0.0)
+        assertEquals(42.0, totals.discount, delta)
+    }
 }

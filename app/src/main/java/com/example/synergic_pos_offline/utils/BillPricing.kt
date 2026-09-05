@@ -26,14 +26,17 @@ object BillPricing {
     )
 
     /**
-     * Works [discountAmount] - always expressed against the line's raw pre-tax base -
-     * into the line under whether tax is switched on.
+     * Works [discountAmount] - always expressed against the line's raw pre-tax base,
+     * whichever price it was actually configured against (see
+     * [GstCalculator.itemDiscountAgainstRawBase]) - into the line under whether tax
+     * is switched on.
      *
-     * A post-tax discount (inclusive or exclusive) is the case where tax is NOT
-     * charged on the discounted value: the rate is applied to the full base and the
-     * discount then comes off the taxed price, so the tax reported matches the full
-     * MRP (a "cash discount" that does not reduce the taxable value). A pre-tax
-     * discount instead comes off the base first and tax is worked out on what remains.
+     * GST is always charged on the value AFTER the discount: [discountPreTax] is not
+     * read here at all - it only decided, upstream, which price [discountAmount] was
+     * measured against before being converted to this raw-base shape (see
+     * [GstCalculator.priceItem]'s own note on why that is the only thing Discount
+     * Position changes). Whichever position it came from, taking it off the same
+     * line's own pre-tax base always reconstructs the correct taxable value.
      *
      * Every figure is returned to the paisa it is reported at, so a bill's lines add
      * up to the total stored against them - see [BillRounding.toPaise].
@@ -47,7 +50,7 @@ object BillPricing {
         discountAmount: Double,
         taxEnabled: Boolean,
         inclusive: Boolean,
-        discountPreTax: Boolean
+        @Suppress("UNUSED_PARAMETER") discountPreTax: Boolean
     ): Line {
         val subtotal = rate * quantity
         // Which taxes this line carries is the *line's* business, not the till's -
@@ -60,25 +63,17 @@ object BillPricing {
         // The listed price is stripped of any tax it already includes to reach the
         // base the rate works on.
         val rawBase = GstCalculator.taxableBase(subtotal, combinedRate, inclusive)
-        val postTax = !discountPreTax && discountAmount > 0.0
-        val taxable = BillRounding.toPaise(
-            if (postTax) rawBase else GstCalculator.taxableValue(rawBase, discountAmount)
-        )
+        val taxable = BillRounding.toPaise(GstCalculator.taxableValue(rawBase, discountAmount))
         val cgst = BillRounding.toPaise(if (taxed) GstCalculator.taxAmount(taxable, cgstRate) else 0.0)
         val sgst = BillRounding.toPaise(if (taxed) GstCalculator.taxAmount(taxable, sgstRate) else 0.0)
         val vat = BillRounding.toPaise(if (taxed) GstCalculator.taxAmount(taxable, vatRate) else 0.0)
-        val taxSum = cgst + sgst + vat
-        // discountAmount is a pre-tax-base amount; grossed up by the rate it is the
-        // discount off the taxed price the customer actually gets. (rawBase + taxSum
-        // is the full taxed MRP - the listed price for an inclusive line, MRP + tax
-        // for an exclusive one.)
-        val itemTotal = BillRounding.toPaise(
-            if (postTax) {
-                (rawBase + taxSum - discountAmount * (1.0 + combinedRate / 100.0)).coerceAtLeast(0.0)
-            } else {
-                taxable + taxSum
-            }
-        )
+        // NOT taxable + cgst + sgst + vat: CGST and SGST are each already rounded to
+        // their own paisa apart, and their sum can land a paisa off the tax on the
+        // taxable value taken as one figure - a discrepancy this line's total must
+        // not inherit. A ₹600 inclusive MRP taxed at the combined rate ONCE and
+        // rounded once comes back to exactly ₹600.00; taxable plus CGST and SGST
+        // each already rounded to their own paisa apart landed on ₹600.01 instead.
+        val itemTotal = BillRounding.toPaise(taxable * (1.0 + combinedRate / 100.0))
         return Line(BillRounding.toPaise(subtotal), taxable, cgst, sgst, vat, itemTotal)
     }
 }

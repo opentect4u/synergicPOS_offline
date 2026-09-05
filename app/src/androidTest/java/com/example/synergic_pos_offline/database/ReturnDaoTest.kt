@@ -285,7 +285,8 @@ class ReturnDaoTest {
                     BillSettingsDao(context).load(),
                     taxEnabled = true,
                     discountPreTax = true,
-                    inclusive = true
+                    inclusive = true,
+                    itemwiseDiscount = true
                 ),
                 receiptNo.toString()
             )
