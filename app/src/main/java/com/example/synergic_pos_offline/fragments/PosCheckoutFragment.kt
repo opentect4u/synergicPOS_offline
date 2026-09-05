@@ -713,8 +713,24 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      *  way it was entered. */
     private fun discountPctForDisplay(): Double {
         val base = discountBase()
-        return if (base > 0) discountAmt() / base * 100.0 else 0.0
+        return if (base > 0) discountAmtForReport() / base * 100.0 else 0.0
     }
+
+    /**
+     * The whole-bill discount actually taken, in customer-facing terms - what is
+     * printed on the slip's DISCOUNT line and stored as `tot_discount_amount`, so
+     * a report reading that column agrees with what the customer was charged.
+     *
+     * Bill-wise: [discountAmt] already is this figure - see its own doc, which
+     * measures a bill-wise discount against the taxed total either way. Item-wise:
+     * [discountAmt] deliberately reports zero there (nothing left for a whole-bill
+     * figure to add - each line prices its own), which is right for the totals
+     * math but wrong for a report column meant to show what was actually saved -
+     * so this sums each line's own [lineDiscount] instead, the same customer-
+     * facing figure the DISC column already prints per line.
+     */
+    private fun discountAmtForReport(): Double =
+        if (itemwiseDiscountActive) BillRounding.toPaise(lines.sumOf { lineDiscount(it) }) else discountAmt()
 
     /**
      * A line's taxable value, CGST, SGST and VAT - see [lineTax]. [discount] is
@@ -811,14 +827,13 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     }
 
     /**
-     * What this line's item-wise discount took off, stated against the listed price
-     * it was configured against - so "3% off 100" reads as 3.00 whether the price
-     * is inclusive or exclusive of tax.
-     *
-     * Deliberately *not* derived from the drop in the tax-inclusive sale price: an
-     * item-wise discount is always applied pre-tax, so on an exclusive price that
-     * drop is the discount grossed up by the tax rate (3.15 on a 5% slab), which is
-     * not the discount the operator set or the customer was quoted.
+     * What this line's item-wise discount took off, stated against whichever price
+     * Discount Position says it is a share of - the same rule [GstCalculator.priceItem]
+     * prices the line by, so this column never disagrees with what is actually
+     * charged: the listed price alone ([line.price] x qty) for an inclusive line
+     * (either position) or an exclusive PRE-tax one, or that price plus its own tax
+     * for an exclusive POST-tax one - "post-tax" means the discount comes off a
+     * price that already has tax figured into it.
      *
      * Zero unless an item-wise discount is active - a bill-wise discount is not a
      * per-line figure, it only moves the bill's total.
@@ -827,7 +842,11 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         if (!itemwiseDiscountActive) return 0.0
         if (line.itemDiscValue <= 0.0 || line.itemDiscType == null) return 0.0
         val mode = if (line.itemDiscType == "A") GstCalculator.DiscountMode.AMOUNT else GstCalculator.DiscountMode.PERCENT
-        return GstCalculator.discountAmount(line.price * line.qty, mode, line.itemDiscValue)
+        val gross = line.price * line.qty
+        val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate else 0.0
+        val postTaxExclusive = !taxInclusive && !discountPreTax
+        val base = if (postTaxExclusive) gross + GstCalculator.taxAmount(gross, rate) else gross
+        return GstCalculator.discountAmount(base, mode, line.itemDiscValue)
     }
 
     /** The discount column's text: the amount taken off, or a dash when nothing was. */
@@ -1144,7 +1163,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                     unit = catalog.firstOrNull { it.id.toLongOrNull() == line.productId }?.unit
                 )
             },
-            discount = discountAmt(),
+            discount = discountAmtForReport(),
             roundOff = roundOffAmt(),
             netAmount = total(),
             paymentModes = listOf(method.name),
@@ -1327,7 +1346,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                 custId = custId
             ),
             totalPrice = subtotal(),
-            discountAmount = discountAmt(),
+            discountAmount = discountAmtForReport(),
             discountPercentage = discountPctForDisplay(),
             discountIsPercent = discountMode == GstCalculator.DiscountMode.PERCENT,
             cgstAmount = cgstTotal,

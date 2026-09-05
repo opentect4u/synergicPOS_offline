@@ -142,12 +142,14 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
      * a screen that works it out a second time can only ever agree by coincidence.
      *
      * [billDiscount] is the whole-bill amount, in the RAW shape the printed slip's own
-     * per-line discount_amount figures are - see [lineDiscounts] - stored, not shown;
-     * [discountDisplay] is what the Discount row on THIS screen actually shows, which
-     * can differ under a post-tax item-wise discount (see BillBreakdown.discountDisplay
-     * on the Orders screen, which this is read from verbatim - the two rows have to
-     * agree by construction, not by two screens doing the same sum). [lineDiscounts]
-     * is each line's share of [billDiscount] against that line's raw pre-tax base.
+     * per-line discount_amount figures are - see [lineDiscounts] - used to spread that
+     * discount per line, not to show or store as the bill's headline figure;
+     * [discountDisplay] is the customer-facing one, shown on THIS screen's Discount
+     * row AND used for the bill's own stored/printed discount (see
+     * BillBreakdown.discountDisplay on the Orders screen, which this is read from
+     * verbatim - the two rows have to agree by construction, not by two screens doing
+     * the same sum). [lineDiscounts] is each line's share of [billDiscount] against
+     * that line's raw pre-tax base.
      * Which of the two does the work depends on [discountPreTax]: pre-tax, the
      * per-line shares reduce the taxable value, and the bill figure is already inside
      * them; post-tax, the lines are taxed in full and the bill figure comes off once,
@@ -316,7 +318,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             },
             // Round off is the Orders screen's own figure too - see [roundOffAmount] -
             // not reworked out here against a total this screen no longer builds.
-            discount = billDiscount,
+            // The customer-facing figure ([discountDisplay]), not [billDiscount] -
+            // the preview must show the same DISCOUNT the actual printed slip will.
+            discount = discountDisplay,
             roundOff = roundOffAmount,
             netAmount = payableTotal,
             paymentModes = listOf(payMethod.uppercase(java.util.Locale.US)),

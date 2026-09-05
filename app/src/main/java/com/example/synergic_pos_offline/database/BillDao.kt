@@ -146,6 +146,7 @@ class BillDao(context: Context) {
         val taxEnabled = taxSettings.taxEnabled
         val inclusive = taxSettings.taxMode == TaxSettingsDao.GstMode.INCLUSIVE
         val discountPreTax = taxSettings.discountPosition == TaxSettingsDao.DiscountPosition.PRE_TAX
+        val itemwiseDiscount = taxSettings.discountType == TaxSettingsDao.DiscountType.ITEM_WISE
 
         db.beginTransaction()
         try {
@@ -164,7 +165,10 @@ class BillDao(context: Context) {
                 put("bill_type", bill.billType)
                 // Frozen at creation time so a later reprint reads exactly as it did
                 // on the day, even after Bill/Tax Settings have since changed.
-                put("settings_snapshot", BillSettingsSnapshot.serialize(settings, taxEnabled, discountPreTax, inclusive))
+                put(
+                    "settings_snapshot",
+                    BillSettingsSnapshot.serialize(settings, taxEnabled, discountPreTax, inclusive, itemwiseDiscount)
+                )
                 put("tot_price", bill.totalPrice)
                 put("tot_discount_amount", bill.discountAmount)
                 put("tot_discount_percentage", bill.discountPercentage)

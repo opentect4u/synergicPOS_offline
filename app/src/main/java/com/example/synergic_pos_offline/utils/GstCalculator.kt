@@ -81,11 +81,11 @@ object GstCalculator {
 
     /**
      * A line's taxable value, tax and final sale price once an item-wise discount
-     * is worked in. [taxable]/[tax] are the GST-compliant reporting figures - for a
-     * post-tax, exclusive discount these are worked out on the *full* pre-discount
-     * price, so [discount] (their shortfall against [salePrice]) is the one case
-     * where the discount is not already folded into them and still needs
-     * subtracting separately to reach what the customer actually pays.
+     * is worked in. GST is always charged on what the customer actually pays -
+     * [taxable]/[tax] are worked out on the value AFTER the discount, whichever
+     * price the discount was measured against - so [taxable] + [tax] reconstructs
+     * [salePrice] exactly; [discount] is kept only for a caller still expecting a
+     * further deduction on top and is always (to rounding) zero.
      */
     data class ItemPricing(val taxable: Double, val tax: Double, val salePrice: Double) {
         val discount: Double get() = taxable + tax - salePrice
@@ -94,24 +94,26 @@ object GstCalculator {
     /**
      * Prices one line under Tax Settings' item-wise discount - a discount
      * pre-configured on the product's own rate row, applied directly against
-     * [mrp], rather than the whole-bill discount entered on the cart page. Which of
-     * the four rules below applies is fixed by two independent Tax Settings
-     * choices: Discount Position (pre/post-tax) and whether the active tax is
-     * Inclusive or Exclusive of the listed price.
+     * [mrp], rather than the whole-bill discount entered on the cart page.
      *
-     * - Pre-tax, Exclusive: the discount comes off [mrp] itself, then tax is added
-     *   on what's left.
-     * - Pre-tax, Inclusive: [mrp] is stripped down to its pre-tax base first, the
-     *   discount comes off that base, then it is re-taxed.
-     * - Post-tax, Inclusive: tax is reported on [mrp]'s full pre-tax base (the
-     *   discount does not reduce the taxable value), and the discount then comes off
-     *   [mrp] directly - it already includes tax, so nothing more needs adding.
-     * - Post-tax, Exclusive: [mrp] is taxed up first, then the discount comes off
-     *   that taxed price - again with tax reported on the full, pre-discount [mrp].
+     * Discount Position decides which price [value] is measured against, never
+     * whether GST is charged before or after the discount - GST is always charged
+     * on the discounted value, since that is what the customer is actually billed
+     * for:
      *
-     * For both post-tax rules the GST-compliant [ItemPricing.taxable]/tax are the
-     * full pre-discount figures, so [ItemPricing.discount] carries the amount still
-     * to come off to reach the sale price.
+     * - Pre-tax: [value] is a share of [mrp]'s own pre-tax base (its listed price
+     *   with any tax it already includes stripped back out) - the discount comes
+     *   off that base directly, then tax is charged on what's left.
+     * - Post-tax: [value] is a share of the *listed, tax-inclusive* price - [mrp]
+     *   itself when it is already inclusive, [mrp] plus its own tax when it is
+     *   not - taken off that price, with tax then reported on whatever taxable
+     *   value the discounted price itself works out to contain.
+     *
+     * A percentage discount on an inclusive price lands on the identical taxable
+     * value either way, since scaling by a discount percentage and stripping a tax
+     * percentage both commute - the two positions only diverge for a flat-amount
+     * discount, or an exclusive price, where which price the amount is taken off
+     * of actually matters.
      */
     fun priceItem(
         mrp: Double,
@@ -127,16 +129,10 @@ object GstCalculator {
             val tax = taxAmount(taxable, rate)
             return ItemPricing(taxable, tax, taxable + tax)
         }
-        if (inclusive) {
-            // Tax on the full base backed out of the MRP; the discount comes off the
-            // MRP afterwards, so it does not shrink the taxable value.
-            val base = taxableBase(mrp, rate, true)
-            val salePrice = taxableValue(mrp, discountAmount(mrp, mode, value))
-            return ItemPricing(base, taxAmount(base, rate), salePrice)
-        }
-        val taxedPrice = mrp + taxAmount(mrp, rate)
-        val salePrice = taxableValue(taxedPrice, discountAmount(taxedPrice, mode, value))
-        return ItemPricing(mrp, taxAmount(mrp, rate), salePrice)
+        val listedPrice = if (inclusive) mrp else mrp + taxAmount(mrp, rate)
+        val salePrice = taxableValue(listedPrice, discountAmount(listedPrice, mode, value))
+        val taxable = taxableBase(salePrice, rate, true)
+        return ItemPricing(taxable, taxAmount(taxable, rate), salePrice)
     }
 
     /**
