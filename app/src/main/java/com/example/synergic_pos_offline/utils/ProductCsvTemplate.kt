@@ -22,6 +22,46 @@ object ProductCsvTemplate {
     const val FILE_NAME = "item_master_template.csv"
 
     /**
+     * The heading a row names its category under: the Dept Code, not the name.
+     *
+     * "DEPT007", as the Category/Department master shows it and as
+     * [CategoryDao.formatCode] renders it from the row id. A code is exact where a
+     * name is not - two shops spell "Dry Fruits & Cereals" three ways between them,
+     * and a sheet that misspells one used to quietly create a SECOND category rather
+     * than land in the one that was meant.
+     *
+     * That is the trade this column makes, and it is worth stating plainly: a code
+     * can only REFER to a category, never create one. An unknown code leaves the
+     * product uncategorised and the upload says how many rows that happened to,
+     * where an unknown name would have created the category and carried on. Set the
+     * departments up first, then upload against their codes.
+     *
+     * The older `category` heading is still read for a sheet that has one, so a file
+     * filled in against a previous template still imports - see
+     * [ProductBulkImporter].
+     */
+    const val CATEGORY_CODE_COLUMN = "category_code"
+
+    /**
+     * The heading a row names its rate under: the Rate Name master's id, not its name.
+     *
+     * The id from the Rate Name master - 1, 2, 3 - rather than "Regular" or "MRP".
+     * Same reasoning as [CATEGORY_CODE_COLUMN]: the id is what the rate actually IS
+     * to this database, and it is what the product's rate row has always been meant
+     * to link to. `md_product_rates` has carried a `rate_name_id` column all along
+     * and the bulk import never filled it, so an uploaded rate held a name with
+     * nothing joining it to the master the Add/Edit form picks from.
+     *
+     * The name is written alongside the id, read off the master rather than off the
+     * sheet, so a rate uploaded in bulk and one chosen in the form come out identical.
+     *
+     * The older `rate_name` heading is still read, and still taken as the name it
+     * says, for a sheet filled in against a previous template.
+     */
+    const val RATE_NAME_ID_COLUMN = "rate_name_id"
+
+
+    /**
      * The heading a sheet may set the till's own screen language under.
      *
      * Not a fact about the product on that row - every product in a shop is sold
@@ -45,17 +85,48 @@ object ProductCsvTemplate {
     const val REGIONAL_LANGUAGE_COLUMN = "regional_language"
 
     /**
+     * The heading a row gives THIS PRODUCT's name in the shop's own language under.
+     *
+     * A per-product fact, unlike [REGIONAL_LANGUAGE_COLUMN] beside it - which is why
+     * the two sit together on the sheet: one names the language, the next gives each
+     * product's name in it.
+     *
+     * It is the name the shop WRITES, not one the app guesses. Without it a bulk
+     * upload could only ever produce machine-translated names - and a lexicon does
+     * not know the local word for a regional sweet, nor how a brand is actually
+     * spelled on the packet. Filling it in is how a catalogue arrives already saying
+     * what the shop calls things, instead of being corrected one product at a time
+     * through the Add/Edit form afterwards.
+     *
+     * Blank is the normal case and costs nothing: that product falls back to the
+     * translation exactly as it did before, so a sheet filled in against an older
+     * template imports unchanged.
+     *
+     * Saved against whichever language [REGIONAL_LANGUAGE_COLUMN] resolved to, one
+     * row per product per language - see ProductNameDao. A sheet that fills this in
+     * without naming a language has not said what language it is IN, so there is no
+     * row to write and [ProductBulkImporter] says so rather than guessing.
+     */
+    const val REGIONAL_NAME_COLUMN = "regional_name"
+
+    /**
      * The columns, in order.
      *
-     * `category` and `unit_id` are filled in by name - "Dairy", "Ltr" - not by id:
-     * the operator writing the sheet knows what the thing is called and has no way
-     * to know what number this database gave it. [ProductBulkImporter] resolves each
-     * to an id, creating the master record where the till has never seen that name
-     * before.
+     * `category_code` and `rate_name_id` name their master ROW - "DEPT007", "2" -
+     * not the text on it. The code and the id are what those things are to this
+     * database, and they are exact: a name has to be spelled the shop's way to
+     * match, and a near-miss used to create a second category rather than land in
+     * the one that was meant. See each column's own doc.
      *
-     * `unit_id` keeps its name rather than becoming `unit`, and the import still
-     * reads the older `sell_price`, so a sheet filled in against a previous template
-     * imports rather than being rejected over a heading.
+     * `unit_id` is the exception and stays a name - "Ltr", "PCS". It is the one of
+     * the three whose master a sheet may legitimately extend: a shop weighing
+     * something in a unit this till has never seen is describing its goods, not
+     * misspelling a department, so that name is created where the others are not.
+     *
+     * `unit_id` also keeps its misleading heading rather than becoming `unit`, and
+     * the import still reads the older `category`, `rate_name` and `sell_price`
+     * headings, so a sheet filled in against a previous template imports rather
+     * than being rejected over a name.
      *
      * `igst` and `vat` sit beside `cgst`/`sgst` as the other two ways a rate's tax
      * can be written down - a rate is under one of them, never more than one, same
@@ -63,12 +134,21 @@ object ProductCsvTemplate {
      * use blank.
      *
      * [REGIONAL_LANGUAGE_COLUMN] is not a per-product fact - see its own doc.
+     * [REGIONAL_NAME_COLUMN] is, and follows it: the first names the language, the
+     * second gives each product's name in that language.
+     *
+     * The regional pair is APPENDED rather than slotted in beside `product_name`,
+     * where it would read more naturally. Every column before it keeps the position
+     * it has always had, so a sheet downloaded from an older till - or one an
+     * operator has been filling in for months - still lines up. The import reads by
+     * heading rather than by position (see CsvUtils.parse), so a sheet with no
+     * regional columns at all imports exactly as before.
      */
     val header = listOf(
-        "product_name", "category", "hsn_code", "bar_code",
-        "rate_name", "rate", "unit_id", "cgst", "sgst", "igst", "vat",
+        "product_name", CATEGORY_CODE_COLUMN, "hsn_code", "bar_code",
+        RATE_NAME_ID_COLUMN, "rate", "unit_id", "cgst", "sgst", "igst", "vat",
         "discount", "discount_type", "selling_price", "purchase_price",
-        REGIONAL_LANGUAGE_COLUMN
+        REGIONAL_LANGUAGE_COLUMN, REGIONAL_NAME_COLUMN
     )
 
     /**
@@ -105,13 +185,19 @@ object ProductCsvTemplate {
      * sample line already carries its tax as `cgst`/`sgst`, and a rate is under one
      * of the three, never more than one. [REGIONAL_LANGUAGE_COLUMN] is shown filled
      * in on the first row only and blank on the rest, since one is all a sheet needs.
+     *
+     * [REGIONAL_NAME_COLUMN] is filled in on EVERY row, because it is the one
+     * regional column that is a fact about the product rather than about the sheet.
+     * The samples are the brand names respelled in the language the first row names,
+     * which is what a shop actually writes there - a name off the packet, not a
+     * translation of one.
      */
     val sampleRows = listOf(
-        "Amul Premium Pack 100L,Dairy,40120,,Regular,498.75,Ltr,2.5,2.5,,,5,P,473.81,399,Hindi",
-        "Britannia Premium Refill 200g,Bakery & Biscuits,190531,,Regular,393.75,PCS,9,9,,,5,P,374.06,315,",
-        "Tata Sampann Premium Value 300g,Dry Fruits & Cereals,110412,,Regular,31.25,PCS,2.5,2.5,,,10,P,29.69,25,",
-        "Fortune Premium Combo 400L,Oil & Ghee Masala,151219,,Regular,158.75,Ltr,2.5,2.5,,,5,P,150.81,127,",
-        "Aashirvaad Premium Regular 500KG,Atta Rice & Dal,110100,,Regular,81.25,KG,2.5,2.5,,,10,P,77.19,65,"
+        "Amul Premium Pack 100L,DEPT001,40120,,1,498.75,Ltr,2.5,2.5,,,5,P,473.81,399,Hindi,अमूल प्रीमियम पैक 100L",
+        "Britannia Premium Refill 200g,DEPT002,190531,,1,393.75,PCS,9,9,,,5,P,374.06,315,,ब्रिटानिया प्रीमियम रिफिल 200g",
+        "Tata Sampann Premium Value 300g,DEPT003,110412,,1,31.25,PCS,2.5,2.5,,,10,P,29.69,25,,टाटा संपन्न प्रीमियम वैल्यू 300g",
+        "Fortune Premium Combo 400L,DEPT004,151219,,1,158.75,Ltr,2.5,2.5,,,5,P,150.81,127,,फॉर्च्यून प्रीमियम कॉम्बो 400L",
+        "Aashirvaad Premium Regular 500KG,DEPT005,110100,,1,81.25,KG,2.5,2.5,,,10,P,77.19,65,,आशीर्वाद प्रीमियम रेगुलर 500KG"
     )
 
     /**
