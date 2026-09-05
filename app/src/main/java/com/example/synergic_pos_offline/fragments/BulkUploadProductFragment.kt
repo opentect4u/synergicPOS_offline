@@ -249,6 +249,7 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
             if (result.skipped > 0) append("\n${result.skipped} row(s) skipped.")
             append("\nApp language set to ${result.languageApplied}.")
             result.languageWarning?.let { append("\n$it") }
+            result.referenceWarning?.let { append("\n$it") }
         }
         DialogUtils.showSuccess(
             context = ctx,

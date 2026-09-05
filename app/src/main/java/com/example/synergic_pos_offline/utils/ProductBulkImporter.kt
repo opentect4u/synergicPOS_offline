@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
+import com.example.synergic_pos_offline.database.ProductNameDao
 import com.example.synergic_pos_offline.database.StockDao
 
 /**
@@ -55,7 +56,9 @@ object ProductBulkImporter {
         val skipped: Int,
         val removed: Int = 0,
         val languageApplied: String = PrintLanguage.Language.ENGLISH.englishName,
-        val languageWarning: String? = null
+        val languageWarning: String? = null,
+        /** Codes or rate ids the sheet named that this till has no row for. */
+        val referenceWarning: String? = null
     )
 
     /**
@@ -198,6 +201,13 @@ object ProductBulkImporter {
         // new category from creating ten copies of it.
         val categoryIds = HashMap<String, Int?>()
         val unitIds = HashMap<String, Int?>()
+        // Codes and rate ids resolve to the same handful of rows across a whole sheet,
+        // same as the name caches above - and a miss is cached too, so a sheet naming
+        // one wrong code on 400 rows asks the database about it once.
+        val categoryCodeIds = HashMap<String, Int?>()
+        val rateNames = HashMap<Long, String?>()
+        var unknownCategoryCodes = 0
+        var unknownRateNameIds = 0
         // Asked once for the sheet, not once per row: the setting cannot change
         // half way through an import, and every row has to be treated the same way
         // whichever half of the file it is in.
@@ -207,6 +217,17 @@ object ProductBulkImporter {
         var removed = 0
 
         val languageMatch = regionalLanguageOf(rows)
+        // The sheet's regional names are filed under the language the sheet named, and
+        // only when it named one that can HAVE regional names. English is the absence
+        // of a regional name rather than a language to file one under - RegionalName.map
+        // does not even query in English - so a name given without a language would be
+        // written somewhere nothing would ever read it. That is warned about below
+        // instead of being written and silently ignored.
+        val namesLanguage = languageMatch.language.takeIf { ProductName.applies(it) }
+        val nameDao = if (namesLanguage != null) ProductNameDao(context) else null
+        val regionalNamesGiven = rows.any {
+            !it[ProductCsvTemplate.REGIONAL_NAME_COLUMN].isNullOrBlank()
+        }
 
         db.beginTransaction()
         try {
@@ -215,8 +236,20 @@ object ProductBulkImporter {
                 val name = (r["product_name"] ?: r["item_name"]).orEmpty().trim()
                 if (name.isBlank()) { skipped++; continue }
 
-                val categoryId = r["category"]?.trim()?.takeIf { it.isNotEmpty() }
-                    ?.let { categoryIdFor(db, it, storeId, categoryIds) }
+                // BY CODE FIRST - "DEPT007" names the department master's row, and
+                // names it exactly. The older `category` heading is still read for a
+                // sheet that has one, and still creates the department it names; a
+                // code cannot do that, since a code IS the row id and there is no
+                // such thing as inventing one. An unknown code leaves the product
+                // uncategorised and is counted for the report at the end.
+                val codeCell = r[ProductCsvTemplate.CATEGORY_CODE_COLUMN]?.trim().orEmpty()
+                val categoryId = if (codeCell.isNotEmpty()) {
+                    categoryIdForCode(db, codeCell, categoryCodeIds)
+                        .also { if (it == null) unknownCategoryCodes++ }
+                } else {
+                    r["category"]?.trim()?.takeIf { it.isNotEmpty() }
+                        ?.let { categoryIdFor(db, it, storeId, categoryIds) }
+                }
 
                 val product = ContentValues().apply {
                     if (storeId != null) put("store_id", storeId) else putNull("store_id")
@@ -245,11 +278,25 @@ object ProductBulkImporter {
                     ?: 0.0
                 val unitId = unitNameOf(r)?.let { unitIdFor(db, it, storeId, unitIds) }
 
+                // BY ID FIRST, and the NAME is read off the master rather than off
+                // the sheet - so a rate uploaded in bulk is the same rate the
+                // Add/Edit form would have picked, joined to the same master row.
+                // md_product_rates has carried rate_name_id all along and the import
+                // never filled it; a bulk-uploaded rate held loose text linked to
+                // nothing. The older `rate_name` heading still works and is still
+                // taken as the name it says, with no id to link.
+                val rateNameCell = r[ProductCsvTemplate.RATE_NAME_ID_COLUMN]?.trim().orEmpty()
+                val rateNameId = rateNameCell.toLongOrNull()
+                    ?.let { id -> rateNameFor(db, id, rateNames)?.let { id } }
+                if (rateNameCell.isNotEmpty() && rateNameId == null) unknownRateNameIds++
+                val rateNameText = rateNameId?.let { rateNames[it] }
+                    ?: r["rate_name"]?.ifBlank { null }
                 val rate = ContentValues().apply {
                     if (storeId != null) put("store_id", storeId) else putNull("store_id")
                     if (outletId != null) put("outlet_id", outletId) else putNull("outlet_id")
                     put("product_id", productId)
-                    put("rate_name", r["rate_name"]?.ifBlank { null })
+                    put("rate_name", rateNameText)
+                    if (rateNameId != null) put("rate_name_id", rateNameId) else putNull("rate_name_id")
                     put("rate", rateValue)
                     if (unitId != null) put("unit_id", unitId) else putNull("unit_id")
                     put("cgst_rate", r["cgst"]?.toDoubleOrNull() ?: 0.0)
@@ -280,6 +327,16 @@ object ProductBulkImporter {
                 stockDao?.let { dao ->
                     openingStockOf(r)?.let { dao.recordOpening(db, productId, it, storeId, outletId) }
                 }
+                // The shop's own name for this product, in the language the sheet
+                // named - through the same DAO the Add/Edit form writes through, so a
+                // bulk-uploaded name and a typed one are the same row in the same
+                // table. A blank cell writes nothing and the product falls back to the
+                // machine translation, exactly as it did before this column existed.
+                if (nameDao != null && namesLanguage != null) {
+                    r[ProductCsvTemplate.REGIONAL_NAME_COLUMN]?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let { nameDao.save(productId.toInt(), namesLanguage.code, it) }
+                }
                 imported++
             }
             db.setTransactionSuccessful()
@@ -293,6 +350,22 @@ object ProductBulkImporter {
         // language should not change out from under a sheet that failed to import.
         android.preference.PreferenceManager.getDefaultSharedPreferences(context)
             .edit().putString(AppLanguage.SETTING_KEY, languageMatch.language.code).commit()
+        // Rows whose code or id named nothing on this till. Reported rather than
+        // silently absorbed: the product imported, but without the department or the
+        // rate the sheet asked for, and only the operator can tell which is wrong -
+        // the sheet, or a master that has not been set up yet.
+        val referenceWarning = listOfNotNull(
+            if (unknownCategoryCodes > 0)
+                "$unknownCategoryCodes row(s) named a " +
+                    "${ProductCsvTemplate.CATEGORY_CODE_COLUMN} this till has no department " +
+                    "for - those products came in uncategorised."
+            else null,
+            if (unknownRateNameIds > 0)
+                "$unknownRateNameIds row(s) named a " +
+                    "${ProductCsvTemplate.RATE_NAME_ID_COLUMN} this till has no rate name " +
+                    "for - those rates came in unnamed."
+            else null
+        ).joinToString(separator = "\n").takeIf { it.isNotEmpty() }
         val languageWarning = when {
             languageMatch.conflicting ->
                 "The regional language column names more than one language - " +
@@ -301,9 +374,20 @@ object ProductBulkImporter {
             languageMatch.raw.isNotEmpty() && !languageMatch.exact ->
                 "\"${languageMatch.raw}\" does not spell a language exactly - " +
                     "${languageMatch.language.englishName} was applied to the app language instead."
+            // Names with nothing to file them under. Said plainly rather than written
+            // to a language that never reads them back: the operator filled the column
+            // in and would otherwise see an import report success with no name saved.
+            regionalNamesGiven && namesLanguage == null ->
+                "The ${ProductCsvTemplate.REGIONAL_NAME_COLUMN} column was filled in but no " +
+                    "regional language was named, so those names were not saved. Name the " +
+                    "language in the ${ProductCsvTemplate.REGIONAL_LANGUAGE_COLUMN} column " +
+                    "and upload again."
             else -> null
         }
-        return Result(imported, skipped, removed, languageMatch.language.englishName, languageWarning)
+        return Result(
+            imported, skipped, removed,
+            languageMatch.language.englishName, languageWarning, referenceWarning
+        )
     }
 
     /**
@@ -353,6 +437,52 @@ object ProductBulkImporter {
      * are the one category rather than two that read alike. Not scoped to a store,
      * matching the categories the upload page's own dropdown lists.
      */
+    /**
+     * The department a Dept Code names, or null where this till has no such row.
+     *
+     * The code is [CategoryDao.formatCode] run backwards: "DEPT007" is row 7. Read
+     * by taking the digits rather than by matching the prefix, so "dept7", "DEPT007"
+     * and a spreadsheet's helpful "7" all land on the same department - the operator
+     * copying a code off the Category master should not have to reproduce its
+     * padding to be understood.
+     *
+     * Nothing is created here. A code is a row id, so an unknown one names a
+     * department that does not exist rather than one to make - see
+     * [ProductCsvTemplate.CATEGORY_CODE_COLUMN].
+     */
+    private fun categoryIdForCode(
+        db: SQLiteDatabase,
+        code: String,
+        cache: MutableMap<String, Int?>
+    ): Int? = cache.getOrPut(code.lowercase()) {
+        val id = code.filter { it.isDigit() }.toIntOrNull() ?: return@getOrPut null
+        db.rawQuery(
+            "SELECT id FROM ${DatabaseHelper.Tables.MD_CATEGORY} WHERE id = ? LIMIT 1",
+            arrayOf(id.toString())
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else null }
+    }
+
+    /**
+     * The rate name carried by the master row [id], or null where there is none.
+     *
+     * Looked up so the NAME written onto the product's rate is the master's own,
+     * not whatever the sheet spelled beside the id. Only active rows count: a rate
+     * name retired from the master is not one a new product should be filed under.
+     */
+    private fun rateNameFor(
+        db: SQLiteDatabase,
+        id: Long,
+        cache: MutableMap<Long, String?>
+    ): String? = cache.getOrPut(id) {
+        db.rawQuery(
+            "SELECT rate_name FROM ${DatabaseHelper.Tables.MD_RATE_NAME} " +
+                "WHERE id = ? AND is_active = 1 LIMIT 1",
+            arrayOf(id.toString())
+        ).use { c ->
+            if (c.moveToFirst()) c.getString(0)?.trim()?.takeIf { it.isNotEmpty() } else null
+        }
+    }
+
     private fun categoryIdFor(
         db: SQLiteDatabase,
         name: String,
