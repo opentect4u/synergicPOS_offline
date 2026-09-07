@@ -39,15 +39,31 @@
             android:textSize="21sp"
             android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/tvDialogMessage"
+        <!-- The message SCROLLS, the buttons do not.
+             A confirm can carry a long warning - the erase-bills one names what goes,
+             what is kept, the numbering and the floor - and with everything in one
+             wrap_content column the card simply grew past the screen, taking the
+             button row off the bottom edge with it. A warning nobody can agree to or
+             refuse is worse than no warning.
+             MaxHeightScrollView caps itself at a fraction of the screen AND at what
+             the parent has left, so short messages still wrap tight and long ones
+             scroll inside the card with Cancel and Confirm always in view. -->
+        <com.example.synergic_pos_offline.utils.MaxHeightScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
-            android:gravity="center"
-            android:text="Message"
-            android:textColor="@color/text_secondary"
-            android:textSize="16sp" />
+            android:scrollbars="vertical"
+            android:fadeScrollbars="false">
+
+            <TextView
+                android:id="@+id/tvDialogMessage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="Message"
+                android:textColor="@color/text_secondary"
+                android:textSize="16sp" />
+        </com.example.synergic_pos_offline.utils.MaxHeightScrollView>
 
         <LinearLayout
             android:layout_width="match_parent"

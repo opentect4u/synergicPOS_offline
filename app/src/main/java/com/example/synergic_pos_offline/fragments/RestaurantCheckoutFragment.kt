@@ -13,6 +13,7 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
+import com.example.synergic_pos_offline.utils.Quantity
 
 /**
  * Restaurant checkout — order review + payment panel. Opened from the Orders
@@ -490,9 +491,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
     private fun money(v: Double): String = String.format(java.util.Locale.US, "%,.2f", v)
 
-    private fun qtyText(v: Double): String =
-        if (v % 1.0 == 0.0) v.toLong().toString()
-        else String.format(java.util.Locale.US, "%.3f", v).trimEnd('0').trimEnd('.')
+    private fun qtyText(v: Double): String = Quantity.text(v)
 
     companion object {
         const val RESULT_PAID = "restaurant_checkout_paid"

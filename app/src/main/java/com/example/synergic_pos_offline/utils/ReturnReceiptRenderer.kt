@@ -356,8 +356,7 @@ class ReturnReceiptRenderer(context: Context) {
     private fun count(v: Double) = v.toInt().toString()
 
     /** Whole quantities print without decimals; fractional ones keep two places. */
-    private fun qtyText(qty: Double): String =
-        if (qty % 1.0 == 0.0) qty.toInt().toString() else String.format(Locale.US, "%.2f", qty)
+    private fun qtyText(qty: Double): String = Quantity.text(qty)
 
     private fun splitDateTime(value: String): Pair<String, String> = runCatching {
         val parsed = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(value)!!

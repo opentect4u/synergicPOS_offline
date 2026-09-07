@@ -1,9 +1,7 @@
 package com.example.synergic_pos_offline.database
 
 import android.content.Context
-import com.example.synergic_pos_offline.utils.BillPricing
 import com.example.synergic_pos_offline.utils.BillRounding
-import com.example.synergic_pos_offline.utils.BillSettingsSnapshot
 import com.example.synergic_pos_offline.utils.CalendarGrain
 import com.example.synergic_pos_offline.utils.SessionManager
 
@@ -20,16 +18,26 @@ import com.example.synergic_pos_offline.utils.SessionManager
  *
  * Not the line total. A sale report is read against what was taxed, and the tax is
  * stated beside it - an amount that already had the tax inside it would not add up
- * with the two columns next to it. So each line is run back through [BillPricing] -
- * the same function that priced it when it was sold - given its own stored inputs and
- * the rules frozen onto its bill: the regime, whether the listed price included tax,
- * and whether the discount came off before or after the rate. See [TaxReportDao],
- * which recovers the same figure the same way, so the two reports agree about what
- * the period's taxable value was.
+ * with the two columns next to it. So the amount is the line's own total less the tax
+ * booked on it, which lands on the taxable value whichever way the price was quoted:
+ * an inclusive line's total already carries its tax, an exclusive line's has it added
+ * on, and taking the tax off reaches the same figure either way.
  *
- * A line on a bill with no snapshot, or one carrying IGST (which [BillPricing] does
- * not model), falls back to what was stored, with the base recovered by inverting the
- * rate off the booked tax.
+ * ## Why it READS the tax rather than working it out again
+ *
+ * It used to re-price every line through [BillPricing], from the rates and the rules
+ * frozen onto its bill. [BillWiseReportDao] does no such thing - it sums the totals
+ * each bill was saved with - so the two reports were arriving at the period's tax by
+ * two different routes, and nothing held those routes to each other. A paisa of
+ * rounding, a line whose bill had no settings snapshot, an IGST line that
+ * [BillPricing] does not model: any of it put the two reports a figure apart over the
+ * same books.
+ *
+ * Every column here is now the money that was written at the sale. The per-item tax
+ * columns are the very figures that were summed into td_bills' own totals - see
+ * BillDao, which stores the priced line on td_bill_items and that same run's total on
+ * td_bills - so this report's CGST, SGST, IGST and VAT equal bill-wise's by
+ * construction rather than by coincidence.
  */
 class ItemWiseReportDao(context: Context) {
 
@@ -87,6 +95,25 @@ class ItemWiseReportDao(context: Context) {
         val totalServiceCharge: Double get() = charges.service
         val totalOtherCharges: Double get() = charges.other
         val totalParcelCharge: Double get() = charges.parcel
+        val totalRoundOff: Double get() = charges.roundOff
+
+        /**
+         * What the period came to - the figure BillWiseReportDao calls Total Amount.
+         *
+         * The same sum a bill is settled by, from the same parts: what the goods were
+         * taxed on, plus that tax, plus the shop's own charges, plus the rounding. So
+         * the two reports can be read against each other on their headline figure and
+         * not only on their columns.
+         *
+         * [totalAmount] beside it is the TAXABLE value - what was sold, before tax -
+         * which is what the AMOUNT column adds up to and what bill-wise's own Bill
+         * Amount now matches. The two are different questions and the report answers
+         * both rather than making the reader add the columns up.
+         */
+        val totalNetAmount: Double get() = BillRounding.toPaise(
+            totalAmount + totalSgst + totalCgst + totalIgst + totalVat +
+                totalServiceCharge + totalOtherCharges + totalParcelCharge + totalRoundOff
+        )
 
         val isEmpty: Boolean get() = lines.isEmpty()
 
@@ -137,17 +164,27 @@ class ItemWiseReportDao(context: Context) {
                    1, ${grain.storedLength})
         """.trimIndent()
 
+        // EVERY FIGURE READ, NOT RECOMPUTED.
+        //
+        // This used to re-price each line from its rates through BillPricing, using
+        // the bill's settings snapshot. Bill-wise does not: it sums the totals the
+        // bill was SAVED with. Two reports over one period, one reading stored money
+        // and the other working it out again, will disagree the moment the two
+        // calculations differ by a paisa - and they had no reason to agree, since
+        // nothing held them to each other.
+        //
+        // So both now sum what was written at the sale. The per-item tax columns are
+        // the same figures that were added up into td_bills' own totals (see BillDao,
+        // which stores priced.cgst on the line and the same run's total on the bill),
+        // so the tax on this report equals the tax on bill-wise by construction rather
+        // than by coincidence - CGST, SGST, IGST and VAT alike.
         val sql = """
             SELECT COALESCE(NULLIF(TRIM(p.product_name), ''), 'Item #' || i.product_id, 'Unnamed item'),
                    COALESCE(i.product_id, -i.id),
-                   COALESCE(i.rate, 0), COALESCE(i.quantity, 0),
-                   COALESCE(i.cgst_rate, 0), COALESCE(i.sgst_rate, 0),
-                   COALESCE(i.igst_rate, 0), COALESCE(i.vat_rate, 0),
-                   COALESCE(i.discount_amount, 0),
+                   COALESCE(i.quantity, 0),
                    COALESCE(i.cgst_amount, 0), COALESCE(i.sgst_amount, 0),
                    COALESCE(i.igst_amount, 0), COALESCE(i.vat_amount, 0),
-                   COALESCE(i.item_total, 0),
-                   b.settings_snapshot
+                   COALESCE(i.item_total, 0)
             FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
             JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id
             LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCTS} p ON p.id = i.product_id
@@ -170,44 +207,30 @@ class ItemWiseReportDao(context: Context) {
                 val sum = sums.getOrPut(key) {
                     Sum(c.getString(0).orEmpty().ifBlank { "Unnamed item" })
                 }
-                val cgstRate = c.getDouble(4)
-                val sgstRate = c.getDouble(5)
-                val igstRate = c.getDouble(6)
-                val vatRate = c.getDouble(7)
-                val cgstAmount = c.getDouble(9)
-                val sgstAmount = c.getDouble(10)
-                val igstAmount = c.getDouble(11)
-                val vatAmount = c.getDouble(12)
-                val itemTotal = c.getDouble(13)
-                val snapshot = BillSettingsSnapshot.parse(c.getString(14))
+                val cgstAmount = c.getDouble(3)
+                val sgstAmount = c.getDouble(4)
+                val igstAmount = c.getDouble(5)
+                val vatAmount = c.getDouble(6)
+                val itemTotal = c.getDouble(7)
 
-                sum.quantity += c.getDouble(3)
+                sum.quantity += c.getDouble(2)
+                sum.cgst += cgstAmount
+                sum.sgst += sgstAmount
                 sum.igst += igstAmount
+                sum.vat += vatAmount
 
-                if (snapshot != null && igstRate <= 0.0 && igstAmount <= 0.0) {
-                    val priced = BillPricing.price(
-                        rate = c.getDouble(2),
-                        quantity = c.getDouble(3),
-                        cgstRate = cgstRate,
-                        sgstRate = sgstRate,
-                        vatRate = vatRate,
-                        discountAmount = c.getDouble(8),
-                        taxEnabled = snapshot.taxEnabled,
-                        inclusive = snapshot.inclusive,
-                        discountPreTax = snapshot.discountPreTax
-                    )
-                    sum.amount += priced.taxable
-                    sum.cgst += priced.cgst
-                    sum.sgst += priced.sgst
-                    sum.vat += priced.vat
-                } else {
-                    val rate = cgstRate + sgstRate + igstRate + vatRate
-                    val tax = cgstAmount + sgstAmount + igstAmount + vatAmount
-                    sum.amount += if (rate > 0.0) tax * 100.0 / rate else itemTotal
-                    sum.cgst += cgstAmount
-                    sum.sgst += sgstAmount
-                    sum.vat += vatAmount
-                }
+                // What the item sold for, before tax: its line total less the tax on
+                // it. True whichever way the price was quoted - an inclusive line's
+                // total already carries its tax and an exclusive line's has it added
+                // on, so taking the tax off lands on the same figure either way.
+                //
+                // An UNTAXED line has no tax to take off and contributes its whole
+                // total, which is the point: it is worth exactly what it sold for, and
+                // the report is short by that much if it is left out.
+                //
+                // It also gives the report an arithmetic it can be checked by:
+                // AMOUNT + SGST + CGST + IGST + VAT adds up to what the items came to.
+                sum.amount += itemTotal - (cgstAmount + sgstAmount + igstAmount + vatAmount)
             }
         }
 

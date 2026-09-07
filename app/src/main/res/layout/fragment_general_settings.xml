@@ -410,21 +410,29 @@
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Negative Stock (only available while Stock is ON).
+
+                     Sits with the stock rows because it is a fact about the count, and
+                     under the alert because it is the harder of the two: the alert
+                     warns, this one refuses. -->
+                <LinearLayout
+                    android:id="@+id/llNegativeStock"
+                    style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Negative Stock" />
+                        <TextView style="@style/BillSettingSub" android:text="Allow a sale to take an item below zero. Off, the sale is refused once stock runs out" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swNegativeStock" style="@style/BillSettingSwitch" />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSaveGeneral"
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="16dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:minHeight="0dp"
-            android:text="Save Settings"
-            android:textSize="16sp"
-            android:textColor="@color/white"
-            app:cornerRadius="12dp" />
+        <!-- No Save button: General Settings write themselves as each control
+             moves - see SettingsAutoSave. Mode keeps its own confirm flow. -->
 
     </LinearLayout>
 </ScrollView>

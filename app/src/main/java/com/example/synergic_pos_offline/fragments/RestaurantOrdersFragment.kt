@@ -25,6 +25,7 @@ import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.ProductName
 import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.Quantity
 
 /**
  * Restaurant "Sale" screen — an Orders workspace (order list + live order detail
@@ -889,15 +890,32 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * The group knows what is in it; this asks it.
      */
     private fun styleSeg(view: View, accent: Int) {
+        styleSeg(
+            view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(
+                R.id.segOrderType
+            ) ?: return,
+            accent
+        )
+    }
+
+    /**
+     * The same colouring, for any segmented group.
+     *
+     * Taken off the id so the table picker's own mode group is painted by this rather
+     * than by a second copy of it - the picker is meant to read as the sales page it
+     * opens from, and two definitions of "how a segment looks" is how that stops being
+     * true after the next change to one of them.
+     */
+    private fun styleSeg(
+        seg: com.google.android.material.button.MaterialButtonToggleGroup,
+        accent: Int
+    ) {
         val white = android.graphics.Color.WHITE
         val states = arrayOf(
             intArrayOf(android.R.attr.state_checked), intArrayOf(-android.R.attr.state_checked)
         )
         val bg = ColorStateList(states, intArrayOf(accent, white))
         val text = ColorStateList(states, intArrayOf(white, accent))
-        val seg = view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(
-            R.id.segOrderType
-        ) ?: return
         for (i in 0 until seg.childCount) {
             (seg.getChildAt(i) as? com.google.android.material.button.MaterialButton)?.apply {
                 backgroundTintList = bg
@@ -2712,17 +2730,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         // Hold a tab to pick it up and drag it along the strip. Wired once, here -
         // not per rebuild - because the RecyclerView outlives the tabs in it.
-        // "All" is position 0 and stays put: it is the way back to the whole menu
-        // rather than a category of it, and the one tab a drag could not put back.
+        // "All" moves with the rest - it was held at position 0 while it could not be
+        // dragged, which is no longer a reason for anything.
         com.example.synergic_pos_offline.utils.CategoryOrder.attach(
             recycler = llCats,
-            firstMovable = 1,
             onMove = { from, to ->
                 catNames.add(to, catNames.removeAt(from))
                 catAdapter.notifyItemMoved(from, to)
             },
             onDropped = {
-                com.example.synergic_pos_offline.utils.CategoryOrder.remember(catNames.drop(1))
+                // The whole strip, "All" among them - dragged like any other tab, so
+                // remembered like any other tab.
+                com.example.synergic_pos_offline.utils.CategoryOrder.remember(catNames)
             }
         )
 
@@ -2730,10 +2749,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // The menu hands these back in whatever order the dishes loaded in; the
             // shop may have dragged them into a selling order since. Applying it here
             // means re-reading the menu cannot quietly undo a drag - see [CategoryOrder].
-            val fresh = listOf("All") +
-                com.example.synergic_pos_offline.utils.CategoryOrder.ordered(
+            // "All" goes INTO the ordering rather than in front of it: it is draggable
+            // like the rest, so wherever it was dropped is where a menu re-read has to
+            // put it back.
+            val fresh = com.example.synergic_pos_offline.utils.CategoryOrder.ordered(
+                listOf("All") +
                     allProducts.map { it.product.category }.filter { it.isNotBlank() }.distinct()
-                )
+            )
             if (fresh.none { it == selectedCat }) selectedCat = "All"
             catNames.clear()
             catNames.addAll(fresh)
@@ -2742,12 +2764,35 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         refreshProducts = {
             val q = query.trim().lowercase()
-            pager.set(allProducts.filter {
+            val matching = allProducts.filter {
                 (selectedCat == "All" || it.product.category == selectedCat) &&
                     // Name, SKU (serial number), and barcode only - no HSN.
                     (q.isEmpty() || it.product.name.lowercase().contains(q) ||
                         it.product.sku.contains(q) || it.barcode.contains(q))
-            })
+            }
+            // UNDER "ALL", THE MENU IS GROUPED BY COURSE - in the tab order.
+            //
+            // "All" is the whole menu at once, and the whole menu in catalogue order is
+            // a list nobody reads: starters, a sweet, a curry, another starter, in
+            // whatever order the products happened to be entered. Ordering it by the
+            // tabs above puts every drink together and every rice together, and puts
+            // those blocks in the order the shop dragged its tabs into - so All reads
+            // as the sections one after another rather than as an unsorted heap.
+            //
+            // Sorted only, never filtered: every dish that matched is still shown, in
+            // the same one grid. And sortedBy is stable, so within a course the dishes
+            // keep the order they already had.
+            //
+            // A dish whose category is blank, or names one no tab does, sorts last -
+            // it belongs to no block, and putting it at the end is the one place it
+            // does not break one.
+            pager.set(
+                if (selectedCat != "All") matching
+                else {
+                    val rank = catNames.withIndex().associate { (i, name) -> name to i }
+                    matching.sortedBy { rank[it.product.category] ?: Int.MAX_VALUE }
+                }
+            )
         }
 
         // Typing does two things at once: it narrows the menu behind, as it always
@@ -2865,15 +2910,37 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val accent = ThemeManager.getThemeColor(ctx)
         val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_choose_table, null)
         val dialog = AlertDialog.Builder(ctx).setView(v).create()
-        // Full screen, always: the floor plan is the whole screen for as long as it is
-        // open, whatever the device's size and however few tables are on it.
+        // Everything BELOW THE HEADER, not the whole display.
+        //
+        // The floor plan still takes every pixel it is given, but the app's own header
+        // is not one of them: covering it left the operator inside a full-screen sheet
+        // with no title, no menu and no way back showing - the picker looked like a
+        // different app rather than a panel of this one. See [fitBelowHeader].
         dialog.window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            setGravity(android.view.Gravity.CENTER)
+            setGravity(android.view.Gravity.TOP)
+            // AND THE HEADER STAYS LIVE while it is open.
+            //
+            // Uncovering it was only half of it. A dialog dims everything behind it
+            // and swallows every touch on the screen, not just the touches inside its
+            // own bounds - so the header was showing through greyed and dead, which
+            // reads as a header that has been disabled rather than one left available.
+            //
+            // NOT_TOUCH_MODAL hands touches outside the window to whatever is behind,
+            // which here is only ever the header strip; clearing DIM_BEHIND paints it
+            // at full strength. The hamburger, the back arrow and the rest work while
+            // the plan is up.
+            //
+            // It also settles something that was wrong before: a tap outside used to
+            // dismiss the picker, and dismissing without a table starts a take-away -
+            // so reaching for the menu abandoned the floor plan and opened a token.
+            // The picker is now left by its own close button or the back press, both
+            // of which still work; the header does what the header does.
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+            clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         }
+        fitBelowHeader(dialog)
 
-        val etSearch = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etTableSearch)
         val llCats = v.findViewById<LinearLayout>(R.id.llTableSections)
         val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvTables)
         val emptyNote = v.findViewById<TextView>(R.id.tvNoTables)
@@ -2886,12 +2953,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // to a row lays out AS the room only while the row belongs to one.
         val catNames = loadSectionNames().distinct()
         var selectedCat = catNames.firstOrNull().orEmpty()
-        var query = ""
 
         // Closing the picker without choosing a table means the next order is not a
         // table order - so it becomes a take-away one rather than leaving the screen
         // on nothing. See the dismiss listener below for the one case it does not.
         var pickedATable = false
+
+        // Set when the action band below has already answered for this picker - by
+        // starting an order of its own, or by handing over to Table Actions. The
+        // dismiss listener's take-away fallback then stands aside: it is for a picker
+        // closed with no answer given, and the band is an answer. Without it, tapping
+        // QSR would start a QSR order and the dismiss would start a take-away on top
+        // of it, and choosing Transfer would abandon the table being transferred.
+        var bandHandled = false
 
         // A CLEANING OR BLOCKED TABLE KEEPS THE PLAN OPEN. Every other tap closes it,
         // as it always has.
@@ -2991,25 +3065,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         rv.layoutManager = androidx.recyclerview.widget.GridLayoutManager(ctx, 8)
         rv.adapter = adapter
 
-        val counts = v.findViewById<LinearLayout>(R.id.llTableCounts)
-
         fun refresh() {
-            val q = query.trim().lowercase()
-            // A search reaches the whole floor, not the open room. With no All chip
-            // left to fall back to, a search bounded by one section would come back
-            // empty for a table the operator knows is there - just in the next room -
-            // and there would be no way to widen it. So typing lifts the section, and
-            // the cards name their room while it does; clearing it drops back to the
-            // room whose chip is lit.
-            val searching = q.isNotEmpty()
-            val shown = tables.filter {
-                (searching || catNames.isEmpty() || it.section == selectedCat) &&
-                    (!searching || it.code.lowercase().contains(q) || it.section.lowercase().contains(q))
-            }
-            adapter.submit(shown, showSection = searching)
+            // The room whose chip is lit, and nothing else. The search that used to
+            // lift the section is gone, and with it the case where a card had to name
+            // its own room - every card on screen now belongs to the room named above
+            // it, so the section line on the card would only repeat the chip.
+            val shown = tables.filter { catNames.isEmpty() || it.section == selectedCat }
+            adapter.submit(shown, showSection = false)
             emptyNote.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
             rv.visibility = if (shown.isEmpty()) View.GONE else View.VISIBLE
-            fillTableCounts(counts, shown)
         }
 
         // Sections read as chips across the top - the categories of this grid. A store
@@ -3037,7 +3101,78 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
         styleSectionChips(tabViews, selectedCat, accent)
 
-        etSearch.addTextChangedListener { query = it?.toString().orEmpty(); refresh() }
+        // ---- The order band: what kind of order, and who for ---------------------
+        //
+        // Dine In is what this dialog already IS - the grid below is the dine-in flow -
+        // so it starts checked and choosing it only says so. The other two have no
+        // table to pick, so they do not wait for one: they start the order and the
+        // picker gets out of the way, which is the whole reason a counter mode is
+        // reached from here rather than through a floor plan it will never use.
+        //
+        // Both go through [openCounterOrder], the same path the Take Away and QSR
+        // buttons on the sales page take, so an order started from the picker is the
+        // same order started the other way - one token sequence, one reuse rule, one
+        // set of buttons enabled at the far end.
+        val segMode = v.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(
+            R.id.segPickerMode
+        )
+        val btnCustomer = v.findViewById<com.google.android.material.button.MaterialButton>(
+            R.id.btnChooseTableCustomer
+        )
+
+        // OPENS ON THE MODE ALREADY SELECTED, mirrored off the sales page's own
+        // segment rather than always starting on Dine In.
+        //
+        // The band and the segment behind it answer the same question, so the picker
+        // opening on Dine In while the screen underneath said Take Away made the two
+        // disagree about what the operator had already chosen - and the mode the
+        // picker showed was the one it had decided for itself, not the one in force.
+        // Reflecting it means the band always reports before it collects.
+        segMode.check(
+            when (view?.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(
+                R.id.segOrderType
+            )?.checkedButtonId) {
+                R.id.btnTakeAway -> R.id.btnModeTakeAway
+                R.id.btnQsr -> R.id.btnModeQsr
+                else -> R.id.btnModeDineIn
+            }
+        )
+
+        /** Starts a counter order of [type] and lets the picker go. */
+        fun startCounter(type: String, then: (() -> Unit)? = null) {
+            bandHandled = true
+            dialog.dismiss()
+            openCounterOrder(type)
+            then?.invoke()
+        }
+
+        // CLICKS, not the group's checked-change.
+        //
+        // Now that the band can open with Take Away or QSR already lit, a checked
+        // listener would go deaf on exactly the button the operator is most likely to
+        // press: tapping the mode that is already checked changes nothing, so it
+        // reports nothing, and the tap would do nothing at all.
+        //
+        // A click always arrives. The group still owns the lit state, so the two do
+        // not fight - it decides what the band LOOKS like, these decide what it DOES.
+        v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnModeTakeAway)
+            .setOnClickListener { startCounter(TYPE_TAKE_AWAY) }
+        v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnModeQsr)
+            .setOnClickListener { startCounter(TYPE_QSR) }
+        // Dine In: stay on the floor plan and pick a table. Nothing to do but light up,
+        // which the group has already done.
+
+        // ADD CUSTOMER STARTS A TAKE-AWAY, and asks straight after.
+        //
+        // It cannot simply open the customer prompt: [onAddCustomer] works on the
+        // order in hand, and standing in the picker there is not one yet. So it makes
+        // the order the customer is FOR and then asks - "a take-away for this person"
+        // in one tap, rather than Take Away, then find the button on the panel.
+        //
+        // Take-away and not whichever mode is checked, because a table order carries
+        // no customer - it is its table, which is the rule [onAddCustomer] enforces.
+        btnCustomer.setOnClickListener { startCounter(TYPE_TAKE_AWAY) { onAddCustomer() } }
+
         v.findViewById<ImageButton>(R.id.btnCloseChooseTable).setOnClickListener { dialog.dismiss() }
 
         // Closed without picking a table -> Take Away. Always.
@@ -3057,22 +3192,117 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         //
         // Covers every way out at once: the close button, the back press, a tap
         // outside.
+        // ...and not when the action band has already started one - see
+        // ANY HEADER CONTROL CLOSES THE PICKER.
+        //
+        // The header is live while the plan is up (see the window flags above), so a
+        // tap on it now does what it says - opens the drawer, goes back, goes home.
+        // What it must not do is leave the floor plan hanging over the screen the
+        // operator has just asked for.
+        //
+        // Hung on each control rather than on the bar itself: a ViewGroup's touch
+        // listener only runs for touches its children did not take, which is every
+        // touch except the ones that matter here.
+        //
+        // ACTION_DOWN, and returning false. The picker is gone by the time the finger
+        // lifts, and the control still receives the whole gesture - so the tap both
+        // closes the plan and does the thing it was aimed at, rather than being spent
+        // on the closing.
+        //
+        // [bandHandled] because leaving by the header is not "closed without picking a
+        // table": the operator is going somewhere else, and starting a take-away token
+        // on their way out is not what reaching for the menu asked for.
+        val headerBar = activity?.findViewById<ViewGroup>(R.id.headerBar)
+        val headerControls = headerBar?.let { bar ->
+            (0 until bar.childCount).map { bar.getChildAt(it) }
+        }.orEmpty()
+        val closeOnHeaderTouch = View.OnTouchListener { _, event ->
+            if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN && dialog.isShowing) {
+                bandHandled = true
+                dialog.dismiss()
+            }
+            false
+        }
+        headerControls.forEach { it.setOnTouchListener(closeOnHeaderTouch) }
+
+        // [bandHandled]. Tapping QSR is an answer, so the fallback for "no answer
+        // given" must not fire on top of it.
         dialog.setOnDismissListener {
-            if (!pickedATable && isAdded) openTakeAway()
+            // Handed back before anything else: the listeners hold this dialog, and a
+            // header that outlives it would go on trying to close one already gone.
+            headerControls.forEach { it.setOnTouchListener(null) }
+            if (!pickedATable && !bandHandled && isAdded) openTakeAway()
         }
 
         ThemeManager.applyTheme(v)
         // After the theme pass, so it cannot repaint the chips out from under us.
         styleSectionChips(tabViews, selectedCat, accent)
+        // AFTER THE THEME PASS, for the same reason the chips are - and it matters
+        // more here. ThemeManager.applyTheme walks every MaterialButton and paints it
+        // one flat colour; a segmented button needs TWO, a checked and an unchecked,
+        // which is what [styleSeg] sets as a state list. Run before the pass, the
+        // state list was flattened and the chosen mode came back looking like the
+        // other two - no accent fill, no white label - which is the whole way a
+        // segment says which one is selected.
+        //
+        // The sales page does this in [restyle], which is likewise its after-the-pass
+        // pass. Same function, same moment, so the two bands match.
+        styleSeg(segMode, accent)
         refresh()
         dialog.show()
         // Re-applied after show, which is where the window would otherwise fall back to
-        // the theme's own sizing.
-        dialog.window?.setLayout(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        )
+        // the theme's own sizing. Measured again too rather than reusing the first
+        // answer: before show() the header may not have been laid out, and its height
+        // is what the offset is made of.
+        fitBelowHeader(dialog)
         stretchToWindow(v)
+    }
+
+    /**
+     * Sizes and places [dialog] to fill everything under the app's header - the bar
+     * carrying the hamburger, the back arrow and the screen title.
+     *
+     * The picker is still as big as it can be, because it is a floor plan and wants
+     * the room. It just starts where the app's own content starts instead of over the
+     * top of the header, so the menu and the way back stay where they always are while
+     * it is open.
+     *
+     * ## Measured in ONE coordinate space
+     *
+     * Both the header and the content frame are read with getLocationOnScreen and then
+     * subtracted, so the answer is the header's bottom edge expressed as an offset
+     * INTO the content area - which is the space a dialog window's `y` is an offset
+     * into. Reading the header in window coordinates and the height off the decor
+     * view, as this first did, mixes two origins that differ by the status bar: the
+     * dialog would be pushed down by that much again and hang off the bottom.
+     *
+     * Off the header itself rather than a fixed dp, because it carries a title, a
+     * subtitle and a row of buttons, and its height follows the font scale.
+     *
+     * Falls back to filling the content area when the header is missing, hidden or not
+     * yet laid out - which is the behaviour this replaces, so it is a safe thing to
+     * land on rather than a broken one.
+     */
+    private fun fitBelowHeader(dialog: android.app.Dialog) {
+        val window = dialog.window ?: return
+        val content = activity?.findViewById<View>(android.R.id.content)
+        val available = content?.height?.takeIf { it > 0 }
+            ?: resources.displayMetrics.heightPixels
+
+        val header = activity?.findViewById<View>(R.id.headerBar)
+        var top = 0
+        if (content != null && header != null && header.height > 0 &&
+            header.visibility == View.VISIBLE
+        ) {
+            val onScreen = IntArray(2)
+            header.getLocationOnScreen(onScreen)
+            val headerBottom = onScreen[1] + header.height
+            content.getLocationOnScreen(onScreen)
+            top = (headerBottom - onScreen[1]).coerceIn(0, available)
+        }
+
+        window.attributes = window.attributes.apply { y = top }
+        window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, available - top)
     }
 
     /**
@@ -3141,62 +3371,6 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun kotSentQty(tableCode: String, section: String): Double =
         orderFor(tableCode, section)?.items?.sumOf { it.kotQty } ?: 0.0
 
-    /**
-     * The tally across the top of the picker: the total, then one box per status.
-     *
-     * Counted from the tables actually on screen, so picking a section re-counts for
-     * that section - the strip answers "is anything free *here*", which is the question
-     * being asked while looking at one room. A status nobody is in is left out rather
-     * than shown as a zero, so the strip stays short enough to read.
-     */
-    private fun fillTableCounts(strip: LinearLayout, shown: List<TableTile>) {
-        strip.removeAllViews()
-        if (shown.isEmpty()) { strip.visibility = View.GONE; return }
-        strip.visibility = View.VISIBLE
-
-        val boxes = mutableListOf<Triple<String, Int, Int>>()   // label, count, colour
-        boxes.add(Triple("Total Tables", shown.size, 0xFF334155.toInt()))
-        // In the order the legend lists them, so the two read the same way round.
-        // Reserved is not among them, and is not in the legend either: no table can
-        // be set to it any more (see TableFragment's status list).
-        //
-        // Cleaning and Blocked ARE, because the Table master still sets both - a floor
-        // with two tables out of service should say so in the tally, not leave them to
-        // be found by counting cards.
-        listOf("Available", "Occupied", "Bill Pending", "Cleaning", "Blocked").forEach { label ->
-            val n = shown.count { lookOf(it.status).label == label }
-            if (n > 0) boxes.add(Triple(label, n, lookOf(statusFor(label)).color))
-        }
-
-        boxes.forEach { (label, count, colour) ->
-            val box = LinearLayout(requireContext()).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = android.view.Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    .also { it.marginEnd = dp(8) }
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    cornerRadius = dp(10).toFloat()
-                    setColor(ColorUtils.setAlphaComponent(colour, 0x14))
-                    setStroke(dp(1), ColorUtils.setAlphaComponent(colour, 0x4D))
-                }
-            }
-            box.addView(TextView(requireContext()).apply {
-                text = count.toString()
-                textSize = 20f
-                setTypeface(null, android.graphics.Typeface.BOLD)
-                setTextColor(colour)
-            })
-            box.addView(TextView(requireContext()).apply {
-                text = label
-                textSize = 12f
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                setTextColor(resources.getColor(R.color.text_secondary, null))
-            })
-            strip.addView(box)
-        }
-    }
 
     /**
      * The same colour taken down towards black, for the border of a card filled with
@@ -3775,6 +3949,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private fun exceedsStock(productId: String, wantedQty: Double, ignoreItemId: Long = 0L): Boolean {
         if (!stockTrackingOn) return false
+        // NEGATIVE STOCK ALLOWED: the count is kept, and the sale is let through
+        // anyway. General Settings' own switch - see
+        // GeneralSettingsDao.allowsNegativeStock, which is read here rather than
+        // cached in a field so a change made in Settings takes effect on the next tap
+        // rather than on the next visit to this screen.
+        //
+        // The count still moves; it is simply allowed to go below zero, which is the
+        // honest record of a shop whose paperwork is behind its shelves.
+        if (com.example.synergic_pos_offline.database.GeneralSettingsDao
+                .allowsNegativeStock(requireContext())
+        ) return false
         val gp = allProducts.firstOrNull { it.product.id == productId } ?: return false
         val onOrder = currentOrder()?.items.orEmpty()
             .filter { it.dbItemId != ignoreItemId && it.productId.toString() == productId }
@@ -5197,9 +5382,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         String.format(java.util.Locale.US, "%,.2f", v)
 
     /** Whole quantities show without decimals; fractional ones keep up to 3 places. */
-    private fun qtyText(v: Double): String =
-        if (v % 1.0 == 0.0) v.toLong().toString()
-        else String.format(java.util.Locale.US, "%.3f", v).trimEnd('0').trimEnd('.')
+    private fun qtyText(v: Double): String = Quantity.text(v)
 
     /** Refresh product names when app language changes, without affecting other UI. */
     fun refreshProductDisplay() {

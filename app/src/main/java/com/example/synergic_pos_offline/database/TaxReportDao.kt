@@ -1,9 +1,7 @@
 package com.example.synergic_pos_offline.database
 
 import android.content.Context
-import com.example.synergic_pos_offline.utils.BillPricing
 import com.example.synergic_pos_offline.utils.BillRounding
-import com.example.synergic_pos_offline.utils.BillSettingsSnapshot
 import com.example.synergic_pos_offline.utils.SessionManager
 
 /**
@@ -15,33 +13,34 @@ import com.example.synergic_pos_offline.utils.SessionManager
  *
  * ## How the figures are worked out
  *
- * By running each bill line back through [BillPricing] - **the same function that
- * priced it when it was sold**, given the same inputs - rather than by inferring
- * anything from what it came to. The line stores its rate, quantity, tax rates and
- * discount; the bill stores the rules those were priced under. Put the two together
- * and the result is not an approximation of the bill's arithmetic, it *is* the bill's
- * arithmetic, and it cannot drift from the receipt because there is only one copy of
- * it.
+ * By reading the money that was written at the sale, and only that. Each line stores
+ * the tax it was charged; the taxable value behind it is that line's total less that
+ * tax, which is the base whichever way the price was quoted - an inclusive total
+ * already carries its tax, an exclusive one has it added on top, and taking the tax
+ * off lands on the same figure either way.
  *
- * That matters because two of the rules genuinely change the answer, and neither can
- * be recovered from the stored totals alone:
+ * ## Why it no longer re-prices the line
  *
- * - **Inclusive or exclusive.** An inclusive line's rate was applied to
- *   `gross / (1 + r)`, an exclusive line's to the gross itself. The same listed price
- *   is a different taxable value under each.
- * - **Discount before or after tax.** A pre-tax discount comes off the base and the
- *   rate applies to what remains. A post-tax discount leaves the base whole - tax is
- *   charged on the full value - and reduces only what the customer pays. Same
- *   discount, same rate, different base and different tax.
+ * It used to run every line back through [BillPricing], from its rates and the rules
+ * frozen onto its bill, on the reasoning that re-deriving the arithmetic could not
+ * drift from the receipt. The flaw was not in the arithmetic but in there being two
+ * of them: [BillWiseReportDao] sums the totals each bill was SAVED with and does no
+ * re-pricing at all, so the same books reached the same period's tax by two routes
+ * with nothing holding them to each other. A paisa of rounding, a bill written before
+ * settings_snapshot existed, an IGST line that [BillPricing] does not model - any of
+ * it put two reports a figure apart, and neither could be shown to be wrong.
  *
- * Both come from `settings_snapshot`, frozen onto the bill at the moment of sale.
- * Today's Tax Settings must never be consulted here: a shop that has since moved from
- * inclusive to exclusive pricing, or moved its discount across the tax line, still has
- * the old bills in its books, and they were taxed the way they were taxed.
+ * The stored figures settle it. `td_bill_items`' tax columns are the very numbers
+ * that were summed into `td_bills`' own totals (see BillDao, which writes the priced
+ * line and that same run's bill total together), so this report, the item-wise report
+ * and the bill-wise report now agree by construction rather than by coincidence -
+ * CGST, SGST, IGST and VAT alike.
  *
- * A line on a bill with no snapshot, or one carrying IGST (which [BillPricing] does
- * not model), falls back to what was stored, with the base recovered by inverting the
- * rate off the booked tax - `tax x 100 / rate`, which needs no rules at all.
+ * The rules that were frozen onto the bill still decide what it was taxed - they did
+ * so when it was priced, and their answer is what is stored. Nothing here consults
+ * today's Tax Settings, for the same reason it never did: a shop that has since moved
+ * from inclusive to exclusive pricing still has the old bills in its books, and they
+ * were taxed the way they were taxed.
  */
 class TaxReportDao(context: Context) {
 
@@ -91,7 +90,19 @@ class TaxReportDao(context: Context) {
     /** A period's Service Charge and other extra charges, summed from `td_bills`.
      *  [other] is non-parcel - [parcel] is Parcel Charge's own share, broken out
      *  separately (see ChargeDao.Kind.PARCEL) rather than folded into [other]. */
-    data class BillCharges(val service: Double, val other: Double, val parcel: Double = 0.0)
+    /**
+     * The bill-level money a period carries that is not the goods themselves.
+     *
+     * [roundOff] rides along with the charges because it is wanted by the same
+     * callers and for the same reason: a report that states what a period came to has
+     * to add the same things the bill added, and the rounding was one of them.
+     */
+    data class BillCharges(
+        val service: Double,
+        val other: Double,
+        val parcel: Double = 0.0,
+        val roundOff: Double = 0.0
+    )
 
     /** What one slab has accumulated so far, before it becomes a [Line]. */
     private class Sum {
@@ -126,7 +137,10 @@ class TaxReportDao(context: Context) {
                    b.settings_snapshot
             FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
             JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id
-            WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
+            WHERE substr(
+                      COALESCE(NULLIF(TRIM(b.bill_date_time), ''), b.bill_date || ' 00:00'),
+                      1, 10
+                  ) BETWEEN ? AND ?
               AND COALESCE(b.is_voided, 0) = 0
               AND COALESCE(b.bill_status, 'COMPLETED') <> 'CANCELLED'
               $storeClause
@@ -153,34 +167,24 @@ class TaxReportDao(context: Context) {
                 val sgstRate = c.getDouble(3)
                 val igstRate = c.getDouble(4)
                 val vatRate = c.getDouble(5)
-                var cgst = c.getDouble(7)
-                var sgst = c.getDouble(8)
+                val cgst = c.getDouble(7)
+                val sgst = c.getDouble(8)
                 val igst = c.getDouble(9)
-                var vat = c.getDouble(10)
-                val snapshot = BillSettingsSnapshot.parse(c.getString(12))
+                val vat = c.getDouble(10)
+                val itemTotal = c.getDouble(11)
 
-                val base: Double
-                if (snapshot != null && igstRate <= 0.0 && igst <= 0.0) {
-                    val priced = BillPricing.price(
-                        rate = c.getDouble(0),
-                        quantity = c.getDouble(1),
-                        cgstRate = cgstRate,
-                        sgstRate = sgstRate,
-                        vatRate = vatRate,
-                        discountAmount = c.getDouble(6),
-                        taxEnabled = snapshot.taxEnabled,
-                        inclusive = snapshot.inclusive,
-                        discountPreTax = snapshot.discountPreTax
-                    )
-                    base = priced.taxable
-                    cgst = priced.cgst
-                    sgst = priced.sgst
-                    vat = priced.vat
-                } else {
-                    val rate = cgstRate + sgstRate + igstRate + vatRate
-                    val tax = cgst + sgst + igst + vat
-                    base = if (rate > 0.0) tax * 100.0 / rate else c.getDouble(11)
-                }
+                // READ, NOT RECOMPUTED - the same change ItemWiseReportDao made, and
+                // for the same reason. This ran each line back through BillPricing
+                // while BillWiseReportDao summed the totals the bill was saved with,
+                // so the period's tax had two routes to arrive by and nothing held
+                // them together.
+                //
+                // The taxable value is the line's total less the tax booked on it,
+                // which is the taxable base whichever way the price was quoted: an
+                // inclusive total already carries its tax, an exclusive one has it
+                // added on. An untaxed line has none to take off and contributes its
+                // whole total.
+                val base = itemTotal - (cgst + sgst + igst + vat)
 
                 // SGST first, as the slip has always set them.
                 add(SGST, sgstRate, base, sgst)
@@ -251,9 +255,13 @@ class TaxReportDao(context: Context) {
             db.rawQuery(
                 """
                 SELECT COALESCE(SUM(service_charge_amount), 0), COALESCE(SUM(tot_other_charges_amount), 0),
-                       COALESCE(SUM(parcel_charge_amount), 0)
+                       COALESCE(SUM(parcel_charge_amount), 0),
+                       COALESCE(SUM(tot_round_off_amount), 0)
                 FROM ${DatabaseHelper.Tables.TD_BILLS}
-                WHERE substr(bill_date, 1, 10) BETWEEN ? AND ?
+                WHERE substr(
+                          COALESCE(NULLIF(TRIM(bill_date_time), ''), bill_date || ' 00:00'),
+                          1, 10
+                      ) BETWEEN ? AND ?
                   AND COALESCE(is_voided, 0) = 0
                   AND COALESCE(bill_status, 'COMPLETED') <> 'CANCELLED'
                   $storeClause
@@ -264,7 +272,10 @@ class TaxReportDao(context: Context) {
                 return if (c.moveToFirst()) {
                     val parcel = BillRounding.toPaise(c.getDouble(2))
                     val other = (BillRounding.toPaise(c.getDouble(1)) - parcel).coerceAtLeast(0.0)
-                    BillCharges(BillRounding.toPaise(c.getDouble(0)), other, parcel)
+                    BillCharges(
+                        BillRounding.toPaise(c.getDouble(0)), other, parcel,
+                        BillRounding.toPaise(c.getDouble(3))
+                    )
                 } else {
                     BillCharges(0.0, 0.0)
                 }

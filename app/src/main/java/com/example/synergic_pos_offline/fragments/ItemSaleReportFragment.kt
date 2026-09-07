@@ -60,20 +60,38 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
         buildList {
             add("Total Items" to report.itemCount.toString())
             add("Total Qty" to StockDao.trim(report.totalQuantity))
-            add("Total SGST" to money(report.totalSgst))
-            add("Total CGST" to money(report.totalCgst))
+            // Named to match bill-wise's own summary line, which now holds the same
+            // figure: what the goods were taxed on, across the period.
+            add("Taxable Amount" to money(report.totalAmount))
+            add("SGST Amount" to money(report.totalSgst))
+            add("CGST Amount" to money(report.totalCgst))
             // Only where the period holds them, so a shop that charges neither is not
             // reading two lines of zeroes - and one that does has them counted.
-            if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
-            if (report.hasVat) add("Total VAT" to money(report.totalVat))
+            if (report.hasIgst) add("IGST Amount" to money(report.totalIgst))
+            if (report.hasVat) add("VAT Amount" to money(report.totalVat))
             if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
             if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
             if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
+            if (kotlin.math.abs(report.totalRoundOff) > 0.005) {
+                add("Round Off Amount" to money(report.totalRoundOff))
+            }
         }
 
-    /** The one figure the report is read for. */
+    /**
+     * The one figure the report is read for - and the one bill-wise is read for too.
+     *
+     * THE NET, not the taxable value. The two reports headline a figure each under
+     * near-identical names, and they were not the same figure: bill-wise's Total
+     * Amount is what the period was settled for, this one's Total Amt was what the
+     * items were taxed on - so a period reading 880.00 on one screen read 862.86 on
+     * the other, and the difference was the tax the reader could see listed above it.
+     *
+     * Both now headline what the period came to. What was sold before tax is still
+     * here, as Item Amount in the summary, where bill-wise states the same figure
+     * under Bill Amount.
+     */
     override fun totalOf(report: ItemWiseReportDao.Report): Pair<String, String> =
-        "Total Amt" to money(report.totalAmount)
+        "Total Amount" to money(report.totalNetAmount)
 
     /**
      * The printed slip, in the format these tills have always printed it.
@@ -98,17 +116,24 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
             // rather than out at the left margin.
             columns2 = listOf("", "AMOUNT", "SGST", "CGST"),
             rows2 = report.lines.map { listOf("", money(it.amount), money(it.sgst), money(it.cgst)) },
+            // The same labels, in the same order, as the bill-wise slip prints - the
+            // two reports state the same figures and should not make the reader
+            // translate between two vocabularies to see that.
             summary = buildList {
-                add("TOTAL QTY " to StockDao.trim(report.totalQuantity))
-                add("TOTAL SGST" to money(report.totalSgst))
-                add("TOTAL CGST" to money(report.totalCgst))
-                if (report.hasIgst) add("TOTAL IGST" to money(report.totalIgst))
-                if (report.hasVat) add("TOTAL VAT " to money(report.totalVat))
-                if (report.totalServiceCharge > 0.005) add("SERVICE CHG" to money(report.totalServiceCharge))
-                if (report.totalOtherCharges > 0.005) add("EXTRA CHGS" to money(report.totalOtherCharges))
-                if (report.totalParcelCharge > 0.005) add("PARCEL CHG" to money(report.totalParcelCharge))
-                add("TOTAL AMT " to money(report.totalAmount))
-            }.map { (label, value) -> "$label:" to value },
+                add("Total Qty" to StockDao.trim(report.totalQuantity))
+                add("Taxable Amount" to money(report.totalAmount))
+                add("SGST Amount" to money(report.totalSgst))
+                add("CGST Amount" to money(report.totalCgst))
+                if (report.hasIgst) add("IGST Amount" to money(report.totalIgst))
+                if (report.hasVat) add("VAT Amount" to money(report.totalVat))
+                if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
+                if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
+                if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
+                add("Total Amount" to money(report.totalNetAmount))
+                if (kotlin.math.abs(report.totalRoundOff) > 0.005) {
+                    add("Round Off Amount" to money(report.totalRoundOff))
+                }
+            }.map { (label, value) -> label.uppercase().padEnd(16) + " :" to value },
             emptyNote = "Nothing was sold in this period."
         )
 

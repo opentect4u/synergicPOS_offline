@@ -159,39 +159,51 @@ class ChargeDao(context: Context) {
         val applicability: Applicability = Applicability.ALL, val kind: Kind = Kind.EXTRA
     )
 
-    /** Every charge in the master, enabled or not - what the master screen lists. */
+    /**
+     * Every charge in the master, enabled or not - what the master screen lists.
+     *
+     * The read is guarded. Every FIELD in here already falls back rather than throwing
+     * on something it does not recognise, but the query itself did not - and a query
+     * naming a column the table does not have throws before any of that fallback is
+     * reached, which took the whole Extra Charges screen down with it. See
+     * DatabaseHelper.onOpen, where the columns this asks for are now guaranteed to
+     * exist; this is the second line of defence, so a schema that is wrong again some
+     * other day shows an empty master rather than closing the app.
+     */
     fun getAll(): List<Charge> {
         val list = mutableListOf<Charge>()
         val store = currentStoreId()
-        helper.readableDatabase.query(
-            table,
-            arrayOf("id", "charge_name", "percentage", "charge_type", "is_enabled", "applicability", "charge_kind"),
-            (if (store != null) "store_id = ? AND is_active = 1" else "is_active = 1"),
-            store?.let { arrayOf(it.toString()) },
-            null, null, "id ASC"
-        ).use { c ->
-            while (c.moveToNext()) {
-                list.add(
-                    Charge(
-                        id = c.getLong(0),
-                        name = c.getString(1).orEmpty(),
-                        value = c.getDouble(2),
-                        type = try {
-                            Type.valueOf(c.getString(3)?.uppercase() ?: "PERCENTAGE")
-                        } catch (e: Exception) {
-                            Type.PERCENTAGE
-                        },
-                        enabled = c.getInt(4) != 0,
-                        // Reads the new comma list and the old single words alike -
-                        // see [Applicability.parse].
-                        applicability = Applicability.parse(c.getString(5)),
-                        kind = try {
-                            Kind.valueOf(c.getString(6)?.uppercase() ?: "EXTRA")
-                        } catch (e: Exception) {
-                            Kind.EXTRA
-                        }
+        runCatching {
+            helper.readableDatabase.query(
+                table,
+                arrayOf("id", "charge_name", "percentage", "charge_type", "is_enabled", "applicability", "charge_kind"),
+                (if (store != null) "store_id = ? AND is_active = 1" else "is_active = 1"),
+                store?.let { arrayOf(it.toString()) },
+                null, null, "id ASC"
+            ).use { c ->
+                while (c.moveToNext()) {
+                    list.add(
+                        Charge(
+                            id = c.getLong(0),
+                            name = c.getString(1).orEmpty(),
+                            value = c.getDouble(2),
+                            type = try {
+                                Type.valueOf(c.getString(3)?.uppercase() ?: "PERCENTAGE")
+                            } catch (e: Exception) {
+                                Type.PERCENTAGE
+                            },
+                            enabled = c.getInt(4) != 0,
+                            // Reads the new comma list and the old single words alike -
+                            // see [Applicability.parse].
+                            applicability = Applicability.parse(c.getString(5)),
+                            kind = try {
+                                Kind.valueOf(c.getString(6)?.uppercase() ?: "EXTRA")
+                            } catch (e: Exception) {
+                                Kind.EXTRA
+                            }
+                        )
                     )
-                )
+                }
             }
         }
         return list

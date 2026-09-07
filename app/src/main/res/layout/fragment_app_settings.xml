@@ -213,18 +213,8 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSaveAppSettings"
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="16dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:minHeight="0dp"
-            android:text="Save Settings"
-            android:textSize="16sp"
-            android:textColor="@color/white"
-            app:cornerRadius="12dp" />
+        <!-- No Save button: App Settings write themselves as each switch is
+             flipped - see SettingsAutoSave. -->
 
     </LinearLayout>
 </ScrollView>

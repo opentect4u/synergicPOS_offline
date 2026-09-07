@@ -214,7 +214,7 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
      */
     private fun summaryLines(r: BillWiseReportDao.Report): List<Pair<String, String>> = buildList {
         add("Total Bills" to r.billCount.toString())
-        add("Bill Amount" to money(r.totalMrp))
+        add("Taxable Amount" to money(r.totalMrp))
         add("SGST Amount" to money(r.totalSgst))
         add("CGST Amount" to money(r.totalCgst))
         if (r.totalIgst > 0.0) add("IGST Amount" to money(r.totalIgst))
@@ -271,7 +271,7 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
             // padded to the longest so the colons line up down the column; the face is
             // monospace, so padding is alignment.
             summary = buildList {
-                add("Bill Amount" to money(r.totalMrp))
+                add("Taxable Amount" to money(r.totalMrp))
                 add("SGST Amount" to money(r.totalSgst))
                 add("CGST Amount" to money(r.totalCgst))
                 if (r.totalIgst > 0.0) add("IGST Amount" to money(r.totalIgst))

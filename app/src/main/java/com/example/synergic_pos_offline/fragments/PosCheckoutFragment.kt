@@ -44,6 +44,7 @@ import com.google.android.material.textfield.TextInputLayout
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.synergic_pos_offline.utils.Quantity
 
 /**
  * How many item lines the "restore held bill?" confirmation previews. The card it
@@ -1796,9 +1797,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     private fun money(v: Double) = "₹" + String.format("%.2f", BillRounding.toPaise(v))
 
     /** Whole quantities show without decimals; fractional ones keep up to 3 places. */
-    private fun qtyText(v: Double): String =
-        if (v % 1.0 == 0.0) v.toLong().toString()
-        else String.format("%.3f", v).trimEnd('0').trimEnd('.')
+    private fun qtyText(v: Double): String = Quantity.text(v)
     private fun fmtPlain(v: Double) = String.format("%.2f", v)
 
     private fun <T : View> id(resId: Int): T = root.findViewById(resId)
