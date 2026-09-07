@@ -143,6 +143,27 @@ class GeneralSettingsDao(context: Context) {
          *  while [stockAlert] is on. */
         val stockAlertQty: Int = 0,
         /**
+         * Whether a sale may take an item below zero.
+         *
+         * ON, the till sells what the customer is standing there holding and lets the
+         * count go negative - which is the honest record of a shop whose paperwork is
+         * behind its shelves: the goods left, so the sale happened, and the count says
+         * how far out the book is until somebody reconciles it.
+         *
+         * OFF, the sale is refused at the quantity that would cross zero. That is the
+         * stricter shop - a warehouse or a franchise counting to the unit - where a
+         * negative on hand means somebody has mis-keyed rather than under-recorded.
+         *
+         * Only meaningful while [stockFlag] is on: with no count kept there is nothing
+         * to go negative.
+         *
+         * DEFAULT OFF, which is how the till behaved before this was a setting: the
+         * sale screens already refused to take an item past its on-hand quantity, so
+         * off is not a new restriction, it is the existing one given a switch. A shop
+         * that wants the looser rule now has somewhere to say so.
+         */
+        val negativeStock: Boolean = false,
+        /**
          * Section access, set by an admin. When off, that top-level section (Master /
          * Settings / Reports) is hidden from a NON-admin user's menu and drawer; an
          * admin always sees all three, so turning one off can never lock the admin out
@@ -178,6 +199,7 @@ class GeneralSettingsDao(context: Context) {
             stockFlag = m[KEY_STOCK_FLAG]?.toBool() ?: d.stockFlag,
             stockAlert = m[KEY_STOCK_ALERT]?.toBool() ?: d.stockAlert,
             stockAlertQty = m[KEY_STOCK_ALERT_QTY]?.toIntOrNull() ?: d.stockAlertQty,
+            negativeStock = m[KEY_NEGATIVE_STOCK]?.toBool() ?: d.negativeStock,
             accessMaster = m[KEY_ACCESS_MASTER]?.toBool() ?: d.accessMaster,
             accessSettings = m[KEY_ACCESS_SETTINGS]?.toBool() ?: d.accessSettings,
             accessReports = m[KEY_ACCESS_REPORTS]?.toBool() ?: d.accessReports,
@@ -207,6 +229,7 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_STOCK_FLAG, s.stockFlag.b())
         put(KEY_STOCK_ALERT, alertApply.b())
         put(KEY_STOCK_ALERT_QTY, if (alertApply) s.stockAlertQty.toString() else "0")
+        put(KEY_NEGATIVE_STOCK, s.negativeStock.b())
         put(KEY_ACCESS_MASTER, s.accessMaster.b())
         put(KEY_ACCESS_SETTINGS, s.accessSettings.b())
         put(KEY_ACCESS_REPORTS, s.accessReports.b())
@@ -317,6 +340,7 @@ class GeneralSettingsDao(context: Context) {
         private const val KEY_STOCK_FLAG = "Stock Flag"
         private const val KEY_STOCK_ALERT = "Stock Alert"
         private const val KEY_STOCK_ALERT_QTY = "Stock Alert Quantity"
+        private const val KEY_NEGATIVE_STOCK = "Negative Stock"
         /** Shared with `PrintLanguage`, which reads it out of the login cache. */
         const val KEY_PRINT_LANGUAGE =
             com.example.synergic_pos_offline.utils.PrintLanguage.SETTING_KEY
@@ -365,6 +389,26 @@ class GeneralSettingsDao(context: Context) {
                 .value(context, "G", KEY_STOCK_FLAG)
             if (!cached.isNullOrBlank()) return cached == "1" || cached.equals("true", true)
             return GeneralSettingsDao(context).load().stockFlag
+        }
+
+        /**
+         * Whether a sale may take an item below zero - see [GeneralSettings.negativeStock].
+         *
+         * Read the same way [isStockEnabled] is: from the settings cache where it has
+         * an answer, and from the database where it does not, which is a till that has
+         * not saved general settings since this existed.
+         *
+         * Answers TRUE when stock is not tracked at all. There is no count to protect,
+         * so a screen asking "may this go negative" about a till that keeps no
+         * quantities is asking about nothing - and answering false would refuse sales
+         * on a shop that never opted into stock in the first place.
+         */
+        fun allowsNegativeStock(context: Context): Boolean {
+            if (!isStockEnabled(context)) return true
+            val cached = com.example.synergic_pos_offline.utils.SettingsCache
+                .value(context, "G", KEY_NEGATIVE_STOCK)
+            if (!cached.isNullOrBlank()) return cached == "1" || cached.equals("true", true)
+            return GeneralSettingsDao(context).load().negativeStock
         }
 
         /**

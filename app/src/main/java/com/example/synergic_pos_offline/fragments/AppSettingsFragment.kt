@@ -1,5 +1,6 @@
 package com.example.synergic_pos_offline.fragments
 
+import com.example.synergic_pos_offline.utils.SettingsAutoSave
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -71,7 +72,16 @@ class AppSettingsFragment : Fragment(), TitledScreen {
 
         bind(dao.load())
 
-        view.findViewById<MaterialButton>(R.id.btnSaveAppSettings).setOnClickListener { onSave() }
+        // SAVED AS EACH SWITCH IS FLIPPED - there is no Save button any more.
+        //
+        // Attached after [bind], so loading the stored values does not read as the
+        // operator changing them and write straight back over what was just read.
+        SettingsAutoSave.onChange(
+            ::onSave,
+            swManualRate, swCashReception, swPaymentMode, swOtherCharges, swParcelCharge,
+            swDirectAddToCart, swBiometricLogin, swShift,
+            swCouponMode, swKot, swTableMerge, swTableShift, swTableSplit
+        )
 
         // Theme accent for switches, header and button.
         ThemeManager.applyTheme(view)
@@ -127,28 +137,45 @@ class AppSettingsFragment : Fragment(), TitledScreen {
             ?: "Offer the fingerprint reader on the login screen, beside the password"
     }
 
+    /**
+     * Writes the switches as they stand. Called by every switch on the screen - see
+     * [SettingsAutoSave].
+     *
+     * NO "SAVED" DIALOG. It was the Save button's receipt, and with the button gone a
+     * dialog on every flip would be a box to dismiss for each switch touched. The
+     * switch showing its new position is the confirmation.
+     *
+     * The fingerprint note stays, because it is not a receipt - it says the setting is
+     * on and STILL will not work yet, which the switch cannot show on its own. Only
+     * when it has just been turned on, and only when there is something to say.
+     */
     private fun onSave() {
         val settings = collect()
         dao.save(settings)
         // Switching it off revokes rather than hides: the operator a fingerprint would
         // have signed in is forgotten, so turning it back on offers nobody until
         // somebody has signed in with a password again.
-        if (!settings.biometricLogin) BiometricLogin.forget(requireContext())
-
+        if (!settings.biometricLogin) {
+            BiometricLogin.forget(requireContext())
+            return
+        }
         val note = when {
-            !settings.biometricLogin -> ""
             BiometricLogin.unavailableReason(requireContext()) != null ->
-                "\n\nFingerprint login is on, but this device cannot use it yet: " +
+                "Fingerprint login is on, but this device cannot use it yet: " +
                     BiometricLogin.unavailableReason(requireContext())
             BiometricLogin.offeredUser(requireContext()) == null ->
-                "\n\nFingerprint login is on. Sign in once with a password, and the " +
+                "Fingerprint login is on. Sign in once with a password, and the " +
                     "fingerprint reader will be offered next time."
-            else -> ""
+            else -> null
         }
-        DialogUtils.showSuccess(
-            context = requireContext(),
-            title = "Saved",
-            message = "App settings saved successfully.$note"
-        )
+        // Said once, as the switch goes on - not again on every later flip of some
+        // other switch, which would re-announce a caveat nothing had changed about.
+        if (note != null && !biometricNoteShown) {
+            biometricNoteShown = true
+            android.widget.Toast.makeText(requireContext(), note, android.widget.Toast.LENGTH_LONG).show()
+        }
     }
+
+    /** Whether the fingerprint caveat has already been said this visit. */
+    private var biometricNoteShown = false
 }

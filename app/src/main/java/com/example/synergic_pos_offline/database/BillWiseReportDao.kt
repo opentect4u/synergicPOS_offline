@@ -35,7 +35,13 @@ class BillWiseReportDao(context: Context) {
          * for a bill saved before a payment was recorded against it.
          */
         val payMode: String,
-        /** Value of the goods as listed, before tax was added and before discount. */
+        /**
+         * What the goods sold for: the value they were taxed on, after discount.
+         *
+         * The same figure the item-wise report totals, summed from the same bill
+         * lines - see the query. It was the listed subtotal before discount, which is
+         * why the two reports disagreed by exactly the discount over one period.
+         */
         val mrp: Double,
         val cgst: Double,
         val sgst: Double,
@@ -142,19 +148,61 @@ class BillWiseReportDao(context: Context) {
                          WHERE p.bill_id = b.receipt_no AND p.payment_mode IS NOT NULL
                          ORDER BY p.id ASC LIMIT 1),
                        b.bill_type, ''),
-                   COALESCE(b.tot_price, 0), COALESCE(b.tot_cgst_amount, 0),
+                   -- WHAT THE GOODS SOLD FOR, summed from the bill's own lines.
+                   --
+                   -- Not b.tot_price, which is the subtotal BEFORE the discount came
+                   -- off. That is what put this report and the item-wise one a figure
+                   -- apart over the same books: one totalled 862 where the other
+                   -- totalled 845, and the 17 between them was the discount, deducted
+                   -- by one report and not the other.
+                   --
+                   -- This is the same arithmetic ItemWiseReportDao does, over the same
+                   -- rows: each line's total less the tax booked on it, which is the
+                   -- taxable value whichever way the price was quoted. Summed per
+                   -- bill here and per item there, so the two reports add up to the
+                   -- same figure by construction rather than by agreement.
+                   --
+                   -- The DISC. column beside it still says what came off; it is now
+                   -- reporting a deduction already made rather than one the reader has
+                   -- to make themselves.
+                   COALESCE((
+                       SELECT SUM(
+                           COALESCE(i.item_total, 0)
+                           - (COALESCE(i.cgst_amount, 0) + COALESCE(i.sgst_amount, 0)
+                              + COALESCE(i.igst_amount, 0) + COALESCE(i.vat_amount, 0))
+                       )
+                       FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
+                       WHERE i.bill_id = b.receipt_no
+                   ), 0), COALESCE(b.tot_cgst_amount, 0),
                    COALESCE(b.tot_sgst_amount, 0), COALESCE(b.tot_igst_amount, 0),
                    COALESCE(b.tot_vat_amount, 0),
                    COALESCE(b.tot_discount_amount, 0), COALESCE(b.tot_round_off_amount, 0),
                    COALESCE(b.service_charge_amount, 0), COALESCE(b.tot_other_charges_amount, 0),
                    COALESCE(b.parcel_charge_amount, 0),
                    COALESCE(b.net_amount, 0)
+            -- THE SAME DAY ITEM-WISE COUNTS THE BILL ON.
+            --
+            -- This read b.bill_date while ItemWiseReportDao read bill_date_time,
+            -- falling back to bill_date. A bill whose two columns land on different
+            -- days - and they do, a sale rung up either side of midnight being the
+            -- obvious way - was inside one report's range and outside the other's, so
+            -- the same period returned two different sets of bills and the totals
+            -- could not be reconciled however the money was added up.
+            --
+            -- One expression, written the same way in both, so a bill is in a period
+            -- for both reports or for neither.
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
-            WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
+            WHERE substr(
+                      COALESCE(NULLIF(TRIM(b.bill_date_time), ''), b.bill_date || ' 00:00'),
+                      1, 10
+                  ) BETWEEN ? AND ?
               AND COALESCE(b.is_voided, 0) = 0
               AND COALESCE(b.bill_status, 'COMPLETED') <> 'CANCELLED'
               $storeClause
-            ORDER BY substr(b.bill_date, 1, 10) ASC, b.receipt_no ASC
+            ORDER BY substr(
+                         COALESCE(NULLIF(TRIM(b.bill_date_time), ''), b.bill_date || ' 00:00'),
+                         1, 10
+                     ) ASC, b.receipt_no ASC
         """.trimIndent()
 
         val args = mutableListOf(fromDate, toDate).apply {

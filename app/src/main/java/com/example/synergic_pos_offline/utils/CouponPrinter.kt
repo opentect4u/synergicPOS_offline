@@ -279,7 +279,5 @@ object CouponPrinter {
     private val WHITESPACE = Regex("\\s+")
 
     /** Whole quantities print without decimals; fractional ones keep two places. */
-    private fun qtyText(qty: Double): String =
-        if (qty % 1.0 == 0.0) qty.toInt().toString()
-        else String.format(java.util.Locale.US, "%.2f", qty)
+    private fun qtyText(qty: Double): String = Quantity.text(qty)
 }

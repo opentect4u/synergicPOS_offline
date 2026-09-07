@@ -242,12 +242,15 @@ object KotPrinter {
          * takes two lines is still one dish ordered once.
          */
         fun dish(name: String, qty: Double): List<Line> {
-            val qtyText = String.format(java.util.Locale.US, "%.2f", qty)
+            // Exactly what was ordered - see [Quantity]. The kitchen is told 0.125,
+            // not 0.13: a ticket that rounds asks for a different amount of food
+            // than the bill charges for.
+            val qtyText = Quantity.text(qty)
             // Reserved from the widest thing this column ever holds - its own heading
             // or a four-figure quantity - so the names stop at the same place on every
             // ticket rather than wherever this one's numbers happen to end.
             val qtyCol = maxOf(
-                item.measureText("0000.00"), sub.measureText(t("QUANTITY"))
+                item.measureText(Quantity.WIDEST_SAMPLE), sub.measureText(t("QUANTITY"))
             ) + gap * 2
             val wrapped = wrapToWidth(
                 RegionalName.forPrint(regionalNames, productLanguage, name),

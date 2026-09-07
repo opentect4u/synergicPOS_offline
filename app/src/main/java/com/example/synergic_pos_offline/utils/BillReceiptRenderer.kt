@@ -304,6 +304,18 @@ class BillReceiptRenderer(context: Context) {
     private val productLang: PrintLanguage.Language by lazy { RegionalName.language(ctx) }
 
     /**
+     * Whether the till asks how a sale was paid at all - App Settings' Payment Mode.
+     *
+     * `by lazy` so a slip reads it once however many payment rows it has, and a slip
+     * with none never asks. See [renderPayment], which is the only thing that wants it.
+     */
+    private val paymentModeOn: Boolean by lazy {
+        runCatching {
+            com.example.synergic_pos_offline.database.AppSettingsDao(ctx).load().paymentMode
+        }.getOrDefault(true)
+    }
+
+    /**
      * The bill's typeface — the bundled Roboto Mono font (res/font/roboto_mono_regular.ttf).
      * Every code-built cell renders with it (the bill XML layouts point their fontFamily
      * at the same font), so the whole slip prints in one face. Falls back to the platform
@@ -892,9 +904,18 @@ class BillReceiptRenderer(context: Context) {
             val billNoLabel = t(if (classic && narrow) NARROW_BILL_NO_LABEL else "BILL NO")
             view.findViewById<TextView>(R.id.tvBillNo).text =
                 "$billNoLabel: $billNumber${part.numberSuffix()}"
-            // Moved to the foot of the bill, where "created by" belongs.
-            view.findViewById<TextView>(R.id.tvBillCreatedBy).text =
-                "${t("Created by")}: ${draft?.cashier ?: cashierName(db, operatorId, createdBy)}"
+            // Moved to the foot of the bill, where "created by" belongs - and paired
+            // onto the PAY MODE line once that is drawn, see [renderPayment]. Set here
+            // as well, because a bill with no payment recorded against it has no row
+            // to pair with and still has to say who rang it up.
+            // "Cashier", not "Created by". The slip is read across a counter by a
+            // customer, and the person who served them is the cashier - "created by"
+            // is how a database describes a row, not how a shop describes a person.
+            // The reports keep CREATED BY, where a document really was generated.
+            val cashierLine =
+                "${t("Cashier")}: ${draft?.cashier ?: cashierName(db, operatorId, createdBy)}"
+            val tvCreatedBy = view.findViewById<TextView>(R.id.tvBillCreatedBy)
+            tvCreatedBy.text = cashierLine
 
             // Which of mobile/name/gstin print is driven by "Customer Details"; the
             // address line is a separate on/off. Each still only shows when the
@@ -1428,7 +1449,11 @@ class BillReceiptRenderer(context: Context) {
             }
 
             val modes = draft?.paymentModes ?: paymentModes(db, receiptNo, billType)
-            renderPayment(view, modes, narrow)
+            // Paired onto the payment row where there is one; the standalone line only
+            // survives on a bill that records no payment at all.
+            if (renderPayment(view, modes, narrow, cashierLine)) {
+                tvCreatedBy.visibility = View.GONE
+            }
             // No modes passed: whether the code prints is the setting's business and
             // not the payment mode's - see renderUpiQr.
             renderUpiQr(view, payable, billNumber)
@@ -1450,6 +1475,25 @@ class BillReceiptRenderer(context: Context) {
      * The Standard totals block: item count / qty / gross, each tax rate on its own
      * line, discount and the totals - "label : value" all the way down to NET AMT.
      */
+    /**
+     * Whether the rounding adjustment earns a line of its own.
+     *
+     * Bill Settings' Round Off decides whether the bill ROUNDS; it does not follow
+     * that every bill has something to show for it. A total that already lands on a
+     * whole rupee is adjusted by nothing, and "ROUNDED OFF : 0.00" is a line saying
+     * that nothing happened - it takes a line of paper on every such bill and invites
+     * the customer to look for a figure that is not there.
+     *
+     * So the setting still governs whether rounding applies, and this governs whether
+     * it is worth printing. A bill that WAS rounded prints the line exactly as before,
+     * up or down.
+     *
+     * What counts as an adjustment is [BillRounding]'s to say, since it is the thing
+     * that worked one out - see [BillRounding.hasAdjustment].
+     */
+    private fun showsRoundOff(show: Boolean, amount: Double): Boolean =
+        show && BillRounding.hasAdjustment(amount)
+
     private fun renderStandardSummary(
         llSummary: LinearLayout,
         totals: BillTotals,
@@ -1517,7 +1561,7 @@ class BillReceiptRenderer(context: Context) {
                 summaryRow(label, value, false, summarySp, labelSize = summarySp, narrow = narrow)
             )
         }
-        if (showRoundOff) row("ROUND OFF", money(roundOff))
+        if (showsRoundOff(showRoundOff, roundOff)) row("ROUND OFF", money(roundOff))
         row("NET AMT", money(payable), bold = true, valueSize = netSize)
         // The account block under the totals (credit breakdown, or change + outstanding).
         // Its labels arrive already translated, so they go through summaryRow directly
@@ -1601,7 +1645,7 @@ class BillReceiptRenderer(context: Context) {
         // Each charge named on its own line - already translated, so they are added
         // straight to the rows rather than through row(), which would translate again.
         charges.forEach { (label, value) -> rows.add(label to value) }
-        if (showRoundOff) row("ROUNDED OFF", money(roundOff))
+        if (showsRoundOff(showRoundOff, roundOff)) row("ROUNDED OFF", money(roundOff))
         // The account block under the totals (credit breakdown, or change + outstanding),
         // added to the rows so its colons line up with the totals above. Its labels
         // are already in the print language, so they skip row()'s translation.
@@ -2505,23 +2549,61 @@ class BillReceiptRenderer(context: Context) {
         return modes
     }
 
+    /**
+     * How the bill was paid, and who rang it up - on ONE line, across the paper.
+     *
+     * The two used to be a line each: PAY MODE spread over the full width with the
+     * mode alone on the right, and the cashier on its own line under the code. Two
+     * lines for two short facts, on a roll where every line is paper.
+     *
+     * They pair naturally. Both answer "who and how", both belong at the foot under
+     * the totals, and neither is worth a line of its own - so the cashier takes the
+     * left, the payment takes the right, and the slip is a line shorter for it.
+     *
+     * [createdBy] arrives already built and already translated, so it is set into the
+     * cell as it is rather than through [t].
+     *
+     * @return whether the row actually carried [createdBy], so the caller can drop
+     *         the standalone line that would otherwise print it twice.
+     */
     private fun renderPayment(
-        view: View, modes: List<String>, narrow: Boolean = false
-    ) {
+        view: View, modes: List<String>, narrow: Boolean = false, createdBy: String = ""
+    ): Boolean {
         val ll = view.findViewById<LinearLayout>(R.id.llBillPayment)
         ll.removeAllViews()
-        if (modes.isEmpty()) return
+        // NOT A LINE AT ALL when App Settings' Payment Mode is off.
+        //
+        // Off means the till does not ask how a sale was paid: the selector is not
+        // shown at checkout and every sale is booked as cash - see PosCheckoutFragment,
+        // which forces Method.CASH when it is off. So "PAY MODE : CASH" on the slip is
+        // not reporting a choice, it is reporting the absence of one, on every bill the
+        // shop prints, for a question it has said it does not ask.
+        //
+        // Read live rather than off the bill's settings snapshot, the same way the UPI
+        // code is: a shop that has switched the question off wants it gone from the
+        // reprints too, not kept on them because it happened to be on that day.
+        if (!paymentModeOn) return false
+        // Nothing to pair it with - the caller leaves its own line showing.
+        if (modes.isEmpty()) return false
 
-        modes.forEach { mode ->
+        modes.forEachIndexed { index, mode ->
             val row = baseRow(narrow)
-            row.addView(cell(t("PAY MODE"), 1f, Gravity.START))
+            // The cashier sits beside the FIRST mode only. A split payment is several
+            // rows, and the sale was rung up once - repeating the name against each
+            // tender would read as though each had its own operator.
+            row.addView(cell(if (index == 0) createdBy else "", 1f, Gravity.START))
+            // The label travels with the value now that it no longer has the left of
+            // the line to itself: "PAY MODE : CASH" reads as one fact on the right,
+            // where a bare "CASH" opposite a name would not say what it was.
+            //
             // The mode itself is one of a handful of known words - CASH, CARD,
             // CREDIT - so it is translated too where it is one of them, and left as
             // it was recorded where it is not.
-            row.addView(cell(t(mode), 1f, Gravity.END))
+            row.addView(cell("${t("PAY MODE")} : ${t(mode)}", 1f, Gravity.END))
             ll.addView(row)
         }
         // The change handed back (RETURN) now prints with the totals - see the summary.
+        return createdBy.isNotBlank()
     }
 
     /**
@@ -3082,8 +3164,7 @@ class BillReceiptRenderer(context: Context) {
     private fun money(v: Double) = String.format(Locale.US, "%.2f", BillRounding.toPaise(v))
 
     /** Whole quantities print without decimals; fractional ones keep two places. */
-    private fun qtyText(qty: Double): String =
-        if (qty % 1.0 == 0.0) qty.toInt().toString() else String.format(Locale.US, "%.2f", qty)
+    private fun qtyText(qty: Double): String = Quantity.text(qty)
 
     private fun splitDateTime(value: String): Pair<String, String> {
         val raw = value.trim()

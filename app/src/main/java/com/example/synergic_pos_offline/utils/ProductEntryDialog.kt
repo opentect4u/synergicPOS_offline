@@ -346,7 +346,8 @@ object ProductEntryDialog {
      * millilitre 0.001L. A fourth place is a figure no shop can measure, no customer
      * can check, and no slip has the width to print.
      */
-    const val QTY_DECIMALS = 3
+    /** The places the quantity field accepts - the same number [Quantity] prints. */
+    const val QTY_DECIMALS = Quantity.DECIMALS
 
     /**
      * Stops a decimal field taking more than [max] places.
@@ -372,9 +373,7 @@ object ProductEntryDialog {
         }
     }
 
-    private fun qtyText(v: Double): String =
-        if (v % 1.0 == 0.0) v.toLong().toString()
-        else v.toString().trimEnd('0').trimEnd('.')
+    private fun qtyText(v: Double): String = Quantity.text(v)
 
     private fun money(v: Double): String = "₹" + String.format("%.2f", v)
 

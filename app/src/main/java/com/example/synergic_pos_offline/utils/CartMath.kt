@@ -144,7 +144,29 @@ object CartMath {
      */
     fun lineDiscount(line: Line, cfg: Config, subtotal: Double, billDiscount: Double): Double {
         val gross = line.gross
-        if (cfg.itemwiseDiscount && line.discValue > 0.0 && line.discType != null) {
+        // ITEM-WISE ENDS HERE, discount or no discount.
+        //
+        // A line's discount is its OWN under item-wise, and a line that was not given
+        // one has none. It used to fall through to the bill-wise share below, which
+        // was harmless only for as long as every caller passed a [billDiscount] of
+        // zero here - [billDiscount] returns zero under item-wise for exactly that
+        // reason, so [totals] was always right.
+        //
+        // The restaurant slip does not come from [totals]. It re-prices each line from
+        // this function and passes the bill's HEADLINE discount, which under item-wise
+        // is the sum of the item discounts - so an undiscounted line picked up a share
+        // of a discount belonging to a different product. On a two-line take-away with
+        // 5% off one item, the untouched line printed a discount of its own, the tax
+        // was charged on a base short by that amount, and the bill's DISCOUNT line
+        // disagreed with the discounts printed against the lines above it.
+        //
+        // Returning zero here settles it wherever the figure is asked for - the slip,
+        // the saved bill line, and the checkout panel all read this - and changes
+        // nothing else: bill-wise still falls through, a discounted item-wise line
+        // still takes the branch below, and a caller that already passed zero got
+        // zero from the share anyway.
+        if (cfg.itemwiseDiscount) {
+            if (line.discValue <= 0.0 || line.discType == null) return 0.0
             val mode = if (line.discType == "A") GstCalculator.DiscountMode.AMOUNT
             else GstCalculator.DiscountMode.PERCENT
             return GstCalculator.itemDiscountAgainstRawBase(

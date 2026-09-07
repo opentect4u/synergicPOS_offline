@@ -80,6 +80,26 @@ class DatabaseHelper private constructor(context: Context) :
         // for the same reason the two above are: it takes nothing away, so a till
         // that already exists gains it on its next open.
         runCatching { db.execSQL(SQL_CREATE_MD_CHARGES) }
+        // AND ITS THREE LATER COLUMNS, HERE RATHER THAN ONLY IN onUpgrade.
+        //
+        // This is what crashed Extra Charges. The table is created by the line above -
+        // it is not in onCreate at all - and the statement it was created from did not
+        // carry charge_type, applicability or charge_kind; those were added only by
+        // onUpgrade, under oldVersion < 18, 19 and 20.
+        //
+        // A till installed fresh is already AT the current version, so onUpgrade never
+        // runs on it. The table was made without the three columns and nothing ever
+        // added them, so ChargeDao's query for charge_type hit a table that had no such
+        // column and the screen died on open. Only a till old enough to have been
+        // upgraded through 18-20 had them, which is why it worked on some and not
+        // others.
+        //
+        // Stated here because here is where the table is made. addColumnIfMissing is
+        // idempotent, so the onUpgrade entries can stay and a till that already has
+        // them is untouched.
+        addColumnIfMissing(db, Tables.MD_CHARGES, "charge_type", "TEXT DEFAULT 'PERCENTAGE'")
+        addColumnIfMissing(db, Tables.MD_CHARGES, "applicability", "TEXT DEFAULT 'BOTH'")
+        addColumnIfMissing(db, Tables.MD_CHARGES, "charge_kind", "TEXT DEFAULT 'EXTRA'")
         addColumnIfMissing(db, Tables.MD_USERS, "shift_id", "INTEGER")
         // Which sections this user may open. Access used to be one set of flags for
         // the whole till, which meant every general user saw the same thing; it is
@@ -1563,6 +1583,13 @@ class DatabaseHelper private constructor(context: Context) :
                 store_id INTEGER,
                 charge_name TEXT NOT NULL,
                 percentage REAL NOT NULL DEFAULT 0,
+                -- Whether [percentage] is read as a percentage or as rupees.
+                charge_type TEXT DEFAULT 'PERCENTAGE',
+                -- Which order modes the charge applies to, as a comma list of
+                -- ChargeDao.Mode names. See ChargeDao.amountsOn.
+                applicability TEXT DEFAULT 'BOTH',
+                -- Extra Charge or the shop's one Parcel Charge - ChargeDao.Kind.
+                charge_kind TEXT DEFAULT 'EXTRA',
                 is_enabled INTEGER NOT NULL DEFAULT 1,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT DEFAULT (datetime('now','localtime')),

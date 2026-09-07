@@ -531,7 +531,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="Created by: ---"
+                    android:text="Cashier: ---"
                     android:fontFamily="@font/roboto_mono_regular"
                     android:textSize="12sp"
                     android:textColor="#222222" />

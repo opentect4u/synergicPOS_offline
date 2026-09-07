@@ -70,7 +70,11 @@ object CategoryOrder {
         return names.sortedBy { rank[it] ?: (remembered.size + names.indexOf(it)) }
     }
 
-    /** Records the order the tabs now stand in. [names] excludes the pinned "All". */
+    /**
+     * Records the order the tabs now stand in - the WHOLE strip, "All" included,
+     * since it is dragged like any other tab and has to be able to come back to
+     * wherever it was put.
+     */
     fun remember(names: List<String>) {
         remembered.clear()
         remembered.addAll(names)
@@ -109,10 +113,11 @@ object CategoryOrder {
     /**
      * Makes [recycler]'s tabs draggable by holding one.
      *
-     * [firstMovable] is the first position that may move or be moved past - 1 on both
-     * screens, because "All" is not a category. It is not a row of the catalogue, it is
-     * the way back to the whole of it, and an operator who has just dragged it into the
-     * middle of the strip has broken the only tab they cannot rebuild by dragging.
+     * EVERY tab, "All" included. It was pinned first on the reasoning that it is not a
+     * category but the way back to the whole catalogue, and that a drag could not put
+     * it back - which was only true while it could not be dragged. Once it moves like
+     * the rest, it comes back like the rest, and a shop that wants it somewhere other
+     * than the far left is describing its own counter rather than making a mistake.
      *
      * [onMove] does the reordering in the caller's own list and tells the adapter; this
      * is only the gesture. [onDropped] fires once when the finger comes off, which is
@@ -121,7 +126,6 @@ object CategoryOrder {
      */
     fun attach(
         recycler: RecyclerView,
-        firstMovable: Int,
         onMove: (from: Int, to: Int) -> Unit,
         onDropped: () -> Unit
     ) {
@@ -130,20 +134,6 @@ object CategoryOrder {
         ) {
             override fun isLongPressDragEnabled() = true
 
-            /** "All" is held down; everything else can be picked up. */
-            override fun getDragDirs(
-                recyclerView: RecyclerView,
-                viewHolder: RecyclerView.ViewHolder
-            ): Int = if (viewHolder.adapterPosition < firstMovable) 0
-            else ItemTouchHelper.START or ItemTouchHelper.END
-
-            /** And nothing may be dropped on top of it, which is how it stays first. */
-            override fun canDropOver(
-                recyclerView: RecyclerView,
-                current: RecyclerView.ViewHolder,
-                target: RecyclerView.ViewHolder
-            ): Boolean = target.adapterPosition >= firstMovable
-
             override fun onMove(
                 recyclerView: RecyclerView,
                 viewHolder: RecyclerView.ViewHolder,
@@ -151,7 +141,6 @@ object CategoryOrder {
             ): Boolean {
                 val from = viewHolder.adapterPosition
                 val to = target.adapterPosition
-                if (from < firstMovable || to < firstMovable) return false
                 if (from == RecyclerView.NO_POSITION || to == RecyclerView.NO_POSITION) return false
                 onMove(from, to)
                 return true
