@@ -49,6 +49,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.min
+import com.example.synergic_pos_offline.utils.Quantity
 
 /**
  * Longest edge decoded for a product tile photo. Larger than a list thumbnail
@@ -377,11 +378,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
         rvCategories.adapter = categoryAdapter
 
         // Hold a tab to pick it up and drag it along the strip - see [CategoryOrder].
-        // Position 0 is "All" and stays put; it is the way back to the whole shelf
-        // rather than a category, and it is the one tab a drag could not put back.
+        // "All" drags with the rest - it was held at position 0 while it could not be
+        // dragged, which is no longer a reason for anything.
         com.example.synergic_pos_offline.utils.CategoryOrder.attach(
             recycler = rvCategories,
-            firstMovable = 1,
             onMove = { from, to ->
                 // The strip IS the order, so the list moves with the finger and the
                 // adapter is told about that one move - not redrawn wholesale, which
@@ -390,8 +390,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 categoryAdapter.notifyItemMoved(from, to)
             },
             onDropped = {
-                com.example.synergic_pos_offline.utils.CategoryOrder
-                    .remember(categories.drop(1))
+                // The whole strip, "All" among them - it is dragged like any other
+                // tab now, so its place has to be remembered like any other tab.
+                com.example.synergic_pos_offline.utils.CategoryOrder.remember(categories)
             }
         )
 
@@ -742,20 +743,25 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val dbCategories = categoryDao.getAll()
 
         categories.clear()
-        categories.add("All")
         categoryItems.clear()
 
         // The catalogue comes back in creation order; the shop may have dragged the
         // tabs into a different one. Re-reading the products must not quietly undo
         // that, so the remembered order is applied here rather than only at the drop.
-        val order = com.example.synergic_pos_offline.utils.CategoryOrder
-            .ordered(dbCategories.map { it.name })
+        //
+        // "All" IS IN THE LIST BEING ORDERED, not prepended to the result of ordering
+        // the rest. It is draggable like every other tab, so wherever it was dropped is
+        // where it has to come back - and prepending would march it back to the front
+        // on the next catalogue read.
         val byName = dbCategories.associateBy { it.name }
+        val order = com.example.synergic_pos_offline.utils.CategoryOrder
+            .ordered(listOf("All") + dbCategories.map { it.name })
 
         for (name in order) {
-            val cat = byName[name] ?: continue
-            categories.add(cat.name)
-            categoryItems.add(CategoryItem(cat.id, cat.name))
+            categories.add(name)
+            // "All" has no master row behind it - it is the way back to the whole
+            // shelf rather than a category, so it contributes a tab and no id.
+            byName[name]?.let { categoryItems.add(CategoryItem(it.id, it.name)) }
         }
 
         categoryAdapter.notifyDataSetChanged()
@@ -920,12 +926,36 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private fun applyFilter() {
         filteredProducts.clear()
-        filteredProducts.addAll(menu.filter { p ->
+        val matching = menu.filter { p ->
             (activeCategory == "All" || p.categoryId == activeCategoryId) &&
                 // Name, SKU (serial number), and barcode only - no HSN.
                 (query.isEmpty() || p.name.contains(query, true) ||
                     p.sku.contains(query) || p.barcode.contains(query))
-        })
+        }
+        // UNDER "ALL", THE SHELF IS GROUPED BY CATEGORY - in the tab order.
+        //
+        // "All" is the whole catalogue at once, and the whole catalogue in creation
+        // order is a shelf nobody reads: a soap, a rice, a biscuit, another soap, in
+        // whatever order the products happened to be entered. Ordering it by the tabs
+        // above puts every dairy line together and every atta line together, and puts
+        // those blocks in the order the shop dragged its tabs into.
+        //
+        // Sorted only, never filtered: every product that matched is still shown. And
+        // sortedBy is stable, so within a category the products keep the order they
+        // already had.
+        //
+        // Uncategorised products sort last - they belong to no block, and the end is
+        // the one place they do not break one.
+        filteredProducts.addAll(
+            if (activeCategory != "All") matching
+            else {
+                // Ranked on the product's own category NAME - it carries one already,
+                // and the tab strip is a list of names, so the two line up without
+                // going back through ids. See CategoryOrder for what sets that order.
+                val rank = categories.withIndex().associate { (i, name) -> name to i }
+                matching.sortedBy { rank[it.category] ?: Int.MAX_VALUE }
+            }
+        )
         // Only the first page reaches the adapter; the rest arrives as the grid is
         // scrolled. The empty state still asks the WHOLE filtered result, so "no
         // products" means none matched rather than none drawn yet.
@@ -951,6 +981,17 @@ class PosBillingFragment : Fragment(), TitledScreen {
      */
     private fun exceedsStock(productId: String, wantedQty: Double, ignoreLineIndex: Int = -1): Boolean {
         if (!stockTrackingOn) return false
+        // NEGATIVE STOCK ALLOWED: the count is kept, and the sale is let through
+        // anyway. General Settings' own switch - see
+        // GeneralSettingsDao.allowsNegativeStock, which is read here rather than
+        // cached in a field so a change made in Settings takes effect on the next tap
+        // rather than on the next visit to this screen.
+        //
+        // The count still moves; it is simply allowed to go below zero, which is the
+        // honest record of a shop whose paperwork is behind its shelves.
+        if (com.example.synergic_pos_offline.database.GeneralSettingsDao
+                .allowsNegativeStock(requireContext())
+        ) return false
         val product = menu.firstOrNull { it.id == productId } ?: return false
         val alreadyInCart = cart
             .filterIndexed { index, line -> index != ignoreLineIndex && line.product.id == productId }
@@ -1142,8 +1183,29 @@ class PosBillingFragment : Fragment(), TitledScreen {
         return true
     }
 
+    /**
+     * Whether [p] being out of stock should stop it going on the bill.
+     *
+     * Two screens refused an "Out" product outright - the tile tap and the quantity
+     * popup - and neither asked the setting, so a shop that allows negative stock
+     * could still not sell the very item that had run out, which is the one case the
+     * setting exists for. Asked in one place now so the two cannot disagree.
+     *
+     * The tile keeps its Out badge and its dimming either way: the operator should
+     * still be able to see at a glance that the shelf is empty, even where the till
+     * will let them sell from it.
+     */
+    private fun blockedByOutOfStock(p: Product): Boolean {
+        if (p.stock != "out") return false
+        if (com.example.synergic_pos_offline.database.GeneralSettingsDao
+                .allowsNegativeStock(requireContext())
+        ) return false
+        toast("${p.name} is out of stock")
+        return true
+    }
+
     private fun addToCart(p: Product, qty: Double, rate: Double) {
-        if (p.stock == "out") { toast("${p.name} is out of stock"); return }
+        if (blockedByOutOfStock(p)) return
         if (exceedsStock(p.id, qty)) return
         val priced = if (rate == p.price) p else p.copy(price = rate)
         
@@ -1203,7 +1265,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * that line in place; otherwise it adds a new line.
      */
     private fun showProductDialog(p: Product, editIndex: Int = -1) {
-        if (editIndex < 0 && p.stock == "out") { toast("${p.name} is out of stock"); return }
+        if (editIndex < 0 && blockedByOutOfStock(p)) return
         val editing = editIndex in cart.indices
 
         // Direct Add to Cart (App Settings): tapping a product adds one straight to the
@@ -2280,9 +2342,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         "₹ " + String.format(java.util.Locale.US, "%,.2f", BillRounding.toPaise(v))
 
     /** Whole quantities show without decimals; fractional ones keep up to 3 places. */
-    private fun qtyText(v: Double): String =
-        if (v % 1.0 == 0.0) v.toLong().toString()
-        else String.format("%.3f", v).trimEnd('0').trimEnd('.')
+    private fun qtyText(v: Double): String = Quantity.text(v)
 
     private fun toast(msg: String) =
         android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_SHORT).show()

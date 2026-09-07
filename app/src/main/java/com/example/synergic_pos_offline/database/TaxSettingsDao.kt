@@ -103,15 +103,24 @@ class TaxSettingsDao(context: Context) {
         return TaxSettings(
             discountEnabled = m[KEY_DISCOUNT_ENABLED]?.toBool() ?: d.discountEnabled,
             discountType = type,
-            // PRE-TAX NEEDS AN EXCLUSIVE PRICE, and that is settled here rather than
-            // only on the settings screen. Under MRP the tax is already inside the
-            // price, so there is no before-tax figure to discount - see
-            // TaxSettingsFragment.syncDiscountPosition, which greys the option for the
-            // same reason. The screen cannot save the two together, but a row written
-            // before it enforced that can still hold the pair, and every caller that
-            // prices a sale reads this rather than the screen.
-            discountPosition = if (taxMode == GstMode.INCLUSIVE) DiscountPosition.POST_TAX
-            else position,
+            // WHICH OF THE TWO MOMENTS, settled here rather than only on the screen,
+            // because every caller that prices a sale reads this and not the radio.
+            //
+            // MRP first: the tax is already inside the price, so there is no
+            // before-tax figure for a discount to come off - see
+            // TaxSettingsFragment.syncDiscountPosition, which greys Pre-tax for the
+            // same reason. That is an arithmetic fact rather than a preference, so it
+            // wins over the item-wise rule below when both would apply.
+            //
+            // Then item-wise: a discount configured against a product comes off that
+            // product and the line is taxed on what is left, which is what pre-tax
+            // means. Post-tax is greyed there, and a row saved before that rule
+            // existed is read the way the screen would now save it.
+            discountPosition = when {
+                taxMode == GstMode.INCLUSIVE -> DiscountPosition.POST_TAX
+                type == DiscountType.ITEM_WISE -> DiscountPosition.PRE_TAX
+                else -> position
+            },
             taxEnabled = m[KEY_TAX_ENABLED]?.toBool() ?: (legacyGstOn || legacyVatOn),
             taxMode = taxMode
         )
@@ -128,8 +137,19 @@ class TaxSettingsDao(context: Context) {
             if (s.discountEnabled) s.discountPosition.code.toString() else "0"
         )
         put(KEY_TAX_ENABLED, s.taxEnabled.b())
-        // Tax mode is only meaningful when tax is on; otherwise store null.
-        put(KEY_TAX_MODE, if (s.taxEnabled) s.taxMode.code else null)
+        // ALWAYS STORED, even while tax is switched off.
+        //
+        // It used to be nulled when tax was off, on the reasoning that a mode means
+        // nothing with no tax to apply. That became unsafe once changing the mode
+        // started costing the bills (see TaxSettingsFragment.onTaxModeChosen): a shop
+        // on MRP could switch tax off, leave the screen, and come back to a till that
+        // had quietly fallen to the Exclusive default - the mode changed, the bills
+        // still there, and nobody asked. Keeping the answer means the only way to
+        // change it is the way that asks.
+        //
+        // Nothing is charged differently for it: whether tax applies at all is
+        // [KEY_TAX_ENABLED]'s business, and it still says no.
+        put(KEY_TAX_MODE, s.taxMode.code)
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "Tax settings save (type T)")
     }

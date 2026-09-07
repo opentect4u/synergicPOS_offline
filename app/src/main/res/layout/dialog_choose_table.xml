@@ -21,7 +21,15 @@
         android:orientation="vertical"
         android:paddingTop="18dp">
 
-        <!-- Title + search + close -->
+        <!--
+          Title + close.
+
+          The search box that stood between them is gone. A floor plan is read one
+          room at a time and every table in the room is already on screen at eight to
+          a row - so the thing being searched for is in plain sight, and a box that
+          lifts the section to find it was answering a question the section chips and
+          the grid answer between them. Its going gives the band below the full width.
+        -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -30,33 +38,13 @@
             android:paddingHorizontal="20dp">
 
             <TextView
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="16dp"
+                android:layout_weight="1"
                 android:text="Choose Table"
                 android:textSize="22sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_main" />
-
-            <com.google.android.material.textfield.TextInputLayout
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="Search table or section"
-                app:startIconDrawable="@android:drawable/ic_menu_search"
-                app:boxCornerRadiusTopStart="12dp"
-                app:boxCornerRadiusTopEnd="12dp"
-                app:boxCornerRadiusBottomStart="12dp"
-                app:boxCornerRadiusBottomEnd="12dp">
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etTableSearch"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="text"
-                    android:maxLines="1"
-                    android:textSize="17sp" />
-            </com.google.android.material.textfield.TextInputLayout>
 
             <ImageButton
                 android:id="@+id/btnCloseChooseTable"
@@ -69,16 +57,126 @@
                 android:contentDescription="Close" />
         </LinearLayout>
 
-        <!-- What the floor adds up to, for whatever section is being shown. Answers
-             "is there anything free?" without counting green cards by eye. -->
+        <!--
+          ORDER BAND: what kind of order this is, and who it is for.
+
+          Replaces the Total/Available count strip that stood here. Those two numbers
+          answered a question the floor plan below already answers at a glance - the
+          green cards ARE the available tables - and they took the most valuable band
+          on the screen, directly under the title, to do it.
+
+          What belongs in that band is the decision the operator came here to make.
+          They opened this to start an order, and an order needs a KIND before it
+          needs a table: a take-away or a QSR ticket has no table to pick at all.
+
+          BUILT AS THE SALES PAGE BUILDS IT. The modes are a
+          MaterialButtonToggleGroup with the same singleSelection/selectionRequired
+          and the same metrics as segOrderType behind this dialog - 36dp tall, 13sp,
+          14dp of horizontal padding, 10dp corners - and the customer button carries
+          the action-button metrics its Table Actions and Add Customer neighbours use
+          there. Opening the floor plan should not feel like arriving on a screen
+          somebody else designed.
+        -->
         <LinearLayout
-            android:id="@+id/llTableCounts"
+            android:id="@+id/llTableAction"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
+            android:gravity="center_vertical"
             android:baselineAligned="false"
             android:paddingHorizontal="20dp"
-            android:paddingTop="14dp" />
+            android:paddingTop="14dp">
+
+            <!-- One control of three, not three buttons that happen to sit together:
+                 the group enforces the single answer, so a mode cannot be left
+                 un-chosen and two cannot be lit at once. -->
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/segPickerMode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:singleSelection="true"
+                app:selectionRequired="true">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnModeDineIn"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingHorizontal="14dp"
+                    android:maxLines="1"
+                    android:textSize="13sp"
+                    android:letterSpacing="0"
+                    android:text="Dine In"
+                    app:cornerRadius="10dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnModeTakeAway"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingHorizontal="14dp"
+                    android:maxLines="1"
+                    android:textSize="13sp"
+                    android:letterSpacing="0"
+                    android:text="Take Away"
+                    app:cornerRadius="10dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnModeQsr"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingHorizontal="14dp"
+                    android:maxLines="1"
+                    android:textSize="13sp"
+                    android:letterSpacing="0"
+                    android:text="QSR"
+                    app:cornerRadius="10dp" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+
+            <!-- The row's spare width, so the customer button sits at the far edge
+                 and the two groups read as two. -->
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <!-- The customer: its own button, apart from the modes, because it answers
+                 a different question and can be left unanswered - a walk-in has no
+                 name to take. Same metrics as the sales page's own action buttons. -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnChooseTableCustomer"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="38dp"
+                android:layout_marginStart="12dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:paddingHorizontal="12dp"
+                android:maxLines="1"
+                android:textSize="12.5sp"
+                android:letterSpacing="0"
+                android:text="Add Customer"
+                app:icon="@android:drawable/ic_menu_myplaces"
+                app:iconSize="16dp"
+                app:iconPadding="3dp"
+                app:cornerRadius="10dp" />
+        </LinearLayout>
+
+        <!-- Separates the decision band above from the floor plan below, so the two
+             read as "what kind of order" and then "which table" rather than as one
+             undifferentiated wall of controls. -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="14dp"
+            android:background="#E4E7EB" />
 
         <!-- The rooms, as the categories of this grid. Gone for a store that has not
              set any up: one unnamed room is not a choice to offer. -->

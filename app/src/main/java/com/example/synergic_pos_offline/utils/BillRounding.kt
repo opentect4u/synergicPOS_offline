@@ -41,4 +41,18 @@ object BillRounding {
 
     /** True when the bill needed no adjustment. */
     fun isExact(amount: Double): Boolean = abs(roundOff(amount)) < 0.001
+
+    /**
+     * Whether an adjustment already worked out by [roundOff] is worth reporting.
+     *
+     * The counterpart to [isExact], taking the ADJUSTMENT rather than the amount it
+     * came from - which is what a bill has to hand by the time it is deciding whether
+     * to print a ROUND OFF line, and what a stored bill carries in
+     * `tot_round_off_amount`.
+     *
+     * Rounding to whole rupees can only ever move a total by a whole number of paise,
+     * so a genuine adjustment is at least 0.01 and anything under half a paisa is
+     * arithmetic noise rather than a figure anybody was charged.
+     */
+    fun hasAdjustment(adjustment: Double): Boolean = abs(adjustment) > 0.005
 }

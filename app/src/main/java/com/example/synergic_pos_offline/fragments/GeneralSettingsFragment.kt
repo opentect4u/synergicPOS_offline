@@ -1,5 +1,6 @@
 package com.example.synergic_pos_offline.fragments
 
+import com.example.synergic_pos_offline.utils.SettingsAutoSave
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Bundle
@@ -57,6 +58,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var llStockAlert: View
     private lateinit var swStockAlert: SwitchMaterial
     private lateinit var llStockAlertQty: View
+    private lateinit var swNegativeStock: SwitchMaterial
+    private lateinit var llNegativeStock: View
     private lateinit var tilStockAlertQty: View
     private lateinit var etStockAlertQty: TextInputEditText
 
@@ -84,6 +87,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         llStockAlert = view.findViewById(R.id.llStockAlert)
         swStockAlert = view.findViewById(R.id.swStockAlert)
         llStockAlertQty = view.findViewById(R.id.llStockAlertQty)
+        swNegativeStock = view.findViewById(R.id.swNegativeStock)
+        llNegativeStock = view.findViewById(R.id.llNegativeStock)
         tilStockAlertQty = view.findViewById(R.id.tilStockAlertQty)
         etStockAlertQty = view.findViewById(R.id.etStockAlertQty)
 
@@ -130,6 +135,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         // ---- Stock: each flag only opens the one below it ----------------------
         swStockFlag.isChecked = s.stockFlag
         swStockAlert.isChecked = s.stockFlag && s.stockAlert
+        swNegativeStock.isChecked = s.negativeStock
         etStockAlertQty.setText(
             if (swStockAlert.isChecked) s.stockAlertQty.toString() else ""
         )
@@ -146,6 +152,9 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             llStockAlertQty.setRowEnabled(alertOn)
             tilStockAlertQty.isEnabled = alertOn
             etStockAlertQty.isEnabled = alertOn
+            // Nothing to go negative when no count is kept.
+            llNegativeStock.setRowEnabled(stockOn)
+            swNegativeStock.isEnabled = stockOn
         }
         applyStockState()
         swStockFlag.setOnCheckedChangeListener { _, on ->
@@ -160,19 +169,21 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         view.findViewById<MaterialButton>(R.id.btnChangePassword).setOnClickListener {
             showChangePasswordDialog()
         }
-        view.findViewById<MaterialButton>(R.id.btnSaveGeneral).setOnClickListener {
+        // The settings as the screen currently stands. Read on every change now that
+        // there is no Save button to gather them at one moment - see [SettingsAutoSave].
+        fun collect(): GeneralSettings {
             val returnMode = if (rgReturnMode.checkedRadioButtonId == R.id.rbReturnItemWise)
                 ReturnMode.ITEM_WISE else ReturnMode.BILL_WISE
             val daysApply = swSaleReturn.isChecked && returnMode == ReturnMode.BILL_WISE
             val days = if (daysApply) etSaleReturnDays.text?.toString()?.toIntOrNull() ?: 0 else 0
             val modeVal = Mode.fromStored(actMode.text?.toString()) ?: Mode.GROCERY
-            
+
             val isMultipleRate = rgItemRate.checkedRadioButtonId == R.id.rbItemRateMultiple
             val itemRateVal = if (isMultipleRate) ItemRate.MULTIPLE else ItemRate.SINGLE
 
             val productSortVal = ProductSort.fromStored(actProductSort.text?.toString())
                 ?: ProductSort.SERIAL_ASC
-            
+
             val isLandingHome = rgLandingScreen.checkedRadioButtonId == R.id.rbLandingHome
             val landingScreenVal = if (isLandingHome) LandingScreen.HOME else LandingScreen.SALE
 
@@ -180,7 +191,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             val alertQty =
                 if (alertApply) etStockAlertQty.text?.toString()?.toIntOrNull() ?: 0 else 0
 
-            val settings = GeneralSettings(
+            return GeneralSettings(
                 mode = modeVal,
                 saleReturn = swSaleReturn.isChecked,
                 returnMode = returnMode,
@@ -194,9 +205,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 stockFlag = swStockFlag.isChecked,
                 stockAlert = alertApply,
                 stockAlertQty = alertQty,
-                // Section access is admin-only: take the toggles when an admin is
-                // signing off on it, otherwise keep whatever was already saved so a
-                // non-admin save can never silently change who can see what.
+                negativeStock = swNegativeStock.isChecked,
                 // Access is granted per user now, on the Add/Edit User form. These are
                 // carried through untouched so an older till's stored flags are not
                 // wiped by a save from a screen that no longer shows them.
@@ -205,49 +214,97 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 accessReports = s.accessReports,
                 accessAboutApp = s.accessAboutApp
             )
+        }
 
-            // Switching mode wipes the mode-specific business data. Because it is
-            // destructive and account-level, it is gated behind the signed-in user's
-            // password first, then the erase warning is confirmed.
+        /**
+         * Writes the screen as it stands. Every control calls this; the Mode dropdown
+         * does not.
+         *
+         * MODE IS NOT SAVED FROM HERE. Changing it erases every product, bill and
+         * table on the till, so it is not something a screen may do because a switch
+         * three cards below it was flipped. It has a flow of its own - password, then
+         * the erase warning - and until that has been agreed to, the mode written is
+         * the mode already stored.
+         */
+        fun autoSave() {
+            val settings = collect()
+            if (settings.mode != dao.load().mode) return
+            dao.save(settings)
+        }
+
+        /**
+         * The Mode dropdown, which is the one destructive control on this screen.
+         *
+         * Asked as soon as it is chosen rather than at a Save press, because there is
+         * no Save press any more - the choice IS the request. Cancelling anywhere in
+         * the flow puts the dropdown back to the mode still in force, so a screen that
+         * refused to switch does not sit there reading as though it had.
+         */
+        fun onModeChosen() {
+            val settings = collect()
             val currentMode = dao.load().mode
-            if (modeVal != currentMode) {
-                promptPasswordThenSwitch(modeVal) {
-                    DialogUtils.showConfirm(
-                        context = requireContext(),
-                        title = "Switch to ${modeVal.label}?",
-                        message = "Changing the mode will erase all current data - products, categories, " +
-                            "sections, tables, waiters, bills, KOTs, payments, sale returns and running " +
-                            "orders. This cannot be undone.",
-                        positiveText = "Erase & Switch",
-                        negativeText = "Cancel",
-                        destructive = true,
-                        onCancel = { actMode.setText(currentMode.label, false) },
-                        onConfirm = {
-                            DatabaseHelper.getInstance(requireContext()).eraseBusinessDataForModeChange()
-                            dao.save(settings)
-                            if (modeVal == Mode.RESTAURANT) enableRestaurantDefaults()
-                            // The menus and the landing screen read the cache, so it
-                            // has to know about the new mode before the next sign-in.
-                            SettingsCache.storeFromDb(requireContext())
-                            DialogUtils.showSuccess(
-                                context = requireContext(),
-                                title = "Mode changed",
-                                message = "Switched to ${modeVal.label}. All previous data was " +
-                                    "erased. You will be signed out - sign back in and the till " +
-                                    "opens in ${modeVal.label} mode.",
-                                buttonText = "Sign out"
-                            ) { signOut() }
-                        }
-                    )
-                }
-            } else {
-                dao.save(settings)
-                DialogUtils.showSuccess(
+            val modeVal = settings.mode
+            if (modeVal == currentMode) return
+            promptPasswordThenSwitch(modeVal) {
+                DialogUtils.showConfirm(
                     context = requireContext(),
-                    title = "Saved",
-                    message = "General settings saved successfully."
+                    title = "Switch to ${modeVal.label}?",
+                    message = "Changing the mode will erase all current data - products, categories, " +
+                        "sections, tables, waiters, bills, KOTs, payments, sale returns and running " +
+                        "orders. This cannot be undone.",
+                    positiveText = "Erase & Switch",
+                    negativeText = "Cancel",
+                    destructive = true,
+                    onCancel = { actMode.setText(currentMode.label, false) },
+                    onConfirm = {
+                        DatabaseHelper.getInstance(requireContext()).eraseBusinessDataForModeChange()
+                        dao.save(settings)
+                        if (modeVal == Mode.RESTAURANT) enableRestaurantDefaults()
+                        // The menus and the landing screen read the cache, so it
+                        // has to know about the new mode before the next sign-in.
+                        SettingsCache.storeFromDb(requireContext())
+                        DialogUtils.showSuccess(
+                            context = requireContext(),
+                            title = "Mode changed",
+                            message = "Switched to ${modeVal.label}. All previous data was " +
+                                "erased. You will be signed out - sign back in and the till " +
+                                "opens in ${modeVal.label} mode.",
+                            buttonText = "Sign out"
+                        ) { signOut() }
+                    }
                 )
             }
+        }
+
+        // SAVED AS EACH CONTROL MOVES - there is no Save button any more. Attached
+        // after everything above has loaded its value, so the load is not mistaken for
+        // a change and written straight back.
+        //
+        // The two with listeners of their own keep them and save from inside; the Mode
+        // dropdown is wired to its own flow rather than to autoSave.
+        swSaleReturn.setOnCheckedChangeListener { _, _ -> applyReturnState(); autoSave() }
+        rgReturnMode.setOnCheckedChangeListener { _, _ -> applyReturnState(); autoSave() }
+        actMode.setOnItemClickListener { _, _, _, _ -> onModeChosen() }
+        SettingsAutoSave.onChange(
+            ::autoSave,
+            swLastBillStatus, swQuantityStatus, swCustomerInfo, swNegativeStock,
+            rgItemRate, rgLandingScreen, actProductSort
+        )
+        SettingsAutoSave.onTyped(::autoSave, etSaleReturnDays, etStockAlertQty)
+
+        // The stock pair keep the behaviour they were given further up and save from
+        // inside it. Re-stated here because autoSave is not in scope where they were
+        // first wired, and a second listener cannot be added to a switch - only the
+        // one can be set, so it has to do both jobs.
+        swStockFlag.setOnCheckedChangeListener { _, on ->
+            if (!on) swStockAlert.isChecked = false
+            applyStockState()
+            autoSave()
+        }
+        swStockAlert.setOnCheckedChangeListener { _, on ->
+            if (!on) etStockAlertQty.setText("")
+            applyStockState()
+            autoSave()
         }
 
         ThemeManager.applyTheme(view)

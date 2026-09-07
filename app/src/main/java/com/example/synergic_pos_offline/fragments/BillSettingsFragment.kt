@@ -1,5 +1,6 @@
 package com.example.synergic_pos_offline.fragments
 
+import com.example.synergic_pos_offline.utils.SettingsAutoSave
 import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Bundle
@@ -14,7 +15,6 @@ import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
@@ -196,7 +196,45 @@ class BillSettingsFragment : Fragment(), TitledScreen {
             pickUpiQr.launch("image/*")
         }
 
-        view.findViewById<MaterialButton>(R.id.btnSaveSettings).setOnClickListener { onSave() }
+        // SAVED AS EACH CONTROL MOVES - there is no Save button any more.
+        //
+        // Attached after [bind], so loading the stored values is not mistaken for the
+        // operator changing them. The controls that already have listeners above save
+        // from inside those; only a switch's listener has to be the one listener, so
+        // they are re-stated rather than added to. A text field can take a second
+        // watcher, so those are simply given one.
+        swBillNoChar.setOnCheckedChangeListener { _, on ->
+            tilPrefix.isVisible = on
+            updatePreview()
+            autoSave()
+        }
+        swTokenNoChar.setOnCheckedChangeListener { _, on ->
+            tilTokenPrefix.isVisible = on
+            updateTokenPreview()
+            autoSave()
+        }
+        rgTokenReset.setOnCheckedChangeListener { _, _ -> updateTokenPreview(); autoSave() }
+        swUpiQr.setOnCheckedChangeListener { _, _ -> updateUpiPreview(); autoSave() }
+
+        SettingsAutoSave.onChange(
+            ::autoSave,
+            swRoundOff, swAmountWords, swHsn, swProductSerial, swBillTime,
+            swTwoCopy, swCouponSplit, swCustomerAddress,
+            rgReset, actCustomerDetails, actTotalFontSize
+        )
+        SettingsAutoSave.onTyped(
+            ::autoSave, etPrefix, etStartTokenNo, etTokenPrefix, etUpiId, etUpiName
+        )
+
+        // THE START BILL NUMBER IS NOT ONE OF THEM.
+        //
+        // Changing it erases every bill on the till, so it cannot be written because
+        // typing paused - a half-typed "5" on the way to "500" would be a different
+        // start number, and agreeing to wipe the books for it is not something anybody
+        // asked. It is settled when the field is LEFT, which is the moment the operator
+        // has finished saying what they meant, and it still asks before erasing
+        // anything. See [onStartNoSettled].
+        etStartBillNo.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) onStartNoSettled() }
 
         // Applies the theme accent to switches, radios, headers, button, inputs.
         ThemeManager.applyTheme(view)
@@ -408,31 +446,51 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         }
     }
 
-    private fun onSave() {
+    /**
+     * Writes the screen as it stands, silently.
+     *
+     * Called by every control except the start bill number - see the wiring above and
+     * [onStartNoSettled] for why that one is on its own.
+     *
+     * No "Saved" dialog: it was the Save button's receipt, and with the button gone a
+     * box on every toggle would be one to dismiss per switch touched.
+     *
+     * A UPI code with no payable address is a square nobody can pay into, so the switch
+     * cannot be written on until there is one - the field says so and nothing is saved
+     * until it is answered, exactly as the Save button used to refuse.
+     */
+    private fun autoSave() {
         val s = collect()
-        // A QR built without a payable address is a square nobody can pay into, so
-        // the setting cannot be switched on until there is one.
         if (s.upiQrEnabled && !UpiQr.isValidVpa(s.upiId)) {
             tilUpiId.error = "Enter a valid UPI ID, e.g. shop@okaxis"
-            etUpiId.requestFocus()
             return
         }
-        // Changing the start number when bills exist requires erasing them.
-        if (s.startBillNo != savedStartNo && dao.hasBills()) {
-            AlertDialog.Builder(requireContext())
-                .setTitle("Erase existing bills?")
-                .setMessage(
-                    "Changing the start bill number requires deleting all previous bills " +
-                        "so numbering can restart cleanly. This cannot be undone."
-                )
-                .setPositiveButton("Erase & Save") { _, _ ->
-                    dao.clearAllBills()
-                    persist(s)
-                }
-                .setNegativeButton("Cancel", null)
-                .create()
-                .also { it.setCanceledOnTouchOutside(false); it.show() }
-        } else {
+        // The start number the till is ON, not the one being typed. Every other
+        // setting on this screen still saves while that field is mid-edit.
+        persist(if (s.startBillNo != savedStartNo) s.copy(startBillNo = savedStartNo) else s)
+    }
+
+    /**
+     * The start bill number, once the operator has finished with the field.
+     *
+     * Changing it requires erasing the bills, so numbering can restart cleanly - which
+     * is the one thing on this screen that cannot be undone, and the one thing that
+     * still stops to ask. Cancelling puts the field back to the number in force, so a
+     * screen that refused the change does not sit there reading as though it took it.
+     */
+    private fun onStartNoSettled() {
+        val s = collect()
+        if (s.startBillNo == savedStartNo) return
+        // The one erase flow, shared with the Tax Mode change and About's own Erase
+        // Bills - see [BillErasePrompt]. It says what is KEPT as well as what goes,
+        // and it clears the floor with the bills, which the bare clearAllBills this
+        // used to call left standing mid-service.
+        com.example.synergic_pos_offline.utils.BillErasePrompt.confirm(
+            fragment = this,
+            reason = "Changing the start bill number restarts the numbering",
+            action = "change the start bill number",
+            onCancelled = { etStartBillNo.setText(savedStartNo.toString()) }
+        ) {
             persist(s)
         }
     }
@@ -440,11 +498,6 @@ class BillSettingsFragment : Fragment(), TitledScreen {
     private fun persist(s: BillSettings) {
         dao.save(s)
         savedStartNo = s.startBillNo
-        DialogUtils.showSuccess(
-            context = requireContext(),
-            title = "Saved",
-            message = "Bill settings saved successfully."
-        )
     }
 
     private companion object {

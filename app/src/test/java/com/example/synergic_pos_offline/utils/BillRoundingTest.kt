@@ -85,4 +85,49 @@ class BillRoundingTest {
         assertEquals(0.0, BillRounding.payable(0.0), delta)
         assertEquals(0.0, BillRounding.roundOff(0.0), delta)
     }
+
+    /**
+     * A bill that landed on a whole rupee has nothing to report.
+     *
+     * This is what keeps "ROUNDED OFF : 0.00" off a slip whose total needed no
+     * adjusting. Round Off being switched on decides whether the bill ROUNDS; it does
+     * not follow that every bill has something to show for it.
+     */
+    @Test
+    fun `an exact total has no adjustment to report`() {
+        assertFalse(BillRounding.hasAdjustment(BillRounding.roundOff(602.00)))
+        assertFalse(BillRounding.hasAdjustment(0.0))
+        // Negative zero and float dust are not adjustments either.
+        assertFalse(BillRounding.hasAdjustment(-0.0))
+        assertFalse(BillRounding.hasAdjustment(0.0001))
+    }
+
+    /**
+     * A bill that WAS rounded still reports it, in either direction - the line has to
+     * go on printing wherever it did before.
+     */
+    @Test
+    fun `a rounded total still reports its adjustment`() {
+        // Rounded down: 112.04 settles at 112, so 0.04 came off.
+        assertTrue(BillRounding.hasAdjustment(BillRounding.roundOff(112.04)))
+        // Rounded up: 594.81 settles at 595, so 0.19 went on.
+        assertTrue(BillRounding.hasAdjustment(BillRounding.roundOff(594.81)))
+        // The smallest adjustment whole-rupee rounding can produce, and the largest.
+        assertTrue(BillRounding.hasAdjustment(0.01))
+        assertTrue(BillRounding.hasAdjustment(-0.01))
+        assertTrue(BillRounding.hasAdjustment(0.50))
+        assertTrue(BillRounding.hasAdjustment(-0.49))
+    }
+
+    /** [BillRounding.hasAdjustment] and [BillRounding.isExact] answer the same question. */
+    @Test
+    fun `hasAdjustment agrees with isExact`() {
+        listOf(0.0, 112.04, 594.81, 602.00, 25.5, 78.499999, 1.0).forEach { amount ->
+            assertEquals(
+                "disagreed about $amount",
+                BillRounding.isExact(amount),
+                !BillRounding.hasAdjustment(BillRounding.roundOff(amount))
+            )
+        }
+    }
 }

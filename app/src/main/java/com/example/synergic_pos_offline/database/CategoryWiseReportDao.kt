@@ -1,9 +1,7 @@
 package com.example.synergic_pos_offline.database
 
 import android.content.Context
-import com.example.synergic_pos_offline.utils.BillPricing
 import com.example.synergic_pos_offline.utils.BillRounding
-import com.example.synergic_pos_offline.utils.BillSettingsSnapshot
 import com.example.synergic_pos_offline.utils.SessionManager
 
 /**
@@ -108,7 +106,10 @@ class CategoryWiseReportDao(context: Context) {
             JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id
             LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCTS} p ON p.id = i.product_id
             LEFT JOIN ${DatabaseHelper.Tables.MD_CATEGORY} c ON c.id = p.category_id
-            WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
+            WHERE substr(
+                      COALESCE(NULLIF(TRIM(b.bill_date_time), ''), b.bill_date || ' 00:00'),
+                      1, 10
+                  ) BETWEEN ? AND ?
               AND COALESCE(b.is_voided, 0) = 0
               AND COALESCE(b.bill_status, 'COMPLETED') <> 'CANCELLED'
               $storeClause
@@ -124,28 +125,12 @@ class CategoryWiseReportDao(context: Context) {
         helper.readableDatabase.rawQuery(sql, args.toTypedArray()).use { c ->
             while (c.moveToNext()) {
                 val sum = sums.getOrPut(c.getString(0).orEmpty().ifBlank { UNCATEGORISED }) { Sum() }
-                val igstRate = c.getDouble(5)
-                val igstAmount = c.getDouble(10)
                 sum.quantity += c.getDouble(2)
-
-                val snapshot = BillSettingsSnapshot.parse(c.getString(13))
-                if (snapshot != null && igstRate <= 0.0 && igstAmount <= 0.0) {
-                    sum.amount += BillPricing.price(
-                        rate = c.getDouble(1),
-                        quantity = c.getDouble(2),
-                        cgstRate = c.getDouble(3),
-                        sgstRate = c.getDouble(4),
-                        vatRate = c.getDouble(6),
-                        discountAmount = c.getDouble(7),
-                        taxEnabled = snapshot.taxEnabled,
-                        inclusive = snapshot.inclusive,
-                        discountPreTax = snapshot.discountPreTax
-                    ).taxable
-                } else {
-                    val rate = c.getDouble(3) + c.getDouble(4) + igstRate + c.getDouble(6)
-                    val tax = c.getDouble(8) + c.getDouble(9) + igstAmount + c.getDouble(11)
-                    sum.amount += if (rate > 0.0) tax * 100.0 / rate else c.getDouble(12)
-                }
+                // Read, not recomputed - the same basis the item-wise, tax and
+                // bill-wise reports now share: the line's total less the tax booked on
+                // it. See TaxReportDao for why re-pricing was dropped.
+                val tax = c.getDouble(8) + c.getDouble(9) + c.getDouble(10) + c.getDouble(11)
+                sum.amount += c.getDouble(12) - tax
             }
         }
 

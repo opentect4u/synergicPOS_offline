@@ -582,18 +582,9 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSaveSettings"
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="16dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:minHeight="0dp"
-            android:text="Save Settings"
-            android:textSize="16sp"
-            android:textColor="@color/white"
-            app:cornerRadius="12dp" />
+        <!-- No Save button: Bill Settings write themselves as each control moves
+             - see SettingsAutoSave. The start bill number keeps its own confirm,
+             because changing it erases every bill on the till. -->
 
     </LinearLayout>
 </ScrollView>

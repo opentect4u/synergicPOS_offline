@@ -62,7 +62,10 @@ object DefaultSettings {
         landingScreen = GeneralSettingsDao.LandingScreen.SALE,
         stockFlag = false,
         stockAlert = false,
-        stockAlertQty = 0
+        stockAlertQty = 0,
+        // Refused by default, which is how the till behaved before the setting
+        // existed - see GeneralSettingsDao.GeneralSettings.negativeStock.
+        negativeStock = false
     )
 
     // ---- Bill Settings (md_app_settings, type 'B') ----------------------------
