@@ -52,23 +52,31 @@ class TaxSettingsDao(context: Context) {
      *
      * Discount: [discountEnabled] gates a single [discountType], radio-selected when
      * discount is on. [discountPosition] says whether the discount comes off before or
-     * after tax - a real choice under an exclusive price, and forced to Post-tax under
-     * MRP, where the tax is already inside the price. It is what the rest of the app
-     * prices against, so [load] is where that rule is enforced rather than the screen.
+     * after tax - a real choice under either tax mode now (MRP included: an inclusive
+     * price is stripped to its base, discounted, and re-taxed - see
+     * [com.example.synergic_pos_offline.utils.GstCalculator.taxableBase]); Item-wise
+     * together with Exclusive is the one combination still forced to Pre-tax, since a
+     * product's own discount comes off it before the line is taxed on what's left. It
+     * is what the rest of the app prices against, so [load] is where that rule is
+     * enforced rather than the screen.
      *
      * Tax: [taxEnabled] switches tax on or off store-wide; [taxMode] is the one
      * shared Inclusive/Exclusive setting. Which tax a given sale carries - GST or
      * VAT - is not decided here any more: it is the product's own business, read
      * off whichever of its rate fields (cgst/sgst vs vat) it actually has set. See
      * [com.example.synergic_pos_offline.utils.GstCalculator.regimeOf].
+     *
+     * Defaults to MRP with tax on and any discount post-tax - what a till reads with
+     * nothing ever saved (a fresh install) or once [resetToFreshTillDefault] has run
+     * (every bill erased) - not Exclusive with tax off, which used to be both.
      */
     data class TaxSettings(
         val discountEnabled: Boolean = false,
         val discountType: DiscountType = DiscountType.ITEM_WISE,
         val discountPosition: DiscountPosition = DiscountPosition.POST_TAX,
         // Tax
-        val taxEnabled: Boolean = false,
-        val taxMode: GstMode = GstMode.EXCLUSIVE
+        val taxEnabled: Boolean = true,
+        val taxMode: GstMode = GstMode.INCLUSIVE
     )
 
     /**
@@ -106,23 +114,43 @@ class TaxSettingsDao(context: Context) {
             // WHICH OF THE TWO MOMENTS, settled here rather than only on the screen,
             // because every caller that prices a sale reads this and not the radio.
             //
-            // MRP first: the tax is already inside the price, so there is no
-            // before-tax figure for a discount to come off - see
-            // TaxSettingsFragment.syncDiscountPosition, which greys Pre-tax for the
-            // same reason. That is an arithmetic fact rather than a preference, so it
-            // wins over the item-wise rule below when both would apply.
-            //
-            // Then item-wise: a discount configured against a product comes off that
-            // product and the line is taxed on what is left, which is what pre-tax
-            // means. Post-tax is greyed there, and a row saved before that rule
-            // existed is read the way the screen would now save it.
+            // Item-wise together with EXCLUSIVE is the one combination still forced to
+            // Pre-tax - a discount configured against a product comes off that product
+            // and the line is taxed on what is left, which is what pre-tax means; a row
+            // saved before that rule existed is read the way the screen would now save
+            // it. MRP no longer forces Post-tax here: an inclusive price has a genuine
+            // before-tax base to discount too (see
+            // com.example.synergic_pos_offline.utils.GstCalculator.taxableBase), so
+            // Item-wise under MRP and Bill-wise under either mode read back whatever
+            // was actually picked.
             discountPosition = when {
-                taxMode == GstMode.INCLUSIVE -> DiscountPosition.POST_TAX
-                type == DiscountType.ITEM_WISE -> DiscountPosition.PRE_TAX
+                type == DiscountType.ITEM_WISE && taxMode == GstMode.EXCLUSIVE -> DiscountPosition.PRE_TAX
                 else -> position
             },
             taxEnabled = m[KEY_TAX_ENABLED]?.toBool() ?: (legacyGstOn || legacyVatOn),
             taxMode = taxMode
+        )
+    }
+
+    /**
+     * Resets Tax Settings to what a till with no bills is meant to read: MRP, with
+     * tax on and any discount taken post-tax - not whatever mode the till happened to
+     * be configured in before its bills went.
+     *
+     * Called once the erase-bills flow ([com.example.synergic_pos_offline.utils.BillErase.erase])
+     * has actually left the till with none, so a wiped till reads exactly as a
+     * brand-new one would. Discount on/off and its type are left exactly as they
+     * were - erasing the bills is not a reason to also drop a shop's own discount
+     * configuration.
+     */
+    fun resetToFreshTillDefault() {
+        val current = load()
+        save(
+            current.copy(
+                taxEnabled = true,
+                taxMode = GstMode.INCLUSIVE,
+                discountPosition = DiscountPosition.POST_TAX
+            )
         )
     }
 

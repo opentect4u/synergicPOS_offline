@@ -49,7 +49,9 @@ class PrintLanguageTest {
     @Test
     fun `a compound is built from its words`() {
         // Neither of these is written down; both are assembled from words that are.
-        assertEquals("कुल कर", PrintLanguage.tr(Language.HINDI, "TOTAL TAX"))
+        // ("TOTAL TAX" itself is written down separately, to borrow "टैक्स" rather
+        // than the dictionary word "कर" TAX uses everywhere else - see its own entry.)
+        assertEquals("कुल रकम", PrintLanguage.tr(Language.HINDI, "TOTAL AMOUNT"))
         assertEquals("बिक्री रिपोर्ट", PrintLanguage.tr(Language.HINDI, "SALE REPORT"))
     }
 
@@ -72,7 +74,7 @@ class PrintLanguageTest {
 
     @Test
     fun `a label keeps its value and its separator`() {
-        assertEquals("बिल नं: 12", PrintLanguage.tr(Language.HINDI, "BILL NO: 12"))
+        assertEquals("बिल नंबर: 12", PrintLanguage.tr(Language.HINDI, "BILL NO: 12"))
         assertEquals("नाम  : SOMNATH", PrintLanguage.tr(Language.HINDI, "NAME  : SOMNATH"))
     }
 
@@ -104,7 +106,7 @@ class PrintLanguageTest {
     @Test
     fun `two labelled figures on one line are translated apart`() {
         assertEquals(
-            "मात्रा : 12   राशि : 640.00",
+            "मात्रा : 12   रकम : 640.00",
             PrintLanguage.tr(Language.HINDI, "QTY : 12   AMT : 640.00")
         )
     }
@@ -137,7 +139,7 @@ class PrintLanguageTest {
     @Test
     fun `a short form inside a label survives the label being translated`() {
         assertEquals("कुल SGST", PrintLanguage.tr(Language.HINDI, "TOTAL SGST"))
-        assertEquals("VAT राशि", PrintLanguage.tr(Language.HINDI, "VAT AMOUNT"))
+        assertEquals("VAT रकम", PrintLanguage.tr(Language.HINDI, "VAT AMOUNT"))
     }
 
     @Test
@@ -172,15 +174,67 @@ class PrintLanguageTest {
     @Test
     fun `a list of column headings translates the ones it knows`() {
         assertEquals(
-            listOf("बिल", "राशि", "SGST", "CUSTOM"),
+            listOf("बिल", "रकम", "SGST", "CUSTOM"),
             PrintLanguage.tr(Language.HINDI, listOf("BILL", "AMOUNT", "SGST", "CUSTOM"))
         )
+    }
+
+    /**
+     * The shop's own reference sheet of exact Hindi/Marathi bill wording - pinned so
+     * the dictionary cannot drift back to a machine-plausible but wrong word (राशि
+     * for AMOUNT, कर for the borrowed टैक्स, पूर्णांकन for the borrowed राउंड-ऑफ) once
+     * something else in this file changes.
+     */
+    @Test
+    fun `matches the shop's own reference sheet for Hindi and Marathi`() {
+        val hindi = mapOf(
+            "BILL NO" to "बिल नंबर",
+            "TABLE" to "टेबल",
+            "PRICE" to "कीमत",
+            "AMOUNT" to "रकम",
+            "TOTAL TAX" to "कुल टैक्स",
+            "ROUNDED OFF" to "राउंड-ऑफ",
+            "GRAND TOTAL" to "कुल योग",
+            "SCAN TO PAY" to "पेमेंट के लिए स्कैन करें",
+            "KOT NO" to "KOT नंबर",
+            "TAKE AWAY TOKEN" to "टेक-अवे टोकन",
+            "DISCOUNT" to "डिस्काउंट",
+            "PAY MODE" to "पेमेंट",
+            "ONLINE" to "ऑनलाइन",
+            "UNIT" to "यूनिट",
+            "PCS" to "नग",
+            "KG" to "किलो",
+            "MOBILE NO." to "मोबाइल नं",
+            "DUPLICATE" to "डुप्लीकेट",
+            "TAX AMOUNT" to "टैक्स रकम",
+            "SL NO" to "अनुक्रमांक",
+            "USER ID" to "यूज़र ID",
+            "USER NAME" to "यूज़र का नाम",
+            "UDF-WISE REPORT" to "UDF के अनुसार रिपोर्ट"
+        )
+        hindi.forEach { (label, expected) ->
+            assertEquals("Hindi $label", expected, PrintLanguage.tr(Language.HINDI, label))
+        }
+
+        val marathi = mapOf(
+            "BILL NO" to "बिल क्र.",
+            "ITEM QTY" to "नग",
+            "QUANTITY" to "नग",
+            "GRAND TOTAL" to "देय रक्कम",
+            "ROUND OFF" to "राउंड-ऑफ",
+            "TAX AMOUNT" to "कर रक्कम",
+            "USER NAME" to "वापरकर्त्याचे नाव",
+            "UDF-WISE REPORT" to "UDF नुसार अहवाल"
+        )
+        marathi.forEach { (label, expected) ->
+            assertEquals("Marathi $label", expected, PrintLanguage.tr(Language.MARATHI, label))
+        }
     }
 
     @Test
     fun `a summary translates its labels and not its figures`() {
         assertEquals(
-            listOf("कुल बिल" to "41", "कुल राशि" to "12,480.00"),
+            listOf("कुल बिल" to "41", "कुल रकम" to "12,480.00"),
             PrintLanguage.trLabels(
                 Language.HINDI, listOf("TOTAL BILLS" to "41", "TOTAL AMOUNT" to "12,480.00")
             )

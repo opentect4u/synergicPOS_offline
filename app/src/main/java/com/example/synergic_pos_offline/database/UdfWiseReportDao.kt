@@ -16,6 +16,12 @@ import com.example.synergic_pos_offline.utils.BillRounding
  * still get a name rather than a bare table number. That fallback can only guess
  * when a table number is used in more than one section, which is why the bill now
  * carries its own name directly.
+ *
+ * Dine-In only: a UDF is a table, and Take Away and QSR orders are never seated at
+ * one - `td_bills.order_type` is blank/NULL for a Dine-In bill (see
+ * `RestaurantOrdersFragment`'s own note on the three order types, "Dine In" being
+ * the unmarked default rather than a stored label), so a bill is excluded here
+ * whenever that column actually names one of the other two.
  */
 class UdfWiseReportDao(context: Context) {
 
@@ -97,6 +103,7 @@ class UdfWiseReportDao(context: Context) {
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
               AND b.table_number IS NOT NULL AND TRIM(b.table_number) <> ''
+              AND UPPER(COALESCE(b.order_type, '')) NOT IN ('TAKE AWAY', 'QSR')
               AND COALESCE(b.bill_status, '') <> 'CANCELLED'
             GROUP BY b.table_number, section_name
             ORDER BY section_name, CAST(b.table_number AS INTEGER), b.table_number

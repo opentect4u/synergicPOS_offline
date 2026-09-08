@@ -53,6 +53,44 @@ class GstCalculatorTest {
         assertEquals(0.0, GstCalculator.taxableValue(price = 100.0, qty = 1, discountPct = 150), delta)
     }
 
+    /**
+     * Pins the grocery till's own bill-wise pre-tax MRP pipeline - the exact sequence
+     * [PosCheckoutFragment.discountBase]/[PosBillingFragment.discountBase] and
+     * [PosCheckoutFragment.lineTaxRaw]/[PosBillingFragment.lineTaxRaw] call, not
+     * [CartMath] - to the same textbook worked example [CartMathTest] pins for the
+     * restaurant: a ₹1,180 MRP line, 18% GST, 20% bill-wise pre-tax discount.
+     *
+     * Base = 1,180 / 1.18 = 1,000; discount = 20% of 1,000 = 200; discounted base =
+     * 800; GST re-added on that = 144; final = 944 - not 236 off the ₹1,180 itself,
+     * which is what the base used to be measured against before this was fixed.
+     */
+    @Test
+    fun `grocery's own bill-wise pre-tax pipeline strips MRP to its base before discounting`() {
+        val mrp = 1180.0
+        val rate = 18.0 // 9% CGST + 9% SGST, as the product master would carry it
+
+        // discountBase(): the base a pre-tax % is taken of, under MRP.
+        val discountBase = GstCalculator.taxableBase(mrp, rate, inclusive = true)
+        assertEquals(1000.0, discountBase, delta)
+
+        // discountAmt(): 20% of that base.
+        val discountAmt = GstCalculator.discountAmount(discountBase, GstCalculator.DiscountMode.PERCENT, 20.0)
+        assertEquals(200.0, discountAmt, delta)
+
+        // lineTaxRaw(): the line's own raw base, less its share of the whole-bill
+        // discount (the whole of it, for a single-line bill) - GST is then charged
+        // on what's left.
+        val rawBase = GstCalculator.taxableBase(mrp, rate, inclusive = true)
+        val taxable = GstCalculator.taxableValueSpread(rawBase, gross = mrp, grossSubtotal = mrp, discountAmount = discountAmt)
+        assertEquals(800.0, taxable, delta)
+
+        val cgst = GstCalculator.taxAmount(taxable, 9.0)
+        val sgst = GstCalculator.taxAmount(taxable, 9.0)
+        assertEquals(72.0, cgst, delta)
+        assertEquals(72.0, sgst, delta)
+        assertEquals(944.0, taxable + cgst + sgst, delta)
+    }
+
     /** A mixed cart must not be flattened to one blended rate. */
     @Test
     fun `sums a cart whose products carry different rates`() {

@@ -698,10 +698,22 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      * Under inclusive pricing this is the listed subtotal itself - the price already
      * carries its tax - so the two only differ when tax is added on top.
      *
+     * The one exception is MRP with the discount PRE-tax: there the base is the
+     * inclusive price with its own tax stripped back out - 20% off a ₹1,180 MRP
+     * line (18% GST) is ₹200.00, a fifth of the ₹1,000 that MRP actually lists, not
+     * ₹236.00 off the ₹1,180 on the shelf - see [GstCalculator.taxableBase].
+     *
      * Safe from recursing back into [discountAmt]: a post-tax discount leaves every
      * line taxed in full, so the lines are priced here with no discount at all.
      */
     private fun discountBase(): Double {
+        if (taxInclusive && discountPreTax) {
+            return lines.sumOf { line ->
+                val gross = line.price * line.qty
+                val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate else 0.0
+                GstCalculator.taxableBase(gross, rate, true)
+            }
+        }
         val sub = subtotal()
         return lines.sumOf {
             val t = lineTax(it, sub, 0.0)

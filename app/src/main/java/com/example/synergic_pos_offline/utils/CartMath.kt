@@ -203,21 +203,31 @@ object CartMath {
      * What a whole-bill discount is a percentage OF - matching Discount Position the
      * same way an item-wise one does (see [CartMath.Totals.discount]'s own doc): a
      * POST-tax discount is taken off after tax, so 20% off a 110.00 sale carrying
-     * 5.50 of GST is 23.10, not 22.00; a PRE-tax one is a share of the raw listed
-     * subtotal instead, before any tax is added on top of it - 5% off a ₹600 +
-     * ₹200 exclusive sale is ₹40.00, not ₹42.00 off the ₹840 those two lines come
-     * to once taxed.
+     * 5.50 of GST is 23.10, not 22.00; a PRE-tax one is a share of each line's own
+     * raw, pre-tax base instead, before any tax is added on top of it - 5% off a
+     * ₹600 + ₹200 exclusive sale is ₹40.00, not ₹42.00 off the ₹840 those two lines
+     * come to once taxed.
      *
-     * Under INCLUSIVE pricing the two coincide (the price already carries its tax,
-     * so there is no separate "before tax is added" figure to differ from), which
-     * is why only the exclusive, pre-tax case needs its own branch here.
+     * A PRE-tax discount under MRP works the same way, against the base an
+     * inclusive price is stripped down to rather than the MRP itself: 20% off a
+     * ₹1,180 MRP line (18% GST) is ₹200.00, a fifth of the ₹1,000 base that MRP
+     * actually lists, not ₹236.00 off the ₹1,180 on the shelf - see
+     * [GstCalculator.taxableBase]. A POST-tax discount stays measured against the
+     * taxed/listed total either way, which for an inclusive price already IS the
+     * MRP - see the un-branched case below.
      *
      * Cannot recurse into [billDiscount]: the lines are priced here with no discount
      * at all.
      */
     fun discountBase(lines: List<Line>, cfg: Config): Double {
+        if (cfg.discountPreTax) {
+            // Under EXCLUSIVE, a line's raw base already IS its gross - taxableBase
+            // is a no-op with nothing embedded to strip - so this reduces to the
+            // plain subtotal exactly as it always did; under MRP it strips the tax
+            // the listed price carries, the one figure that branch used to skip.
+            return lines.sumOf { GstCalculator.taxableBase(it.gross, rateOf(it, cfg), cfg.inclusive) }
+        }
         val sub = subtotal(lines)
-        if (!cfg.inclusive && cfg.discountPreTax) return sub
         return lines.sumOf { l ->
             val p = priceLine(l, cfg, sub, 0.0)
             p.taxable + p.cgst + p.sgst + p.vat

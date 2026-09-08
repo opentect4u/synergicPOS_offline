@@ -110,19 +110,21 @@ object DefaultSettings {
     // ---- Tax Settings (md_app_settings, type 'T') -----------------------------
 
     /**
-     * No discount and no tax.
+     * MRP, tax on, no discount - what a shop with nothing billed yet actually prices
+     * against: the sticker price already carries the tax, which is the figure on the
+     * shelf far more often than a price with tax added on top of it.
      *
-     * Off rather than on because a tax charged that the shop is not registered for
-     * is a worse mistake than one that has to be switched on. The modes carried
-     * alongside are what each becomes when it is switched on - exclusive, i.e. added
-     * on top of the price.
+     * [TaxSettingsDao.resetToFreshTillDefault] puts a till back to this same reading
+     * whenever every bill on it goes - see [com.example.synergic_pos_offline.utils.BillErase.erase] -
+     * so "no bills yet" reads the same whether that is because the till is new or
+     * because it was just wiped.
      */
     val TAX = TaxSettingsDao.TaxSettings(
         discountEnabled = false,
         discountType = TaxSettingsDao.DiscountType.ITEM_WISE,
         discountPosition = TaxSettingsDao.DiscountPosition.POST_TAX,
-        taxEnabled = false,
-        taxMode = TaxSettingsDao.GstMode.EXCLUSIVE
+        taxEnabled = true,
+        taxMode = TaxSettingsDao.GstMode.INCLUSIVE
     )
 
     // ---- App Settings (md_app_settings, type 'A') -----------------------------

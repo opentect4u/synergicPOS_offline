@@ -34,6 +34,7 @@ import com.example.synergic_pos_offline.utils.AppLanguage
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.PrintLanguage
 import com.example.synergic_pos_offline.utils.ProductName
+import com.example.synergic_pos_offline.utils.RegionalName
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.Downloads
 import com.example.synergic_pos_offline.utils.ProductCsvExport
@@ -63,17 +64,28 @@ class ProductsFragment : DataTableFragment() {
      * Stock is appended rather than slotted in, so the columns before it keep their
      * positions - [filterColumnIndex] and the cell order both count from the front,
      * and a column that only sometimes exists must not shift them.
+     *
+     * "Regional Name" sits right after "Name" - the shop's own name for the product
+     * in whichever language the master is on (see [buildHeaderExtra]'s picker), or
+     * the machine translation where none has been written - the same answer
+     * [RegionalName] gives a bill. It is always present, English included, so its
+     * position never shifts the columns after it the way a sometimes-column would.
      */
     override val columns by lazy {
-        listOf("S.No", "Name", "HSN Code", "Barcode", "Category") +
+        listOf("S.No", "Name", "Regional Name", "HSN Code", "Barcode", "Category") +
             if (stockTracked) listOf("Stock") else emptyList()
     }
 
     /** Products filter by category - the "Category" column above. */
-    override val filterColumnIndex = 4
+    override val filterColumnIndex = 5
 
     /** Products show their image as a round preview before the name. */
     override val showsThumbnails = true
+
+    /** A shop's own product list is exactly where reading down a familiar order
+     *  matters, and the one screen with enough columns for the order to be worth
+     *  choosing at all. */
+    override val columnsReorderable = true
 
     /** An id/label pair backing a dropdown. */
     private data class Option(val id: Int, val label: String)
@@ -143,6 +155,11 @@ class ProductsFragment : DataTableFragment() {
     override fun loadRows(): MutableList<DataRow> {
         val rows = mutableListOf<DataRow>()
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+        val language = AppLanguage.of(requireContext())
+        // One query for the whole catalogue's regional names - see [RegionalName.map] -
+        // not a lookup per row, which a table of hundreds of products would turn into
+        // hundreds of queries.
+        val savedNames = RegionalName.map(requireContext())
         // The count is summed in the query rather than read per row: the master lists
         // the whole catalogue, and a lookup per product would be a query per tile.
         val sql = """
@@ -157,9 +174,20 @@ class ProductsFragment : DataTableFragment() {
 
         db.rawQuery(sql, arrayOf(storeId().toString())).use { cursor ->
             while (cursor.moveToNext()) {
+                val name = cursor.getString(1).orEmpty()
                 val cells = listOf(
                     cursor.getInt(0).toString(),
-                    cursor.getString(1).orEmpty(),
+                    // Always the plain English name, whatever language the master is
+                    // on - display only, unrelated to what actually bills or prints.
+                    // "Regional Name" beside it is the one column the language picker
+                    // changes.
+                    name,
+                    // The shop's own written name where there is one, otherwise the
+                    // same translation a bill would print - see [RegionalName.forPrint].
+                    // Read fresh from [savedNames] every load, so saving the Regional
+                    // Name field and the table refresh that follows it (see
+                    // [saveProduct]'s caller) actually change what this column shows.
+                    RegionalName.forPrint(savedNames, language, name),
                     cursor.getString(2).orEmpty(),
                     cursor.getString(3).orEmpty(),
                     cursor.getString(4).orEmpty()
@@ -176,21 +204,12 @@ class ProductsFragment : DataTableFragment() {
         return rows
     }
 
-    override fun formatCellText(columnIndex: Int, row: DataRow, text: String): String {
-        return when (columnIndex) {
-            1 -> {
-                val language = AppLanguage.of(requireContext())
-                ProductName.inAppLanguage(language, text)
-            }
-            else -> text
-        }
-    }
-
     /**
      * The app-language picker - moved here from Settings › Language, since this
-     * list of product names is the one place picking a language actually shows
-     * something: [formatCellText] above already reads [AppLanguage] fresh on every
-     * row, so all this has to do is store the choice and ask the table to repaint.
+     * list of products is the one place picking a language actually shows something:
+     * the "Regional Name" column [loadRows] builds reads [AppLanguage] fresh on every
+     * load, so all this has to do is store the choice and ask the table to reload.
+     * "Name" itself stays in English regardless - see [loadRows].
      *
      * A dropdown rather than [ChargesFragment]'s tab strip - eleven languages is too
      * many buttons to fit one row - built from [PrintLanguage.Language] the same way
