@@ -67,6 +67,32 @@
             android:textSize="15sp"
             android:textColor="@color/text_main" />
 
+        <!-- Cancel: throws the bill away and puts its stock back. An icon rather than
+             a word, in the destructive red, and first in the row so it is never the
+             button beside the one somebody is reaching for - Print and View sit to its
+             right where the hand goes. Hidden on a bill that cannot be cancelled; see
+             BillListFragment. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCancelBillRow"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton.Icon"
+            android:layout_width="48dp"
+            android:layout_height="40dp"
+            android:layout_marginEnd="8dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:contentDescription="Cancel bill"
+            app:icon="@drawable/ic_delete"
+            app:iconSize="20dp"
+            app:iconPadding="0dp"
+            app:iconGravity="textStart"
+            app:iconTint="#D93025"
+            app:strokeColor="#F2C6C2"
+            app:cornerRadius="10dp"
+            app:paddingStart="14dp"
+            app:paddingEnd="14dp" />
+
         <!-- Prints straight from the list, without opening the bill first. -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnPrintBillRow"

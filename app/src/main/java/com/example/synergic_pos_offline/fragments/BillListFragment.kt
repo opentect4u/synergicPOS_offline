@@ -287,6 +287,7 @@ class BillListFragment : Fragment(), TitledScreen {
             sorted,
             onView = { if (pickingForReturn) openForReturn(it) else openBill(it) },
             onPrint = { printBill(it) },
+            onCancel = { confirmCancelBill(it) },
             showPrint = !pickingForReturn
         )
         tvEmpty.visibility = if (sorted.isEmpty()) View.VISIBLE else View.GONE
@@ -357,6 +358,65 @@ class BillListFragment : Fragment(), TitledScreen {
      * Prints without opening the bill first. Marked a duplicate for the same reason
      * the preview is: this list is history, so the customer already has the original.
      */
+    /**
+     * Asks before a bill is thrown away, then throws it away.
+     *
+     * The same destructive popup the rest of the till uses for a deletion it cannot
+     * undo - red confirm, a plain statement of what happens, Cancel first. What it
+     * says is specific to THIS bill rather than to cancelling in general: the number,
+     * the amount and the customer, because those are what an operator checks before
+     * agreeing, and "Cancel this bill?" over a list of twenty is not something anybody
+     * can safely say yes to.
+     *
+     * The refusal path matters as much as the confirm. A bill with a sale return
+     * against it cannot go, and the reason is said in the popup rather than as a toast
+     * that appears and vanishes - see [BillDao.cancelBill].
+     */
+    private fun confirmCancelBill(bill: BillDao.Bill) {
+        val who = bill.name.takeIf { it.isNotBlank() && !it.equals("Guest", true) }
+        DialogUtils.showConfirm(
+            context = requireContext(),
+            title = "Cancel bill ${bill.billNo}?",
+            message = buildString {
+                append("₹ ${bill.total}")
+                who?.let { append("  ·  $it") }
+                append("  ·  ${bill.date}")
+                append("\n\nThe bill is deleted - its items, payments, print record and ")
+                append("kitchen order go with it, and it stops counting in every report.")
+                append("\n\nThe stock it sold goes back on the shelf, and the sale's own ")
+                append("stock movement is removed, so the till reads as though it never ")
+                append("happened.")
+                append("\n\nA credit sale's entry on the customer's ledger goes too, so ")
+                append("nothing is left owing for a bill that no longer exists.")
+                append("\n\nThis cannot be undone.")
+            },
+            positiveText = "Cancel Bill",
+            negativeText = "Keep It",
+            destructive = true,
+            messageStart = true
+        ) {
+            val result = BillDao(requireContext()).cancelBill(bill.receiptNo)
+            if (!result.ok) {
+                DialogUtils.showSuccess(
+                    context = requireContext(),
+                    title = "Bill not cancelled",
+                    message = result.refusal.orEmpty()
+                )
+                return@showConfirm
+            }
+            android.widget.Toast.makeText(
+                requireContext(),
+                if (result.itemsRestored > 0)
+                    "Bill ${bill.billNo} cancelled - ${result.itemsRestored} item(s) back in stock"
+                else "Bill ${bill.billNo} cancelled",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+            // The row has to go from the list it was tapped in, not just from the
+            // database - see [refresh], which re-reads and re-filters.
+            refresh()
+        }
+    }
+
     private fun printBill(bill: BillDao.Bill) {
         BillPrinter.print(requireContext(), bill.receiptNo, duplicate = true) { message ->
             if (isAdded) android.widget.Toast.makeText(
@@ -420,6 +480,7 @@ class BillListFragment : Fragment(), TitledScreen {
         private val items: List<BillDao.Bill>,
         private val onView: (BillDao.Bill) -> Unit,
         private val onPrint: (BillDao.Bill) -> Unit,
+        private val onCancel: (BillDao.Bill) -> Unit,
         private val showPrint: Boolean = true
     ) : RecyclerView.Adapter<BillAdapter.ViewHolder>() {
 
@@ -431,6 +492,7 @@ class BillListFragment : Fragment(), TitledScreen {
             val tvAmount: TextView = view.findViewById(R.id.tvRowAmount)
             val btnView: MaterialButton = view.findViewById(R.id.btnViewBill)
             val btnPrint: MaterialButton = view.findViewById(R.id.btnPrintBillRow)
+            val btnCancel: MaterialButton = view.findViewById(R.id.btnCancelBillRow)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -460,6 +522,14 @@ class BillListFragment : Fragment(), TitledScreen {
             holder.btnPrint.isEnabled = !bill.cancelled
             holder.btnPrint.alpha = if (bill.cancelled) 0.4f else 1f
             holder.btnPrint.setOnClickListener { onPrint(bill) }
+
+            // CANCEL is offered only while this list is the real Bill History, and only
+            // on a bill there is still something to cancel. A bill already gone, or one
+            // being picked for a return, has nothing for it to do - and a destructive
+            // button that answers to nothing is worse than no button.
+            val canCancel = showPrint && !bill.cancelled && !bill.returned
+            holder.btnCancel.visibility = if (canCancel) View.VISIBLE else View.GONE
+            holder.btnCancel.setOnClickListener { onCancel(bill) }
         }
 
         override fun getItemCount() = items.size

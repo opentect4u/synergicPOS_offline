@@ -1187,6 +1187,9 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                 )
             },
             discount = discountAmtForReport(),
+            // The rate it was given at, so the slip prints "DISCOUNT @5%" rather than the
+            // amount alone - the same figure the bill is saved with.
+            discountPercent = discountPctForDisplay(),
             roundOff = roundOffAmt(),
             netAmount = total(),
             paymentModes = listOf(method.name),

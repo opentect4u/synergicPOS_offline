@@ -169,16 +169,20 @@ object ProductBulkImporter {
             buildList { while (c.moveToNext()) c.getString(0)?.takeIf { it.isNotBlank() }?.let { add(it) } }
         }
 
+        // EVERY product goes, so every product is removable and none is kept.
+        //
+        // There used to be a "kept" half here: products already on a bill were held
+        // back, because deleting one takes the bill line's link to it. That made an
+        // upload of 50 products over a shop's 200 leave 50 plus however many of the
+        // 200 had ever been sold - which is not what "replace my product list" means
+        // to the person who said it. See [clearProducts]: the history keeps its rows
+        // and its item names, and only the link goes.
         val total = count("SELECT count(*) FROM ${DatabaseHelper.Tables.MD_PRODUCTS}")
-        val kept = count(
-            "SELECT count(*) FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE id IN ($SQL_PRODUCTS_IN_USE)"
-        )
         return ReplaceCounts(
             total = total,
-            removable = total - kept,
-            kept = kept,
-            removableNames = names("id NOT IN ($SQL_PRODUCTS_IN_USE)"),
-            keptNames = names("id IN ($SQL_PRODUCTS_IN_USE)")
+            removable = total,
+            kept = 0,
+            removableNames = names("1 = 1")
         )
     }
 
@@ -201,21 +205,50 @@ object ProductBulkImporter {
      * @return how many products were removed
      */
     private fun clearProducts(db: SQLiteDatabase): Int {
-        val doomed = "SELECT id FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE id NOT IN ($SQL_PRODUCTS_IN_USE)"
-        // Children first: all of these point at md_products, and foreign keys are
-        // enforced. A name belongs to its product exactly as its rates and batches do,
-        // and goes with it.
-        // The stock movements first, because they point at the batches as well as at
-        // the product. These can only be the product's own opening stock and
-        // adjustments - anything that reached a customer keeps its product alive and
-        // out of [doomed] entirely, see SQL_PRODUCTS_IN_USE.
-        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS} WHERE product_id IN ($doomed)")
-        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} WHERE product_id IN ($doomed)")
-        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} WHERE product_id IN ($doomed)")
-        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_PRODUCT_NAMES} WHERE product_id IN ($doomed)")
-        val removed = db.rawQuery("SELECT count(*) FROM ($doomed)", null)
+        val products = DatabaseHelper.Tables.MD_PRODUCTS
+        val removed = db.rawQuery("SELECT count(*) FROM $products", null)
             .use { c -> c.moveToFirst(); c.getInt(0) }
-        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE id NOT IN ($SQL_PRODUCTS_IN_USE)")
+
+        // 1. SAVE THE NAMES THE BOOKS WILL NEED, before the rows that hold them go.
+        //
+        // A bill line keeps its own product_name so a reprint can name an item without
+        // the product still existing - but only rows written since that column was
+        // added actually carry one. Filling the gaps here is what makes the deletion
+        // below safe: after this, every bill line in the database can name its own item
+        // from itself. Do it the other way round and a shop's oldest bills reprint as
+        // blank lines.
+        db.execSQL(
+            """
+            UPDATE ${DatabaseHelper.Tables.TD_BILL_ITEMS}
+               SET product_name = (SELECT p.product_name FROM $products p
+                                    WHERE p.id = ${DatabaseHelper.Tables.TD_BILL_ITEMS}.product_id)
+             WHERE (product_name IS NULL OR TRIM(product_name) = '')
+               AND product_id IS NOT NULL
+            """.trimIndent()
+        )
+
+        // 2. DETACH THE HISTORY. The rows stay - they are the record of what happened,
+        // and nothing here deletes a sale - but they stop pointing at products that are
+        // about to be gone. Foreign keys are enforced, so this is what lets step 3
+        // succeed at all.
+        //
+        // The batch columns go with them: a batch belongs to its product and is deleted
+        // below, so a line still naming one would be pointing at nothing.
+        listOf(
+            "${DatabaseHelper.Tables.TD_BILL_ITEMS} SET product_id = NULL, batch_id = NULL",
+            "${DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS} SET product_id = NULL, batch_id = NULL",
+            "${DatabaseHelper.Tables.TD_RETURN_ITEMS} SET product_id = NULL",
+            "${DatabaseHelper.Tables.TD_KOT_ITEMS} SET product_id = NULL",
+            "${DatabaseHelper.Tables.TD_PURCHASE} SET product_id = NULL",
+            "${DatabaseHelper.Tables.TD_WRITE_OFF} SET prod_id = NULL"
+        ).forEach { db.execSQL("UPDATE $it") }
+
+        // 3. THE CATALOGUE ITSELF, children before parents. Rates, stock batches and
+        // the shop's own regional names all belong to the product and die with it.
+        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES}")
+        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK}")
+        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_PRODUCT_NAMES}")
+        db.execSQL("DELETE FROM $products")
         restartIdsIfEmptied(db)
         return removed
     }

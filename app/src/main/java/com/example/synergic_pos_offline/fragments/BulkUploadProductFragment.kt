@@ -373,12 +373,15 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
                 append("\n\nRemoved from this till (${counts.removable}), with their rates and stock:\n")
                 append(listed(counts.removableNames, counts.removable))
             }
-            if (counts.kept > 0) {
-                append("\n\nKEPT (${counts.kept}) - these are on a bill, return or stock record, ")
-                append("and removing them would break those records:\n")
-                append(listed(counts.keptNames, counts.kept))
-                append("\n\nThey will still be in the product list after the upload.")
-            }
+            // What a hard replace costs, said before it is agreed to rather than
+            // discovered in a report weeks later. The bills themselves are NOT touched
+            // and still name their items - only the link from a sold line back to a
+            // product record goes, and it cannot be put back.
+            append(
+                "\n\nBills, returns and stock records are kept and still show their item " +
+                    "names, but they will no longer be linked to a product - so reports " +
+                    "that group past sales by product cannot do so for these."
+            )
             append("\n\nThis cannot be undone.")
         }
     }

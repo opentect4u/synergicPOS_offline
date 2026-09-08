@@ -595,6 +595,20 @@ class BillReceiptRenderer(context: Context) {
         val customer: Customer,
         val items: List<Item>,
         val discount: Double,
+        /**
+         * The RATE the whole-bill discount was given at, where it was given as one.
+         *
+         * Printed beside the amount - "DISCOUNT @5%" - for the same reason the charge
+         * lines and the tax lines carry theirs: the amount says what came off, the
+         * rate says what it was worked out from, and only the second is something the
+         * customer can check.
+         *
+         * Zero for a discount typed as a flat figure, and the line then prints the
+         * amount alone. A percentage is NOT derived from the amount in that case: the
+         * shop said "fifty rupees off", and printing "@5.19%" would be putting a rate
+         * on the slip that nobody agreed to.
+         */
+        val discountPercent: Double = 0.0,
         val roundOff: Double,
         val netAmount: Double,
         val paymentModes: List<String>,
@@ -617,6 +631,17 @@ class BillReceiptRenderer(context: Context) {
         val charges: List<Pair<String, Double>> = emptyList(),
         val chargeTypes: List<String> = emptyList(), // PERCENTAGE or AMOUNT for each charge
         val chargeApplicabilities: List<String> = emptyList(), // ChargeDao.Applicability.store() per charge
+        /**
+         * What each charge was SET to - the percentage for a PERCENTAGE charge, the
+         * flat figure for an AMOUNT one. See ChargeDao.Applied.value.
+         *
+         * Carried so the slip can print "PACKING %" rather than only the rupees it
+         * came to: a customer looking at a charge wants to know the RATE they were
+         * charged at, which is the thing they can check, and the amount alone does not
+         * say it. Empty for a bill quoted before this was passed - the line then prints
+         * as it always did.
+         */
+        val chargeValues: List<Double> = emptyList(),
         /** Order type for filtering charges: "DINE_IN", "TAKEAWAY" or "QSR"; null for grocery */
         val orderType: String? = null,
         /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
@@ -733,6 +758,8 @@ class BillReceiptRenderer(context: Context) {
             var storedCgst = 0.0
             var storedSgst = 0.0
             var storedVat = 0.0
+            /** The rate a saved bill's whole-bill discount was given at - see Draft.discountPercent. */
+            var storedDiscountPercent = 0.0
             /**
              * The extra charges this bill actually carried, off its own row.
              *
@@ -772,7 +799,9 @@ class BillReceiptRenderer(context: Context) {
                        COALESCE(service_charge_amount, 0),
                        COALESCE(tot_other_charges_amount, 0),
                        COALESCE(tot_cgst_amount, 0), COALESCE(tot_sgst_amount, 0),
-                       COALESCE(tot_vat_amount, 0)
+                       COALESCE(tot_vat_amount, 0),
+                       -- Appended, so every column index above keeps its place.
+                       COALESCE(tot_discount_percentage, 0)
                 FROM ${billsTableFor(db, receiptNo)} WHERE receipt_no = ?
                 """.trimIndent(),
                 arrayOf(receiptNo.toString())
@@ -783,6 +812,7 @@ class BillReceiptRenderer(context: Context) {
                 storedCgst = c.getDouble(14)
                 storedSgst = c.getDouble(15)
                 storedVat = c.getDouble(16)
+                storedDiscountPercent = c.getDouble(17)
                 billNumber = c.getString(0) ?: receiptNo.toString()
                 dateTime = c.getString(1) ?: c.getString(2) ?: ""
                 customerId = if (c.isNull(3)) null else c.getLong(3)
@@ -1206,15 +1236,18 @@ class BillReceiptRenderer(context: Context) {
             val rawChargeLines: List<Pair<String, Double>>
             val rawChargeTypes: List<String>
             val rawChargeApplicabilities: List<String>
+            val rawChargeValues: List<Double>
             if (draft?.charges?.isNotEmpty() == true) {
                 rawChargeLines = draft.charges
                 rawChargeTypes = draft.chargeTypes
                 rawChargeApplicabilities = draft.chargeApplicabilities
+                rawChargeValues = draft.chargeValues
             } else {
                 val applied = runCatching { ChargeDao(ctx).amountsOn(totals.itemsSubtotal, orderType) }.getOrDefault(emptyList())
                 rawChargeLines = applied.map { it.name to it.amount }
                 rawChargeTypes = applied.map { it.type.name }
                 rawChargeApplicabilities = applied.map { it.applicability.store() }
+                rawChargeValues = applied.map { it.value }
             }
             // Kept by the SAME rule ChargeDao.amountsOn applies, read off the same
             // stored value - see ChargeDao.Applicability. Written out separately here
@@ -1231,6 +1264,7 @@ class BillReceiptRenderer(context: Context) {
             }
             val recomputed = keepIndices.map { rawChargeLines[it] }
             val recomputedTypes = keepIndices.map { rawChargeTypes.getOrNull(it) ?: "PERCENTAGE" }
+            val recomputedValues = keepIndices.map { rawChargeValues.getOrNull(it) ?: 0.0 }
             val recomputedTotal = BillRounding.toPaise(recomputed.sumOf { it.second })
 
             // A SAVED BILL CARRIES ITS OWN CHARGE TOTAL, and that is what is printed.
@@ -1299,14 +1333,26 @@ class BillReceiptRenderer(context: Context) {
             }
             val chargeTypes = if (!useStored || breakdownAgrees) recomputedTypes
             else chargeLines.map { "AMOUNT" }
-            // Printed as label / amount, the name as the shop typed it, with type indicator
+            // Printed as label / amount, the name as the shop typed it, and a
+            // PERCENTAGE charge carries the rate it was charged at.
+            //
+            // "PACKING CHARGE @5%" rather than "PACKING CHARGE (% amount)". The old
+            // indicator said only that the figure had been worked out as a percentage,
+            // which is the one thing about it a customer cannot do anything with; the
+            // RATE is what they can check the amount against. Written the same way the
+            // tax lines beside it are - "SGST @2.5%" - so the slip reads with one
+            // convention rather than two.
+            //
+            // A flat charge gets no annotation at all. It used to say "(fixed)", which
+            // is what a figure with no rate beside it already looks like.
+            val chargeValuesForRows = if (!useStored || breakdownAgrees) recomputedValues
+            else chargeLines.map { 0.0 }
             val chargeRows = chargeLines.mapIndexed { index, (name, amount) ->
-                val typeIndicator = when (chargeTypes.getOrNull(index)) {
-                    "PERCENTAGE" -> "(% amount)"
-                    "AMOUNT" -> "(fixed)"
-                    else -> ""
-                }
-                val displayName = if (typeIndicator.isNotEmpty()) "$name $typeIndicator" else name
+                val percent = chargeValuesForRows.getOrNull(index) ?: 0.0
+                val displayName =
+                    if (chargeTypes.getOrNull(index) == "PERCENTAGE" && percent > 0.0) {
+                        "$name @${rate(percent)}%"
+                    } else name
                 displayName.uppercase() to money(amount)
             }
 
@@ -1368,6 +1414,10 @@ class BillReceiptRenderer(context: Context) {
             // amount, so it reads after the tax total. True of either layout - only
             // where the block sits and what its lines are called differ.
             val showDiscount = totals.totalDiscount > 0.005
+            // The rate the bill's own discount was given at - the draft's where one is being
+            // priced, the saved bill's where it is being reprinted. Zero means it was typed
+            // as a flat figure and the line prints the amount alone; see Draft.discountPercent.
+            val discountPercent = draft?.discountPercent ?: storedDiscountPercent
 
             // The account block printed under the totals. On a CREDIT bill it is the
             // running-account breakdown from the customer's side - what they had, this
@@ -1406,6 +1456,7 @@ class BillReceiptRenderer(context: Context) {
                     taxSlabs = if (taxWise) emptyList() else taxSlabs,
                     summarySp = summarySp, showTotalTax = !taxWise,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
+                    discountPercent = discountPercent,
                     roundOff = effectiveRoundOff, showRoundOff = roundOffSetting, narrow = narrow,
                     serviceCharge = serviceCharge, charges = chargeRows, trailer = trailer
                 )
@@ -1426,6 +1477,7 @@ class BillReceiptRenderer(context: Context) {
                 renderStandardSummary(
                     llSummary, totals, taxSlabs, summarySp, netSize,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
+                    discountPercent = discountPercent,
                     roundOff = effectiveRoundOff, showRoundOff = roundOffSetting,
                     payable = payable, narrow = narrow, serviceCharge = serviceCharge,
                     charges = chargeRows,
@@ -1496,6 +1548,8 @@ class BillReceiptRenderer(context: Context) {
         netSize: Float,
         showDiscount: Boolean,
         discountPreTax: Boolean,
+        /** The rate the whole-bill discount was given at, or 0 for a flat figure. */
+        discountPercent: Double = 0.0,
         roundOff: Double,
         showRoundOff: Boolean,
         payable: Double,
@@ -1529,7 +1583,7 @@ class BillReceiptRenderer(context: Context) {
         llSummary.addView(
             summaryHead(counts, "${t("AMT")}: ${money(totals.grossMrp)}", summarySp, narrow)
         )
-        if (showDiscount && discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        if (showDiscount && discountPreTax) row(discountLabel(discountPercent), money(totals.totalDiscount))
         // GST first, then VAT, each with its own total - so a bill carrying both
         // shows which money is which instead of one sum under one of the two names.
         // A bill carrying neither prints no tax lines at all and nothing to demarcate.
@@ -1544,7 +1598,7 @@ class BillReceiptRenderer(context: Context) {
         }
         val vatTotal = taxSlabs.sumOf { it.vat }
         if (vatTotal > 0.005) row("TOTAL VAT", money(vatTotal))
-        if (showDiscount && !discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        if (showDiscount && !discountPreTax) row(discountLabel(discountPercent), money(totals.totalDiscount))
         row("TOTAL", money(totals.grandTotal))
         if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
         // Each charge on its own line, under its own name: a customer asked to pay a
@@ -1596,6 +1650,8 @@ class BillReceiptRenderer(context: Context) {
         showTotalTax: Boolean,
         showDiscount: Boolean,
         discountPreTax: Boolean,
+        /** The rate the whole-bill discount was given at, or 0 for a flat figure. */
+        discountPercent: Double = 0.0,
         roundOff: Double,
         showRoundOff: Boolean,
         narrow: Boolean,
@@ -1608,7 +1664,7 @@ class BillReceiptRenderer(context: Context) {
         val rows = mutableListOf<Pair<String, String>>()
         fun row(label: String, value: String) { rows.add(t(label) to value) }
 
-        if (showDiscount && discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        if (showDiscount && discountPreTax) row(discountLabel(discountPercent), money(totals.totalDiscount))
         // [loadItems] orders the slabs highest-rate first, the Standard order; the
         // Classic slip lists them the other way up.
         taxSlabs.asReversed().filter { it.hasGst }.forEach { slab ->
@@ -1631,7 +1687,7 @@ class BillReceiptRenderer(context: Context) {
                 row("TOTAL TAX", money(totals.tax))
             }
         }
-        if (showDiscount && !discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        if (showDiscount && !discountPreTax) row(discountLabel(discountPercent), money(totals.totalDiscount))
         // Stated before the rounding adjustment, so TOTAL AMOUNT + SERVICE CHARGE +
         // ROUNDED OFF is visibly the GRAND TOTAL below.
         row("TOTAL AMOUNT", money(totals.grandTotal))
@@ -2403,6 +2459,21 @@ class BillReceiptRenderer(context: Context) {
      * adding a third would be one word in one place rather than a QSR-shaped bug in
      * another year.
      */
+    /**
+     * The DISCOUNT line's label, carrying the rate where the discount had one.
+     *
+     * "DISCOUNT @5%" against "DISCOUNT". The amount beside it says what came off; the
+     * rate says what it was worked out from, and that is the half a customer can
+     * actually check against the total above it. Written the way the tax and charge
+     * lines write theirs, so the slip keeps one convention.
+     *
+     * The label is translated by the caller's own `row`, and a rate is digits and a
+     * per-cent sign in every language - so appending it here rather than inside the
+     * dictionary keeps [PrintLanguage] holding words, not formats.
+     */
+    private fun discountLabel(percent: Double): String =
+        if (percent > 0.0) "DISCOUNT @${rate(percent)}%" else "DISCOUNT"
+
     private fun isCounterLine(line: String): Boolean =
         COUNTER_LINE_PREFIXES.any { line.startsWith(it, ignoreCase = true) }
 

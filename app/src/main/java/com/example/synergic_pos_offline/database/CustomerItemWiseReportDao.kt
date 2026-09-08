@@ -81,7 +81,7 @@ class CustomerItemWiseReportDao(context: Context) {
         val items = mutableListOf<Item>()
         helper.readableDatabase.rawQuery(
             """
-            SELECT COALESCE(p.product_name, 'Item #' || bi.product_id) AS name,
+            SELECT COALESCE(NULLIF(TRIM(bi.product_name), ''), p.product_name, 'Item') AS name,
                    SUM(COALESCE(bi.quantity, 0)) AS qty,
                    SUM(COALESCE(bi.item_total, bi.item_subtotal, 0)) AS amount,
                    SUM(COALESCE(bi.sgst_amount, 0)) AS sgst,

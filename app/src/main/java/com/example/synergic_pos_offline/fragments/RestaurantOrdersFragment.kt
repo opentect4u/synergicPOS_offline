@@ -808,6 +808,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 // screen the customer actually pays from.
                                 discount = b.discount,
                                 discountDisplay = b.discountDisplay,
+                                discountRate = b.discountPercent,
                                 lineDiscounts = order.items.map { line ->
                                     com.example.synergic_pos_offline.utils.CartMath.lineDiscount(
                                         line.toMathLine(), cartConfig(),
@@ -5090,13 +5091,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // The slip shows what came off, whichever way it was arrived at - the
             // customer-facing figure, not the raw one the lines above are priced
             // against (see BillBreakdown.discount vs .discountDisplay).
-            discount = b.discountDisplay, roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
+            discount = b.discountDisplay, discountPercent = b.discountPercent,
+            roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
             paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),
             serviceCharge = b.service,   // shown as its own totals line, not an item
             // The figures already quoted on the order panel, handed to the slip rather
             // than worked out again - so what prints is what the customer was told.
             charges = b.charges.map { it.name to it.amount },
             chargeTypes = b.charges.map { it.type.name },
+            // The rate each percentage charge was set at, so the slip can print it.
+            chargeValues = b.charges.map { it.value },
             chargeApplicabilities = b.charges.map { it.applicability.store() },
             orderType = chargeOrderType,
             returnAmount = (tendered - payableTotal(b.total)).coerceAtLeast(0.0)   // cash to hand back
