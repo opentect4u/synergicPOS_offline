@@ -87,7 +87,7 @@ class ProfitLossReportDao(context: Context) {
         """.trimIndent()
 
         val sql = """
-            SELECT COALESCE(NULLIF(TRIM(p.product_name), ''), 'Item #' || i.product_id, 'Unnamed item'),
+            SELECT COALESCE(NULLIF(TRIM(p.product_name), ''), NULLIF(TRIM(i.product_name), ''), 'Item #' || i.product_id, 'Unnamed item'),
                    COALESCE(SUM(i.quantity), 0),
                    COALESCE(SUM(
                        CASE WHEN COALESCE($listed, 0) > 0

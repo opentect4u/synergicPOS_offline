@@ -60,7 +60,7 @@ class UdfWiseItemReportDao(context: Context) {
             """
             SELECT b.table_number,
                    COALESCE(b.table_section, '') AS section,
-                   COALESCE(p.product_name, 'Item #' || bi.product_id) AS name,
+                   COALESCE(NULLIF(TRIM(bi.product_name), ''), p.product_name, 'Item') AS name,
                    SUM(COALESCE(bi.quantity, 0)) AS qty,
                    SUM(COALESCE(bi.item_total, bi.item_subtotal, 0)) AS amount
             FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} bi
