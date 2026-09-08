@@ -41,7 +41,7 @@
                     android:textSize="14sp"
                     android:textColor="@color/text_secondary"
                     android:lineSpacingExtra="3dp"
-                    android:text="1. Download the template to see the column structure.\n2. Fill it in a spreadsheet app and save as CSV — each row carries its own category and unit, by name.\n3. Upload it, and choose whether to add to the products already here or replace them." />
+                    android:text="1. Download the template — an Excel file with the column structure.\n2. Fill it in and save it as Excel. PRODUCT_ID and CATEGORY_ID are plain numbers; UNIT_1–4 with RATE_1–4 give one product up to four units and prices.\n3. Upload it, and choose whether to add to the products already here or replace them.\n\nA CSV still uploads, for sheets you already keep." />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnBulkDownload"
@@ -64,7 +64,7 @@
                     android:insetTop="0dp"
                     android:insetBottom="0dp"
                     android:minHeight="0dp"
-                    android:text="Upload CSV"
+                    android:text="Upload Excel"
                     android:textColor="@color/white"
                     app:icon="@drawable/ic_upload"
                     app:iconTint="@color/white"

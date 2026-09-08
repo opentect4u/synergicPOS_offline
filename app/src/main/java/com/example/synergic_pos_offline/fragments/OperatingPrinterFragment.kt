@@ -219,7 +219,7 @@ class OperatingPrinterFragment : DataTableFragment() {
 
         val comboMap = loadCombos()
         val comboOptions = comboMap.keys.toList()
-        actvCombo.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, comboOptions))
+        actvCombo.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, comboOptions))
 
         // actvBt/actvUsb intentionally have no adapter of their own: tapping one opens
         // its device picker below instead of a plain dropdown list.

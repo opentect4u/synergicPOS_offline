@@ -838,12 +838,54 @@
                              act at two moments - the order to the kitchen, then to the
                              customer - and an order passes through them in that order,
                              left to right. Sharing one row costs no height over the
-                             single Print Bill that used to sit here. -->
+                             single Print Bill that used to sit here.
+
+                             QSR PUTS ITS OWN PAIR IN THIS ROW. Quick service hides both
+                             prints - there is no kitchen ticket to send ahead and the
+                             settlement slip IS the bill - so the row would otherwise sit
+                             empty above Print & Settlement. Hold and Held take that
+                             space, which is why all four live in one row: the panel is
+                             the same height whichever mode is open, and nothing below
+                             moves when the counter switches between them. -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:orientation="horizontal"
                             android:baselineAligned="false">
+
+                            <!-- Both start GONE and only QSR raises them - every other
+                                 mode is showing the prints in this row instead. -->
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnQsrHold"
+                                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                                android:layout_width="0dp"
+                                android:layout_height="48dp"
+                                android:layout_weight="1"
+                                android:layout_marginEnd="5dp"
+                                android:insetTop="0dp"
+                                android:insetBottom="0dp"
+                                android:paddingHorizontal="4dp"
+                                android:maxLines="1"
+                                android:letterSpacing="0"
+                                android:text="Hold"
+                                android:visibility="gone"
+                                app:cornerRadius="12dp" />
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnQsrHeld"
+                                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                                android:layout_width="0dp"
+                                android:layout_height="48dp"
+                                android:layout_weight="1"
+                                android:layout_marginStart="5dp"
+                                android:insetTop="0dp"
+                                android:insetBottom="0dp"
+                                android:paddingHorizontal="4dp"
+                                android:maxLines="1"
+                                android:letterSpacing="0"
+                                android:text="Held (0)"
+                                android:visibility="gone"
+                                app:cornerRadius="12dp" />
 
                             <com.google.android.material.button.MaterialButton
                                 android:id="@+id/btnPrintKot"

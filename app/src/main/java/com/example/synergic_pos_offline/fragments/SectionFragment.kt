@@ -84,7 +84,7 @@ class SectionFragment : DataTableFragment() {
         btnSave.text = if (existing == null) "Add" else "Update"
 
         // Price List dropdown from the product-rate tiers; value stored as its id.
-        actPriceList.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, priceLists.map { it.name }))
+        actPriceList.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, priceLists.map { it.name }))
         actPriceList.setOnItemClickListener { _, _, pos, _ -> actPriceList.tag = priceLists[pos].id }
         existing?.priceListId?.let { pid ->
             priceLists.firstOrNull { it.id == pid }?.let {

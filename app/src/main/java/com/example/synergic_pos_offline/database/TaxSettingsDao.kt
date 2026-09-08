@@ -52,13 +52,18 @@ class TaxSettingsDao(context: Context) {
      *
      * Discount: [discountEnabled] gates a single [discountType], radio-selected when
      * discount is on. [discountPosition] says whether the discount comes off before or
-     * after tax - a real choice under either tax mode now (MRP included: an inclusive
-     * price is stripped to its base, discounted, and re-taxed - see
-     * [com.example.synergic_pos_offline.utils.GstCalculator.taxableBase]); Item-wise
-     * together with Exclusive is the one combination still forced to Pre-tax, since a
-     * product's own discount comes off it before the line is taxed on what's left. It
-     * is what the rest of the app prices against, so [load] is where that rule is
-     * enforced rather than the screen.
+     * after tax, and only ONE of the four combinations is actually a choice:
+     *
+     * - Item-wise, either mode: PRE-TAX. The discount is attached to a product, so it
+     *   comes off that product and the line is taxed on what is left.
+     * - Bill-wise + MRP: POST-TAX. An inclusive price is what the customer pays, so a
+     *   whole-bill discount comes off the payable figure, which is after tax by
+     *   definition - the taxable value is worked back out of it.
+     * - Bill-wise + Exclusive: the operator's to pick. The bill genuinely has a
+     *   before-tax figure and an after-tax one, and shops differ on which they mean.
+     *
+     * It is what the rest of the app prices against, so [load] is where those rules
+     * are enforced rather than the screen - every caller reads this, not the radio.
      *
      * Tax: [taxEnabled] switches tax on or off store-wide; [taxMode] is the one
      * shared Inclusive/Exclusive setting. Which tax a given sale carries - GST or
@@ -114,17 +119,35 @@ class TaxSettingsDao(context: Context) {
             // WHICH OF THE TWO MOMENTS, settled here rather than only on the screen,
             // because every caller that prices a sale reads this and not the radio.
             //
-            // Item-wise together with EXCLUSIVE is the one combination still forced to
-            // Pre-tax - a discount configured against a product comes off that product
-            // and the line is taxed on what is left, which is what pre-tax means; a row
-            // saved before that rule existed is read the way the screen would now save
-            // it. MRP no longer forces Post-tax here: an inclusive price has a genuine
-            // before-tax base to discount too (see
-            // com.example.synergic_pos_offline.utils.GstCalculator.taxableBase), so
-            // Item-wise under MRP and Bill-wise under either mode read back whatever
-            // was actually picked.
+            // ITEM-WISE IS PRE-TAX, UNDER EITHER TAX MODE - which is what the screen
+            // now offers, so this is where a row saved under the older rule is read the
+            // way the screen would save it today.
+            //
+            // A discount configured against a PRODUCT comes off that product, and the
+            // line is taxed on what is left. That is what pre-tax means, and it is true
+            // whether the price it comes off was quoted with the tax inside it (MRP) or
+            // added on top (Exclusive) - an inclusive price has a genuine before-tax
+            // base to discount too, see
+            // com.example.synergic_pos_offline.utils.GstCalculator.taxableBase. The mode
+            // decides where the base figure comes from, not when the discount lands.
+            //
+            // This carried an EXCLUSIVE qualifier before, so Item-wise under MRP read
+            // back whatever was picked and could price post-tax. Settled here rather
+            // than only on the screen, because every caller that prices a sale reads
+            // this and not the radio - a till left on that combination is corrected on
+            // the way in rather than pricing one way while the screen shows another.
+            // AND BILL-WISE UNDER MRP IS POST-TAX, the mirror of it - which leaves the
+            // two MRP combinations with one answer each and nothing to read back.
+            //
+            // An MRP is what the customer pays, tax already inside. A whole-bill
+            // discount under that comes off the payable figure, and that figure is
+            // after tax by definition: the bill's taxable value is worked back out of
+            // it, so there is no before-tax bill to discount. Item-wise escapes this
+            // because it has a PRODUCT's own price to strip to a base; a whole-bill
+            // discount has no equivalent.
             discountPosition = when {
-                type == DiscountType.ITEM_WISE && taxMode == GstMode.EXCLUSIVE -> DiscountPosition.PRE_TAX
+                type == DiscountType.ITEM_WISE -> DiscountPosition.PRE_TAX
+                taxMode == GstMode.INCLUSIVE -> DiscountPosition.POST_TAX
                 else -> position
             },
             taxEnabled = m[KEY_TAX_ENABLED]?.toBool() ?: (legacyGstOn || legacyVatOn),

@@ -106,8 +106,8 @@ class CaptionFragment : DataTableFragment() {
         val btnCancel = view.findViewById<MaterialButton>(R.id.btnFormNegative)
 
         tilType.hint = "Caption Type"
-        actvType.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, typeLabels))
-        actvFont.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, fontLabels))
+        actvType.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, typeLabels))
+        actvFont.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, fontLabels))
 
         tvTitle.text = if (existing == null) "Add Caption" else "Edit Caption"
         etText.setText(existing?.text.orEmpty())

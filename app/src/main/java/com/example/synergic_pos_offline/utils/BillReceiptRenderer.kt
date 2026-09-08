@@ -304,18 +304,6 @@ class BillReceiptRenderer(context: Context) {
     private val productLang: PrintLanguage.Language by lazy { RegionalName.language(ctx) }
 
     /**
-     * Whether the till asks how a sale was paid at all - App Settings' Payment Mode.
-     *
-     * `by lazy` so a slip reads it once however many payment rows it has, and a slip
-     * with none never asks. See [renderPayment], which is the only thing that wants it.
-     */
-    private val paymentModeOn: Boolean by lazy {
-        runCatching {
-            com.example.synergic_pos_offline.database.AppSettingsDao(ctx).load().paymentMode
-        }.getOrDefault(true)
-    }
-
-    /**
      * The bill's typeface — the bundled Roboto Mono font (res/font/roboto_mono_regular.ttf).
      * Every code-built cell renders with it (the bill XML layouts point their fontFamily
      * at the same font), so the whole slip prints in one face. Falls back to the platform
@@ -607,6 +595,20 @@ class BillReceiptRenderer(context: Context) {
         val customer: Customer,
         val items: List<Item>,
         val discount: Double,
+        /**
+         * The RATE the whole-bill discount was given at, where it was given as one.
+         *
+         * Printed beside the amount - "DISCOUNT @5%" - for the same reason the charge
+         * lines and the tax lines carry theirs: the amount says what came off, the
+         * rate says what it was worked out from, and only the second is something the
+         * customer can check.
+         *
+         * Zero for a discount typed as a flat figure, and the line then prints the
+         * amount alone. A percentage is NOT derived from the amount in that case: the
+         * shop said "fifty rupees off", and printing "@5.19%" would be putting a rate
+         * on the slip that nobody agreed to.
+         */
+        val discountPercent: Double = 0.0,
         val roundOff: Double,
         val netAmount: Double,
         val paymentModes: List<String>,
@@ -629,6 +631,17 @@ class BillReceiptRenderer(context: Context) {
         val charges: List<Pair<String, Double>> = emptyList(),
         val chargeTypes: List<String> = emptyList(), // PERCENTAGE or AMOUNT for each charge
         val chargeApplicabilities: List<String> = emptyList(), // ChargeDao.Applicability.store() per charge
+        /**
+         * What each charge was SET to - the percentage for a PERCENTAGE charge, the
+         * flat figure for an AMOUNT one. See ChargeDao.Applied.value.
+         *
+         * Carried so the slip can print "PACKING %" rather than only the rupees it
+         * came to: a customer looking at a charge wants to know the RATE they were
+         * charged at, which is the thing they can check, and the amount alone does not
+         * say it. Empty for a bill quoted before this was passed - the line then prints
+         * as it always did.
+         */
+        val chargeValues: List<Double> = emptyList(),
         /** Order type for filtering charges: "DINE_IN", "TAKEAWAY" or "QSR"; null for grocery */
         val orderType: String? = null,
         /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
@@ -745,6 +758,8 @@ class BillReceiptRenderer(context: Context) {
             var storedCgst = 0.0
             var storedSgst = 0.0
             var storedVat = 0.0
+            /** The rate a saved bill's whole-bill discount was given at - see Draft.discountPercent. */
+            var storedDiscountPercent = 0.0
             /**
              * The extra charges this bill actually carried, off its own row.
              *
@@ -768,8 +783,14 @@ class BillReceiptRenderer(context: Context) {
                 storedNetAmount = draft.netAmount
                 serviceCharge = draft.serviceCharge
                 returnAmount = draft.returnAmount
+                // A COUNTER LINE STANDS ALONE; a table line is labelled "TABLE :".
+                //
+                // The test used to be "does it start with Take Away", which was written
+                // when that was the only counter mode. A QSR slip names itself "QSR
+                // Token #7" and would have come out as "TABLE : QSR TOKEN #7" - a table
+                // line for an order that never had a table.
                 tableLine = draft.table?.takeIf { it.isNotBlank() }
-                    ?.let { if (it.startsWith("Take Away", true)) it.uppercase() else "TABLE : ${it.uppercase()}" }
+                    ?.let { if (isCounterLine(it)) it.uppercase() else "TABLE : ${it.uppercase()}" }
             } else db.rawQuery(
                 """
                 SELECT bill_number, bill_date_time, bill_date, customer_id,
@@ -778,7 +799,9 @@ class BillReceiptRenderer(context: Context) {
                        COALESCE(service_charge_amount, 0),
                        COALESCE(tot_other_charges_amount, 0),
                        COALESCE(tot_cgst_amount, 0), COALESCE(tot_sgst_amount, 0),
-                       COALESCE(tot_vat_amount, 0)
+                       COALESCE(tot_vat_amount, 0),
+                       -- Appended, so every column index above keeps its place.
+                       COALESCE(tot_discount_percentage, 0)
                 FROM ${billsTableFor(db, receiptNo)} WHERE receipt_no = ?
                 """.trimIndent(),
                 arrayOf(receiptNo.toString())
@@ -789,6 +812,7 @@ class BillReceiptRenderer(context: Context) {
                 storedCgst = c.getDouble(14)
                 storedSgst = c.getDouble(15)
                 storedVat = c.getDouble(16)
+                storedDiscountPercent = c.getDouble(17)
                 billNumber = c.getString(0) ?: receiptNo.toString()
                 dateTime = c.getString(1) ?: c.getString(2) ?: ""
                 customerId = if (c.isNull(3)) null else c.getLong(3)
@@ -1212,15 +1236,18 @@ class BillReceiptRenderer(context: Context) {
             val rawChargeLines: List<Pair<String, Double>>
             val rawChargeTypes: List<String>
             val rawChargeApplicabilities: List<String>
+            val rawChargeValues: List<Double>
             if (draft?.charges?.isNotEmpty() == true) {
                 rawChargeLines = draft.charges
                 rawChargeTypes = draft.chargeTypes
                 rawChargeApplicabilities = draft.chargeApplicabilities
+                rawChargeValues = draft.chargeValues
             } else {
                 val applied = runCatching { ChargeDao(ctx).amountsOn(totals.itemsSubtotal, orderType) }.getOrDefault(emptyList())
                 rawChargeLines = applied.map { it.name to it.amount }
                 rawChargeTypes = applied.map { it.type.name }
                 rawChargeApplicabilities = applied.map { it.applicability.store() }
+                rawChargeValues = applied.map { it.value }
             }
             // Kept by the SAME rule ChargeDao.amountsOn applies, read off the same
             // stored value - see ChargeDao.Applicability. Written out separately here
@@ -1237,6 +1264,7 @@ class BillReceiptRenderer(context: Context) {
             }
             val recomputed = keepIndices.map { rawChargeLines[it] }
             val recomputedTypes = keepIndices.map { rawChargeTypes.getOrNull(it) ?: "PERCENTAGE" }
+            val recomputedValues = keepIndices.map { rawChargeValues.getOrNull(it) ?: 0.0 }
             val recomputedTotal = BillRounding.toPaise(recomputed.sumOf { it.second })
 
             // A SAVED BILL CARRIES ITS OWN CHARGE TOTAL, and that is what is printed.
@@ -1305,14 +1333,26 @@ class BillReceiptRenderer(context: Context) {
             }
             val chargeTypes = if (!useStored || breakdownAgrees) recomputedTypes
             else chargeLines.map { "AMOUNT" }
-            // Printed as label / amount, the name as the shop typed it, with type indicator
+            // Printed as label / amount, the name as the shop typed it, and a
+            // PERCENTAGE charge carries the rate it was charged at.
+            //
+            // "PACKING CHARGE @5%" rather than "PACKING CHARGE (% amount)". The old
+            // indicator said only that the figure had been worked out as a percentage,
+            // which is the one thing about it a customer cannot do anything with; the
+            // RATE is what they can check the amount against. Written the same way the
+            // tax lines beside it are - "SGST @2.5%" - so the slip reads with one
+            // convention rather than two.
+            //
+            // A flat charge gets no annotation at all. It used to say "(fixed)", which
+            // is what a figure with no rate beside it already looks like.
+            val chargeValuesForRows = if (!useStored || breakdownAgrees) recomputedValues
+            else chargeLines.map { 0.0 }
             val chargeRows = chargeLines.mapIndexed { index, (name, amount) ->
-                val typeIndicator = when (chargeTypes.getOrNull(index)) {
-                    "PERCENTAGE" -> "(% amount)"
-                    "AMOUNT" -> "(fixed)"
-                    else -> ""
-                }
-                val displayName = if (typeIndicator.isNotEmpty()) "$name $typeIndicator" else name
+                val percent = chargeValuesForRows.getOrNull(index) ?: 0.0
+                val displayName =
+                    if (chargeTypes.getOrNull(index) == "PERCENTAGE" && percent > 0.0) {
+                        "$name @${rate(percent)}%"
+                    } else name
                 displayName.uppercase() to money(amount)
             }
 
@@ -1374,6 +1414,10 @@ class BillReceiptRenderer(context: Context) {
             // amount, so it reads after the tax total. True of either layout - only
             // where the block sits and what its lines are called differ.
             val showDiscount = totals.totalDiscount > 0.005
+            // The rate the bill's own discount was given at - the draft's where one is being
+            // priced, the saved bill's where it is being reprinted. Zero means it was typed
+            // as a flat figure and the line prints the amount alone; see Draft.discountPercent.
+            val discountPercent = draft?.discountPercent ?: storedDiscountPercent
 
             // The account block printed under the totals. On a CREDIT bill it is the
             // running-account breakdown from the customer's side - what they had, this
@@ -1412,6 +1456,7 @@ class BillReceiptRenderer(context: Context) {
                     taxSlabs = if (taxWise) emptyList() else taxSlabs,
                     summarySp = summarySp, showTotalTax = !taxWise,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
+                    discountPercent = discountPercent,
                     roundOff = effectiveRoundOff, showRoundOff = roundOffSetting, narrow = narrow,
                     serviceCharge = serviceCharge, charges = chargeRows, trailer = trailer
                 )
@@ -1432,6 +1477,7 @@ class BillReceiptRenderer(context: Context) {
                 renderStandardSummary(
                     llSummary, totals, taxSlabs, summarySp, netSize,
                     showDiscount = showDiscount, discountPreTax = discountPreTax,
+                    discountPercent = discountPercent,
                     roundOff = effectiveRoundOff, showRoundOff = roundOffSetting,
                     payable = payable, narrow = narrow, serviceCharge = serviceCharge,
                     charges = chargeRows,
@@ -1502,6 +1548,8 @@ class BillReceiptRenderer(context: Context) {
         netSize: Float,
         showDiscount: Boolean,
         discountPreTax: Boolean,
+        /** The rate the whole-bill discount was given at, or 0 for a flat figure. */
+        discountPercent: Double = 0.0,
         roundOff: Double,
         showRoundOff: Boolean,
         payable: Double,
@@ -1535,7 +1583,7 @@ class BillReceiptRenderer(context: Context) {
         llSummary.addView(
             summaryHead(counts, "${t("AMT")}: ${money(totals.grossMrp)}", summarySp, narrow)
         )
-        if (showDiscount && discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        if (showDiscount && discountPreTax) row(discountLabel(discountPercent), money(totals.totalDiscount))
         // GST first, then VAT, each with its own total - so a bill carrying both
         // shows which money is which instead of one sum under one of the two names.
         // A bill carrying neither prints no tax lines at all and nothing to demarcate.
@@ -1550,7 +1598,7 @@ class BillReceiptRenderer(context: Context) {
         }
         val vatTotal = taxSlabs.sumOf { it.vat }
         if (vatTotal > 0.005) row("TOTAL VAT", money(vatTotal))
-        if (showDiscount && !discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        if (showDiscount && !discountPreTax) row(discountLabel(discountPercent), money(totals.totalDiscount))
         row("TOTAL", money(totals.grandTotal))
         if (serviceCharge > 0.005) row("SERVICE CHARGE", money(serviceCharge))
         // Each charge on its own line, under its own name: a customer asked to pay a
@@ -1602,6 +1650,8 @@ class BillReceiptRenderer(context: Context) {
         showTotalTax: Boolean,
         showDiscount: Boolean,
         discountPreTax: Boolean,
+        /** The rate the whole-bill discount was given at, or 0 for a flat figure. */
+        discountPercent: Double = 0.0,
         roundOff: Double,
         showRoundOff: Boolean,
         narrow: Boolean,
@@ -1614,7 +1664,7 @@ class BillReceiptRenderer(context: Context) {
         val rows = mutableListOf<Pair<String, String>>()
         fun row(label: String, value: String) { rows.add(t(label) to value) }
 
-        if (showDiscount && discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        if (showDiscount && discountPreTax) row(discountLabel(discountPercent), money(totals.totalDiscount))
         // [loadItems] orders the slabs highest-rate first, the Standard order; the
         // Classic slip lists them the other way up.
         taxSlabs.asReversed().filter { it.hasGst }.forEach { slab ->
@@ -1637,7 +1687,7 @@ class BillReceiptRenderer(context: Context) {
                 row("TOTAL TAX", money(totals.tax))
             }
         }
-        if (showDiscount && !discountPreTax) row("DISCOUNT", money(totals.totalDiscount))
+        if (showDiscount && !discountPreTax) row(discountLabel(discountPercent), money(totals.totalDiscount))
         // Stated before the rounding adjustment, so TOTAL AMOUNT + SERVICE CHARGE +
         // ROUNDED OFF is visibly the GRAND TOTAL below.
         row("TOTAL AMOUNT", money(totals.grandTotal))
@@ -2396,6 +2446,37 @@ class BillReceiptRenderer(context: Context) {
     }
 
     /** Fills a receipt line, or hides it when there is nothing to print there. */
+    /**
+     * Whether a bill's "table" line is really a COUNTER order's own name.
+     *
+     * A counter order has no table, so its line is the mode and its token - "QSR Token
+     * #7", "Take Away Token #3" - and prints as it stands. A table's line is a number
+     * and a room, and gets the "TABLE :" label in front of it.
+     *
+     * Told apart by the mode the line opens with, because the line is all the renderer
+     * is given: the caller composes it (see RestaurantOrdersFragment's billTable) and
+     * a reprint reads it back off the bill. Both counter modes are named here, so
+     * adding a third would be one word in one place rather than a QSR-shaped bug in
+     * another year.
+     */
+    /**
+     * The DISCOUNT line's label, carrying the rate where the discount had one.
+     *
+     * "DISCOUNT @5%" against "DISCOUNT". The amount beside it says what came off; the
+     * rate says what it was worked out from, and that is the half a customer can
+     * actually check against the total above it. Written the way the tax and charge
+     * lines write theirs, so the slip keeps one convention.
+     *
+     * The label is translated by the caller's own `row`, and a rate is digits and a
+     * per-cent sign in every language - so appending it here rather than inside the
+     * dictionary keeps [PrintLanguage] holding words, not formats.
+     */
+    private fun discountLabel(percent: Double): String =
+        if (percent > 0.0) "DISCOUNT @${rate(percent)}%" else "DISCOUNT"
+
+    private fun isCounterLine(line: String): Boolean =
+        COUNTER_LINE_PREFIXES.any { line.startsWith(it, ignoreCase = true) }
+
     private fun setIfPresent(root: View, id: Int, value: String?) {
         val tv = root.findViewById<TextView>(id)
         if (value.isNullOrBlank()) {
@@ -2571,19 +2652,26 @@ class BillReceiptRenderer(context: Context) {
     ): Boolean {
         val ll = view.findViewById<LinearLayout>(R.id.llBillPayment)
         ll.removeAllViews()
-        // NOT A LINE AT ALL when App Settings' Payment Mode is off.
+        // WHAT THE BILL RECORDED, whether or not the till asks the question.
         //
-        // Off means the till does not ask how a sale was paid: the selector is not
-        // shown at checkout and every sale is booked as cash - see PosCheckoutFragment,
-        // which forces Method.CASH when it is off. So "PAY MODE : CASH" on the slip is
-        // not reporting a choice, it is reporting the absence of one, on every bill the
-        // shop prints, for a question it has said it does not ask.
+        // This used to print nothing when App Settings' Payment Mode was off, on the
+        // reasoning that a mode nobody was asked for is not worth paper. That was the
+        // wrong reading of the setting. Off does not mean the shop stopped taking
+        // money - it means it only ever takes one kind, so the question is not worth a
+        // tap per sale. The checkout screens come down to the Cash tile alone and
+        // every sale is booked as cash (see PaymentModeSetting), so the mode is not
+        // ASKED but it is KNOWN, and the slip should say it: a shop's own copy of a
+        // bill that does not say how the money came in is worth less than one that
+        // does.
         //
-        // Read live rather than off the bill's settings snapshot, the same way the UPI
-        // code is: a shop that has switched the question off wants it gone from the
-        // reprints too, not kept on them because it happened to be on that day.
-        if (!paymentModeOn) return false
-        // Nothing to pair it with - the caller leaves its own line showing.
+        // Which leaves nothing for the setting to decide here. The bill's own record
+        // is printed, and it says CASH on a till that does not ask because that is
+        // what was actually booked - not because this guessed.
+        //
+        // An EMPTY list still prints nothing, and that is not the same case. It is a
+        // provisional table bill, printed minutes before the table pays - see
+        // RestaurantOrdersFragment, which passes no mode on purpose. Standing CASH in
+        // there would put "paid, in cash" on a bill that nobody has paid yet.
         if (modes.isEmpty()) return false
 
         modes.forEachIndexed { index, mode ->
@@ -2697,26 +2785,49 @@ class BillReceiptRenderer(context: Context) {
     }
 
     /**
-     * Login id of the operator who generated the bill. Resolved from the bill's own
-     * `operator_id` rather than the current session, so reprinting an older bill
-     * still credits whoever actually rang it up. Falls back to `created_by`, the
-     * login id stamped on the row, which is all that survives if that operator has
-     * since been removed from md_users.
+     * The NAME of the operator who generated the bill - "ISHANI", not "IS78".
+     *
+     * It used to be the login id: the query asked for `user_name` but read `user_id`
+     * first and returned that, so every slip credited an account code. A customer
+     * reading a receipt cannot turn "IS78" into a person, and neither can the shop
+     * without the user master open.
+     *
+     * Resolved from the bill's OWN `operator_id` rather than from the session, so
+     * reprinting an older bill still credits whoever actually rang it up rather than
+     * whoever is standing at the till now. `created_by` is the same operator's serial
+     * number written as text, and is tried the same way when `operator_id` is missing;
+     * a row that stamped a login id there instead - older bills - is looked up by that
+     * and, failing everything, printed as it stands. A name is preferred at every step
+     * and the login id is only ever the fallback.
      */
     private fun cashierName(db: SQLiteDatabase, operatorId: Long?, createdBy: String?): String {
-        if (operatorId != null) {
-            db.query(
-                DatabaseHelper.Tables.MD_USERS, arrayOf("user_id", "user_name"),
-                "id=?", arrayOf(operatorId.toString()), null, null, null, "1"
-            ).use { c ->
-                if (c.moveToFirst()) {
-                    val id = c.getString(0)?.takeIf { it.isNotBlank() }
-                        ?: c.getString(1)?.takeIf { it.isNotBlank() }
-                    if (id != null) return id.uppercase()
-                }
-            }
+        val stamp = createdBy?.trim()?.takeIf { it.isNotEmpty() }
+        // Both columns hold md_users.id - one as a number, one as the text of one.
+        (operatorId ?: stamp?.toLongOrNull())
+            ?.let { userNameFor(db, "id=?", it.toString()) }
+            ?.let { return it }
+        if (stamp != null) {
+            userNameFor(db, "user_id=?", stamp)?.let { return it }
+            // The operator has been removed from md_users, or the stamp was never an
+            // id at all. What the row itself says is all that is left of them.
+            return stamp.uppercase()
         }
-        return createdBy?.takeIf { it.isNotBlank() }?.uppercase() ?: "---"
+        return "---"
+    }
+
+    /**
+     * One operator's printable name, or null where [where] matches nobody.
+     *
+     * The name first and the login id only as a fallback - an account with its name
+     * left blank should still credit somebody rather than nobody.
+     */
+    private fun userNameFor(db: SQLiteDatabase, where: String, arg: String): String? = db.query(
+        DatabaseHelper.Tables.MD_USERS, arrayOf("user_name", "user_id"),
+        where, arrayOf(arg), null, null, null, "1"
+    ).use { c ->
+        if (!c.moveToFirst()) return null
+        (c.getString(0)?.takeIf { it.isNotBlank() } ?: c.getString(1)?.takeIf { it.isNotBlank() })
+            ?.uppercase()
     }
 
     /**
@@ -3221,6 +3332,17 @@ class BillReceiptRenderer(context: Context) {
 
     companion object {
         private const val TAG = "BillReceiptRenderer"
+
+        /**
+         * How a counter order's own line opens - see [isCounterLine].
+         *
+         * The two modes that have no table, spelled as the restaurant screen spells
+         * them (RestaurantOrdersFragment.TYPE_TAKE_AWAY / TYPE_QSR). Kept as text
+         * rather than referenced from there because a REPRINT reads this line back off
+         * a stored bill, and that bill may have been written by a build whose labels
+         * have since been renamed - the line on the paper is the only thing this has.
+         */
+        private val COUNTER_LINE_PREFIXES = listOf("Take Away", "QSR")
 
         /**
          * The receipt layout for a bill format - what every screen that shows or

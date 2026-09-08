@@ -369,7 +369,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         storeName(ctx)?.let { view.findViewById<TextView>(R.id.tvBrandName).text = it.uppercase() }
 
         // Set cashier name from logged-in user
-        tvCashierName.text = SessionManager.currentUser?.userId ?: "Guest"
+        tvCashierName.text = SessionManager.cashierName
 
         // Customer info button click listener
         btnCustomerInfo.setOnClickListener {
@@ -1427,7 +1427,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 DialogUtils.FormField("Phone Number", customerPhone ?: "", inputType = "phone", maxLength = 10)
             ),
             positiveText = "Add",
+            // No Cancel button - the one button adds the customer - so the header
+            // cross is the only thing on this card that gets out of it. Raised over a
+            // sale in progress, and opened by mistake often enough to matter.
             showNegative = false,
+            showClose = true,
             mandatoryFields = listOf(0),
             onSave = { values ->
                 val phone = values[0].trim()

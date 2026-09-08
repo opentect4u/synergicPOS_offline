@@ -179,7 +179,7 @@ class ItemWiseReportDao(context: Context) {
         // so the tax on this report equals the tax on bill-wise by construction rather
         // than by coincidence - CGST, SGST, IGST and VAT alike.
         val sql = """
-            SELECT COALESCE(NULLIF(TRIM(p.product_name), ''), 'Item #' || i.product_id, 'Unnamed item'),
+            SELECT COALESCE(NULLIF(TRIM(p.product_name), ''), NULLIF(TRIM(i.product_name), ''), 'Item #' || i.product_id, 'Unnamed item'),
                    COALESCE(i.product_id, -i.id),
                    COALESCE(i.quantity, 0),
                    COALESCE(i.cgst_amount, 0), COALESCE(i.sgst_amount, 0),

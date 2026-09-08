@@ -27,6 +27,52 @@ class UdfWiseReportDao(context: Context) {
 
     private val helper = DatabaseHelper.getInstance(context)
 
+    companion object {
+        /**
+         * A bill rung up at the COUNTER rather than served at a table.
+         *
+         * Written once and used by both UDF reports - this one and
+         * [UdfWiseItemReportDao] - because they have to draw the same line. The item
+         * report did not have this test at all, so a take-away token ("TA-ABC6", which
+         * a counter bill stores in `table_number` exactly as a table stores its number)
+         * came through as a UDF group of its own and sat in the table beside the real
+         * ones.
+         *
+         * "Dine In" is the unmarked default: a bill from before order_type was stored
+         * has it blank, and blank means a table. So the test names the two that ARE
+         * marked rather than looking for the one that is not.
+         */
+        const val SQL_COUNTER_ORDER = "UPPER(COALESCE(b.order_type, '')) IN ('TAKE AWAY', 'QSR')"
+
+        /** The other side of [SQL_COUNTER_ORDER] - what the rows of a UDF report are. */
+        const val SQL_DINE_IN = "NOT ($SQL_COUNTER_ORDER)"
+    }
+
+    /**
+     * What the counter took over the same period - the take-away and QSR bills the
+     * rows deliberately leave out.
+     *
+     * Carried so the summary can be the period's whole takings while the table stays
+     * what a UDF report is for: a table. Both halves are needed together, because a
+     * summary that quietly exceeds the sum of the rows in front of it is the thing an
+     * operator reports as a mismatch - so the screen names this figure rather than
+     * folding it in silently.
+     */
+    data class Counter(
+        val bills: Int = 0,
+        val cgst: Double = 0.0,
+        val sgst: Double = 0.0,
+        val igst: Double = 0.0,
+        val vat: Double = 0.0,
+        val discount: Double = 0.0,
+        val serviceCharge: Double = 0.0,
+        val otherCharges: Double = 0.0,
+        val parcelCharge: Double = 0.0,
+        val billAmount: Double = 0.0
+    ) {
+        val any: Boolean get() = bills > 0
+    }
+
     /** One UDF (section-table) group. */
     data class Row(
         /** "<section>-<table>", e.g. "AC-1" - the table number alone where no
@@ -67,15 +113,30 @@ class UdfWiseReportDao(context: Context) {
         val totalServiceCharge: Double = 0.0,
         val totalOtherCharges: Double = 0.0,
         val totalParcelCharge: Double = 0.0,
-        val totalBillAmount: Double
+        val totalBillAmount: Double,
+        /**
+         * The take-away and QSR bills folded into the totals above but kept out of
+         * [rows] - see [Counter]. Zero on a shop that only serves tables.
+         */
+        val counter: Counter = Counter()
     ) {
         /** Every tax the range charged, however the regimes split it. */
         val totalTax: Double get() = BillRounding.toPaise(totalCgst + totalSgst + totalIgst + totalVat)
-        /** The IGST column earns its place only where a bill in the range carried it. */
-        val hasIgst: Boolean get() = rows.any { it.igst > 0.0 }
+        /**
+         * The IGST column earns its place only where a bill in the range carried it -
+         * a COUNTER bill included, since the summary now totals those too. Reading
+         * only the rows would hide a line the total below it was already counting.
+         */
+        val hasIgst: Boolean get() = rows.any { it.igst > 0.0 } || counter.igst > 0.0
         /** The VAT column earns its place only where a bill in the range carried it. */
-        val hasVat: Boolean get() = rows.any { it.vat > 0.0 }
-        val isEmpty: Boolean get() = rows.isEmpty()
+        val hasVat: Boolean get() = rows.any { it.vat > 0.0 } || counter.vat > 0.0
+        /**
+         * Nothing to show at all - no table billed AND the counter took nothing.
+         *
+         * A day of counter sales only still has a summary worth reading, so it is
+         * not reported as an empty period just because no table was seated.
+         */
+        val isEmpty: Boolean get() = rows.isEmpty() && !counter.any
     }
 
     /** Every table/section that billed between [from] and [to] (inclusive). */
@@ -103,7 +164,7 @@ class UdfWiseReportDao(context: Context) {
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
               AND b.table_number IS NOT NULL AND TRIM(b.table_number) <> ''
-              AND UPPER(COALESCE(b.order_type, '')) NOT IN ('TAKE AWAY', 'QSR')
+              AND $SQL_DINE_IN
               AND COALESCE(b.bill_status, '') <> 'CANCELLED'
             GROUP BY b.table_number, section_name
             ORDER BY section_name, CAST(b.table_number AS INTEGER), b.table_number
@@ -130,20 +191,79 @@ class UdfWiseReportDao(context: Context) {
                 )
             }
         }
+        // THE TOTALS ARE THE PERIOD'S, THE ROWS ARE THE TABLES'.
+        //
+        // A UDF is a table, so a counter order has no row to sit in - but it is still
+        // money the shop took that day, and a summary that leaves it out is not the
+        // day's takings and does not agree with any other report of the same period.
+        // So the counter's own figures are read separately and added to every total.
+        val counter = counterTotals(from, to)
         return Report(
             fromDate = from,
             toDate = to,
             rows = rows,
-            totalBills = rows.sumOf { it.bills },
-            totalCgst = BillRounding.toPaise(rows.sumOf { it.cgst }),
-            totalSgst = BillRounding.toPaise(rows.sumOf { it.sgst }),
-            totalIgst = BillRounding.toPaise(rows.sumOf { it.igst }),
-            totalVat = BillRounding.toPaise(rows.sumOf { it.vat }),
-            totalDiscount = BillRounding.toPaise(rows.sumOf { it.discount }),
-            totalServiceCharge = BillRounding.toPaise(rows.sumOf { it.serviceCharge }),
-            totalOtherCharges = BillRounding.toPaise(rows.sumOf { it.otherCharges }),
-            totalParcelCharge = BillRounding.toPaise(rows.sumOf { it.parcelCharge }),
-            totalBillAmount = BillRounding.toPaise(rows.sumOf { it.billAmount })
+            totalBills = rows.sumOf { it.bills } + counter.bills,
+            totalCgst = BillRounding.toPaise(rows.sumOf { it.cgst } + counter.cgst),
+            totalSgst = BillRounding.toPaise(rows.sumOf { it.sgst } + counter.sgst),
+            totalIgst = BillRounding.toPaise(rows.sumOf { it.igst } + counter.igst),
+            totalVat = BillRounding.toPaise(rows.sumOf { it.vat } + counter.vat),
+            totalDiscount = BillRounding.toPaise(rows.sumOf { it.discount } + counter.discount),
+            totalServiceCharge = BillRounding.toPaise(rows.sumOf { it.serviceCharge } + counter.serviceCharge),
+            totalOtherCharges = BillRounding.toPaise(rows.sumOf { it.otherCharges } + counter.otherCharges),
+            totalParcelCharge = BillRounding.toPaise(rows.sumOf { it.parcelCharge } + counter.parcelCharge),
+            totalBillAmount = BillRounding.toPaise(rows.sumOf { it.billAmount } + counter.billAmount),
+            counter = counter
         )
+    }
+
+    /**
+     * What the take-away and QSR bills of the period came to.
+     *
+     * A separate query rather than a second pass over the row query, because those two
+     * ask different questions: the rows are grouped by table and a counter order has no
+     * table to group by. Read with no grouping at all - one line for the whole counter,
+     * which is all the summary shows of it.
+     *
+     * The same date, cancellation and rounding rules as the rows, so the two halves of
+     * the summary are measured the same way.
+     */
+    private fun counterTotals(from: String, to: String): Counter {
+        helper.readableDatabase.rawQuery(
+            """
+            SELECT COUNT(*) AS bills,
+                   SUM(COALESCE(b.tot_cgst_amount,0)) AS cgst,
+                   SUM(COALESCE(b.tot_sgst_amount,0)) AS sgst,
+                   SUM(COALESCE(b.tot_igst_amount,0)) AS igst,
+                   SUM(COALESCE(b.tot_vat_amount,0)) AS vat,
+                   SUM(COALESCE(b.tot_discount_amount,0)) AS disc,
+                   SUM(COALESCE(b.service_charge_amount,0)) AS svc,
+                   SUM(COALESCE(b.tot_other_charges_amount,0)) AS other,
+                   SUM(COALESCE(b.parcel_charge_amount,0)) AS parcel,
+                   SUM(COALESCE(b.net_amount,0)) AS billamt
+            FROM ${DatabaseHelper.Tables.TD_BILLS} b
+            WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
+              AND $SQL_COUNTER_ORDER
+              AND COALESCE(b.bill_status, '') <> 'CANCELLED'
+            """.trimIndent(),
+            arrayOf(from, to)
+        ).use { c ->
+            if (!c.moveToFirst()) return Counter()
+            val other = BillRounding.toPaise(c.getDouble(7))
+            val parcel = BillRounding.toPaise(c.getDouble(8))
+            return Counter(
+                bills = c.getInt(0),
+                cgst = BillRounding.toPaise(c.getDouble(1)),
+                sgst = BillRounding.toPaise(c.getDouble(2)),
+                igst = BillRounding.toPaise(c.getDouble(3)),
+                vat = BillRounding.toPaise(c.getDouble(4)),
+                discount = BillRounding.toPaise(c.getDouble(5)),
+                serviceCharge = BillRounding.toPaise(c.getDouble(6)),
+                // Parcel is carried inside other_charges on the bill and broken out
+                // here, exactly as the rows do it - so the two never double-count.
+                otherCharges = (other - parcel).coerceAtLeast(0.0),
+                parcelCharge = parcel,
+                billAmount = BillRounding.toPaise(c.getDouble(9))
+            )
+        }
     }
 }

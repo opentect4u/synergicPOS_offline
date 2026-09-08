@@ -113,8 +113,8 @@ class BillHeaderFooterFragment : DataTableFragment() {
         val btnSave = view.findViewById<MaterialButton>(R.id.btnFormPositive)
         val btnCancel = view.findViewById<MaterialButton>(R.id.btnFormNegative)
 
-        actvSection.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, sectionLabels))
-        actvFont.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, fontLabels))
+        actvSection.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, sectionLabels))
+        actvFont.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, fontLabels))
 
         tvTitle.text = if (existing == null) "Add Header / Footer" else "Edit Header / Footer"
         etText.setText(existing?.text.orEmpty())

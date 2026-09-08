@@ -117,6 +117,14 @@ class UdfWiseItemReportFragment : Fragment(), TitledScreen {
             container.addView(spread("QTY : ${qtyFmt(g.qty)}", "AMT : ${money(g.amount)}"))
         }
         container.addView(divider())
+        // The counter's share, named before the total it is part of. The bands above
+        // are tables - a UDF is a table - so without this line the groups add up to
+        // less than TOTAL AMT and nothing on screen says why.
+        if (r.counter.any) {
+            container.addView(
+                spread("TAKE AWAY / QSR : ${qtyFmt(r.counter.qty)}", "AMT : ${money(r.counter.amount)}")
+            )
+        }
         container.addView(spread("TOTAL QTY : ${qtyFmt(r.totalQty)}", "TOTAL AMT : ${money(r.totalAmount)}", bold = true))
     }
 
@@ -136,10 +144,14 @@ class UdfWiseItemReportFragment : Fragment(), TitledScreen {
         rows = r.groups.flatMap { g ->
             g.items.map { listOf(g.udf, it.name, qtyFmt(it.qty), money(it.amount)) }
         },
-        summary = listOf(
-            "Total Qty" to qtyFmt(r.totalQty),
-            "Total Amount" to money(r.totalAmount)
-        )
+        summary = buildList {
+            if (r.counter.any) {
+                add("Take Away / QSR Qty" to qtyFmt(r.counter.qty))
+                add("Take Away / QSR Amount" to money(r.counter.amount))
+            }
+            add("Total Qty" to qtyFmt(r.totalQty))
+            add("Total Amount" to money(r.totalAmount))
+        }
     )
 
     private fun showEmpty(title: String, hint: String) {

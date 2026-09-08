@@ -30,32 +30,12 @@
           lifts the section to find it was answering a question the section chips and
           the grid answer between them. Its going gives the band below the full width.
         -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingHorizontal="20dp">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Choose Table"
-                android:textSize="22sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_main" />
-
-            <ImageButton
-                android:id="@+id/btnCloseChooseTable"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:layout_marginStart="10dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@android:drawable/ic_menu_close_clear_cancel"
-                app:tint="@color/text_secondary"
-                android:contentDescription="Close" />
-        </LinearLayout>
+        <!-- The header row is gone entirely.
+             It held the "Choose Table" title, and once that went it was a 44dp band
+             holding one button. The close cross moved down into the order band, which
+             already runs the full width and had room at its end - so the popup is a
+             whole row shorter and every pixel of it went to the floor plan, which is
+             the part of this card worth the room. -->
 
         <!--
           ORDER BAND: what kind of order this is, and who it is for.
@@ -167,6 +147,22 @@
                 app:iconSize="16dp"
                 app:iconPadding="3dp"
                 app:cornerRadius="10dp" />
+
+            <!-- Close, at the far end of the same row.
+                 It sits after Add Customer rather than in a band of its own: a row that
+                 already spans the card has room at its end, and a whole line of height
+                 for one 44dp button is height the floor plan should have. Kept visually
+                 apart from the buttons beside it - borderless and greyed, so it reads
+                 as the window's control rather than as a third thing to choose. -->
+            <ImageButton
+                android:id="@+id/btnCloseChooseTable"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="10dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                app:tint="@color/text_secondary"
+                android:contentDescription="Close" />
         </LinearLayout>
 
         <!-- Separates the decision band above from the floor plan below, so the two
@@ -202,30 +198,171 @@
             android:layout_height="1dp"
             android:background="#E4E7EB" />
 
-        <!-- The floor. Takes every pixel between the sections and the legend, so the
-             grid is as tall as the screen allows. -->
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rvTables"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:paddingHorizontal="13dp"
-            android:paddingVertical="14dp"
-            android:clipToPadding="false"
-            android:scrollbars="none" />
+        <!-- The floor, and beside it what is already running on it.
 
-        <!-- Stands in for the grid, and holds the same space, when there is none -->
-        <TextView
-            android:id="@+id/tvNoTables"
+             Two columns rather than one: the grid answers "which table do I take",
+             and the panel on the right answers "what is out there" - a waiter picking
+             a table is standing in the same room as the orders it lists. Reading it
+             meant closing the picker and going back to the order list, which is the
+             screen this popup covers.
+
+             The grid keeps the weight and the panel a fixed width, so the floor still
+             grows with the screen and the summary stays the same readable column
+             whatever size it is on. -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:paddingVertical="28dp"
-            android:gravity="center"
-            android:text="No tables set up yet.\nAdd them in Master ▸ Table."
-            android:textSize="16sp"
-            android:textColor="@color/text_secondary"
-            android:visibility="gone" />
+            android:orientation="horizontal"
+            android:baselineAligned="false">
+
+            <!-- The floor. Takes every pixel between the sections and the legend, so
+                 the grid is as tall as the screen allows. -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvTables"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:paddingHorizontal="13dp"
+                android:paddingVertical="14dp"
+                android:clipToPadding="false"
+                android:scrollbars="none" />
+
+            <!-- Stands in for the grid, and holds the same space, when there is none -->
+            <TextView
+                android:id="@+id/tvNoTables"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:paddingVertical="28dp"
+                android:gravity="center"
+                android:text="No tables set up yet.\nAdd them in Master ▸ Table."
+                android:textSize="16sp"
+                android:textColor="@color/text_secondary"
+                android:visibility="gone" />
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="match_parent"
+                android:background="#E4E7EB" />
+
+            <!-- READ ONLY. Nothing here is tappable: an order is opened from the list
+                 behind this popup, and a tile that looks like a button but answers to
+                 nothing is worse than plain text. It is a summary to glance at while
+                 choosing a table, and that is all. -->
+            <LinearLayout
+                android:id="@+id/llActiveSummary"
+                android:layout_width="330dp"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:background="#F7F8FA">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="16dp"
+                    android:paddingTop="16dp"
+                    android:paddingBottom="12dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="ACTIVE ORDERS"
+                        android:textSize="13sp"
+                        android:letterSpacing="0.08"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_secondary" />
+
+                    <!-- The count as a pill, tinted with the theme in code - the same
+                         badge the Active Orders list behind this popup carries, so the
+                         two read as the same thing counted once. -->
+                    <TextView
+                        android:id="@+id/tvActiveSummaryCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minWidth="24dp"
+                        android:gravity="center"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="2dp"
+                        android:text="0"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/white"
+                        android:background="@drawable/bg_kot_count" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#E4E7EB" />
+
+                <!-- The rows. Scrolls on its own, so a busy floor does not push the
+                     total off the bottom - that figure is the reason to look here. -->
+                <ScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:scrollbars="none">
+
+                    <LinearLayout
+                        android:id="@+id/llActiveSummaryRows"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingVertical="4dp" />
+                </ScrollView>
+
+                <TextView
+                    android:id="@+id/tvActiveSummaryEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:paddingHorizontal="20dp"
+                    android:text="Nothing running yet.\nPick a table to start."
+                    android:textSize="15sp"
+                    android:textColor="@color/text_secondary"
+                    android:visibility="gone" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#E4E7EB" />
+
+                <!-- The figure the panel exists for, pinned to the foot where a total
+                     belongs and where it cannot scroll away. -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="14dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="TOTAL"
+                        android:textSize="14sp"
+                        android:letterSpacing="0.06"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_secondary" />
+
+                    <TextView
+                        android:id="@+id/tvActiveSummaryTotal"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="₹ 0.00"
+                        android:textSize="21sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_main" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
 
         <View
             android:layout_width="match_parent"

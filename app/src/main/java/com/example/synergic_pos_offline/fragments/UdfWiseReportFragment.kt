@@ -165,6 +165,20 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
         if (r.totalServiceCharge > 0.005) summary.addView(summaryRow("Service Charge", money(r.totalServiceCharge)))
         if (r.totalOtherCharges > 0.005) summary.addView(summaryRow("Extra Charges", money(r.totalOtherCharges)))
         if (r.totalParcelCharge > 0.005) summary.addView(summaryRow("Parcel Charge", money(r.totalParcelCharge)))
+        // NAMED, not folded in silently.
+        //
+        // The table is tables only - a UDF is a table - but the totals are the whole
+        // period's, counter sales included. Without this line an operator adds up the
+        // rows, comes out short of the Bill Amount below, and reports a mismatch. With
+        // it, the difference is the line they are reading.
+        if (r.counter.any) {
+            summary.addView(
+                summaryRow(
+                    "Take Away / QSR (${r.counter.bills} bill(s))",
+                    money(r.counter.billAmount)
+                )
+            )
+        }
         summary.addView(summaryRow("Bill Amount", money(r.totalBillAmount), emphasised = true))
     }
 
@@ -188,6 +202,10 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
             if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
             if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
             if (r.totalParcelCharge > 0.005) add("Parcel Charge" to money(r.totalParcelCharge))
+            // Named in the download too, for the same reason the screen names it.
+            if (r.counter.any) {
+                add("Take Away / QSR (${r.counter.bills} bill(s))" to money(r.counter.billAmount))
+            }
             add("Bill Amount" to money(r.totalBillAmount))
         }
     )

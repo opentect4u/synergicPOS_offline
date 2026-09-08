@@ -758,6 +758,135 @@ class BillDao(context: Context) {
     private fun parse(fmt: SimpleDateFormat, text: String?) =
         try { if (text.isNullOrBlank()) null else fmt.parse(text) } catch (_: Exception) { null }
 
+    // ---- Cancelling a bill ---------------------------------------------------
+
+    /** Why a bill could not be cancelled, or null where it went. */
+    data class CancelResult(val refusal: String? = null, val itemsRestored: Int = 0) {
+        val ok: Boolean get() = refusal == null
+    }
+
+    /**
+     * Throws a bill away: the sale is undone, the stock goes back on the shelf and the
+     * bill is deleted outright.
+     *
+     * ## Deleted, not flagged
+     *
+     * `bill_status` has a CANCELLED value and Bill History has a filter for it, but a
+     * cancelled bill is REMOVED here rather than marked. That is what was asked for,
+     * and it is the reading that matches what the rest of this till already does with
+     * bills it is told to get rid of - see BillErase, which deletes them outright too.
+     * A bill flagged and kept would still be a row every report has to remember to
+     * exclude; a bill deleted is simply not there.
+     *
+     * ## The stock goes back exactly where it came from
+     *
+     * Restored from the BILL'S OWN LINES rather than by hunting the stock ledger:
+     * `td_bill_items` records the batch each line drew from and how much, so putting it
+     * back is exact. The alternative - matching `td_stock_transactions` on its
+     * `reference_number` - only works for a grocery sale, where that reference is the
+     * bill number; a restaurant bill deducts its stock at Print Bill time under the
+     * TABLE's name ("Table 1 (Ac)"), which two orders on the same table share.
+     *
+     * The SALE movements are deleted too, one per line at most, matched on the same
+     * product, batch and quantity the line records. Bounded by the lines so it can
+     * never take out more than this bill put in, and it leaves the ledger reading as
+     * though the sale never happened rather than as a sale followed by a return -
+     * which is what a cancellation means and what a RETURN movement would not say.
+     *
+     * ## What it refuses
+     *
+     * A bill with a sale return against it. The return is its own document with its own
+     * number and its own stock, and deleting the bill under it would leave a credit
+     * note pointing at nothing. Reverse the return first.
+     *
+     * The customer's ledger entry goes with the bill, so a credit sale stops being owed
+     * - a debt for a bill that no longer exists is not a debt anybody can settle.
+     */
+    fun cancelBill(receiptNo: Long): CancelResult {
+        val db = helper.writableDatabase
+
+        val returned = db.rawQuery(
+            "SELECT COUNT(*) FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} WHERE original_bill_id = ?",
+            arrayOf(receiptNo.toString())
+        ).use { c -> c.moveToFirst(); c.getInt(0) }
+        if (returned > 0) {
+            return CancelResult(
+                refusal = "This bill has a sale return against it. Reverse the return first - " +
+                    "cancelling the bill under it would leave the credit note pointing at nothing."
+            )
+        }
+
+        // The lines, read before anything is deleted: what to put back, and where.
+        data class Line(val productId: Long?, val batchId: Long?, val qty: Double)
+        val lines = mutableListOf<Line>()
+        db.rawQuery(
+            "SELECT product_id, batch_id, COALESCE(quantity, 0) FROM " +
+                "${DatabaseHelper.Tables.TD_BILL_ITEMS} WHERE bill_id = ?",
+            arrayOf(receiptNo.toString())
+        ).use { c ->
+            while (c.moveToNext()) {
+                lines.add(
+                    Line(
+                        productId = if (c.isNull(0)) null else c.getLong(0),
+                        batchId = if (c.isNull(1)) null else c.getLong(1),
+                        qty = c.getDouble(2)
+                    )
+                )
+            }
+        }
+
+        var restored = 0
+        db.beginTransaction()
+        try {
+            lines.forEach { line ->
+                val batch = line.batchId ?: return@forEach
+                if (line.qty <= 0.0) return@forEach
+                // Back on the shelf. Guarded on the batch still existing: a product
+                // replaced by a bulk upload takes its batches with it, and there is
+                // then nothing to put the goods back into.
+                val put = db.compileStatement(
+                    "UPDATE ${DatabaseHelper.Tables.MD_BATCH_STOCK} " +
+                        "SET current_quantity = COALESCE(current_quantity, 0) + ?, " +
+                        "last_stock_update = datetime('now','localtime') WHERE id = ?"
+                ).apply {
+                    bindDouble(1, line.qty)
+                    bindLong(2, batch)
+                }
+                put.use { it.executeUpdateDelete() }.let { if (it > 0) restored++ }
+
+                // And the movement that took it off, at most one per line.
+                db.execSQL(
+                    """
+                    DELETE FROM ${DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS}
+                     WHERE id = (SELECT id FROM ${DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS}
+                                  WHERE transaction_type = 'SALE' AND stock_flow = 'OUT'
+                                    AND batch_id = ? AND quantity = ?
+                                  ORDER BY id DESC LIMIT 1)
+                    """.trimIndent(),
+                    arrayOf<Any>(batch, line.qty)
+                )
+            }
+
+            // The bill and everything that is part of it, children before parents.
+            val id = arrayOf(receiptNo.toString())
+            db.delete(DatabaseHelper.Tables.TD_BILL_PRINTS, "bill_id = ?", id)
+            db.delete(DatabaseHelper.Tables.TD_PAYMENTS, "bill_id = ?", id)
+            db.execSQL(
+                "DELETE FROM ${DatabaseHelper.Tables.TD_KOT_ITEMS} WHERE kot_id IN " +
+                    "(SELECT id FROM ${DatabaseHelper.Tables.TD_KOT} WHERE bill_id = ?)",
+                id
+            )
+            db.delete(DatabaseHelper.Tables.TD_KOT, "bill_id = ?", id)
+            db.delete(DatabaseHelper.Tables.TD_CUSTOMER_LEDGER, "bill_id = ?", id)
+            db.delete(DatabaseHelper.Tables.TD_BILL_ITEMS, "bill_id = ?", id)
+            db.delete(DatabaseHelper.Tables.TD_BILLS, "receipt_no = ?", id)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return CancelResult(itemsRestored = restored)
+    }
+
     companion object {
 
         /**
@@ -782,5 +911,6 @@ class BillDao(context: Context) {
                 "SELECT 1 FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} r " +
                 "WHERE r.original_bill_id = ${prefix}receipt_no)"
         }
+
     }
 }

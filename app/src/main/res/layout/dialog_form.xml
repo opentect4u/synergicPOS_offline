@@ -19,16 +19,41 @@
         android:gravity="center"
         android:padding="28dp">
 
-        <TextView
-            android:id="@+id/tvFormTitle"
+        <!-- Title with a close cross laid OVER its right-hand end, rather than beside
+             it in a row: the title stays centred on the card the way it always was,
+             and the cross does not push it off-centre or steal width from a long one.
+             Gone unless the caller asks for it - see DialogUtils.showForm's showClose.
+             A form reached from a menu is left as it was, where the buttons below are
+             the way out; the cross is for one raised over the sale screen mid-sale. -->
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Edit"
-            android:textSize="21sp"
-            android:textStyle="bold"
-            android:gravity="center"
-            android:textColor="@color/text_main"
-            android:layout_marginBottom="24dp" />
+            android:layout_marginBottom="24dp">
+
+            <TextView
+                android:id="@+id/tvFormTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:text="Edit"
+                android:textSize="21sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:paddingHorizontal="40dp"
+                android:textColor="@color/text_main" />
+
+            <ImageButton
+                android:id="@+id/btnFormClose"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="end|center_vertical"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Close"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_close"
+                android:visibility="gone" />
+        </FrameLayout>
 
         <!-- Weighted so that when the form is taller than the screen, it is this
              that gives up height and scrolls - not the button row below it. -->
