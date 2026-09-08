@@ -756,8 +756,14 @@ class BillReceiptRenderer(context: Context) {
                 storedNetAmount = draft.netAmount
                 serviceCharge = draft.serviceCharge
                 returnAmount = draft.returnAmount
+                // A COUNTER LINE STANDS ALONE; a table line is labelled "TABLE :".
+                //
+                // The test used to be "does it start with Take Away", which was written
+                // when that was the only counter mode. A QSR slip names itself "QSR
+                // Token #7" and would have come out as "TABLE : QSR TOKEN #7" - a table
+                // line for an order that never had a table.
                 tableLine = draft.table?.takeIf { it.isNotBlank() }
-                    ?.let { if (it.startsWith("Take Away", true)) it.uppercase() else "TABLE : ${it.uppercase()}" }
+                    ?.let { if (isCounterLine(it)) it.uppercase() else "TABLE : ${it.uppercase()}" }
             } else db.rawQuery(
                 """
                 SELECT bill_number, bill_date_time, bill_date, customer_id,
@@ -2384,6 +2390,22 @@ class BillReceiptRenderer(context: Context) {
     }
 
     /** Fills a receipt line, or hides it when there is nothing to print there. */
+    /**
+     * Whether a bill's "table" line is really a COUNTER order's own name.
+     *
+     * A counter order has no table, so its line is the mode and its token - "QSR Token
+     * #7", "Take Away Token #3" - and prints as it stands. A table's line is a number
+     * and a room, and gets the "TABLE :" label in front of it.
+     *
+     * Told apart by the mode the line opens with, because the line is all the renderer
+     * is given: the caller composes it (see RestaurantOrdersFragment's billTable) and
+     * a reprint reads it back off the bill. Both counter modes are named here, so
+     * adding a third would be one word in one place rather than a QSR-shaped bug in
+     * another year.
+     */
+    private fun isCounterLine(line: String): Boolean =
+        COUNTER_LINE_PREFIXES.any { line.startsWith(it, ignoreCase = true) }
+
     private fun setIfPresent(root: View, id: Int, value: String?) {
         val tv = root.findViewById<TextView>(id)
         if (value.isNullOrBlank()) {
@@ -3239,6 +3261,17 @@ class BillReceiptRenderer(context: Context) {
 
     companion object {
         private const val TAG = "BillReceiptRenderer"
+
+        /**
+         * How a counter order's own line opens - see [isCounterLine].
+         *
+         * The two modes that have no table, spelled as the restaurant screen spells
+         * them (RestaurantOrdersFragment.TYPE_TAKE_AWAY / TYPE_QSR). Kept as text
+         * rather than referenced from there because a REPRINT reads this line back off
+         * a stored bill, and that bill may have been written by a build whose labels
+         * have since been renamed - the line on the paper is the only thing this has.
+         */
+        private val COUNTER_LINE_PREFIXES = listOf("Take Away", "QSR")
 
         /**
          * The receipt layout for a bill format - what every screen that shows or

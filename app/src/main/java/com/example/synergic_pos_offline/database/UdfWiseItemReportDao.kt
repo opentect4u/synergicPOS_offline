@@ -30,14 +30,25 @@ class UdfWiseItemReportDao(context: Context) {
         val amount: Double
     )
 
+    /**
+     * What the counter sold over the same period - the take-away and QSR items the
+     * groups deliberately leave out, counted into the totals.
+     */
+    data class Counter(val qty: Double = 0.0, val amount: Double = 0.0) {
+        val any: Boolean get() = amount > 0.005 || qty > 0.0005
+    }
+
     data class Report(
         val fromDate: String,
         val toDate: String,
         val groups: List<Group>,
         val totalQty: Double,
-        val totalAmount: Double
+        val totalAmount: Double,
+        /** Folded into the totals above, kept out of [groups] - see [Counter]. */
+        val counter: Counter = Counter()
     ) {
-        val isEmpty: Boolean get() = groups.isEmpty()
+        /** No table sold anything AND the counter sold nothing either. */
+        val isEmpty: Boolean get() = groups.isEmpty() && !counter.any
     }
 
     /** Every item sold, grouped by table then product, between [from] and [to]. */
@@ -57,6 +68,7 @@ class UdfWiseItemReportDao(context: Context) {
             LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCTS} p ON p.id = bi.product_id
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
               AND b.table_number IS NOT NULL AND TRIM(b.table_number) <> ''
+              AND ${UdfWiseReportDao.SQL_DINE_IN}
               AND COALESCE(b.bill_status, '') <> 'CANCELLED'
             GROUP BY b.table_number, section, name
             ORDER BY CAST(b.table_number AS INTEGER), b.table_number, section, name
@@ -85,12 +97,46 @@ class UdfWiseItemReportDao(context: Context) {
                 amount = BillRounding.toPaise(rows.sumOf { it.amount })
             )
         }
+        // THE TOTAL IS THE PERIOD'S, THE GROUPS ARE THE TABLES'. A counter order has
+        // no table to group under, but what it sold is still part of the period - see
+        // [counterTotals] and the same split in UdfWiseReportDao.
+        val counter = counterTotals(from, to)
         return Report(
             fromDate = from,
             toDate = to,
             groups = groups,
-            totalQty = groups.sumOf { it.qty },
-            totalAmount = BillRounding.toPaise(groups.sumOf { it.amount })
+            totalQty = groups.sumOf { it.qty } + counter.qty,
+            totalAmount = BillRounding.toPaise(groups.sumOf { it.amount } + counter.amount),
+            counter = counter
         )
+    }
+
+    /**
+     * What the take-away and QSR bills of the period sold, as one line.
+     *
+     * Not grouped and not itemised: a UDF report groups by table, and there is no
+     * table here to group by. The summary states it as a single figure and names it,
+     * so a reader who adds up the groups and comes out short can see why rather than
+     * reporting the difference as a fault.
+     */
+    private fun counterTotals(from: String, to: String): Counter {
+        helper.readableDatabase.rawQuery(
+            """
+            SELECT SUM(COALESCE(bi.quantity, 0)) AS qty,
+                   SUM(COALESCE(bi.item_total, bi.item_subtotal, 0)) AS amount
+            FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} bi
+            JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = bi.bill_id
+            WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
+              AND ${UdfWiseReportDao.SQL_COUNTER_ORDER}
+              AND COALESCE(b.bill_status, '') <> 'CANCELLED'
+            """.trimIndent(),
+            arrayOf(from, to)
+        ).use { c ->
+            if (!c.moveToFirst()) return Counter()
+            return Counter(
+                qty = c.getDouble(0),
+                amount = BillRounding.toPaise(c.getDouble(1))
+            )
+        }
     }
 }

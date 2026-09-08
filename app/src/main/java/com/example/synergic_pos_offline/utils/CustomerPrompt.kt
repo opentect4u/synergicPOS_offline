@@ -179,6 +179,19 @@ object CustomerPrompt {
         }
 
         btnNegative.setOnClickListener { dialog.dismiss() }
+        // The header cross - always here, unlike Skip.
+        //
+        // Skip is a decision ("start the order without a customer") and is only
+        // offered where there is an order to start. The cross is just the way out of
+        // the card, and every popup needs one: this form is raised over the sale
+        // screen, and without it an operator who opened it by mistake - or a Change
+        // Customer they thought better of - had nothing on the card to leave by and
+        // had to know the back gesture.
+        //
+        // It lands on the same dismiss listener below, so closing by cross, by Skip or
+        // by back all mean the same thing to the caller.
+        view.findViewById<android.widget.ImageButton>(R.id.btnQuickCustomerClose)
+            .setOnClickListener { dialog.dismiss() }
         var saved = false
         btnPositive.setOnClickListener {
             val phone = etPhone.text?.toString()?.trim().orEmpty()

@@ -384,6 +384,18 @@ object DialogUtils {
          * still a decision to carry on - the take-away customer prompt, where Skip
          * means start the order without a customer rather than start no order at all.
          */
+        /**
+         * Shows a close cross in the header, which dismisses the form exactly as a
+         * back press does - [onCancel] included.
+         *
+         * Opt-in, for a form raised OVER something the operator was in the middle of.
+         * Add Customer on the sale screen is the case: it opens with no Cancel button
+         * (its one button adds the customer), so an operator who tapped it by mistake
+         * had nothing on the card to get out by and had to know the back gesture.
+         * A form reached deliberately from a menu is left as it was - its buttons are
+         * already the way out, and a second one would be clutter.
+         */
+        showClose: Boolean = false,
         onCancel: (() -> Unit)? = null,
         onSave: (List<String>) -> Unit
     ) {
@@ -411,6 +423,16 @@ object DialogUtils {
         // Callers can drop the Cancel button entirely (e.g. a mandatory prompt); the
         // positive button then fills the row.
         btnNegative.visibility = if (showNegative) android.view.View.VISIBLE else android.view.View.GONE
+
+        // The header cross - see [showClose]. It CANCELS rather than merely dismissing:
+        // dialog.cancel() runs the same OnCancelListener a back press does, so a form
+        // whose caller needs to know it was declined hears about it either way. Using
+        // dismiss() here would have closed the card silently and left that caller
+        // waiting for an answer that never came.
+        view.findViewById<android.widget.ImageButton>(R.id.btnFormClose).apply {
+            visibility = if (showClose) android.view.View.VISIBLE else android.view.View.GONE
+            setOnClickListener { dialog.cancel() }
+        }
 
         val inputs = ArrayList<TextInputEditText>(fields.size)
         val toggles = HashMap<Int, Boolean>() // For toggle fields: index -> value

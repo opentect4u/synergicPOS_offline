@@ -55,6 +55,30 @@ object PaymentModeSetting {
     }.getOrDefault(true)
 
     /**
+     * Whether the counter's settlement popup has anything left to ask.
+     *
+     * There are exactly two questions on it: HOW they paid (Payment Mode) and WHAT
+     * they handed over (Cash Reception). With both switched off it is a dialog with no
+     * question on it - one mode, already chosen, and no change to work out - so the
+     * take-away and QSR counters put it up, showed a single Cash tile and a total the
+     * operator had just read off the order panel, and waited for a tap that could only
+     * mean one thing. That is a press charged to every sale for nothing.
+     *
+     * So it is skipped and the order settles as cash. Nothing is decided differently -
+     * it is the same settlement through the same path, with the step that had no
+     * content taken out.
+     *
+     * With EITHER switched on the popup still stands: one mode but a real amount to
+     * enter, or several modes to choose between. Defaults to true if the settings
+     * cannot be read - a till that cannot say what it wants should ask rather than
+     * settle a sale on its own.
+     */
+    fun settlementHasAQuestion(context: Context): Boolean = runCatching {
+        val settings = AppSettingsDao(context).load()
+        settings.paymentMode || settings.cashReception
+    }.getOrDefault(true)
+
+    /**
      * Takes the non-cash tiles off the screen, leaving Cash standing alone.
      *
      * A row left holding nothing but hidden tiles is collapsed too, so the panel
