@@ -40,6 +40,13 @@ object BillErasePrompt {
      * a failed backup leaves the setting exactly as it was. [onCancelled] runs on
      * every other ending, so the screen can put itself back.
      *
+     * [savesOwnTaxSettings] is true only from the Tax Mode change itself: erasing
+     * resets Tax Settings to a fresh till's own default (see [BillErase.erase]), but
+     * that caller's own [onErased] immediately saves the mode the operator actually
+     * chose straight afterward, so the default is never the visible outcome there and
+     * the warning does not claim it will be. The other two callers (Erase Bills, a
+     * Start Bill No. change) leave the default standing, so they warn about it.
+     *
      * A till with no bills never asks: there is nothing to lose.
      */
     fun confirm(
@@ -47,6 +54,7 @@ object BillErasePrompt {
         reason: String,
         action: String,
         onCancelled: () -> Unit = {},
+        savesOwnTaxSettings: Boolean = false,
         onErased: () -> Unit
     ) {
         val context = fragment.context ?: return
@@ -58,7 +66,7 @@ object BillErasePrompt {
         DialogUtils.showConfirm(
             context = context,
             title = "Erase existing bills?",
-            message = warning(reason, preview),
+            message = warning(reason, preview, mentionsTaxReset = !savesOwnTaxSettings),
             positiveText = "Erase & Change",
             negativeText = "Cancel",
             destructive = true,
@@ -77,7 +85,7 @@ object BillErasePrompt {
      * the numbering only truly restarts when there are none of those either. Said
      * plainly rather than promising a fresh start that will not happen.
      */
-    private fun warning(reason: String, preview: BillErase.Preview): String {
+    private fun warning(reason: String, preview: BillErase.Preview, mentionsTaxReset: Boolean = true): String {
         val counter = if (!preview.sharesCounter) {
             "\n\n- Numbering starts again from the Start No. in Bill Settings."
         } else {
@@ -106,7 +114,12 @@ object BillErasePrompt {
             "\n\n- The floor is cleared too. Tables still open lose their orders, any " +
             "split is undone, and every table goes back to Available - including any you " +
             "had blocked, which must be blocked again in the Table master." +
-            "\n\nProducts, customers and every other setting are left as they are."
+            (if (mentionsTaxReset) "\n\n- Tax Settings go back to a fresh till's own " +
+                "default - MRP, tax on, any discount post-tax - whatever they were set " +
+                "to before." else "") +
+            "\n\nProducts, customers and every other setting" +
+            (if (mentionsTaxReset) " besides Tax Settings, above," else "") +
+            " are left as they are."
     }
 
     /**

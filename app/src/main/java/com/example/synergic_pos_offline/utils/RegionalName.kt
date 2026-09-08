@@ -70,4 +70,21 @@ object RegionalName {
         language: PrintLanguage.Language,
         name: String
     ): String = saved[name.trim().uppercase()] ?: ProductName.inPrintLanguage(language, name)
+
+    /**
+     * How [name] should read on the SALE screen - the product grid, the cart, search -
+     * the shop's own name where there is one, otherwise the usual on-screen respelling
+     * (see [ProductName.inAppLanguage]).
+     *
+     * The screen-side twin of [forPrint]: the same "the shop's own word wins" rule,
+     * landing on whichever convention the surface already uses for a name nobody has
+     * written one for - transliteration on screen, translation on a bill. Without
+     * this, a name typed in and saved here printed correctly but never showed while
+     * the operator was actually selling the product.
+     */
+    fun forScreen(
+        saved: Map<String, String>,
+        language: PrintLanguage.Language,
+        name: String
+    ): String = saved[name.trim().uppercase()] ?: ProductName.inAppLanguage(language, name)
 }

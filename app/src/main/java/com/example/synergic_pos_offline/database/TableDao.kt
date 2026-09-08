@@ -165,6 +165,19 @@ class TableDao(context: Context) {
     }
 
     /**
+     * The waiter assigned to a table by its code, within [section] when one is
+     * given. Null where the table carries no waiter (or doesn't exist) - a
+     * take-away order has no table at all and never calls this.
+     */
+    fun waiterIdForTable(code: String, section: String = ""): Long? {
+        val (where, args) = tableWhere(code, section)
+        helper.readableDatabase.query(
+            table, arrayOf("waiter_id"), where, args, null, null, null, "1"
+        ).use { c -> if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0) }
+        return null
+    }
+
+    /**
      * One list row: a section+waiter group summarised. The same section can appear
      * more than once when different table ranges are assigned different waiters.
      * [sectionCapacity] is the section's total; [count] is this group's tables.

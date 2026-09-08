@@ -37,7 +37,6 @@ import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.ImageUtils
-import com.example.synergic_pos_offline.utils.ProductName
 import com.example.synergic_pos_offline.utils.SearchSuggestions
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.SettingsCache
@@ -152,7 +151,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val language = AppLanguage.of(requireContext())
         return SearchSuggestions.Item(
             id = p.id,
-            name = ProductName.inAppLanguage(language, p.name),
+            name = com.example.synergic_pos_offline.utils.RegionalName.forScreen(regionalNames, language, p.name),
             meta = listOfNotNull(
                 p.category.takeIf { it.isNotBlank() },
                 p.sku.takeIf { it.isNotBlank() }?.let { "#$it" }
@@ -217,6 +216,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     /** Product photos, decoded once per catalogue load and keyed by product id. */
     private val photoCache = mutableMapOf<String, android.graphics.Bitmap>()
+
+    /**
+     * The shop's own product names for the master's current language, read once per
+     * catalogue load - see [RegionalName.map]. Empty in English, or wherever nothing
+     * has been written, in which case [RegionalName.forScreen] falls back to the
+     * usual on-screen respelling.
+     */
+    private var regionalNames: Map<String, String> = emptyMap()
 
     // ---- State -------------------------------------------------------------
 
@@ -781,6 +788,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         // Query products with their rates — store-scoped like the Products master.
         photoCache.clear()
+        // One query for the whole catalogue's regional names, same as the Products
+        // master's own table - see [RegionalName.map].
+        regionalNames = com.example.synergic_pos_offline.utils.RegionalName.map(requireContext())
         val store = currentStoreId(db)
 
         // Stock is read once for the whole catalogue rather than per tile, and only
@@ -1984,10 +1994,21 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * Under inclusive pricing this is the listed subtotal itself - the price already
      * carries its tax - so the two only differ when tax is added on top.
      *
+     * The one exception is MRP with the discount PRE-tax: there the base is the
+     * inclusive price with its own tax stripped back out - 20% off a ₹1,180 MRP
+     * line (18% GST) is ₹200.00, a fifth of the ₹1,000 that MRP actually lists, not
+     * ₹236.00 off the ₹1,180 on the shelf - see [GstCalculator.taxableBase].
+     *
      * Safe from recursing back into [discountAmt]: a post-tax discount leaves every
      * line taxed in full, so the lines are priced here with no discount at all.
      */
     private fun discountBase(): Double {
+        if (taxInclusive && discountPreTax) {
+            return cart.sumOf { line ->
+                val gross = line.product.price * line.qty
+                GstCalculator.taxableBase(gross, taxRateOf(line.product), true)
+            }
+        }
         val sub = subtotal()
         return cart.sumOf { line ->
             val (taxable, tax, _) = lineTax(line.product, line.product.price * line.qty, sub, 0.0)
@@ -2474,7 +2495,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         override fun onBindViewHolder(holder: VH, position: Int) {
             val p = shownProducts[position]
             val language = AppLanguage.of(holder.itemView.context)
-            holder.name.text = ProductName.inAppLanguage(language, p.name)
+            holder.name.text = com.example.synergic_pos_offline.utils.RegionalName.forScreen(regionalNames, language, p.name)
             holder.price.text = money(p.price)
             holder.sku.text = p.sku
 
@@ -2519,7 +2540,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             val accent = ThemeManager.getThemeColor(holder.itemView.context)
             val language = AppLanguage.of(holder.itemView.context)
 
-            holder.name.text = ProductName.inAppLanguage(language, line.product.name)
+            holder.name.text = com.example.synergic_pos_offline.utils.RegionalName.forScreen(regionalNames, language, line.product.name)
             holder.each.text = "${money(line.product.price)} each"
             holder.qty.text = qtyText(line.qty)
             holder.total.text = money(lineSalePrice(line))
@@ -2546,6 +2567,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     /** Refresh product names when app language changes, without affecting other UI. */
     fun refreshProductDisplay() {
+        regionalNames = com.example.synergic_pos_offline.utils.RegionalName.map(requireContext())
         view?.let { root ->
             root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProducts)?.adapter?.notifyDataSetChanged()
             root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvCart)?.adapter?.notifyDataSetChanged()

@@ -31,11 +31,11 @@ import com.google.android.material.switchmaterial.SwitchMaterial
  * product, from whichever rate fields that product has set. See
  * [GstCalculator.regimeOf].
  *
- * Discount position: Pre-tax is offered only under EXCLUSIVE tax. Under MRP the tax
- * is already in the price, so there is no before-tax figure to discount, and the
- * option is greyed - see [syncDiscountPosition]. It was disabled outright until now,
- * with Post-tax pinned whatever was saved; both radios are live again, bounded by
- * the mode.
+ * Discount position: Pre-tax is offered under MRP as well as Exclusive tax - the
+ * inclusive price is stripped of its own tax to reach a base, the discount taken off
+ * THAT, and tax re-added on what's left (see [GstCalculator.taxableBase] and
+ * [CartMath.discountBase]), so a genuine before-tax figure exists under MRP too. See
+ * [syncDiscountPosition] for the one thing that still bounds the choice - item-wise.
  */
 class TaxSettingsFragment : Fragment(), TitledScreen {
 
@@ -139,46 +139,43 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
      * Shows the Pre-tax / Post-tax block while discount is on, and decides which of
      * the two may be picked.
      *
-     * ## Item-wise is a PRE-TAX discount
+     * ## Item-wise under EXCLUSIVE is a PRE-TAX discount
      *
      * A discount configured against a product comes off that product, and the line is
-     * then taxed on what is left - which is what pre-tax means. So under Item wise the
-     * Post-tax option is greyed and the choice settles on Pre-tax.
+     * then taxed on what is left - which is what pre-tax means. So under Item-wise AND
+     * Exclusive tax together the Post-tax option is greyed and the choice settles on
+     * Pre-tax.
      *
-     * Bill-wise keeps both. A figure taken off the whole bill can honestly be applied
-     * before the rate or after it, and shops differ on which they mean.
+     * Bill-wise keeps both, under either tax mode - a figure taken off the whole bill
+     * can honestly be applied before the rate or after it, and shops differ on which
+     * they mean. Item-wise under MRP keeps both too, left exactly as it already was
+     * (Post-tax) for any till already relying on it - only Pre-tax's own greying is
+     * lifted, not what Item-wise still forces under Exclusive.
      *
-     * ## Pre-tax needs an exclusive price
+     * ## Pre-tax now has a base under MRP too
      *
-     * Under MRP the tax is already inside the price on the shelf, so there is no
-     * "before tax" to take a discount off - the figure the customer sees IS the taxed
-     * one. Taking a discount pre-tax there would mean stripping the tax out, cutting
-     * the remainder and adding tax back on, which is not what a shop means by a
-     * discount on an MRP item: they mean money off the price on the box.
-     *
-     * ## Where the two rules meet
-     *
-     * Item-wise under MRP would grey BOTH, leaving a question with no answer to it. So
-     * MRP wins: it is not a preference but an arithmetic fact - the before-tax figure
-     * does not exist there - while the item-wise rule is about which of two real
-     * moments a shop means. Under MRP the position is Post-tax whatever the type says,
-     * exactly as it was before.
+     * Pre-tax used to be greyed outright under MRP - the tax was thought to already be
+     * inside the price with no "before tax" figure left to discount. It does exist: an
+     * inclusive price is stripped to its base the same way [GstCalculator.priceItem]
+     * and [CartMath.discountBase] already strip it for tax itself, the discount comes
+     * off THAT, and tax is re-added on what's left. So the button is live under MRP
+     * now, the same as under Exclusive.
      *
      * ## Greyed rather than hidden, and moved off rather than left sitting
      *
      * Greyed, because it is a choice that comes back the moment the type or the mode
      * changes - an option that vanishes reads as one that never existed. Moved off,
-     * because a disabled radio can still be the CHECKED one: switching to MRP with
-     * Pre-tax picked would otherwise leave the selection on a greyed button and save
-     * PRE_TAX for a mode that cannot honour it.
+     * because a disabled radio can still be the CHECKED one: switching to Item-wise
+     * under Exclusive with Post-tax picked would otherwise leave the selection on a
+     * greyed button and save POST_TAX for a combination that cannot honour it.
      */
     private fun syncDiscountPosition() {
         llDiscountPosition.isVisible = swDiscount.isChecked
 
         val exclusive = rgTaxMode.checkedRadioButtonId != R.id.rbInclusive
         val itemwise = rgDiscountType.checkedRadioButtonId == R.id.rbTypeItem
-        // MRP first - see the note above on where the two rules meet.
-        val preAllowed = exclusive
+        // Pre-tax now has a real before-tax base under MRP too - see the note above.
+        val preAllowed = true
         val postAllowed = !exclusive || !itemwise
 
         val rbPre = requireView().findViewById<android.widget.RadioButton>(R.id.rbPosPre)
@@ -240,7 +237,11 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
             reason = "Changing the tax mode to ${chosen.label()} changes what every listed " +
                 "price means",
             action = "change the tax mode",
-            onCancelled = { revertTaxMode() }
+            onCancelled = { revertTaxMode() },
+            // The erase resets Tax Settings to a fresh till's own default, but this
+            // screen's own save runs right after and writes the mode the operator
+            // actually chose over it - see BillErasePrompt.confirm's own note.
+            savesOwnTaxSettings = true
         ) {
             savedTaxMode = chosen
             onSave()
@@ -271,13 +272,9 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         return TaxSettings(
             discountEnabled = swDiscount.isChecked,
             discountType = type,
-            // What is actually checked. This was pinned to POST_TAX while Pre-tax was
-            // disabled outright; it is a real choice now, and pinning it would throw
-            // away the one the operator just made.
-            //
-            // It cannot arrive as PRE_TAX under MRP: syncDiscountPosition moves the
-            // selection off Pre-tax whenever the mode stops allowing it, so the two can
-            // never be saved together.
+            // What is actually checked. Pre-tax is a real choice under MRP now, same as
+            // under Exclusive - only Item-wise together with Exclusive still pins this
+            // to Pre-tax, via the same move-off in syncDiscountPosition.
             discountPosition = if (rgDiscountPosition.checkedRadioButtonId == R.id.rbPosPre)
                 DiscountPosition.PRE_TAX else DiscountPosition.POST_TAX,
             taxEnabled = swTax.isChecked,

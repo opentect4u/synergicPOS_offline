@@ -1,24 +1,26 @@
 package com.example.synergic_pos_offline.fragments
 
+import com.example.synergic_pos_offline.database.StockDao
 import com.example.synergic_pos_offline.database.WaiterDao
 import com.example.synergic_pos_offline.database.WaiterWiseReportDao
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
 
 /**
- * Waiter Wise Report - one waiter's bills over a period, a line each, or every
- * waiter's at once. Restaurant only - see [ReportsFragment.isVisible], which gates
- * the tile on Restaurant mode the same way it gates KOT Cancel and the UDF reports.
+ * Waiter Wise Report - one waiter's bills over a period, or every waiter's at once.
+ * Restaurant only - see [ReportsFragment.isVisible], which gates the tile on
+ * Restaurant mode the same way it gates KOT Cancel and the UDF reports.
  *
- * A date range and a waiter go in; every bill served at that waiter's tables comes out
- * with what it carried and what it came to, laid out as the Shift Wise Report lays its
- * bills out - the two are the same shape of question (a period's bills, filtered to
- * one person) asked of a different person. [ALL_LABEL] in the same dropdown, the way
- * the Payment-Wise Report offers one, drops the filter instead of narrowing it - every
- * waiter's bills come back together, each row saying which of them it was, so the
- * floor's whole night can be read as one report rather than one waiter at a time.
+ * A date range and a waiter go in. Picking one waiter reads like the Operator
+ * Billed Report reads an operator - one row per bill, what it carried, what it was
+ * taxed, what came off it and what it came to - with the heading naming the waiter
+ * instead of the operator. [ALL_LABEL] in the same dropdown, the way the
+ * Payment-Wise Report offers one, drops the filter instead of narrowing it and
+ * reads like the UDF-Wise Report instead - one row per waiter, summed across the
+ * period - so the floor's whole night can be read as one report rather than one
+ * waiter at a time.
  *
  * See [WaiterWiseReportDao] for which bills belong to a waiter - the bill's own
- * `waiter_id`, set once at settlement from the table it was raised on.
+ * `waiter_id`, set once at order creation from the table it was opened on.
  */
 class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report>() {
 
@@ -42,7 +44,7 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
         val waiter = waiters.firstOrNull { label(it) == filterChoice }
         // No waiter picked, or a till with none on the master. An empty report says so
         // rather than quietly reporting on whichever waiter happened to be first.
-            ?: return WaiterWiseReportDao.Report(fromDate, toDate, null, allWaiters = false, lines = emptyList())
+            ?: return WaiterWiseReportDao.Report(fromDate, toDate, null, allWaiters = false)
         return dao.between(fromDate, toDate, waiter)
     }
 
@@ -55,52 +57,42 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
     }
 
     /**
-     * The Shift Wise columns, operator among them (the cashier, not the waiter - the
-     * waiter is the one already chosen in the picker above, so its own column earns
-     * its place only when [ALL_LABEL] was picked instead), and IGST/VAT only where a
-     * bill in the period actually carried one.
+     * One waiter picked: the Operator Billed Report's own columns - a bill each,
+     * what it carried, what it was taxed, what came off it, what it came to.
+     *
+     * [ALL_LABEL] picked instead: the UDF-Wise Report's own columns, WAITER
+     * standing in for UDF - one row per waiter, summed across the period.
      */
-    override fun columnsFor(report: WaiterWiseReportDao.Report): List<Column> = buildList {
-        add(Column("BILL", 120, alignEnd = true))
-        add(Column("DATE", 110, alignEnd = false))
-        if (report.allWaiters) add(Column("WAITER", 140, alignEnd = false))
-        add(Column("OPERATOR", 160, alignEnd = false))
-        add(Column("PAY MODE", 110, alignEnd = false))
-        add(Column("AMT", 110, alignEnd = true))
-        add(Column("SGST", 100, alignEnd = true))
-        add(Column("CGST", 100, alignEnd = true))
-        if (report.hasIgst) add(Column("IGST", 100, alignEnd = true))
-        if (report.hasVat) add(Column("VAT", 100, alignEnd = true))
-        add(Column("DISC.", 100, alignEnd = true))
-        add(Column("TOTAL AMT", 130, alignEnd = true))
-    }
+    override fun columnsFor(report: WaiterWiseReportDao.Report): List<Column> =
+        if (report.allWaiters) listOf(
+            Column("WAITER", 140, alignEnd = false),
+            Column("BILLS", 90, alignEnd = true),
+            Column("TAX AMT", 110, alignEnd = true),
+            Column("DISC.", 100, alignEnd = true),
+            Column("BILL AMT", 130, alignEnd = true)
+        ) else listOf(
+            Column("BILL", 130, alignEnd = true),
+            Column("ITEMS", 110, alignEnd = true),
+            Column("TAX", 110, alignEnd = true),
+            Column("DISC", 110, alignEnd = true),
+            Column("TOTAL", 130, alignEnd = true)
+        )
 
     override fun rowsOf(report: WaiterWiseReportDao.Report): List<List<String>> =
-        report.lines.map { line ->
-            buildList {
-                add(line.billNumber)
-                add(pretty(line.date))
-                if (report.allWaiters) add(line.waiterName)
-                add(line.operator)
-                add(line.payMode)
-                add(money(line.mrp))
-                add(money(line.sgst))
-                add(money(line.cgst))
-                if (report.hasIgst) add(money(line.igst))
-                if (report.hasVat) add(money(line.vat))
-                add(money(line.discount))
-                add(money(line.netAmount))
-            }
+        if (report.allWaiters) report.rows.map { row ->
+            listOf(row.waiterName, row.bills.toString(), money(row.taxAmount), money(row.discount), money(row.billAmount))
+        } else report.lines.map { line ->
+            listOf(line.billNumber, money(line.items), money(line.tax), money(line.discount), money(line.total))
         }
 
     override fun summaryOf(report: WaiterWiseReportDao.Report): List<Pair<String, String>> =
         buildList {
-            // Only worth a row when there is more than one waiter to have counted -
-            // the same rule the Payment-Wise Report's own All shows its mode count by.
-            if (report.allWaiters) add("Waiters" to report.waiterCount.toString())
+            if (report.allWaiters) add("Total Waiters" to report.waiterCount.toString())
             add("Total Bills" to report.billCount.toString())
-            add("Operators" to report.operatorCount.toString())
-            add("Total Amt" to money(report.totalMrp))
+            if (!report.allWaiters) add("Total Items" to StockDao.trim(report.totalItems))
+            // Each tax its own line rather than one blended figure - a GST return
+            // is filed against SGST and CGST separately, and IGST/VAT earn their
+            // place only where a bill in the period actually carried one.
             add("Total SGST" to money(report.totalSgst))
             add("Total CGST" to money(report.totalCgst))
             if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
@@ -115,7 +107,7 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
 
     /** The one figure the report is read for: what the waiter's tables took. */
     override fun totalOf(report: WaiterWiseReportDao.Report): Pair<String, String> =
-        "Total Amount" to money(report.totalAmount)
+        (if (report.allWaiters) "Bill Amount" else "Grand Total") to money(report.totalAmount)
 
     /**
      * Tells a shop with no waiters on the master from a waiter (or all of them) that
@@ -144,37 +136,58 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
         pretty(date).let { it.take(6) + it.takeLast(2) }
 
     /**
-     * The printed slip: the bill and its total across the roll, with the operator,
-     * the date and the rest on a second line beneath - the same shape Shift Wise
-     * prints its own bills in.
+     * The printed slip: the Operator Billed Report's own layout for one waiter
+     * (WTR CODE / WTR NAME heading over a bill-per-line body), or the UDF-Wise
+     * Report's own layout for [ALL_LABEL] (one row per waiter).
      */
     override fun printContent(report: WaiterWiseReportDao.Report): PeriodReportRenderer.Content =
-        PeriodReportRenderer.Content(
+        if (report.allWaiters) PeriodReportRenderer.Content(
+            title = "Waiter Wise Report",
+            period = "${pretty(report.fromDate)}  to  ${pretty(report.toDate)}",
+            subtitle = "${report.waiterCount} waiter(s)",
+            style = PeriodReportRenderer.Style.CLASSIC,
+            range = "F.DT:${shortDate(report.fromDate)}" to "TO.DT:${shortDate(report.toDate)}",
+            columns = listOf("WAITER", "BILLS", "TAX AMT", "DISC.", "BILL AMT"),
+            evenColumns = true,
+            rows = rowsOf(report),
+            summary = buildList {
+                add("SGST AMOUNT :" to money(report.totalSgst))
+                add("CGST AMOUNT :" to money(report.totalCgst))
+                if (report.hasIgst) add("IGST AMOUNT :" to money(report.totalIgst))
+                if (report.hasVat) add("VAT AMOUNT  :" to money(report.totalVat))
+                if (report.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(report.totalServiceCharge))
+                if (report.totalOtherCharges > 0.005) add("EXTRA CHGS  :" to money(report.totalOtherCharges))
+                if (report.totalParcelCharge > 0.005) add("PARCEL CHG  :" to money(report.totalParcelCharge))
+            },
+            total = "TOTAL  :" to money(report.totalAmount),
+            emptyNote = "No bills in this period."
+        ) else PeriodReportRenderer.Content(
             title = "Waiter Wise Report",
             period = "${pretty(report.fromDate)}  to  ${pretty(report.toDate)}",
             subtitle = "${report.billCount} bill(s)",
             style = PeriodReportRenderer.Style.CLASSIC,
             range = "F.DT:${shortDate(report.fromDate)}" to "TO.DT:${shortDate(report.toDate)}",
             heading = listOf(
-                "WAITER" to when {
-                    report.allWaiters -> "$ALL_LABEL (${report.waiterCount})"
-                    report.waiter != null -> label(report.waiter)
-                    else -> "-"
-                }
+                "WTR CODE:" to (report.waiter?.code ?: "-"),
+                "WTR NAME:" to (report.waiter?.name?.uppercase() ?: "-")
             ),
-            columns = listOf("BILL", "TOTAL AMT"),
-            rows = report.lines.map { listOf(it.billNumber, money(it.netAmount)) },
-            columns2 = if (report.allWaiters) listOf("", "WAITER", "DATE", "OPERATOR", "MODE")
-            else listOf("", "DATE", "OPERATOR", "MODE"),
-            rows2 = report.lines.map {
-                if (report.allWaiters) listOf("", it.waiterName, shortDate(it.date), it.operator, it.payMode)
-                else listOf("", shortDate(it.date), it.operator, it.payMode)
-            },
-            ruleBetweenRows = true,
+            columns = listOf("BILL", "ITEMS", "TAX", "DISC", "TOTAL"),
             evenColumns = true,
             alignFirstColumnEnd = true,
-            summary = summaryOf(report).map { (label, value) -> label.uppercase() to value },
-            total = totalOf(report).let { (label, value) -> label.uppercase() to value },
+            rows = rowsOf(report),
+            summary = buildList {
+                add("TOTAL BILLS" to report.billCount.toString())
+                add("TOTAL ITEMS" to StockDao.trim(report.totalItems))
+                add("TOTAL SGST " to money(report.totalSgst))
+                add("TOTAL CGST " to money(report.totalCgst))
+                if (report.hasIgst) add("TOTAL IGST " to money(report.totalIgst))
+                if (report.hasVat) add("TOTAL VAT  " to money(report.totalVat))
+                add("TOTAL DISC." to money(report.totalDiscount))
+                if (report.totalServiceCharge > 0.005) add("SERVICE CHG" to money(report.totalServiceCharge))
+                if (report.totalOtherCharges > 0.005) add("EXTRA CHGS " to money(report.totalOtherCharges))
+                if (report.totalParcelCharge > 0.005) add("PARCEL CHG " to money(report.totalParcelCharge))
+                add("GRAND TOTAL" to money(report.totalAmount))
+            }.map { (label, value) -> "$label :" to value },
             emptyNote = "No bills for this waiter."
         )
 
