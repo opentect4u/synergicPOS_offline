@@ -735,7 +735,7 @@ class LoginFragment : Fragment() {
     private fun loadUser(userId: String): User? {
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
         val sql = """
-            SELECT u.role, u.is_blocked, u.store_id, u.id
+            SELECT u.role, u.is_blocked, u.store_id, u.id, u.user_name
             FROM ${DatabaseHelper.Tables.MD_USERS} u
             JOIN ${DatabaseHelper.Tables.MD_REGISTRATION} r ON r.store_id = u.store_id
             WHERE u.user_id = ? AND r.verify_flag = 1
@@ -752,7 +752,10 @@ class LoginFragment : Fragment() {
                     UserRole.GENERAL_USER else UserRole.ADMIN,
                 isBlocked = c.getInt(c.getColumnIndexOrThrow("is_blocked")) == 1,
                 storeId = c.getInt(c.getColumnIndexOrThrow("store_id")),
-                serialNo = c.getLong(c.getColumnIndexOrThrow("id"))
+                serialNo = c.getLong(c.getColumnIndexOrThrow("id")),
+                // Read at sign-in so every receipt this session prints can credit the
+                // PERSON rather than their login id - see SessionManager.cashierName.
+                userName = c.getString(c.getColumnIndexOrThrow("user_name")).orEmpty()
             )
         }
     }
@@ -797,7 +800,7 @@ class LoginFragment : Fragment() {
 
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
         val sql = """
-            SELECT u.password, u.role, u.is_blocked, u.store_id, u.id
+            SELECT u.password, u.role, u.is_blocked, u.store_id, u.id, u.user_name
             FROM ${DatabaseHelper.Tables.MD_USERS} u
             JOIN ${DatabaseHelper.Tables.MD_REGISTRATION} r ON r.store_id = u.store_id
             WHERE u.user_id = ? AND r.verify_flag = 1
@@ -826,7 +829,8 @@ class LoginFragment : Fragment() {
                 role = role,
                 isBlocked = isBlocked,
                 storeId = storeId,
-                serialNo = serialNo
+                serialNo = serialNo,
+                userName = cursor.getString(cursor.getColumnIndexOrThrow("user_name")).orEmpty()
             )
         }
     }

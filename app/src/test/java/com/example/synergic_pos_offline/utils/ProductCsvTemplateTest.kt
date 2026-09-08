@@ -11,6 +11,11 @@ import org.junit.Test
  * [ProductCsvTemplate.header] is a list, and nothing in the language holds the two to
  * the same width. A row one comma short does not fail to compile - it ships, and the
  * operator opens a sheet whose headings have slid one column off its own examples.
+ *
+ * The layout itself is now the shop's own item master reproduced, so these also pin
+ * the decisions that were made ABOUT that master - where the two ids went, where IGST
+ * was added - since those are the parts someone tidying the file later would not know
+ * were deliberate.
  */
 class ProductCsvTemplateTest {
 
@@ -27,80 +32,92 @@ class ProductCsvTemplateTest {
     }
 
     /**
-     * The regional pair sits together, name after language.
-     *
-     * They are read by heading rather than by position, so this is about the sheet
-     * being legible to whoever fills it in: the column saying WHICH language, and the
-     * column giving the name in it, belong next to each other.
+     * The two ids lead the sheet - which product this is, and which department it
+     * belongs to, before anything the row merely says about it.
      */
     @Test
-    fun theRegionalNameFollowsTheRegionalLanguage() {
-        val language = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.REGIONAL_LANGUAGE_COLUMN)
-        val name = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.REGIONAL_NAME_COLUMN)
-        assertTrue("regional_language is missing from the header", language >= 0)
-        assertEquals("regional_name should follow regional_language", language + 1, name)
-    }
-
-    /**
-     * The columns before the regional pair have not moved.
-     *
-     * `category` became `category_code` and `rate_name` became `rate_name_id`, but
-     * both stayed exactly where they were: a heading changed, not a layout. A sheet
-     * an operator has been filling in for months still has its figures under the
-     * right headings, and only the two reference columns need re-entering.
-     */
-    @Test
-    fun theOlderColumnsKeepTheirPositions() {
+    fun theSheetLeadsWithTheTwoIds() {
         assertEquals(
-            listOf(
-                "product_name", "category_code", "hsn_code", "bar_code",
-                "rate_name_id", "rate", "unit_id", "cgst", "sgst", "igst", "vat",
-                "discount", "discount_type", "selling_price", "purchase_price"
-            ),
-            ProductCsvTemplate.header.take(15)
+            listOf("PRODUCT_ID", "PRODUCT_NAME", "PRODUCT_UNI_NAME", "CATEGORY_ID"),
+            ProductCsvTemplate.header.take(4)
         )
     }
 
-    /**
-     * The sample Dept Codes are spelled the way the Category master spells them.
-     *
-     * The samples are hand-written strings and the code format lives in
-     * [com.example.synergic_pos_offline.database.CategoryDao.formatCode]. If that
-     * ever changes shape, a sheet still showing the old one teaches the operator to
-     * type something the import will not resolve.
-     */
+    /** Both id columns hold plain numbers - 1, 2, 3, 4 - not codes to decode. */
     @Test
-    fun theSampleCategoryCodesMatchTheMastersFormat() {
-        val at = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.CATEGORY_CODE_COLUMN)
-        val codes = ProductCsvTemplate.sampleRows.map { it.split(",")[at] }
-        assertEquals(
-            (1..codes.size).map { com.example.synergic_pos_offline.database.CategoryDao.formatCode(it.toLong()) },
-            codes
-        )
-    }
-
-    /** The sample rate references are ids, not the names they replaced. */
-    @Test
-    fun theSampleRateNamesAreIds() {
-        val at = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.RATE_NAME_ID_COLUMN)
+    fun theSampleIdsArePlainNumbers() {
+        val product = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.PRODUCT_ID_COLUMN.uppercase())
+        val category = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.CATEGORY_ID_COLUMN.uppercase())
         ProductCsvTemplate.sampleRows.forEach { row ->
-            val cell = row.split(",")[at]
-            assertTrue("not a rate name id in: $row", cell.toLongOrNull() != null)
+            val cells = row.split(",")
+            assertTrue("not a product id in: $row", cells[product].toIntOrNull() != null)
+            assertTrue("not a category id in: $row", cells[category].toIntOrNull() != null)
         }
     }
 
     /**
-     * The sample sheet actually demonstrates the new column.
+     * The unit and rate slots are two blocks of [ProductCsvTemplate.RATE_SLOTS], not
+     * interleaved pairs - UNIT_1..4 then RATE_1..4, the way the shop's master has them.
+     *
+     * The export writes into those blocks by offset, so this is the shape that code is
+     * reading; a column added ahead of them has to move both together.
+     */
+    @Test
+    fun theSlotBlocksSitWhereTheHeaderSaysTheyDo() {
+        val slots = ProductCsvTemplate.RATE_SLOTS
+        val units = ProductCsvTemplate.header.indexOf("UNIT_1")
+        val rates = ProductCsvTemplate.header.indexOf("RATE_1")
+        assertTrue("UNIT_1 is missing from the header", units >= 0)
+        assertEquals("the rate block should follow the unit block", units + slots, rates)
+        assertEquals("UNIT_$slots", ProductCsvTemplate.header[rates - 1])
+        assertEquals("RATE_$slots", ProductCsvTemplate.header[rates + slots - 1])
+    }
+
+    /**
+     * The three tax rates are read together.
+     *
+     * PRODUCT_IGST is this template's one addition to the shop's own sheet, and it was
+     * put beside the pair rather than appended at the end because SGST, CGST and IGST
+     * are three answers to one question. Appending it would have been the easier edit
+     * and is what a later hand is likely to do.
+     */
+    @Test
+    fun theThreeTaxRatesSitTogether() {
+        val at = ProductCsvTemplate.header.indexOf("PRODUCT_SGST")
+        assertTrue("PRODUCT_SGST is missing from the header", at >= 0)
+        assertEquals(
+            listOf("PRODUCT_SGST", "PRODUCT_CGST", "PRODUCT_IGST", "VAT_FLAG"),
+            ProductCsvTemplate.header.subList(at, at + 4)
+        )
+    }
+
+    /**
+     * The till's own screen language is the last column.
+     *
+     * It is the one heading that is not a fact about the product on that row - it is a
+     * setting riding along because there is no second file to ask for it on - so it
+     * goes after everything the shop's master itself carries, where it cannot be
+     * mistaken for one of the product's own fields.
+     */
+    @Test
+    fun theScreenLanguageComesLast() {
+        assertEquals(
+            ProductCsvTemplate.REGIONAL_LANGUAGE_COLUMN,
+            ProductCsvTemplate.header.last()
+        )
+    }
+
+    /**
+     * The sample sheet actually demonstrates the regional name column.
      *
      * A column shown blank on every example row teaches nobody what goes in it - and
      * the regional name is the one column whose format is not obvious from its heading.
      */
     @Test
     fun everySampleRowShowsARegionalName() {
-        val at = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.REGIONAL_NAME_COLUMN)
+        val at = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.REGIONAL_NAME_COLUMN.uppercase())
         ProductCsvTemplate.sampleRows.forEach { row ->
-            val cell = row.split(",")[at]
-            assertTrue("no regional name shown in: $row", cell.isNotBlank())
+            assertTrue("no regional name shown in: $row", row.split(",")[at].isNotBlank())
         }
     }
 }

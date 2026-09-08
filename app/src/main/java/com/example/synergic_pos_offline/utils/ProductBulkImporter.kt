@@ -207,7 +207,9 @@ object ProductBulkImporter {
         val categoryCodeIds = HashMap<String, Int?>()
         val rateNames = HashMap<Long, String?>()
         var unknownCategoryCodes = 0
+        var unknownCategoryIds = 0
         var unknownRateNameIds = 0
+        var reassignedProductIds = 0
         // Asked once for the sheet, not once per row: the setting cannot change
         // half way through an import, and every row has to be treated the same way
         // whichever half of the file it is in.
@@ -226,7 +228,7 @@ object ProductBulkImporter {
         val namesLanguage = languageMatch.language.takeIf { ProductName.applies(it) }
         val nameDao = if (namesLanguage != null) ProductNameDao(context) else null
         val regionalNamesGiven = rows.any {
-            !it[ProductCsvTemplate.REGIONAL_NAME_COLUMN].isNullOrBlank()
+            regionalNameOf(it) != null
         }
 
         db.beginTransaction()
@@ -236,26 +238,39 @@ object ProductBulkImporter {
                 val name = (r["product_name"] ?: r["item_name"]).orEmpty().trim()
                 if (name.isBlank()) { skipped++; continue }
 
-                // BY CODE FIRST - "DEPT007" names the department master's row, and
-                // names it exactly. The older `category` heading is still read for a
-                // sheet that has one, and still creates the department it names; a
-                // code cannot do that, since a code IS the row id and there is no
-                // such thing as inventing one. An unknown code leaves the product
+                // BY ID FIRST - the plain number md_products.category_id holds, so
+                // nothing has to be resolved or matched. Then the "DEPT007" code, and
+                // then the older `category` NAME column, which is the only one of the
+                // three that can still create the department it names: an id and a
+                // code are both row ids, and there is no such thing as inventing one.
+                // An id or code this till has no department for leaves the product
                 // uncategorised and is counted for the report at the end.
+                val idCell = r[ProductCsvTemplate.CATEGORY_ID_COLUMN]?.trim().orEmpty()
                 val codeCell = r[ProductCsvTemplate.CATEGORY_CODE_COLUMN]?.trim().orEmpty()
-                val categoryId = if (codeCell.isNotEmpty()) {
-                    categoryIdForCode(db, codeCell, categoryCodeIds)
+                val categoryId = when {
+                    idCell.isNotEmpty() -> categoryIdForId(db, idCell, categoryCodeIds)
+                        .also { if (it == null) unknownCategoryIds++ }
+                    codeCell.isNotEmpty() -> categoryIdForCode(db, codeCell, categoryCodeIds)
                         .also { if (it == null) unknownCategoryCodes++ }
-                } else {
-                    r["category"]?.trim()?.takeIf { it.isNotEmpty() }
+                    else -> r["category"]?.trim()?.takeIf { it.isNotEmpty() }
                         ?.let { categoryIdFor(db, it, storeId, categoryIds) }
                 }
 
+                // The id the sheet asks this product to be, where it asks for one and
+                // nothing on the till is already using it. See
+                // ProductCsvTemplate.PRODUCT_ID_COLUMN for why a taken id is stepped
+                // around rather than written over.
+                val wantedId = cell(r, ProductCsvTemplate.PRODUCT_ID_COLUMN, "id")?.toLongOrNull()
+                    ?.takeIf { it > 0 }
+                val freeId = wantedId?.takeIf { !productIdTaken(db, it) }
+                if (wantedId != null && freeId == null) reassignedProductIds++
+
                 val product = ContentValues().apply {
+                    if (freeId != null) put("id", freeId)
                     if (storeId != null) put("store_id", storeId) else putNull("store_id")
                     put("product_name", name)
-                    put("hsn_code", r["hsn_code"]?.ifBlank { null })
-                    put("bar_code", r["bar_code"]?.ifBlank { null })
+                    put("hsn_code", cell(r, "hsn_number", "hsn_code"))
+                    put("bar_code", cell(r, "bar_code", "barcode"))
                     if (categoryId != null) put("category_id", categoryId) else putNull("category_id")
                 }
                 val productId = db.insert(DatabaseHelper.Tables.MD_PRODUCTS, null, product)
@@ -267,16 +282,12 @@ object ProductBulkImporter {
                 // that happen to coincide on an untaxed, undiscounted line. Filling
                 // one from the other would quietly invent a price the sheet never
                 // gave, which is worse than a blank the operator can see and correct.
-                val rateValue = (r["rate"] ?: r["price"])?.toDoubleOrNull() ?: 0.0
                 // "selling_price" is the current template's column; the older names
                 // are still read so a sheet filled in against a previous template
                 // imports - they are other spellings of this column, not other
                 // columns to fall back on.
-                val sell = r["selling_price"]?.toDoubleOrNull()
-                    ?: r["sell_price"]?.toDoubleOrNull()
-                    ?: r["sale_price"]?.toDoubleOrNull()
-                    ?: 0.0
-                val unitId = unitNameOf(r)?.let { unitIdFor(db, it, storeId, unitIds) }
+                val sell = cell(r, "selling_price", "sell_price", "sale_price")
+                    ?.toDoubleOrNull() ?: 0.0
 
                 // BY ID FIRST, and the NAME is read off the master rather than off
                 // the sheet - so a rate uploaded in bulk is the same rate the
@@ -291,34 +302,50 @@ object ProductBulkImporter {
                 if (rateNameCell.isNotEmpty() && rateNameId == null) unknownRateNameIds++
                 val rateNameText = rateNameId?.let { rateNames[it] }
                     ?: r["rate_name"]?.ifBlank { null }
-                val rate = ContentValues().apply {
-                    if (storeId != null) put("store_id", storeId) else putNull("store_id")
-                    if (outletId != null) put("outlet_id", outletId) else putNull("outlet_id")
-                    put("product_id", productId)
-                    put("rate_name", rateNameText)
-                    if (rateNameId != null) put("rate_name_id", rateNameId) else putNull("rate_name_id")
-                    put("rate", rateValue)
-                    if (unitId != null) put("unit_id", unitId) else putNull("unit_id")
-                    put("cgst_rate", r["cgst"]?.toDoubleOrNull() ?: 0.0)
-                    put("sgst_rate", r["sgst"]?.toDoubleOrNull() ?: 0.0)
-                    put("igst_rate", r["igst"]?.toDoubleOrNull() ?: 0.0)
-                    put("vat_rate", r["vat"]?.toDoubleOrNull() ?: 0.0)
-                    put("discount", r["discount"]?.toDoubleOrNull() ?: 0.0)
-                    // A bulk-uploaded discount is always a percentage, whatever the
-                    // sheet's discount_type column says: the figures in the template
-                    // are percentages, and reading a "5" meant as 5% as five rupees
-                    // off would misprice the product with nothing to show for it.
-                    put("discount_type", DISCOUNT_TYPE_PERCENT)
-                    put("sale_price", sell)
-                    put("sell_price", sell)
-                    put("purchase_price", r["purchase_price"]?.toDoubleOrNull() ?: 0.0)
-                }
-                val rateId = db.insert(DatabaseHelper.Tables.MD_PRODUCT_RATES, null, rate)
-                if (rateId != -1L) {
-                    db.execSQL(
-                        "UPDATE ${DatabaseHelper.Tables.MD_PRODUCT_RATES} SET \"default\" = 1 WHERE id = ?",
-                        arrayOf<Any>(rateId)
-                    )
+
+                // The tax, discount and price figures are the PRODUCT's - one set of
+                // columns on the sheet - so every unit this product sells under
+                // carries them. Only the unit and the rate differ slot to slot, which
+                // is exactly the shape UNIT_1..4/RATE_1..4 describes.
+                for ((slot, line) in rateLinesOf(r).withIndex()) {
+                    val unitId = line.unit?.let { unitIdForSlot(db, it, storeId, unitIds) }
+                    val rate = ContentValues().apply {
+                        if (storeId != null) put("store_id", storeId) else putNull("store_id")
+                        if (outletId != null) put("outlet_id", outletId) else putNull("outlet_id")
+                        put("product_id", productId)
+                        put("rate_name", rateNameText)
+                        if (rateNameId != null) put("rate_name_id", rateNameId) else putNull("rate_name_id")
+                        put("rate", line.rate)
+                        if (unitId != null) put("unit_id", unitId) else putNull("unit_id")
+                        put("cgst_rate", cell(r, "product_cgst", "cgst")?.toDoubleOrNull() ?: 0.0)
+                        put("sgst_rate", cell(r, "product_sgst", "sgst")?.toDoubleOrNull() ?: 0.0)
+                        put("igst_rate", cell(r, "product_igst", "igst")?.toDoubleOrNull() ?: 0.0)
+                        put("vat_rate", cell(r, "vat_flag", "vat")?.toDoubleOrNull() ?: 0.0)
+                        put("discount", cell(r, "product_discount", "discount")?.toDoubleOrNull() ?: 0.0)
+                        // A bulk-uploaded discount is always a percentage, whatever the
+                        // sheet's discount_type column says: the figures in the template
+                        // are percentages, and reading a "5" meant as 5% as five rupees
+                        // off would misprice the product with nothing to show for it.
+                        put("discount_type", DISCOUNT_TYPE_PERCENT)
+                        // The selling price belongs to the product, but only the FIRST
+                        // slot may claim it: it is one figure and the further slots are
+                        // other units at other rates, so copying it onto a half plate
+                        // would price the half at the full plate's price.
+                        val slotSell = if (slot == 0) sell else line.rate
+                        put("sale_price", slotSell)
+                        put("sell_price", slotSell)
+                        put("purchase_price", cell(r, "purchase_price")?.toDoubleOrNull() ?: 0.0)
+                    }
+                    val rateId = db.insert(DatabaseHelper.Tables.MD_PRODUCT_RATES, null, rate)
+                    // The first slot is the one the till reaches for. Marked here
+                    // rather than after the loop so a product whose later slots failed
+                    // to insert still has a default.
+                    if (rateId != -1L && slot == 0) {
+                        db.execSQL(
+                            "UPDATE ${DatabaseHelper.Tables.MD_PRODUCT_RATES} SET \"default\" = 1 WHERE id = ?",
+                            arrayOf<Any>(rateId)
+                        )
+                    }
                 }
 
                 // The quantity the sheet says this item starts at, booked in exactly
@@ -333,8 +360,7 @@ object ProductBulkImporter {
                 // table. A blank cell writes nothing and the product falls back to the
                 // machine translation, exactly as it did before this column existed.
                 if (nameDao != null && namesLanguage != null) {
-                    r[ProductCsvTemplate.REGIONAL_NAME_COLUMN]?.trim()
-                        ?.takeIf { it.isNotEmpty() }
+                    regionalNameOf(r)
                         ?.let { nameDao.save(productId.toInt(), namesLanguage.code, it) }
                 }
                 imported++
@@ -355,6 +381,16 @@ object ProductBulkImporter {
         // rate the sheet asked for, and only the operator can tell which is wrong -
         // the sheet, or a master that has not been set up yet.
         val referenceWarning = listOfNotNull(
+            if (unknownCategoryIds > 0)
+                "$unknownCategoryIds row(s) named a " +
+                    "${ProductCsvTemplate.CATEGORY_ID_COLUMN} this till has no department " +
+                    "for - those products came in uncategorised."
+            else null,
+            if (reassignedProductIds > 0)
+                "$reassignedProductIds row(s) asked for a " +
+                    "${ProductCsvTemplate.PRODUCT_ID_COLUMN} another product already holds " +
+                    "- those came in under new ids rather than replacing it."
+            else null,
             if (unknownCategoryCodes > 0)
                 "$unknownCategoryCodes row(s) named a " +
                     "${ProductCsvTemplate.CATEGORY_CODE_COLUMN} this till has no department " +
@@ -463,6 +499,44 @@ object ProductBulkImporter {
     }
 
     /**
+     * The department the plain id [cell] names, or null where this till has no such
+     * row.
+     *
+     * The number on the sheet is the number `md_products.category_id` stores, so this
+     * is a check that the department exists rather than a translation of anything.
+     * Nothing is created: an id is a row id, and an unknown one names a department
+     * that does not exist rather than one to make - see
+     * [ProductCsvTemplate.CATEGORY_ID_COLUMN].
+     *
+     * Shares [categoryIdForCode]'s cache under its own key shape, so a sheet naming
+     * one department on four hundred rows asks the database about it once.
+     */
+    private fun categoryIdForId(
+        db: SQLiteDatabase,
+        cell: String,
+        cache: MutableMap<String, Int?>
+    ): Int? = cache.getOrPut("#$cell") {
+        val id = cell.toIntOrNull()?.takeIf { it > 0 } ?: return@getOrPut null
+        db.rawQuery(
+            "SELECT id FROM ${DatabaseHelper.Tables.MD_CATEGORY} WHERE id = ? LIMIT 1",
+            arrayOf(id.toString())
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else null }
+    }
+
+    /**
+     * Whether some product already holds [id].
+     *
+     * Asked per row rather than cached, because the answer CHANGES as the sheet goes
+     * in: the row above may have just taken the id this row is asking for. Reading it
+     * fresh is what makes a sheet that repeats an id import as two products instead of
+     * failing on a primary key half way through.
+     */
+    private fun productIdTaken(db: SQLiteDatabase, id: Long): Boolean = db.rawQuery(
+        "SELECT 1 FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE id = ? LIMIT 1",
+        arrayOf(id.toString())
+    ).use { it.moveToFirst() }
+
+    /**
      * The rate name carried by the master row [id], or null where there is none.
      *
      * Looked up so the NAME written onto the product's rate is the master's own,
@@ -513,6 +587,104 @@ object ProductBulkImporter {
      * a column named for what it holds should not be the one that fails to import.
      */
     private val UNIT_COLUMNS = listOf("unit_id", "unit", "unit_name", "unit_symbol")
+
+    /**
+     * The first of [keys] this row actually fills in, or null where it fills none.
+     *
+     * Every figure on the sheet is asked for through this, because every figure has
+     * more than one spelling now: the shop's own master heads its tax columns
+     * `PRODUCT_CGST` where the previous template said `cgst`, and both have to import.
+     * They are alternative SPELLINGS of one column, tried in order, not separate
+     * columns to add up or fall back through - the first one present wins even if the
+     * value it holds is a zero the operator meant.
+     *
+     * Blank counts as absent: a spreadsheet fills every cell of a row it touches, so
+     * an empty `PRODUCT_CGST` beside a filled `cgst` should read as the filled one.
+     */
+    private fun cell(row: Map<String, String>, vararg keys: String): String? =
+        keys.firstNotNullOfOrNull { row[it]?.trim()?.takeIf { v -> v.isNotEmpty() } }
+
+    /**
+     * The headings a sheet may give a product's regional name under.
+     *
+     * `PRODUCT_UNI_NAME` is what the shop's own master calls it and what the current
+     * template hands out; `regional_name` is the previous template's heading, kept so
+     * a file filled in against it still imports.
+     */
+    val REGIONAL_NAME_COLUMNS = listOf(ProductCsvTemplate.REGIONAL_NAME_COLUMN, "regional_name")
+
+    /** The shop's own name for this row's product, or null where it gives none. */
+    fun regionalNameOf(row: Map<String, String>): String? =
+        cell(row, *REGIONAL_NAME_COLUMNS.toTypedArray())
+
+    /** One way this product is sold: at [rate], under [unit] where it names one. */
+    data class RateLine(val unit: String?, val rate: Double)
+
+    /**
+     * The ways this row says its product is sold - one [RateLine] per priced slot.
+     *
+     * `UNIT_1..UNIT_4` with `RATE_1..RATE_4` beside them is the shop's own master
+     * describing a dish sold by plate, by half plate and by quarter, each at its own
+     * price. Each priced slot becomes a rate row; the first is the default.
+     *
+     * It is the RATE that decides a slot is used. A unit with no price beside it is
+     * not something this shop sells - the master leaves those cells filled from an
+     * older edit - while a price with no unit is still a price, and refusing it would
+     * lose the product's only rate over a blank cell nothing needs.
+     *
+     * A sheet with no numbered slots at all is the previous template, whose single
+     * `rate`/`unit` pair is read instead. That case always yields a line even at zero,
+     * because it always did: every product it imported got a rate row, and a product
+     * with none would not appear on the sales screen at all. A slotted sheet whose
+     * every rate cell is blank gets the same one empty line, for the same reason.
+     */
+    fun rateLinesOf(row: Map<String, String>): List<RateLine> {
+        val slots = (1..ProductCsvTemplate.RATE_SLOTS).mapNotNull { slot ->
+            val (unitKey, rateKey) = ProductCsvTemplate.slotColumns(slot)
+            cell(row, rateKey)?.toDoubleOrNull()?.let { RateLine(cell(row, unitKey), it) }
+        }
+        if (slots.isNotEmpty()) return slots
+        val (unitKey, rateKey) = ProductCsvTemplate.slotColumns(1)
+        return listOf(
+            RateLine(
+                unit = unitNameOf(row) ?: cell(row, unitKey),
+                rate = cell(row, "rate", "price", rateKey)?.toDoubleOrNull() ?: 0.0
+            )
+        )
+    }
+
+    /**
+     * The unit id a slot's cell names - resolving it as an ID where it is a whole
+     * number, and as a symbol otherwise.
+     *
+     * A sheet a person filled in heads that cell "PLT" or "KG". A sheet exported from
+     * the shop's other system carries that system's unit id there instead - "5", "2" -
+     * and taking those for symbols would fill this till's Unit master with units
+     * called "5" and "2" and put them on the bill. So a whole number is looked up as
+     * an id, and an id this till has no unit for leaves the rate's unit blank: an id
+     * can only REFER to a unit, never create one, the same trade
+     * [ProductCsvTemplate.CATEGORY_CODE_COLUMN] makes.
+     *
+     * A decimal is not an id and is treated as a symbol, so a unit genuinely named
+     * "0.5" is not silently dropped.
+     */
+    private fun unitIdForSlot(
+        db: SQLiteDatabase,
+        cell: String,
+        storeId: Int?,
+        cache: MutableMap<String, Int?>
+    ): Int? {
+        val asId = cell.toIntOrNull()
+        if (asId != null) {
+            return cache.getOrPut("#$asId") {
+                db.rawQuery(
+                    "SELECT id FROM ${DatabaseHelper.Tables.MD_UNITS} WHERE id = ? LIMIT 1",
+                    arrayOf(asId.toString())
+                ).use { c -> if (c.moveToFirst()) c.getInt(0) else null }
+            }
+        }
+        return unitIdFor(db, cell, storeId, cache)
+    }
 
     /** The unit a row names, under whichever of [UNIT_COLUMNS] it used. */
     fun unitNameOf(row: Map<String, String>): String? = UNIT_COLUMNS

@@ -21,15 +21,16 @@ import com.example.synergic_pos_offline.utils.Downloads
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.ProductBulkImporter
 import com.example.synergic_pos_offline.utils.ProductCsvTemplate
+import com.example.synergic_pos_offline.utils.Xlsx
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 
 /**
  * Dedicated "Bulk Upload Products" page reached from the Products screen.
  *
- * The operator downloads a CSV template to see the structure, fills it in a
- * spreadsheet, and uploads it — every row becomes a product, under the category the
- * row itself names. A preview is shown before anything is written, and it is there
+ * The operator downloads an Excel template to see the structure, fills it in a
+ * spreadsheet, and uploads it — every row becomes a product, under the department
+ * its CATEGORY_ID names. A preview is shown before anything is written, and it is there
  * that the operator says whether to add to the products already on the till or
  * replace them.
  *
@@ -41,9 +42,23 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Bulk Upload Products"
 
-    private val uploadCsv: ActivityResultLauncher<String> =
+    /**
+     * The file picker the Upload button opens.
+     *
+     * It accepts EVERY type rather than filtering on the workbook's own, and that is
+     * deliberate. An `.xlsx` sitting in Downloads is reported as
+     * `application/octet-stream` by a good many Android file providers - the type is
+     * guessed from whatever the provider knows, and a file that arrived over WhatsApp
+     * or a USB cable often carries nothing to guess from. Filtering on the correct
+     * type would grey out the very file the operator came here to upload, with no
+     * explanation on screen.
+     *
+     * So everything is offered and the FILE decides what it is once opened - see
+     * [importSheet], which reads the first bytes rather than trusting a name or a type.
+     */
+    private val uploadSheet: ActivityResultLauncher<String> =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-            uri?.let { importCsv(it) }
+            uri?.let { importSheet(it) }
         }
 
     override fun onCreateView(
@@ -55,7 +70,7 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
 
         view.findViewById<MaterialButton>(R.id.btnBulkDownload).setOnClickListener { downloadTemplate() }
         view.findViewById<MaterialButton>(R.id.btnBulkUpload).setOnClickListener {
-            uploadCsv.launch("*/*")
+            uploadSheet.launch("*/*")
         }
 
         ThemeManager.applyTheme(view)
@@ -74,9 +89,23 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
      */
     private fun downloadTemplate() {
         try {
+            // AN EXCEL WORKBOOK, not a CSV.
+            //
+            // The sheet is filled in on a computer in Excel or WPS, and a CSV opened
+            // there is a file of guesses: the app decides which delimiter was meant,
+            // whether "40120" is a number to be shown as 4.012E+04, and what to do
+            // with a name holding a comma. A workbook has cells, so a code stays a
+            // code and a name stays a name, and the file that comes back is the file
+            // that went out.
+            //
+            // Written from the same rows as the CSV - see ProductCsvTemplate.rows -
+            // so the two describe the same sheet. CSV is still accepted on the way
+            // back in; see [importSheet].
             val savedTo = Downloads.save(
-                requireContext(), ProductCsvTemplate.FILE_NAME,
-                ProductCsvTemplate.content(requireContext())
+                requireContext(),
+                ProductCsvTemplate.EXCEL_FILE_NAME,
+                Xlsx.write(ProductCsvTemplate.rows(requireContext()), "Item Master"),
+                Xlsx.MIME
             )
             toast("Template saved to $savedTo")
         } catch (e: Exception) {
@@ -86,16 +115,73 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
 
     // ---- Upload -------------------------------------------------------------
 
-    private fun importCsv(uri: Uri) {
+    /**
+     * Reads the uploaded sheet - a workbook or a CSV, whichever it turns out to be.
+     *
+     * ## The FILE says which it is, not its name
+     *
+     * A ZIP starts with the two bytes `PK`, and nothing that is CSV does. So the
+     * first bytes are read and the answer taken from them, rather than from an
+     * extension that may be `.XLSX`, may have been dropped by a phone, or may not
+     * exist at all - the picker hands over a `content://` URI, which need not carry a
+     * file name.
+     *
+     * CSV is still read, and deliberately. The template downloads as a workbook now,
+     * but shops have sheets they have been keeping for months, and a system that
+     * exports their catalogue writes CSV. Refusing those would be making the operator
+     * convert a file the app is perfectly able to read.
+     */
+    private fun importSheet(uri: Uri) {
+        // Which reader ran, so the message on an empty result can say something the
+        // operator can act on rather than "no rows" for every kind of wrong file.
+        var workbook = false
         val rows = try {
             requireContext().contentResolver.openInputStream(uri)?.use { ins ->
-                CsvUtils.parse(ins.bufferedReader().readText())
+                // Buffered so the sniffed bytes can be put back for whichever reader
+                // takes over - a content stream cannot be reopened from the start.
+                val stream = ins.buffered()
+                val head = ByteArray(2)
+                stream.mark(4)
+                val read = stream.read(head)
+                stream.reset()
+                workbook = read == 2 && Xlsx.looksLikeXlsx(head)
+                if (workbook) fromWorkbook(stream)
+                else CsvUtils.parse(stream.bufferedReader().readText())
             } ?: emptyList()
         } catch (e: Exception) {
             toast("Could not read file: ${e.message}"); return
         }
-        if (rows.isEmpty()) { toast("No rows found in the file"); return }
+        if (rows.isEmpty()) {
+            toast(
+                if (workbook) "That workbook has no rows under its headings"
+                else "No rows found - is that the sheet you filled in?"
+            )
+            return
+        }
         showPreview(rows)
+    }
+
+    /**
+     * A workbook's rows, keyed by its heading row - the shape [CsvUtils.parse]
+     * returns, so everything downstream reads one sheet the same way whichever file
+     * it arrived in.
+     *
+     * Headings are lower-cased and trimmed exactly as the CSV reader does, because
+     * the importer looks its columns up by name and a heading Excel handed back as
+     * "Product_Name " must still be `product_name`.
+     */
+    private fun fromWorkbook(input: java.io.InputStream): List<Map<String, String>> {
+        val rows = Xlsx.read(input)
+        if (rows.isEmpty()) return emptyList()
+        val headings = rows.first().map { it.trim().lowercase() }
+        return rows.drop(1)
+            // A workbook keeps trailing blank rows that were only ever formatted or
+            // scrolled through; they are not products and must not be counted as
+            // skipped rows in the report at the end.
+            .filter { cells -> cells.any { it.isNotBlank() } }
+            .map { cells ->
+                headings.mapIndexed { i, key -> key to cells.getOrNull(i)?.trim().orEmpty() }.toMap()
+            }
     }
 
     private fun showPreview(rows: List<Map<String, String>>) {

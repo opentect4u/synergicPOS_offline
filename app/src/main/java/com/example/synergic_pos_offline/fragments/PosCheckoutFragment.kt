@@ -31,6 +31,7 @@ import com.example.synergic_pos_offline.utils.InputLimits
 import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.GstCalculator
+import com.example.synergic_pos_offline.utils.PaymentModeSetting
 import com.example.synergic_pos_offline.utils.PrinterSetup
 import com.example.synergic_pos_offline.utils.ReceiptContext
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
@@ -223,10 +224,19 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         val density = resources.displayMetrics.density
 
         appSettings = AppSettingsDao(ctx).load()
-        // No mode picker means there is nothing to pay by but cash.
-        if (!appSettings.paymentMode) method = Method.CASH
-        id<View>(R.id.sectionPaymentModePicker).visibility =
-            if (appSettings.paymentMode) View.VISIBLE else View.GONE
+        // ONE TILE, NOT NO TILES.
+        //
+        // With the question off every sale is cash, so Credit, Card and Online come
+        // down - but the Cash tile stays, selected, and the panel stays with it. The
+        // whole section used to be hidden, and a checkout that shows no payment
+        // section at all reads as though something failed to load rather than as a
+        // till that only takes cash. See PaymentModeSetting.
+        if (!appSettings.paymentMode) {
+            method = Method.CASH
+            PaymentModeSetting.cashOnly(
+                id<View>(R.id.btnCredit), id<View>(R.id.btnCard), id<View>(R.id.btnOnline)
+            )
+        }
 
         // Header
         id<TextView>(R.id.tvOrder).text = BillDao(ctx).nextBillNumber()
@@ -1155,7 +1165,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         return BillReceiptRenderer.Draft(
             billNumber = BillDao(requireContext()).nextBillNumber(),
             dateTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()),
-            cashier = SessionManager.currentUser?.userId?.uppercase() ?: "---",
+            cashier = SessionManager.cashierName,
             customer = BillReceiptRenderer.Draft.Customer(
                 name = name.ifEmpty { null },
                 phone = phone.ifEmpty { null },

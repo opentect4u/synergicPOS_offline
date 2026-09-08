@@ -140,9 +140,17 @@ class ProductsFragment : DataTableFragment() {
      */
     private fun downloadTemplate() {
         try {
+            // A WORKBOOK, as the template now is. This file's whole purpose is to be
+            // edited and uploaded back, so it has to be the same kind of file the
+            // upload page hands out - a shop exporting its catalogue and a shop
+            // starting from the template are filling in one sheet either way.
             val savedTo = Downloads.save(
-                requireContext(), ProductCsvExport.FILE_NAME,
-                ProductCsvExport.content(requireContext())
+                requireContext(),
+                ProductCsvExport.EXCEL_FILE_NAME,
+                com.example.synergic_pos_offline.utils.Xlsx.write(
+                    ProductCsvExport.rows(requireContext()), "Item Master"
+                ),
+                com.example.synergic_pos_offline.utils.Xlsx.MIME
             )
             toast("Products saved to $savedTo")
         } catch (e: Exception) {

@@ -260,7 +260,7 @@ class AdvancePaymentFragment : Fragment(), TitledScreen {
         val receipt = PaymentReceiptRenderer.Receipt(
             receiptNumber = collection.receiptNumber,
             dateTime = collection.dateTime,
-            cashier = SessionManager.currentUser?.userId?.uppercase() ?: "---",
+            cashier = SessionManager.cashierName,
             customerId = acc.customer.id,
             customerName = acc.customer.name,
             customerPhone = acc.customer.phone,

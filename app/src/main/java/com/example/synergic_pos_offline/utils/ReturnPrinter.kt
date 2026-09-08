@@ -31,7 +31,7 @@ object ReturnPrinter {
         config: ThermalPrinter.Config,
         report: (String) -> Unit
     ) {
-        val cashier = SessionManager.currentUser?.userId?.uppercase() ?: "---"
+        val cashier = SessionManager.cashierName
         val capture = ReturnReceiptRenderer(context)
             .renderToBitmap(result, cashier, config.paperDots)
         if (capture == null) {

@@ -68,7 +68,7 @@ object CustomerLedgerView {
         config: ThermalPrinter.Config,
         report: (String) -> Unit
     ) {
-        val printedBy = SessionManager.currentUser?.userId?.uppercase() ?: "---"
+        val printedBy = SessionManager.cashierName
         val capture = LedgerReceiptRenderer(context).renderToBitmap(ledger, printedBy, config.paperDots)
         if (capture == null) {
             report("Could not render the ledger")

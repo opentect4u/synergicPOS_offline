@@ -369,7 +369,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         storeName(ctx)?.let { view.findViewById<TextView>(R.id.tvBrandName).text = it.uppercase() }
 
         // Set cashier name from logged-in user
-        tvCashierName.text = SessionManager.currentUser?.userId ?: "Guest"
+        tvCashierName.text = SessionManager.cashierName
 
         // Customer info button click listener
         btnCustomerInfo.setOnClickListener {

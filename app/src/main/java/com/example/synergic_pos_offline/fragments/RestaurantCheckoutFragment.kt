@@ -234,6 +234,17 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 }
             }
 
+        // App Settings' Payment Mode, which this screen was not reading at all - so a
+        // restaurant that had switched the question off was still being offered Card
+        // and Online here, and could settle a table by a mode the till says it does
+        // not take. Off, the sale is cash and Cash is the only tile left standing.
+        if (!com.example.synergic_pos_offline.utils.PaymentModeSetting.asked(requireContext())) {
+            payMethod = com.example.synergic_pos_offline.utils.PaymentModeSetting.CASH_LABEL
+            com.example.synergic_pos_offline.utils.PaymentModeSetting.cashOnly(
+                view.findViewById(R.id.btnPayCard), view.findViewById(R.id.btnPayOnline)
+            )
+        }
+
         // Amount tendered → change due.
         val etTendered = view.findViewById<TextInputEditText>(R.id.etTendered)
         val tvChange = view.findViewById<TextView>(R.id.tvChangeDue)
@@ -301,7 +312,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         val draft = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft(
             billNumber = com.example.synergic_pos_offline.database.BillDao(ctx).nextBillNumber(),
             dateTime = java.text.SimpleDateFormat("dd-MM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date()),
-            cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—",
+            cashier = com.example.synergic_pos_offline.utils.SessionManager.cashierName,
             customer = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Customer(
                 phone = customer.takeIf { it != "Walk-in" && it.isNotBlank() }
             ),

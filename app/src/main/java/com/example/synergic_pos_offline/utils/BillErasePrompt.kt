@@ -40,6 +40,11 @@ object BillErasePrompt {
      * a failed backup leaves the setting exactly as it was. [onCancelled] runs on
      * every other ending, so the screen can put itself back.
      *
+     * EXACTLY ONE OF THE TWO ALWAYS RUNS. A caller has moved a control to get here and
+     * that control is now showing something the till has not agreed to, so an ending
+     * that reports neither leaves the screen stating a setting that is not in force -
+     * see [eraseInBackground], where a failed backup used to do exactly that.
+     *
      * [savesOwnTaxSettings] is true only from the Tax Mode change itself: erasing
      * resets Tax Settings to a fresh till's own default (see [BillErase.erase]), but
      * that caller's own [onErased] immediately saves the mode the operator actually
@@ -73,7 +78,7 @@ object BillErasePrompt {
             onCancel = onCancelled
         ) {
             withPassword(fragment, action, onCancelled) {
-                eraseInBackground(fragment, action, onErased)
+                eraseInBackground(fragment, action, onCancelled, onErased)
             }
         }
     }
@@ -167,14 +172,42 @@ object BillErasePrompt {
      * The backup is a PRECONDITION, not a courtesy: if it cannot be written, nothing
      * is erased and the setting that asked for it is left alone. A change that costs
      * the books should not also cost the only copy of them.
+     *
+     * EXACTLY ONE of [onCancelled] and [onErased] runs, on every ending.
+     *
+     * This is the whole contract, and it was broken here: the backup-failure path told
+     * the operator that nothing had changed and then returned without telling the
+     * CALLER. The Tax Settings screen was left with its radio sitting on the mode it
+     * had just been refused - showing MRP on a till still trading Exclusive, and only
+     * admitting it when the screen was closed and reopened. The screen cannot put
+     * itself back if it is never told that nothing happened.
      */
-    private fun eraseInBackground(fragment: Fragment, action: String, onErased: () -> Unit) {
+    private fun eraseInBackground(
+        fragment: Fragment,
+        action: String,
+        onCancelled: () -> Unit,
+        onErased: () -> Unit
+    ) {
+        // The dialog needs a live screen to sit on. Without one nothing runs at all -
+        // so the caller is told now, rather than waiting for a callback that cannot
+        // come.
+        if (fragment.context == null) {
+            onCancelled()
+            return
+        }
         BusyDialog.run(fragment, "Backing up, then erasing bills...") {
-            val context = fragment.context ?: return@run
+            val context = fragment.context
+            if (context == null) {
+                BusyDialog.onMain(fragment) { onCancelled() }
+                return@run
+            }
             val backup = try {
                 AutoBackup.backupBefore(context, action)
             } catch (e: Exception) {
                 BusyDialog.onMain(fragment) {
+                    // Told first, so the screen is already back on the setting still in
+                    // force by the time the operator reads why.
+                    onCancelled()
                     DialogUtils.showSuccess(
                         context = context,
                         title = "Nothing was changed",
@@ -187,7 +220,32 @@ object BillErasePrompt {
                 }
                 return@run
             }
-            val outcome = BillErase.erase(context)
+            // CAUGHT HERE, not left to BusyDialog's own catch.
+            //
+            // That catch shows "That did not finish" and returns - it has never heard
+            // of [onCancelled], so a throw inside the erase reported nothing to the
+            // caller at all. The Tax Mode change was left with its radio on a mode the
+            // till had not taken and no way to know, which is how a foreign-key
+            // exception in clearFloor turned into "the mode change does not work".
+            val outcome = try {
+                BillErase.erase(context)
+            } catch (e: Exception) {
+                android.util.Log.e("BillErase", "Erase failed part-way", e)
+                BusyDialog.onMain(fragment) {
+                    onCancelled()
+                    DialogUtils.showSuccess(
+                        context = context,
+                        title = "Erase did not finish",
+                        message = "The bills were backed up to $backup, but erasing them " +
+                            "stopped part-way: " + (e.message ?: e.javaClass.simpleName) +
+                            "." +
+                            "\n\nSo $action was NOT carried out, and the till may be part " +
+                            "way through the erase - check Bill History and the table " +
+                            "floor before trading again."
+                    )
+                }
+                return@run
+            }
             BusyDialog.onMain(fragment) {
                 // The setting is saved only now - after the books have actually gone.
                 onErased()

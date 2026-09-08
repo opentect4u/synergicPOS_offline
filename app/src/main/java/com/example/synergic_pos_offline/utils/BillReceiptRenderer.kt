@@ -304,18 +304,6 @@ class BillReceiptRenderer(context: Context) {
     private val productLang: PrintLanguage.Language by lazy { RegionalName.language(ctx) }
 
     /**
-     * Whether the till asks how a sale was paid at all - App Settings' Payment Mode.
-     *
-     * `by lazy` so a slip reads it once however many payment rows it has, and a slip
-     * with none never asks. See [renderPayment], which is the only thing that wants it.
-     */
-    private val paymentModeOn: Boolean by lazy {
-        runCatching {
-            com.example.synergic_pos_offline.database.AppSettingsDao(ctx).load().paymentMode
-        }.getOrDefault(true)
-    }
-
-    /**
      * The bill's typeface — the bundled Roboto Mono font (res/font/roboto_mono_regular.ttf).
      * Every code-built cell renders with it (the bill XML layouts point their fontFamily
      * at the same font), so the whole slip prints in one face. Falls back to the platform
@@ -2571,19 +2559,26 @@ class BillReceiptRenderer(context: Context) {
     ): Boolean {
         val ll = view.findViewById<LinearLayout>(R.id.llBillPayment)
         ll.removeAllViews()
-        // NOT A LINE AT ALL when App Settings' Payment Mode is off.
+        // WHAT THE BILL RECORDED, whether or not the till asks the question.
         //
-        // Off means the till does not ask how a sale was paid: the selector is not
-        // shown at checkout and every sale is booked as cash - see PosCheckoutFragment,
-        // which forces Method.CASH when it is off. So "PAY MODE : CASH" on the slip is
-        // not reporting a choice, it is reporting the absence of one, on every bill the
-        // shop prints, for a question it has said it does not ask.
+        // This used to print nothing when App Settings' Payment Mode was off, on the
+        // reasoning that a mode nobody was asked for is not worth paper. That was the
+        // wrong reading of the setting. Off does not mean the shop stopped taking
+        // money - it means it only ever takes one kind, so the question is not worth a
+        // tap per sale. The checkout screens come down to the Cash tile alone and
+        // every sale is booked as cash (see PaymentModeSetting), so the mode is not
+        // ASKED but it is KNOWN, and the slip should say it: a shop's own copy of a
+        // bill that does not say how the money came in is worth less than one that
+        // does.
         //
-        // Read live rather than off the bill's settings snapshot, the same way the UPI
-        // code is: a shop that has switched the question off wants it gone from the
-        // reprints too, not kept on them because it happened to be on that day.
-        if (!paymentModeOn) return false
-        // Nothing to pair it with - the caller leaves its own line showing.
+        // Which leaves nothing for the setting to decide here. The bill's own record
+        // is printed, and it says CASH on a till that does not ask because that is
+        // what was actually booked - not because this guessed.
+        //
+        // An EMPTY list still prints nothing, and that is not the same case. It is a
+        // provisional table bill, printed minutes before the table pays - see
+        // RestaurantOrdersFragment, which passes no mode on purpose. Standing CASH in
+        // there would put "paid, in cash" on a bill that nobody has paid yet.
         if (modes.isEmpty()) return false
 
         modes.forEachIndexed { index, mode ->
@@ -2697,26 +2692,49 @@ class BillReceiptRenderer(context: Context) {
     }
 
     /**
-     * Login id of the operator who generated the bill. Resolved from the bill's own
-     * `operator_id` rather than the current session, so reprinting an older bill
-     * still credits whoever actually rang it up. Falls back to `created_by`, the
-     * login id stamped on the row, which is all that survives if that operator has
-     * since been removed from md_users.
+     * The NAME of the operator who generated the bill - "ISHANI", not "IS78".
+     *
+     * It used to be the login id: the query asked for `user_name` but read `user_id`
+     * first and returned that, so every slip credited an account code. A customer
+     * reading a receipt cannot turn "IS78" into a person, and neither can the shop
+     * without the user master open.
+     *
+     * Resolved from the bill's OWN `operator_id` rather than from the session, so
+     * reprinting an older bill still credits whoever actually rang it up rather than
+     * whoever is standing at the till now. `created_by` is the same operator's serial
+     * number written as text, and is tried the same way when `operator_id` is missing;
+     * a row that stamped a login id there instead - older bills - is looked up by that
+     * and, failing everything, printed as it stands. A name is preferred at every step
+     * and the login id is only ever the fallback.
      */
     private fun cashierName(db: SQLiteDatabase, operatorId: Long?, createdBy: String?): String {
-        if (operatorId != null) {
-            db.query(
-                DatabaseHelper.Tables.MD_USERS, arrayOf("user_id", "user_name"),
-                "id=?", arrayOf(operatorId.toString()), null, null, null, "1"
-            ).use { c ->
-                if (c.moveToFirst()) {
-                    val id = c.getString(0)?.takeIf { it.isNotBlank() }
-                        ?: c.getString(1)?.takeIf { it.isNotBlank() }
-                    if (id != null) return id.uppercase()
-                }
-            }
+        val stamp = createdBy?.trim()?.takeIf { it.isNotEmpty() }
+        // Both columns hold md_users.id - one as a number, one as the text of one.
+        (operatorId ?: stamp?.toLongOrNull())
+            ?.let { userNameFor(db, "id=?", it.toString()) }
+            ?.let { return it }
+        if (stamp != null) {
+            userNameFor(db, "user_id=?", stamp)?.let { return it }
+            // The operator has been removed from md_users, or the stamp was never an
+            // id at all. What the row itself says is all that is left of them.
+            return stamp.uppercase()
         }
-        return createdBy?.takeIf { it.isNotBlank() }?.uppercase() ?: "---"
+        return "---"
+    }
+
+    /**
+     * One operator's printable name, or null where [where] matches nobody.
+     *
+     * The name first and the login id only as a fallback - an account with its name
+     * left blank should still credit somebody rather than nobody.
+     */
+    private fun userNameFor(db: SQLiteDatabase, where: String, arg: String): String? = db.query(
+        DatabaseHelper.Tables.MD_USERS, arrayOf("user_name", "user_id"),
+        where, arrayOf(arg), null, null, null, "1"
+    ).use { c ->
+        if (!c.moveToFirst()) return null
+        (c.getString(0)?.takeIf { it.isNotBlank() } ?: c.getString(1)?.takeIf { it.isNotBlank() })
+            ?.uppercase()
     }
 
     /**
