@@ -77,6 +77,15 @@ object DialogUtils {
         negativeText: String = "Cancel",
         iconRes: Int? = null,
         destructive: Boolean = false,
+        /**
+         * Left-aligns the message instead of centring it.
+         *
+         * For a message that is a LIST rather than a sentence. Centred text is right
+         * for "Delete this product?" and wrong for a column of bulleted names, where
+         * every line starting at a different x is what makes it hard to scan. Opt-in,
+         * so every existing dialog keeps the centring it was written for.
+         */
+        messageStart: Boolean = false,
         onCancel: () -> Unit = {},
         onConfirm: () -> Unit
     ) {
@@ -105,6 +114,7 @@ object DialogUtils {
 
         tvTitle.text = title
         tvMessage.text = message
+        if (messageStart) tvMessage.gravity = android.view.Gravity.START
         btnPositive.text = positiveText
         btnNegative.text = negativeText
 

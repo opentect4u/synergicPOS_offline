@@ -268,7 +268,7 @@ object ProductEntryDialog {
             val labels = product.rates.map { r ->
                 "${r.name.ifBlank { "Rate" }} (${money(r.rate)})"
             }
-            act.setAdapter(ArrayAdapter(context, android.R.layout.simple_list_item_1, labels))
+            act.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(context, labels))
             // Open on whichever rate matches the starting rate, else the first.
             val startIdx = product.rates.indexOfFirst { it.rate == startRate }.coerceAtLeast(0)
             act.setText(labels[startIdx], false)

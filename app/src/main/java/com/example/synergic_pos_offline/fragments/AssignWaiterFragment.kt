@@ -64,7 +64,7 @@ class AssignWaiterFragment : DataTableFragment() {
         val btnSave = view.findViewById<MaterialButton>(R.id.btnFormPositive)
         val btnCancel = view.findViewById<MaterialButton>(R.id.btnFormNegative)
 
-        actvName.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, waiters.map { it.name }))
+        actvName.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, waiters.map { it.name }))
         actvName.setOnItemClickListener { _, _, pos, _ ->
             val w = waiters[pos]
             actvName.tag = w.id

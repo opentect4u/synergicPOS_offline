@@ -74,7 +74,7 @@ class DescriptionLedgerFragment : DataTableFragment() {
         val btnSave = view.findViewById<MaterialButton>(R.id.btnFormPositive)
         val btnCancel = view.findViewById<MaterialButton>(R.id.btnFormNegative)
 
-        actvType.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, typeLabels))
+        actvType.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, typeLabels))
 
         val descId = existing?.cells?.getOrNull(COL_ID).orEmpty()
             .ifBlank { DescriptionDao.formatCode(dao.nextId()) }

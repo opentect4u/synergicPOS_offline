@@ -28,9 +28,23 @@ object ProductBulkImporter {
     /** md_product_rates.discount_type for a percentage discount. */
     private const val DISCOUNT_TYPE_PERCENT = "P"
 
-    /** What an import does with the products already on the till. */
+    /**
+     * What an import does with the products already on the till.
+     *
+     * The Bulk Upload screen only ever asks for [REPLACE] now - an uploaded sheet IS
+     * the product list, and choosing between the two on every upload was a decision
+     * whose wrong answer could not be undone from the till. See
+     * BulkUploadProductFragment.
+     */
     enum class Mode {
-        /** Leaves them alone and adds the sheet's rows alongside. */
+        /**
+         * Leaves them alone and adds the sheet's rows alongside.
+         *
+         * No longer offered by the upload screen. Kept because it is the behaviour
+         * anything importing a PART of a catalogue would want, and because the
+         * distinction is what [clearProducts] exists to make - not because a caller
+         * still picks it.
+         */
         APPEND,
 
         /**
@@ -64,14 +78,34 @@ object ProductBulkImporter {
     /**
      * Every product id that some transaction still refers to.
      *
-     * A product that has been sold, returned, purchased, written off, counted in a
-     * stock movement or sent to a kitchen is part of the record of what happened. It
-     * cannot be deleted without either breaking that record or taking it down too,
-     * so Replace leaves those products where they are - it clears the catalogue, not
-     * the books.
+     * A product that has been sold, returned, purchased, written off or sent to a
+     * kitchen is part of the record of what happened. It cannot be deleted without
+     * either breaking that record or taking it down too, so Replace leaves those
+     * products where they are - it clears the catalogue, not the books.
+     *
+     * ## Not every stock movement is a record of trade
+     *
+     * This used to protect a product for ANY row in td_stock_transactions, and that
+     * made Replace do nothing at all on a till that tracks stock. Opening stock writes
+     * a PURCHASE movement for every product the moment it is created (see
+     * StockDao.recordOpening), so every product ever added was protected by its own
+     * creation - a Replace on a real shop's till removed nothing and the catalogue
+     * only ever grew.
+     *
+     * SALE, RETURN and DAMAGE_WRITEOFF are records of trade and still protect. A bare
+     * PURCHASE or ADJUSTMENT is the product's own stock bookkeeping - what it opened
+     * at, and corrections the operator made to that - and belongs to the product the
+     * way its rates and its batches do. It goes when the product goes.
+     *
+     * A REAL purchase document is a different thing and still protects, through the
+     * td_purchase clause above - so nothing that was actually bought from a supplier
+     * is at risk here.
      *
      * A product whose *batch* is on a transaction counts as in use for the same
-     * reason: the batch cannot go, and a batch cannot outlive its product.
+     * reason: the batch cannot go, and a batch cannot outlive its product. That clause
+     * reads stock movements the same way and for the same reason - opening stock names
+     * the batch it opened, so counting every movement there protected every product
+     * through its own creation a second time, by the back door.
      *
      * Every branch excludes nulls deliberately. `id NOT IN (…)` is never true once
      * the list contains one, so a single null would quietly protect every product on
@@ -82,48 +116,103 @@ object ProductBulkImporter {
         UNION SELECT product_id FROM ${DatabaseHelper.Tables.TD_RETURN_ITEMS} WHERE product_id IS NOT NULL
         UNION SELECT product_id FROM ${DatabaseHelper.Tables.TD_PURCHASE} WHERE product_id IS NOT NULL
         UNION SELECT prod_id FROM ${DatabaseHelper.Tables.TD_WRITE_OFF} WHERE prod_id IS NOT NULL
-        UNION SELECT product_id FROM ${DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS} WHERE product_id IS NOT NULL
+        UNION SELECT product_id FROM ${DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS}
+               WHERE product_id IS NOT NULL
+                 AND transaction_type IN ('SALE', 'RETURN', 'DAMAGE_WRITEOFF')
         UNION SELECT product_id FROM ${DatabaseHelper.Tables.TD_KOT_ITEMS} WHERE product_id IS NOT NULL
         UNION SELECT b.product_id FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} b
                WHERE b.product_id IS NOT NULL AND (
                    b.id IN (SELECT batch_id FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} WHERE batch_id IS NOT NULL)
-                OR b.id IN (SELECT batch_id FROM ${DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS} WHERE batch_id IS NOT NULL)
+                OR b.id IN (SELECT batch_id FROM ${DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS}
+                             WHERE batch_id IS NOT NULL
+                               AND transaction_type IN ('SALE', 'RETURN', 'DAMAGE_WRITEOFF'))
                )
     """.trimIndent()
 
-    /** What a Replace would do: [removable] products cleared, [kept] held back. */
-    data class ReplaceCounts(val total: Int, val removable: Int, val kept: Int)
+    /**
+     * What a Replace would do: [removable] products cleared, [kept] held back.
+     *
+     * [removableNames] and [keptNames] carry the products BY NAME, up to
+     * [NAMES_LISTED] of each, so the alert shown before an upload can say which
+     * products it is about to override rather than only how many. A count tells an
+     * operator that something is going; a name tells them WHETHER IT SHOULD.
+     *
+     * Capped because the list is read on a dialog, and a shop with four hundred
+     * products would otherwise build a message nobody can read past. The counts are
+     * always the true totals - only the naming is trimmed.
+     */
+    data class ReplaceCounts(
+        val total: Int,
+        val removable: Int,
+        val kept: Int,
+        val removableNames: List<String> = emptyList(),
+        val keptNames: List<String> = emptyList()
+    )
+
+    /** How many products the override alert names before it says "and N more". */
+    const val NAMES_LISTED = 12
 
     /**
-     * How many products a Replace would clear, and how many it would have to keep.
+     * What a Replace would do to THIS till - counts, and the products by name.
      *
-     * Read before the operator confirms, so the warning states what will actually
+     * Read before the operator confirms, so the alert states what will actually
      * happen on this till rather than promising a clean sweep it cannot deliver.
      */
     fun replaceCounts(context: Context): ReplaceCounts {
         val db = DatabaseHelper.getInstance(context).readableDatabase
         fun count(sql: String): Int = db.rawQuery(sql, null).use { c -> c.moveToFirst(); c.getInt(0) }
+        fun names(where: String): List<String> = db.rawQuery(
+            "SELECT product_name FROM ${DatabaseHelper.Tables.MD_PRODUCTS} " +
+                "WHERE $where ORDER BY id ASC LIMIT ${NAMES_LISTED + 1}",
+            null
+        ).use { c ->
+            buildList { while (c.moveToNext()) c.getString(0)?.takeIf { it.isNotBlank() }?.let { add(it) } }
+        }
+
         val total = count("SELECT count(*) FROM ${DatabaseHelper.Tables.MD_PRODUCTS}")
         val kept = count(
             "SELECT count(*) FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE id IN ($SQL_PRODUCTS_IN_USE)"
         )
-        return ReplaceCounts(total = total, removable = total - kept, kept = kept)
+        return ReplaceCounts(
+            total = total,
+            removable = total - kept,
+            kept = kept,
+            removableNames = names("id NOT IN ($SQL_PRODUCTS_IN_USE)"),
+            keptNames = names("id IN ($SQL_PRODUCTS_IN_USE)")
+        )
     }
 
     /**
-     * Clears every product the till is free to forget, with its rates and its stock.
+     * Clears every product the till is free to forget, with its rates, its stock and
+     * its names.
      *
      * Runs inside the caller's transaction, before the new rows go in, so a sheet
      * that fails to import leaves the old catalogue standing rather than wiping it
      * and putting nothing in its place.
      *
+     * EVERY child table that points at md_products has to be listed here. Foreign keys
+     * are enforced, so one that is missed does not leave an orphan - it fails the
+     * delete, rolls the whole transaction back, and the upload imports nothing at all.
+     * That is what md_product_names did: the regional-name table was added later and
+     * never added here, so any till where a single product had been given a name in
+     * the shop's own language could not run a Replace. It went unnoticed while Replace
+     * was one of two choices and Append was the default.
+     *
      * @return how many products were removed
      */
     private fun clearProducts(db: SQLiteDatabase): Int {
         val doomed = "SELECT id FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE id NOT IN ($SQL_PRODUCTS_IN_USE)"
-        // Children first: both point at md_products, and foreign keys are enforced.
+        // Children first: all of these point at md_products, and foreign keys are
+        // enforced. A name belongs to its product exactly as its rates and batches do,
+        // and goes with it.
+        // The stock movements first, because they point at the batches as well as at
+        // the product. These can only be the product's own opening stock and
+        // adjustments - anything that reached a customer keeps its product alive and
+        // out of [doomed] entirely, see SQL_PRODUCTS_IN_USE.
+        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS} WHERE product_id IN ($doomed)")
         db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} WHERE product_id IN ($doomed)")
         db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} WHERE product_id IN ($doomed)")
+        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_PRODUCT_NAMES} WHERE product_id IN ($doomed)")
         val removed = db.rawQuery("SELECT count(*) FROM ($doomed)", null)
             .use { c -> c.moveToFirst(); c.getInt(0) }
         db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE id NOT IN ($SQL_PRODUCTS_IN_USE)")
@@ -238,22 +327,29 @@ object ProductBulkImporter {
                 val name = (r["product_name"] ?: r["item_name"]).orEmpty().trim()
                 if (name.isBlank()) { skipped++; continue }
 
-                // BY ID FIRST - the plain number md_products.category_id holds, so
-                // nothing has to be resolved or matched. Then the "DEPT007" code, and
-                // then the older `category` NAME column, which is the only one of the
-                // three that can still create the department it names: an id and a
-                // code are both row ids, and there is no such thing as inventing one.
-                // An id or code this till has no department for leaves the product
-                // uncategorised and is counted for the report at the end.
+                // BY NAME FIRST - what the sheet's CATEGORY_NAME column carries and
+                // what a person filling it in can actually read and check. Then the
+                // plain id, then the "DEPT007" code, for sheets filled in against
+                // previous templates.
+                //
+                // The NAME is the only one of the three that can create the department
+                // it names; an id and a code are both row ids, and there is no such
+                // thing as inventing one, so an id or code this till has no department
+                // for leaves the product uncategorised and is counted for the report at
+                // the end. That is the trade named in ProductCsvTemplate's own note on
+                // the column: a misspelt name makes a category rather than failing
+                // loudly, and the upload preview lists every category it is about to
+                // create so the typo is visible before anything is written.
+                val nameCell = categoryNameOf(r)
                 val idCell = r[ProductCsvTemplate.CATEGORY_ID_COLUMN]?.trim().orEmpty()
                 val codeCell = r[ProductCsvTemplate.CATEGORY_CODE_COLUMN]?.trim().orEmpty()
                 val categoryId = when {
+                    nameCell != null -> categoryIdFor(db, nameCell, storeId, categoryIds)
                     idCell.isNotEmpty() -> categoryIdForId(db, idCell, categoryCodeIds)
                         .also { if (it == null) unknownCategoryIds++ }
                     codeCell.isNotEmpty() -> categoryIdForCode(db, codeCell, categoryCodeIds)
                         .also { if (it == null) unknownCategoryCodes++ }
-                    else -> r["category"]?.trim()?.takeIf { it.isNotEmpty() }
-                        ?.let { categoryIdFor(db, it, storeId, categoryIds) }
+                    else -> null
                 }
 
                 // The id the sheet asks this product to be, where it asks for one and
@@ -616,6 +712,19 @@ object ProductBulkImporter {
     /** The shop's own name for this row's product, or null where it gives none. */
     fun regionalNameOf(row: Map<String, String>): String? =
         cell(row, *REGIONAL_NAME_COLUMNS.toTypedArray())
+
+    /**
+     * The headings a sheet may name its department under.
+     *
+     * `CATEGORY_NAME` is the current template's; `category` is what the template
+     * carried before the column ever became an id, and a shop that has been filling
+     * that sheet in for months should not have to rename a column to upload it.
+     */
+    val CATEGORY_NAME_COLUMNS = listOf(ProductCsvTemplate.CATEGORY_NAME_COLUMN, "category")
+
+    /** The department this row names, or null where it names none. */
+    fun categoryNameOf(row: Map<String, String>): String? =
+        cell(row, *CATEGORY_NAME_COLUMNS.toTypedArray())
 
     /** One way this product is sold: at [rate], under [unit] where it names one. */
     data class RateLine(val unit: String?, val rate: Double)

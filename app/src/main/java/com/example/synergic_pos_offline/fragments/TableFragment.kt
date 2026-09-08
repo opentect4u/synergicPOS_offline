@@ -128,7 +128,7 @@ class TableFragment : DataTableFragment() {
                 else remaining.toString()
             )
         }
-        actSection.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, sections.map { it.name }))
+        actSection.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, sections.map { it.name }))
         actSection.setOnItemClickListener { _, _, pos, _ ->
             val s = sections[pos]
             actSection.tag = s.id
@@ -157,7 +157,7 @@ class TableFragment : DataTableFragment() {
         etTo.addTextChangedListener { recalc() }
 
         val waiters = dao.waiters()
-        actWaiter.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, waiters.map { it.name }))
+        actWaiter.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, waiters.map { it.name }))
         actWaiter.setOnItemClickListener { _, _, pos, _ -> actWaiter.tag = waiters[pos].id }
 
         ThemeManager.applyTheme(view)
@@ -210,7 +210,7 @@ class TableFragment : DataTableFragment() {
         // Editable waiter for this group (prefilled with the group's waiter).
         val actWaiter = view.findViewById<MaterialAutoCompleteTextView>(R.id.actUnitsWaiter)
         val waiterOptions = dao.waiters()
-        actWaiter.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, waiterOptions.map { it.name }))
+        actWaiter.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, waiterOptions.map { it.name }))
         actWaiter.setOnItemClickListener { _, _, pos, _ -> actWaiter.tag = waiterOptions[pos].id }
         if (groupWaiterId != null) {
             actWaiter.tag = groupWaiterId
@@ -248,7 +248,7 @@ class TableFragment : DataTableFragment() {
             val r = LayoutInflater.from(ctx).inflate(R.layout.item_table_unit, container, false)
             r.findViewById<TextView>(R.id.etUnitCode).text = prefill?.tableCode.orEmpty()
             r.findViewById<AutoCompleteTextView>(R.id.actUnitStatus).apply {
-                setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, statuses))
+                setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, statuses))
                 threshold = 0
                 keyListener = null
                 // ITS ACTUAL STATUS, even one this dropdown does not offer.

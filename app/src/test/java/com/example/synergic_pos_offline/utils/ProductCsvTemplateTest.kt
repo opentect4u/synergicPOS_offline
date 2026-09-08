@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.utils
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,27 +33,49 @@ class ProductCsvTemplateTest {
     }
 
     /**
-     * The two ids lead the sheet - which product this is, and which department it
-     * belongs to, before anything the row merely says about it.
+     * What the row IS leads the sheet - which product this is, and which department it
+     * belongs to - before anything the row merely says about it.
      */
     @Test
-    fun theSheetLeadsWithTheTwoIds() {
+    fun theSheetLeadsWithIdentity() {
         assertEquals(
-            listOf("PRODUCT_ID", "PRODUCT_NAME", "PRODUCT_UNI_NAME", "CATEGORY_ID"),
+            listOf("PRODUCT_ID", "PRODUCT_NAME", "PRODUCT_UNI_NAME", "CATEGORY_NAME"),
             ProductCsvTemplate.header.take(4)
         )
     }
 
-    /** Both id columns hold plain numbers - 1, 2, 3, 4 - not codes to decode. */
+    /**
+     * The product id is a plain number; the category is a WORD.
+     *
+     * The category column carried an id for a while, which is exact and unreadable: a
+     * spreadsheet column of 1, 2, 3 cannot be filled in or checked without the Category
+     * master open beside it. This pins the split - the id stays an id, the department
+     * became something a person can type.
+     */
     @Test
-    fun theSampleIdsArePlainNumbers() {
+    fun theProductIdIsANumberAndTheCategoryIsAName() {
         val product = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.PRODUCT_ID_COLUMN.uppercase())
-        val category = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.CATEGORY_ID_COLUMN.uppercase())
+        val category = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.CATEGORY_NAME_COLUMN.uppercase())
         ProductCsvTemplate.sampleRows.forEach { row ->
             val cells = row.split(",")
             assertTrue("not a product id in: $row", cells[product].toIntOrNull() != null)
-            assertTrue("not a category id in: $row", cells[category].toIntOrNull() != null)
+            assertTrue("the category is blank in: $row", cells[category].isNotBlank())
+            assertTrue("the category is still a number in: $row", cells[category].toIntOrNull() == null)
         }
+    }
+
+    /**
+     * Products in the same department name it identically.
+     *
+     * The point of a name over an id: it repeats as the same WORD, so a mistyped one
+     * shows up in the spreadsheet. Three of the samples share a department, and if this
+     * ever drifts the template is teaching operators to create duplicate categories.
+     */
+    @Test
+    fun productsInOneDepartmentNameItTheSameWay() {
+        val at = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.CATEGORY_NAME_COLUMN.uppercase())
+        val names = ProductCsvTemplate.sampleRows.map { it.split(",")[at] }
+        assertEquals(listOf("Chinese", "Chinese", "Chinese", "Sauces", "Beverages"), names)
     }
 
     /**
@@ -108,16 +131,59 @@ class ProductCsvTemplateTest {
     }
 
     /**
-     * The sample sheet actually demonstrates the regional name column.
+     * The sample sheet demonstrates the regional name column IN THE TILL'S OWN
+     * LANGUAGE.
      *
      * A column shown blank on every example row teaches nobody what goes in it - and
-     * the regional name is the one column whose format is not obvious from its heading.
+     * the regional name is the one column whose format is not obvious from its
+     * heading. It used to be hard-coded Marathi, so a shop working in Hindi opened a
+     * template written in a script they do not use.
      */
     @Test
-    fun everySampleRowShowsARegionalName() {
+    fun everySampleRowShowsARegionalNameInTheChosenLanguage() {
         val at = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.REGIONAL_NAME_COLUMN.uppercase())
-        ProductCsvTemplate.sampleRows.forEach { row ->
-            assertTrue("no regional name shown in: $row", row.split(",")[at].isNotBlank())
+        val english = ProductCsvTemplate.header.indexOf("PRODUCT_NAME")
+        ProductCsvTemplate.sampleRows(PrintLanguage.Language.HINDI).forEach { row ->
+            val cells = row.split(",")
+            assertTrue("no regional name shown in: $row", cells[at].isNotBlank())
+            assertNotEquals("still the English name in: $row", cells[english], cells[at])
+        }
+    }
+
+    /**
+     * The language column names the till's language, on the first row only.
+     *
+     * One answer is all a sheet needs - see ProductCsvTemplate.REGIONAL_LANGUAGE_COLUMN
+     * - and filling every row would teach the operator to repeat it.
+     */
+    @Test
+    fun theFirstRowAloneNamesTheChosenLanguage() {
+        val at = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.REGIONAL_LANGUAGE_COLUMN)
+        val rows = ProductCsvTemplate.sampleRows(PrintLanguage.Language.HINDI)
+        assertEquals(PrintLanguage.Language.HINDI.englishName, rows.first().split(",")[at])
+        rows.drop(1).forEach {
+            assertEquals("only the first row names the language", "", it.split(",")[at])
+        }
+    }
+
+    /**
+     * On an English till both language cells stay empty - and that is the right sheet,
+     * not a gap.
+     *
+     * English is the absence of a regional name, so an English shop's own file has
+     * that column present and unfilled. Naming a language there would set one on the
+     * next upload.
+     */
+    @Test
+    fun anEnglishTillGetsAnEmptyRegionalPair() {
+        val name = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.REGIONAL_NAME_COLUMN.uppercase())
+        val lang = ProductCsvTemplate.header.indexOf(ProductCsvTemplate.REGIONAL_LANGUAGE_COLUMN)
+        ProductCsvTemplate.sampleRows(PrintLanguage.Language.ENGLISH).forEachIndexed { i, row ->
+            val cells = row.split(",")
+            assertEquals("row $i named a language", "", cells[lang])
+            // The English name passes through untranslated, so the cell holds the
+            // product's own name rather than a second script.
+            assertEquals(cells[ProductCsvTemplate.header.indexOf("PRODUCT_NAME")], cells[name])
         }
     }
 }

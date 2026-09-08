@@ -490,7 +490,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             .mapNotNull { it.cells.getOrNull(index)?.takeIf { cell -> cell.isNotBlank() } }
             .distinct()
             .sortedBy { it.lowercase() }
-        act.setAdapter(ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, values))
+        act.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(requireContext(), values))
         act.setText(filterValue.takeIf { it in values } ?: allFilterValues, false)
         act.setOnItemClickListener { _, _, pos, _ ->
             filterValue = values[pos]

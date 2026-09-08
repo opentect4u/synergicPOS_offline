@@ -42,9 +42,16 @@ object ProductCsvExport {
         val rates = DatabaseHelper.Tables.MD_PRODUCT_RATES
         val units = DatabaseHelper.Tables.MD_UNITS
         val batches = DatabaseHelper.Tables.MD_BATCH_STOCK
+        val categories = DatabaseHelper.Tables.MD_CATEGORY
 
         return """
-            SELECT p.id AS product_id, p.category_id, p.product_name, p.hsn_code, p.bar_code,
+            SELECT p.id AS product_id,
+                   -- The department's NAME, not its id - what the sheet's CATEGORY_NAME
+                   -- column carries and what the upload reads back. An uncategorised
+                   -- product exports a blank cell rather than a number standing for
+                   -- nothing.
+                   COALESCE(c.category_name, '') AS category_name,
+                   p.product_name, p.hsn_code, p.bar_code,
                    r.rate, u.unit_symbol,
                    r.cgst_rate, r.sgst_rate, r.igst_rate, r.vat_rate,
                    r.discount, COALESCE(r.sell_price, r.sale_price) AS selling_price,
@@ -60,6 +67,7 @@ object ProductCsvExport {
             FROM $products p
             LEFT JOIN $rates r ON r.product_id = p.id
             LEFT JOIN $units u ON u.id = r.unit_id
+            LEFT JOIN $categories c ON c.id = p.category_id
             ORDER BY p.id ASC, r."default" DESC, r.id ASC
         """.trimIndent()
     }
@@ -103,8 +111,12 @@ object ProductCsvExport {
         val out = mutableListOf(ProductCsvTemplate.columns(context))
         val slots = ProductCsvTemplate.RATE_SLOTS
         val units = ProductCsvTemplate.header.indexOf("UNIT_1")
+        // The language the Products master is showing - the one picked in the dropdown
+        // at the top of that screen. Read once for the whole file, since it is a
+        // setting and cannot change half way down a download.
+        val language = AppLanguage.of(context)
         DatabaseHelper.getInstance(context).readableDatabase
-            .rawQuery(sql(), arrayOf(AppLanguage.of(context).code)).use { c ->
+            .rawQuery(sql(), arrayOf(language.code)).use { c ->
                 fun text(name: String): String =
                     c.getColumnIndex(name).let { if (it < 0 || c.isNull(it)) "" else c.getString(it) }
 
@@ -132,10 +144,27 @@ object ProductCsvExport {
                         // A quantity is written as a person would write it: the raw
                         // column hands over "12.0", and a sheet full of those invites
                         // the operator to "fix" every line.
+                        // WHAT THE SCREEN SHOWS, in the language the screen is on.
+                        //
+                        // The saved name wins - that is the shop's own word for this
+                        // product and nothing should overwrite it. Where there is
+                        // none, the same translation the Products table puts in its
+                        // Regional Name column is written instead, rather than an
+                        // empty cell.
+                        //
+                        // This is what was wrong: the download read md_product_names
+                        // and nothing else, so a catalogue that read perfectly well in
+                        // Hindi on screen came out with a blank PRODUCT_UNI_NAME on
+                        // every row nobody had typed a name for by hand. The operator
+                        // picked a language on that page, downloaded, and got a file
+                        // that showed no sign of it.
+                        val english = text("product_name")
+                        val regional = text("regional_name")
+                            .ifBlank { ProductName.inPrintLanguage(language, english) }
                         line = (
                             listOf(
-                                id.toString(), text("product_name"),
-                                text("regional_name"), text("category_id")
+                                id.toString(), english,
+                                regional, text("category_name")
                             ) +
                                 List(slots * 2) { "" } +
                                 listOf(
@@ -144,7 +173,7 @@ object ProductCsvExport {
                                     num("discount"), if (withStock) num("stock") else "",
                                     text("hsn_code"), text("bar_code"),
                                     num("purchase_price"), num("selling_price"),
-                                    if (firstProduct) AppLanguage.of(context).englishName else ""
+                                    if (firstProduct) language.englishName else ""
                                 )
                             ).toMutableList()
                         out.add(line)

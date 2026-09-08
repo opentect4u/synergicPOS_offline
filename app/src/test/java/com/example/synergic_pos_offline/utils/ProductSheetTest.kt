@@ -15,30 +15,73 @@ import org.junit.Test
  */
 class ProductSheetTest {
 
-    /** The template as the upload actually receives it - headings lower-cased. */
+    /**
+     * The template as the upload actually receives it - headings lower-cased, and
+     * filled in for a till working in Hindi.
+     *
+     * A language has to be named because the two regional cells are no longer written
+     * into the sample strings: they are filled in for whatever language the till is
+     * on, which is the whole point of the template being an example of THIS shop's
+     * sheet. Hindi rather than English, so the regional name is actually populated and
+     * there is something to read back.
+     */
     private fun parsedTemplate(): List<Map<String, String>> = CsvUtils.parse(
-        (listOf(ProductCsvTemplate.header.joinToString(",")) + ProductCsvTemplate.sampleRows)
-            .joinToString("\n")
+        (
+            listOf(ProductCsvTemplate.header.joinToString(",")) +
+                ProductCsvTemplate.sampleRows(PrintLanguage.Language.HINDI)
+            ).joinToString("\n")
     )
 
     /**
-     * The two id columns are read back as the plain numbers they hold.
+     * The id and the department are read back as the sheet writes them.
      *
-     * The point of the pair, checked through the parse rather than off the header: the
-     * heading the sheet writes and the key the importer looks up have to be the same
-     * word, and a mismatch there reads as an empty cell rather than as an error.
+     * Checked through the parse rather than off the header: the heading the sheet
+     * writes and the key the importer looks up have to be the same word, and a
+     * mismatch there reads as an empty cell rather than as an error.
      */
     @Test
-    fun bothIdColumnsAreReadBack() {
+    fun theIdAndTheDepartmentAreReadBack() {
         val rows = parsedTemplate()
         assertEquals(listOf("1", "2", "3", "4", "5"), rows.map { it[ProductCsvTemplate.PRODUCT_ID_COLUMN] })
-        assertEquals(listOf("1", "1", "1", "2", "3"), rows.map { it[ProductCsvTemplate.CATEGORY_ID_COLUMN] })
+        assertEquals(
+            listOf("Chinese", "Chinese", "Chinese", "Sauces", "Beverages"),
+            rows.map { ProductBulkImporter.categoryNameOf(it) }
+        )
     }
 
-    /** The name column is read back, under the heading the sheet gives it. */
+    /**
+     * The department heading the PREVIOUS template used is still read.
+     *
+     * A shop that has been filling in a sheet headed `category` for months should not
+     * have to rename a column to upload it.
+     */
+    @Test
+    fun theOlderCategoryHeadingIsStillRead() {
+        val old = CsvUtils.parse("product_name,category\nTea,Beverages")
+        assertEquals("Beverages", ProductBulkImporter.categoryNameOf(old[0]))
+    }
+
+    /** A row naming no department says so, rather than saying "". */
+    @Test
+    fun noDepartmentReadsAsNone() {
+        assertNull(ProductBulkImporter.categoryNameOf(CsvUtils.parse("product_name\nTea")[0]))
+    }
+
+    /**
+     * The name column is read back, under the heading the sheet gives it - and it
+     * carries the till's own language rather than a fixed one.
+     *
+     * Checked against what the template itself generated rather than against a literal
+     * string: the point is that the cell the template WRITES is the cell the importer
+     * READS, whichever language produced it.
+     */
     @Test
     fun theSheetsOwnRegionalNameHeadingIsRead() {
-        assertEquals("जिंजर क्रिस्पी", ProductBulkImporter.regionalNameOf(parsedTemplate()[0]))
+        val nameAt = ProductCsvTemplate.header
+            .indexOf(ProductCsvTemplate.REGIONAL_NAME_COLUMN.uppercase())
+        val written = ProductCsvTemplate.sampleRows(PrintLanguage.Language.HINDI)[0].split(",")[nameAt]
+        assertTrue("the template wrote no regional name to read back", written.isNotBlank())
+        assertEquals(written, ProductBulkImporter.regionalNameOf(parsedTemplate()[0]))
     }
 
     /** And so is the heading the previous template used, so an old file still imports. */

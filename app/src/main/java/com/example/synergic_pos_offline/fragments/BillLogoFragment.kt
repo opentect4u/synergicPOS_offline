@@ -148,7 +148,7 @@ class BillLogoFragment : DataTableFragment() {
         pendingImageBytes = existing?.id?.toLongOrNull()?.let { dao.getImage(it) }
         pendingImageBytes?.let { showPreview(ivImage, it) }
 
-        actvType.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, myTypes.map { it.label }))
+        actvType.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, myTypes.map { it.label }))
         tvTitle.text = if (existing == null) "Add Logo" else "Edit Logo"
         actvType.setText(
             existing?.cells?.getOrNull(COL_TYPE) ?: myTypes.first().label, false

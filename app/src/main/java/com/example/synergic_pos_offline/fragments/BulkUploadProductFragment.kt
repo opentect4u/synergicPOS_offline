@@ -8,7 +8,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
-import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,9 +29,22 @@ import com.google.android.material.button.MaterialButton
  *
  * The operator downloads an Excel template to see the structure, fills it in a
  * spreadsheet, and uploads it — every row becomes a product, under the department
- * its CATEGORY_ID names. A preview is shown before anything is written, and it is there
- * that the operator says whether to add to the products already on the till or
- * replace them.
+ * its CATEGORY_ID names. A preview is shown before anything is written.
+ *
+ * ## The sheet IS the product list
+ *
+ * An upload REPLACES the catalogue. The till ends up holding what the file holds:
+ * upload a sheet of four items over a till of three and the till has those four.
+ *
+ * There used to be an Append/Replace choice here, defaulting to Append. It made every
+ * upload a decision, and the wrong answer is not one the operator can undo from the
+ * till - Append quietly doubled a catalogue that was meant to be corrected and
+ * re-uploaded. One outcome, stated on the preview and confirmed once, is the honest
+ * reading of what "upload my product list" means.
+ *
+ * A product that has been SOLD is still kept, because deleting it would take the
+ * bills it appears on with it - see [ProductBulkImporter.replaceCounts], which is
+ * what the confirmation counts.
  *
  * There is no category to pick on this page: one upload can carry the whole
  * catalogue, and a sheet holding twenty categories cannot be filed under a single
@@ -198,8 +210,15 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         // called out before the import, not after: they will be created, and that is
         // worth seeing while Cancel is still on screen - a misspelt "Diary" reads as
         // a new category rather than as the mistake it is.
-        val newCategories =
-            unknownNames(rows, "category", ProductBulkImporter.knownCategoryNames(ctx))
+        // Read through the importer, under every heading it accepts, so the preview
+        // names the categories the upload will ACTUALLY create. It read only the old
+        // `category` heading, so once the sheet's column became CATEGORY_NAME the
+        // preview promised nothing and the departments appeared without warning.
+        val knownCategories = ProductBulkImporter.knownCategoryNames(ctx)
+        val newCategories = rows
+            .mapNotNull { ProductBulkImporter.categoryNameOf(it) }
+            .distinctBy { it.lowercase() }
+            .filter { it.lowercase() !in knownCategories }
         // Read through the importer, so the units the preview promises to create are
         // the ones it will actually create - whichever heading the sheet used.
         val knownUnits = ProductBulkImporter.knownUnitNames(ctx)
@@ -209,7 +228,7 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
             .filter { it.lowercase() !in knownUnits }
         // A row that names no category imports uncategorised rather than being
         // filed under a guess - the page no longer asks for one to guess with.
-        val uncategorised = rows.count { it["category"].orEmpty().isBlank() }
+        val uncategorised = rows.count { ProductBulkImporter.categoryNameOf(it) == null }
         // What the sheet's stock column is about to do, said before it does it. Only
         // a till that tracks stock opens a count from it, and on one that does not
         // the figures are quietly dropped - which is worth saying out loud, since an
@@ -279,11 +298,10 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         }
 
         view.findViewById<MaterialButton>(R.id.btnPreviewCancel).setOnClickListener { dialog.dismiss() }
+        // ALWAYS A REPLACE. The sheet IS the product list after an upload - the till
+        // holds what the file holds and nothing else. See [ProductBulkImporter.Mode].
         view.findViewById<MaterialButton>(R.id.btnPreviewSubmit).setOnClickListener {
-            val replace = view.findViewById<RadioGroup>(R.id.rgImportMode)
-                .checkedRadioButtonId == R.id.rbImportReplace
-            if (replace) confirmReplace(ctx) { runImport(ctx, rows, dialog, ProductBulkImporter.Mode.REPLACE) }
-            else runImport(ctx, rows, dialog, ProductBulkImporter.Mode.APPEND)
+            confirmReplace(ctx) { runImport(ctx, rows, dialog) }
         }
 
         ThemeManager.applyTheme(view)
@@ -292,42 +310,86 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
 
 
     /**
-     * Asks once more before a Replace, stating what it will actually do to *this*
-     * till - how many products go, and how many cannot.
+     * Asks once before the upload, stating what it will actually do to *this* till -
+     * which products go, and which cannot.
      *
-     * Deleting the catalogue is not something the operator can undo from the till,
-     * and "Replace" chosen among radio buttons is easier to pick by accident than to
-     * recover from, so the count is put in front of them before it happens. A till
-     * with nothing on it yet is not worth stopping for.
+     * This is now the ONLY thing standing between the button and the catalogue, since
+     * the mode is no longer a choice - so it names real products off this till rather
+     * than describing replacement in general. Deleting the catalogue is not something
+     * the operator can undo from here.
+     *
+     * A till with nothing on it yet is not worth stopping for: there is nothing to
+     * lose, and a confirmation that always says "0 products" trains people to tap
+     * through the one that matters.
      */
     private fun confirmReplace(ctx: android.content.Context, onConfirm: () -> Unit) {
         val counts = ProductBulkImporter.replaceCounts(ctx)
         if (counts.total == 0) { onConfirm(); return }
 
-        val kept = if (counts.kept > 0) {
-            "\n\n${counts.kept} product(s) already on a bill, return or stock entry will be " +
-                "kept - removing them would break those records."
-        } else ""
         DialogUtils.showConfirm(
             context = ctx,
-            title = "Replace all products?",
-            message = "This removes ${counts.removable} product(s) from this till, " +
-                "with their rates and stock, and then imports the sheet.$kept",
-            positiveText = "Replace",
+            title = "These products will be overridden",
+            message = overrideReport(counts),
+            positiveText = "Confirm & Upload",
             negativeText = "Cancel",
             destructive = true,
+            // A column of product names, not a sentence - see [DialogUtils.showConfirm].
+            messageStart = true,
             onConfirm = onConfirm
         )
+    }
+
+    /**
+     * The override report: which products this upload takes off the till, and which
+     * it cannot.
+     *
+     * BY NAME, not by count. "This removes 9 product(s)" is a number an operator can
+     * only agree to on trust - they cannot tell from it whether the sheet they are
+     * about to upload is the right one, and the mistake is only visible afterwards,
+     * when the catalogue is already gone. Reading "Coffee, Tea, Sugar" is what makes
+     * it possible to notice that the wrong file was picked while Cancel is still on
+     * screen.
+     *
+     * The KEPT list is the other half and matters just as much: those products stay
+     * whatever the sheet says, because they are on a bill or a stock record and
+     * deleting them would take those records with them. An operator who expects the
+     * sheet to be the whole catalogue needs to see the ones that will still be there
+     * beside it - otherwise the upload "did not work" and nothing said why.
+     *
+     * Both lists are trimmed to [ProductBulkImporter.NAMES_LISTED] with the remainder
+     * counted, so a long catalogue still produces a message that can be read.
+     */
+    private fun overrideReport(counts: ProductBulkImporter.ReplaceCounts): String {
+        fun listed(names: List<String>, total: Int): String {
+            val shown = names.take(ProductBulkImporter.NAMES_LISTED)
+            val more = total - shown.size
+            return shown.joinToString("\n") { "  • $it" } +
+                if (more > 0) "\n  • …and $more more" else ""
+        }
+
+        return buildString {
+            append("The sheet you are uploading becomes the whole product list.")
+            if (counts.removable > 0) {
+                append("\n\nRemoved from this till (${counts.removable}), with their rates and stock:\n")
+                append(listed(counts.removableNames, counts.removable))
+            }
+            if (counts.kept > 0) {
+                append("\n\nKEPT (${counts.kept}) - these are on a bill, return or stock record, ")
+                append("and removing them would break those records:\n")
+                append(listed(counts.keptNames, counts.kept))
+                append("\n\nThey will still be in the product list after the upload.")
+            }
+            append("\n\nThis cannot be undone.")
+        }
     }
 
     /** Runs the import, closes the preview and reports what happened. */
     private fun runImport(
         ctx: android.content.Context,
         rows: List<Map<String, String>>,
-        preview: AlertDialog,
-        mode: ProductBulkImporter.Mode
+        preview: AlertDialog
     ) {
-        val result = ProductBulkImporter.import(ctx, rows, mode)
+        val result = ProductBulkImporter.import(ctx, rows, ProductBulkImporter.Mode.REPLACE)
         preview.dismiss()
         val summary = buildString {
             append("${result.imported} product(s) uploaded successfully.")

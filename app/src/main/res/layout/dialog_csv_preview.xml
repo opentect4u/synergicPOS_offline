@@ -46,38 +46,28 @@
             android:padding="12dp"
             android:background="@drawable/bg_import_mode">
 
+            <!-- ONE OUTCOME, STATED - not a choice to make.
+                 The upload replaces the catalogue, so this says so plainly instead of
+                 offering an Append/Replace pair. A radio group here was a decision the
+                 operator had to take on every upload, and picking the wrong one is not
+                 something they can undo from the till. -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Existing products"
+                android:text="Existing products will be replaced"
                 android:textSize="13sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_main" />
 
-            <RadioGroup
-                android:id="@+id/rgImportMode"
+            <TextView
+                android:id="@+id/tvImportMode"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:orientation="vertical">
-
-                <RadioButton
-                    android:id="@+id/rbImportAppend"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:checked="true"
-                    android:text="Append — keep what is on the till and add these"
-                    android:textSize="14sp"
-                    android:textColor="@color/text_main" />
-
-                <RadioButton
-                    android:id="@+id/rbImportReplace"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Replace — remove the existing products first"
-                    android:textSize="14sp"
-                    android:textColor="@color/text_main" />
-            </RadioGroup>
+                android:layout_marginTop="4dp"
+                android:lineSpacingExtra="2dp"
+                android:text="The products on this till are removed, and this sheet becomes the whole product list."
+                android:textSize="13sp"
+                android:textColor="@color/text_secondary" />
         </LinearLayout>
 
         <!-- Full uploaded table: scrolls both ways. Header + rows are built in code

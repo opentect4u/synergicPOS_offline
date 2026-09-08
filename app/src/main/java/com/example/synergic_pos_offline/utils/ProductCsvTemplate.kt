@@ -45,20 +45,47 @@ object ProductCsvTemplate {
     const val PRODUCT_ID_COLUMN = "product_id"
 
     /**
+     * The heading a row names its category under: the department's NAME.
+     *
+     * "Dairy", "Beverages" - what the Category/Department master calls it and what the
+     * operator filling the sheet in actually knows. This is the column on the
+     * handed-out sheet and the first one read.
+     *
+     * ## Why a name rather than the id
+     *
+     * The sheet carried the plain id for a while, on the reasoning that an id is exact
+     * where a name is not. It IS exact - and it is also unreadable. A spreadsheet
+     * column of 1, 2, 3 tells whoever is filling it in nothing about which department
+     * each row is going into, cannot be checked by eye against the file, and cannot be
+     * typed at all without the Category master open beside them to look each number
+     * up. A catalogue is edited by people, and the column has to say what it means.
+     *
+     * The trade is real and worth stating: a NAME CAN CREATE a department. A row
+     * naming one this till does not have gets that department made for it, so a
+     * misspelt "Diary" quietly becomes a second category rather than landing in the
+     * one that was meant. The upload's preview names every category it is about to
+     * create, before anything is written, which is where a typo is caught - see
+     * BulkUploadProductFragment.
+     *
+     * Matching is case-insensitive and trimmed, so "dairy " lands in "Dairy".
+     * [CATEGORY_ID_COLUMN], [CATEGORY_CODE_COLUMN] and the older `category` heading
+     * are all still read after this one, for files filled in against previous
+     * templates.
+     */
+    const val CATEGORY_NAME_COLUMN = "category_name"
+
+    /**
      * The heading a row names its category under by ID - 1, 2, 3, 4.
      *
-     * The Category/Department master's row id, plainly. It is what
-     * `md_products.category_id` actually holds, so a sheet naming it needs nothing
-     * resolved, decoded or matched - the number on the sheet is the number stored.
+     * NOT ON THE HANDED-OUT SHEET any more - [CATEGORY_NAME_COLUMN] carries the
+     * department now, because a number is not something a person can fill in or check.
+     * This is still READ, after that one, so a file filled in against the previous
+     * template still lands its products in the right department.
      *
-     * This is the column to fill in, and the first one read. [CATEGORY_CODE_COLUMN]
-     * ("DEPT007") and the older `category` name column are still read after it, for
-     * files filled in against previous templates.
-     *
-     * An id can only REFER to a category, never create one - so an id this till has no
-     * department for leaves the product uncategorised and is counted for the operator,
-     * rather than inventing a department numbered to match. Set the departments up
-     * first, then upload against their ids; the Category master shows each one's.
+     * It is what `md_products.category_id` actually holds, so a sheet naming it needs
+     * nothing resolved or matched - but an id can only REFER to a category, never
+     * create one, so an id this till has no department for leaves the product
+     * uncategorised and is counted for the operator.
      */
     const val CATEGORY_ID_COLUMN = "category_id"
 
@@ -191,13 +218,17 @@ object ProductCsvTemplate {
      * rate is not a price this shop sells at, whatever its unit cell says, and a
      * priced slot with no unit is still a price and still imports.
      *
-     * ## PRODUCT_ID and CATEGORY_ID
+     * ## PRODUCT_ID and CATEGORY_NAME
      *
-     * The two ids lead, because they are what the row IS rather than what it says:
-     * which product this is, and which department it belongs to. Both are plain
-     * numbers - 1, 2, 3, 4 - the same ones the Products and Category screens show, and
-     * the same ones the database stores. See [PRODUCT_ID_COLUMN] and
-     * [CATEGORY_ID_COLUMN] for what each does on the way back in.
+     * The two lead, because they are what the row IS rather than what it says: which
+     * product this is, and which department it belongs to.
+     *
+     * PRODUCT_ID is a plain number - 1, 2, 3, 4 - the same one the Products screen
+     * shows and the database stores. CATEGORY is the department's NAME rather than its
+     * number, because that column is filled in and checked by a person: a column of
+     * bare ids cannot be read, and cannot be typed without the Category master open
+     * beside the spreadsheet. See [PRODUCT_ID_COLUMN] and [CATEGORY_NAME_COLUMN] for
+     * what each does on the way back in, and what naming a department costs.
      *
      * ## PRODUCT_IGST is the addition
      *
@@ -211,7 +242,7 @@ object ProductCsvTemplate {
     val header: List<String> =
         listOf(
             PRODUCT_ID_COLUMN.uppercase(), "PRODUCT_NAME",
-            REGIONAL_NAME_COLUMN.uppercase(), CATEGORY_ID_COLUMN.uppercase()
+            REGIONAL_NAME_COLUMN.uppercase(), CATEGORY_NAME_COLUMN.uppercase()
         ) +
             (1..RATE_SLOTS).map { "UNIT_$it" } +
             (1..RATE_SLOTS).map { "RATE_$it" } +
@@ -263,29 +294,71 @@ object ProductCsvTemplate {
      *
      * Between them they show what each column is for: a product sold three ways, one
      * sold two ways, ones sold a single way, a CGST/SGST pair, a lone IGST, a VAT
-     * line and an untaxed line. The language is named on the first row only, since one
-     * is all a sheet needs - see [REGIONAL_LANGUAGE_COLUMN] - while the regional name
-     * beside it is per product and filled in on every row.
+     * line and an untaxed line.
      *
      * The ids run 1, 2, 3, 4, 5 and the first three rows share one department, which is
      * what those two columns look like on a real sheet: [PRODUCT_ID_COLUMN] counts the
-     * rows, [CATEGORY_ID_COLUMN] repeats wherever products belong together.
+     * rows, [CATEGORY_NAME_COLUMN] repeats wherever products belong together - and it
+     * repeats as the same WORD, which is what makes a mistyped one visible in a
+     * spreadsheet where a mistyped number would not be.
      *
      * The unit cells are written as the symbols the Unit master holds, since that is
      * what someone filling this in by hand should write. A sheet exported from another
      * system often carries that system's unit ID there instead, and a whole number is
      * read as one - see [ProductBulkImporter.unitIdForSlot].
+     *
+     * ## The two language cells are left EMPTY here
+     *
+     * [REGIONAL_NAME_COLUMN] and [REGIONAL_LANGUAGE_COLUMN] are filled in by
+     * [sampleRows] (the Context one) against whatever language the till is on, not
+     * written into these strings. They used to be hard-coded Marathi, so a shop
+     * working in Hindi downloaded a template whose examples were in a script they do
+     * not use and whose language column said MARATHI - and uploading it unedited set
+     * the till to Marathi. A template is meant to be an example of THIS shop's sheet.
      */
     val sampleRows = listOf(
-        "1,GINGER CRISPY,जिंजर क्रिस्पी,1,PLT,HALF,,,220,120,,,2.5,2.5,,,0,100,21069099,8901234500011,150,220,MARATHI",
-        "2,VEG MANCHURIAN,व्हेज मंच्युरियन,1,PLT,HALF,QTR,,160,90,50,,2.5,2.5,,,0,100,21069099,,100,160,",
-        "3,PANEER CHILLY,पनीर चिली,1,PLT,,,,210,,,,,,5,,5,100,21069099,8901234500028,140,210,",
-        "4,SCHEZWAN SAUCE,शेझवान सॉस,2,PCS,,,,25,,,,,,,5,0,250,21039090,,18,25,",
-        "5,COLD DRINK,कोल्ड ड्रिंक,3,BTL,,,,40,,,,,,,,0,60,22021010,8901234500042,30,40,"
+        "1,GINGER CRISPY,,Chinese,PLT,HALF,,,220,120,,,2.5,2.5,,,0,100,21069099,8901234500011,150,220,",
+        "2,VEG MANCHURIAN,,Chinese,PLT,HALF,QTR,,160,90,50,,2.5,2.5,,,0,100,21069099,,100,160,",
+        "3,PANEER CHILLY,,Chinese,PLT,,,,210,,,,,,5,,5,100,21069099,8901234500028,140,210,",
+        "4,SCHEZWAN SAUCE,,Sauces,PCS,,,,25,,,,,,,5,0,250,21039090,,18,25,",
+        "5,COLD DRINK,,Beverages,BTL,,,,40,,,,,,,,0,60,22021010,8901234500042,30,40,"
     )
 
-    /** [sampleRows] as they stand - STOCK is one of the sheet's own columns now. */
-    private fun sampleRows(context: Context): List<String> = sampleRows
+    /**
+     * [sampleRows] with the two language cells filled in for THIS till.
+     *
+     * The regional name is written on every row, in the language picked at the top of
+     * the Products master - the same translation that screen shows in its Regional
+     * Name column, through the same [ProductName.inPrintLanguage] the download uses.
+     * So the example the operator opens is an example of their own sheet: it shows
+     * what goes in that column, in the script they actually read.
+     *
+     * The LANGUAGE is named on the first row only, since one is all a sheet needs -
+     * see [REGIONAL_LANGUAGE_COLUMN]. Filling every row would be filling in the same
+     * answer five times and would teach the operator to do the same.
+     *
+     * In English both cells stay empty, and that is right rather than a gap: English
+     * is the absence of a regional name (see [ProductName.applies]), so a template on
+     * an English till shows the column present and unfilled, which is exactly how an
+     * English shop's own sheet looks.
+     */
+    private fun sampleRows(context: Context): List<String> = sampleRows(AppLanguage.of(context))
+
+    /**
+     * [sampleRows] filled in for [language] - the testable half of the Context one
+     * above, which only reads which language the till is on.
+     */
+    fun sampleRows(language: PrintLanguage.Language): List<String> {
+        val nameAt = header.indexOf(REGIONAL_NAME_COLUMN.uppercase())
+        val languageAt = header.indexOf(REGIONAL_LANGUAGE_COLUMN)
+        val englishAt = header.indexOf("PRODUCT_NAME")
+        return sampleRows.mapIndexed { row, line ->
+            val cells = splitCsvRow(line).toMutableList()
+            cells[nameAt] = ProductName.inPrintLanguage(language, cells[englishAt])
+            if (row == 0 && ProductName.applies(language)) cells[languageAt] = language.englishName
+            cells.joinToString(",")
+        }
+    }
 
     /**
      * The sheet to hand the operator.
