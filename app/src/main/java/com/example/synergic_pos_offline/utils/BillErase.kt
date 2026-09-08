@@ -162,22 +162,43 @@ object BillErase {
                 "WHERE table_status IS NOT NULL AND table_status <> 'Available'"
         )
 
-        db.setForeignKeyConstraintsEnabled(false)
+        // FOREIGN KEYS ARE LEFT ALONE, and the rows are deleted child-first instead.
+        //
+        // This used to switch constraints off around the deletes, and that is what
+        // broke the Tax Mode change. Android refuses to reconfigure them while ANY
+        // connection is in use - not just a transaction on this thread, any acquired
+        // connection anywhere in the app - and throws:
+        //
+        //   IllegalStateException: Foreign Key Constraints cannot be enabled or
+        //   disabled while there are transactions in progress.
+        //
+        // This runs on a worker thread with the till's UI still live behind a spinner,
+        // so whether a cursor happened to be open somewhere decided whether it threw.
+        // When it did, the erase stopped here: the bills were already gone, the floor
+        // was left standing, the tax mode was never reset, and BillErasePrompt's
+        // onErased never ran - so the mode the operator had chosen was never saved and
+        // the screen sat there showing it as though it had been. It worked the first
+        // time and failed the next four, which is exactly how it was reported.
+        //
+        // The switch was never needed. These deletes already run child before parent -
+        // items before their orders, and md_table is only updated - so nothing here
+        // ever violates a constraint. Ordering is the fix; disabling enforcement was
+        // only ever hiding the question of whether the order was right.
+        //
+        // Ordering note: td_kot points at a running order, and BillErase.erase clears
+        // the KOTs (through clearAllBills) before calling this. Anything that ever
+        // calls this on its own has to do the same.
+        db.beginTransaction()
         try {
-            db.beginTransaction()
-            try {
-                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_RUNNING_ORDER_ITEMS}")
-                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_RUNNING_ORDER}")
-                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_SUBTABLE}")
-                db.execSQL(
-                    "UPDATE ${DatabaseHelper.Tables.MD_TABLE} SET table_status = 'Available'"
-                )
-                db.setTransactionSuccessful()
-            } finally {
-                db.endTransaction()
-            }
+            db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_RUNNING_ORDER_ITEMS}")
+            db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_RUNNING_ORDER}")
+            db.execSQL("DELETE FROM ${DatabaseHelper.Tables.MD_SUBTABLE}")
+            db.execSQL(
+                "UPDATE ${DatabaseHelper.Tables.MD_TABLE} SET table_status = 'Available'"
+            )
+            db.setTransactionSuccessful()
         } finally {
-            db.setForeignKeyConstraintsEnabled(true)
+            db.endTransaction()
         }
         return open to busy
     }

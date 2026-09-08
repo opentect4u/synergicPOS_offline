@@ -166,7 +166,7 @@ class PrintTemplateFragment : Fragment() {
     private fun sampleDraft(): BillReceiptRenderer.Draft = BillReceiptRenderer.Draft(
         billNumber = "SAMPLE",
         dateTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()),
-        cashier = SessionManager.currentUser?.userId?.uppercase() ?: "ADMIN",
+        cashier = SessionManager.cashierName,
         customer = BillReceiptRenderer.Draft.Customer(
             name = "Sample Customer",
             phone = "9876543210",

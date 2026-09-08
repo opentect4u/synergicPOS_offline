@@ -103,7 +103,7 @@ class AdvancePaymentFragment : Fragment(), TitledScreen {
             }
         })
 
-        actvMode.setAdapter(ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, modes))
+        actvMode.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(requireContext(), modes))
         actvMode.setText(modes.first(), false)
 
         // A rejected amount stops being wrong the moment it is edited.
@@ -260,7 +260,7 @@ class AdvancePaymentFragment : Fragment(), TitledScreen {
         val receipt = PaymentReceiptRenderer.Receipt(
             receiptNumber = collection.receiptNumber,
             dateTime = collection.dateTime,
-            cashier = SessionManager.currentUser?.userId?.uppercase() ?: "---",
+            cashier = SessionManager.cashierName,
             customerId = acc.customer.id,
             customerName = acc.customer.name,
             customerPhone = acc.customer.phone,

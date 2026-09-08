@@ -53,6 +53,17 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
     /** True while the radio is being put back, so the revert is not read as a choice. */
     private var revertingTaxMode = false
 
+    /**
+     * True while [bind] is filling the controls in, so nothing it touches is read as
+     * the operator touching it.
+     *
+     * [bind] runs a second time now - after a tax-mode change, to show what actually
+     * landed - and by then every control has a listener on it that saves. Without this
+     * the screen would write itself back to the database control by control as it was
+     * being filled in, each write seeing a half-bound screen.
+     */
+    private var binding = false
+
     private lateinit var swDiscount: SwitchMaterial
     private lateinit var llDiscountOptions: View
     private lateinit var rgDiscountType: RadioGroup
@@ -114,6 +125,11 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
     }
 
     private fun bind(s: TaxSettings) {
+        binding = true
+        // The mode radio is set below like any other control, and setting it must not
+        // read as the operator choosing a mode - which would put the erase question up
+        // over a screen that is only showing what is already stored.
+        revertingTaxMode = true
         swDiscount.isChecked = s.discountEnabled
         llDiscountOptions.isVisible = s.discountEnabled
         rgDiscountType.check(
@@ -133,50 +149,87 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
             if (s.discountPosition == DiscountPosition.PRE_TAX) R.id.rbPosPre else R.id.rbPosPost
         )
         syncDiscountPosition()
+        revertingTaxMode = false
+        binding = false
     }
 
     /**
      * Shows the Pre-tax / Post-tax block while discount is on, and decides which of
      * the two may be picked.
      *
-     * ## Item-wise under EXCLUSIVE is a PRE-TAX discount
+     * ## Item-wise is a PRE-TAX discount, under EITHER tax mode
      *
      * A discount configured against a product comes off that product, and the line is
-     * then taxed on what is left - which is what pre-tax means. So under Item-wise AND
-     * Exclusive tax together the Post-tax option is greyed and the choice settles on
-     * Pre-tax.
+     * then taxed on what is left - which is what pre-tax means. So whenever Item-wise
+     * is picked the Post-tax option is greyed and the choice settles on Pre-tax.
      *
-     * Bill-wise keeps both, under either tax mode - a figure taken off the whole bill
-     * can honestly be applied before the rate or after it, and shops differ on which
-     * they mean. Item-wise under MRP keeps both too, left exactly as it already was
-     * (Post-tax) for any till already relying on it - only Pre-tax's own greying is
-     * lifted, not what Item-wise still forces under Exclusive.
+     * MRP does not change that. It changes where the before-tax figure comes from - an
+     * inclusive price has to be stripped to its base first - but not the moment the
+     * discount lands. This was qualified by Exclusive for a while and Item-wise under
+     * MRP kept both buttons, which was a concession to tills already set that way
+     * rather than a claim that post-tax was right there.
      *
-     * ## Pre-tax now has a base under MRP too
+     * ## Bill-wise under MRP is a POST-TAX discount
      *
-     * Pre-tax used to be greyed outright under MRP - the tax was thought to already be
-     * inside the price with no "before tax" figure left to discount. It does exist: an
-     * inclusive price is stripped to its base the same way [GstCalculator.priceItem]
-     * and [CartMath.discountBase] already strip it for tax itself, the discount comes
-     * off THAT, and tax is re-added on what's left. So the button is live under MRP
-     * now, the same as under Exclusive.
+     * The mirror of the rule above, and it leaves exactly one live button in each of
+     * the two MRP combinations.
+     *
+     * An MRP is what the customer pays, tax already inside it. A discount taken off
+     * the WHOLE BILL under that reading comes off the amount payable - the figure on
+     * the shelf edge and at the foot of the slip - and that figure is after tax by
+     * definition. There is no before-tax bill for it to come off: the bill's taxable
+     * value is worked back OUT of the payable total, so "before tax" would be
+     * discounting a number the shop never quoted to anybody.
+     *
+     * Under EXCLUSIVE, bill-wise keeps both. There the bill genuinely has two figures -
+     * the goods, and the goods plus tax - and a shop can honestly mean either.
+     *
+     * ## Where Pre-tax under MRP does still stand
+     *
+     * Item-wise, and only item-wise. A discount attached to a PRODUCT has that
+     * product's own inclusive price to strip to a base the way [GstCalculator.priceItem]
+     * and [CartMath.discountBase] already strip it for tax itself; the discount lands
+     * on that base and tax is re-added on what is left. That is a real before-tax
+     * figure. A whole-bill discount has no equivalent.
      *
      * ## Greyed rather than hidden, and moved off rather than left sitting
      *
      * Greyed, because it is a choice that comes back the moment the type or the mode
      * changes - an option that vanishes reads as one that never existed. Moved off,
      * because a disabled radio can still be the CHECKED one: switching to Item-wise
-     * under Exclusive with Post-tax picked would otherwise leave the selection on a
-     * greyed button and save POST_TAX for a combination that cannot honour it.
+     * with Post-tax picked would otherwise leave the selection on a greyed button and
+     * save POST_TAX for a combination that cannot honour it.
      */
     private fun syncDiscountPosition() {
         llDiscountPosition.isVisible = swDiscount.isChecked
 
-        val exclusive = rgTaxMode.checkedRadioButtonId != R.id.rbInclusive
         val itemwise = rgDiscountType.checkedRadioButtonId == R.id.rbTypeItem
-        // Pre-tax now has a real before-tax base under MRP too - see the note above.
-        val preAllowed = true
-        val postAllowed = !exclusive || !itemwise
+        val inclusive = rgTaxMode.checkedRadioButtonId == R.id.rbInclusive
+        // BILL-WISE UNDER MRP IS A POST-TAX DISCOUNT.
+        //
+        // An MRP is the price the customer pays, tax already inside it. A discount
+        // taken off the WHOLE BILL under that reading comes off the amount payable -
+        // the figure on the shelf edge and on the slip - which is after tax by
+        // definition. There is no before-tax bill for it to come off: the bill's
+        // taxable value is worked back OUT of the payable figure, so "take it off
+        // before tax" would mean discounting a number the shop never quoted.
+        //
+        // Item-wise is the exception and stays live, because an item-wise discount is
+        // attached to a PRODUCT rather than to the bill - that product's own inclusive
+        // price is stripped to its base and the discount lands there, which is a real
+        // before-tax figure for that line.
+        val preAllowed = !(inclusive && !itemwise)
+        // ITEM-WISE IS PRE-TAX UNDER EITHER MODE.
+        //
+        // This was once qualified by Exclusive, leaving Post-tax live for Item-wise
+        // under MRP. The qualifier was about the till's history rather than about the
+        // arithmetic - it was left open for any shop already set that way - but it does
+        // not survive the question being asked plainly: an item-wise discount is
+        // configured against a PRODUCT, so it comes off that product and the line is
+        // taxed on what is left. That is pre-tax, and it is pre-tax whether the price
+        // it comes off was quoted with the tax inside it or added on top. MRP changes
+        // where the base figure comes from, not when the discount lands.
+        val postAllowed = !itemwise
 
         val rbPre = requireView().findViewById<android.widget.RadioButton>(R.id.rbPosPre)
         val rbPost = requireView().findViewById<android.widget.RadioButton>(R.id.rbPosPost)
@@ -186,11 +239,22 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         rbPost.alpha = if (postAllowed) 1f else 0.5f
 
         // The selection cannot be left sitting on a button that has just been greyed.
+        //
+        // Moved under the [binding] guard, so this does NOT save on its own. It is the
+        // screen correcting itself, not the operator answering - and it matters now
+        // that Bill-wise + MRP greys Pre-tax: moving the tax mode moves this radio,
+        // and the auto-save behind it would have written the new position before the
+        // erase-the-bills question had even been answered. Refuse that question and
+        // the position had already changed underneath. The confirmed path saves for
+        // itself (see [onTaxModeChosen]); the refused one re-reads storage.
+        val wasBinding = binding
+        binding = true
         if (!preAllowed && rgDiscountPosition.checkedRadioButtonId == R.id.rbPosPre) {
             rgDiscountPosition.check(R.id.rbPosPost)
         } else if (!postAllowed && rgDiscountPosition.checkedRadioButtonId == R.id.rbPosPost) {
             rgDiscountPosition.check(R.id.rbPosPre)
         }
+        binding = wasBinding
     }
 
     /**
@@ -245,17 +309,56 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
         ) {
             savedTaxMode = chosen
             onSave()
+            // READ BACK, rather than assumed.
+            //
+            // The erase resets Tax Settings to a fresh till's default on its way past
+            // (MRP, tax on) and the save above writes the chosen mode over it. Two
+            // writers, one of them on a worker thread, for the setting this screen
+            // exists to show - so what is on the paper is read back and re-shown
+            // instead of the screen simply believing its own save went in.
+            //
+            // This is what was missing. Exclusive to MRP erased the bills and then
+            // left the radio showing MRP over a till still stored as Exclusive, and
+            // nothing on the screen ever contradicted it - the disagreement only
+            // surfaced on the next visit, which is why the change was made four times
+            // in twelve minutes and appeared to do nothing each time.
+            val landed = dao.load().taxMode
+            // Logged because this change costs the bills and cannot be repeated
+            // cheaply to find out what happened. If the mode ever fails to stick
+            // again, this one line says whether the write went in and came back - so
+            // it can be answered from a log rather than by erasing another till's
+            // books to watch it happen.
+            android.util.Log.i(
+                "TaxMode",
+                "change ${savedTaxMode.name} -> ${chosen.name}; read back ${landed.name}" +
+                    (if (landed != chosen) " - DID NOT STICK" else "")
+            )
+            bind(dao.load())
         }
     }
 
-    /** Puts the radio back on the mode still in force, without re-asking. */
+    /**
+     * Puts the radio back on the mode still in force, without re-asking.
+     *
+     * Read back from the DATABASE rather than from [savedTaxMode]. The two agree in
+     * every ordinary case, but only one of them is the till's actual answer, and this
+     * runs precisely when something has just gone wrong - a cancelled password, a
+     * backup that could not be written - which is the worst moment to trust a copy.
+     * [savedTaxMode] is re-seeded from it so the next comparison starts from the truth
+     * as well.
+     */
     private fun revertTaxMode() {
-        revertingTaxMode = true
-        rgTaxMode.check(
-            if (savedTaxMode == GstMode.INCLUSIVE) R.id.rbInclusive else R.id.rbExclusive
-        )
-        revertingTaxMode = false
-        syncDiscountPosition()
+        // THE WHOLE SCREEN back to what is stored, not just the mode radio.
+        //
+        // A refused mode change has to undo everything the attempt moved, and it moves
+        // more than the one button now: Bill-wise + MRP greys Pre-tax, so reaching for
+        // MRP shifts the position radio on the way past. Putting only the mode back
+        // would leave that shift standing - a change the operator declined, applied
+        // anyway, in a setting they were not even looking at.
+        //
+        // [bind] re-reads storage and is guarded against re-prompting, so this cannot
+        // put the erase question up again on its way through.
+        bind(dao.load())
     }
 
     /** What the screen calls each mode - "MRP" is the word a shopkeeper uses. */
@@ -273,12 +376,24 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
             discountEnabled = swDiscount.isChecked,
             discountType = type,
             // What is actually checked. Pre-tax is a real choice under MRP now, same as
-            // under Exclusive - only Item-wise together with Exclusive still pins this
-            // to Pre-tax, via the same move-off in syncDiscountPosition.
+            // under Exclusive - only Item-wise still pins this to Pre-tax, under either
+            // mode, via the same move-off in syncDiscountPosition.
             discountPosition = if (rgDiscountPosition.checkedRadioButtonId == R.id.rbPosPre)
                 DiscountPosition.PRE_TAX else DiscountPosition.POST_TAX,
             taxEnabled = swTax.isChecked,
-            taxMode = if (rgTaxMode.checkedRadioButtonId == R.id.rbInclusive) GstMode.INCLUSIVE else GstMode.EXCLUSIVE
+            // THE MODE AGREED TO, NOT THE ONE THE RADIO IS SHOWING.
+            //
+            // Every other control on this screen writes through here, and the radio can
+            // be sitting on a mode that has been pressed but not paid for - the erase
+            // dialog is still open, or has just been refused. Reading the button would
+            // let any of those controls slip an unconfirmed mode into the database
+            // behind the dialog that is asking about it, and the bills it should have
+            // cost would still be there.
+            //
+            // [savedTaxMode] moves only when the change has actually been carried
+            // through - see [onTaxModeChosen], which sets it and then saves - so this
+            // is the mode the till has agreed to and nothing else can write one.
+            taxMode = savedTaxMode
         )
     }
 
@@ -290,6 +405,8 @@ class TaxSettingsFragment : Fragment(), TitledScreen {
      * showing its new position is the confirmation.
      */
     private fun onSave() {
+        // Filling the controls in is not the operator moving them - see [binding].
+        if (binding) return
         dao.save(collect())
     }
 }

@@ -68,7 +68,7 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
 
         customers = dao.customers()
         val labels = customers.map { c -> if (c.phone.isNotBlank()) "${c.name} - ${c.phone}" else c.name }
-        actCustomer.setAdapter(ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, labels))
+        actCustomer.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(requireContext(), labels))
         actCustomer.setOnItemClickListener { _, _, position, _ ->
             selectedCustomerId = customers.getOrNull(position)?.id
         }

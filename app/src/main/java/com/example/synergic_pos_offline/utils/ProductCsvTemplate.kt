@@ -22,7 +22,80 @@ object ProductCsvTemplate {
     const val FILE_NAME = "item_master_template.csv"
 
     /**
+     * The heading a row carries its product's own id under - 1, 2, 3, 4.
+     *
+     * The product master's row id, the number the rest of this database refers to a
+     * product by. Exported so the sheet in front of the operator is the till's
+     * catalogue with its own numbering on it, rather than an anonymous list they have
+     * to match up by name.
+     *
+     * On the way back in, a row's id is HONOURED WHERE IT IS FREE and quietly
+     * reassigned where it is not. That is the whole rule, and it is worth being plain
+     * about both halves. Honouring it is what makes download-edit-upload a round trip:
+     * a Replace clears the catalogue and puts it back under the same numbers, so
+     * anything holding a product id still points at the same product. Reassigning is
+     * what stops a sheet from ever landing on top of a product that is still there -
+     * an id already taken belongs to a product that has been sold, and writing over it
+     * would re-label somebody's till history. The upload says how many rows that
+     * happened to.
+     *
+     * A blank cell is the normal case for a sheet someone is filling in by hand, and
+     * takes the next id the way it always did.
+     */
+    const val PRODUCT_ID_COLUMN = "product_id"
+
+    /**
+     * The heading a row names its category under: the department's NAME.
+     *
+     * "Dairy", "Beverages" - what the Category/Department master calls it and what the
+     * operator filling the sheet in actually knows. This is the column on the
+     * handed-out sheet and the first one read.
+     *
+     * ## Why a name rather than the id
+     *
+     * The sheet carried the plain id for a while, on the reasoning that an id is exact
+     * where a name is not. It IS exact - and it is also unreadable. A spreadsheet
+     * column of 1, 2, 3 tells whoever is filling it in nothing about which department
+     * each row is going into, cannot be checked by eye against the file, and cannot be
+     * typed at all without the Category master open beside them to look each number
+     * up. A catalogue is edited by people, and the column has to say what it means.
+     *
+     * The trade is real and worth stating: a NAME CAN CREATE a department. A row
+     * naming one this till does not have gets that department made for it, so a
+     * misspelt "Diary" quietly becomes a second category rather than landing in the
+     * one that was meant. The upload's preview names every category it is about to
+     * create, before anything is written, which is where a typo is caught - see
+     * BulkUploadProductFragment.
+     *
+     * Matching is case-insensitive and trimmed, so "dairy " lands in "Dairy".
+     * [CATEGORY_ID_COLUMN], [CATEGORY_CODE_COLUMN] and the older `category` heading
+     * are all still read after this one, for files filled in against previous
+     * templates.
+     */
+    const val CATEGORY_NAME_COLUMN = "category_name"
+
+    /**
+     * The heading a row names its category under by ID - 1, 2, 3, 4.
+     *
+     * NOT ON THE HANDED-OUT SHEET any more - [CATEGORY_NAME_COLUMN] carries the
+     * department now, because a number is not something a person can fill in or check.
+     * This is still READ, after that one, so a file filled in against the previous
+     * template still lands its products in the right department.
+     *
+     * It is what `md_products.category_id` actually holds, so a sheet naming it needs
+     * nothing resolved or matched - but an id can only REFER to a category, never
+     * create one, so an id this till has no department for leaves the product
+     * uncategorised and is counted for the operator.
+     */
+    const val CATEGORY_ID_COLUMN = "category_id"
+
+    /**
      * The heading a row names its category under: the Dept Code, not the name.
+     *
+     * NOT ON THE HANDED-OUT SHEET any more - [CATEGORY_ID_COLUMN] carries the
+     * department now, as the plain id the database stores. This is still READ, after
+     * that one, so a file filled in against a previous template still lands its
+     * products in the right department.
      *
      * "DEPT007", as the Category/Department master shows it and as
      * [CategoryDao.formatCode] renders it from the row id. A code is exact where a
@@ -44,6 +117,11 @@ object ProductCsvTemplate {
 
     /**
      * The heading a row names its rate under: the Rate Name master's id, not its name.
+     *
+     * Off the handed-out sheet and still read, for the same reason as
+     * [CATEGORY_CODE_COLUMN]. The shop's master names a rate by the unit beside it -
+     * `UNIT_1` with `RATE_1` - rather than by a rate-name row, so a sheet in that
+     * format leaves the rate unnamed.
      *
      * The id from the Rate Name master - 1, 2, 3 - rather than "Regular" or "MRP".
      * Same reasoning as [CATEGORY_CODE_COLUMN]: the id is what the rate actually IS
@@ -87,9 +165,13 @@ object ProductCsvTemplate {
     /**
      * The heading a row gives THIS PRODUCT's name in the shop's own language under.
      *
-     * A per-product fact, unlike [REGIONAL_LANGUAGE_COLUMN] beside it - which is why
-     * the two sit together on the sheet: one names the language, the next gives each
-     * product's name in it.
+     * `PRODUCT_UNI_NAME` on the shop's own master - the second column, beside the
+     * English one - which is what this sheet is now reproduced from. The older
+     * `regional_name` heading is still read, so a file filled in against a previous
+     * template still imports; see [ProductBulkImporter.REGIONAL_NAME_COLUMNS].
+     *
+     * A per-product fact, unlike [REGIONAL_LANGUAGE_COLUMN] - one names the language
+     * the sheet is written in, this gives each product's name in it.
      *
      * It is the name the shop WRITES, not one the app guesses. Without it a bulk
      * upload could only ever produce machine-translated names - and a lexicon does
@@ -107,123 +189,185 @@ object ProductCsvTemplate {
      * without naming a language has not said what language it is IN, so there is no
      * row to write and [ProductBulkImporter] says so rather than guessing.
      */
-    const val REGIONAL_NAME_COLUMN = "regional_name"
+    const val REGIONAL_NAME_COLUMN = "product_uni_name"
 
     /**
-     * The columns, in order.
+     * How many unit/rate pairs one product row can carry - `UNIT_1..UNIT_4` with
+     * `RATE_1..RATE_4` beside them.
      *
-     * `category_code` and `rate_name_id` name their master ROW - "DEPT007", "2" -
-     * not the text on it. The code and the id are what those things are to this
-     * database, and they are exact: a name has to be spelled the shop's way to
-     * match, and a near-miss used to create a second category rather than land in
-     * the one that was meant. See each column's own doc.
-     *
-     * `unit_id` is the exception and stays a name - "Ltr", "PCS". It is the one of
-     * the three whose master a sheet may legitimately extend: a shop weighing
-     * something in a unit this till has never seen is describing its goods, not
-     * misspelling a department, so that name is created where the others are not.
-     *
-     * `unit_id` also keeps its misleading heading rather than becoming `unit`, and
-     * the import still reads the older `category`, `rate_name` and `sell_price`
-     * headings, so a sheet filled in against a previous template imports rather
-     * than being rejected over a name.
-     *
-     * `igst` and `vat` sit beside `cgst`/`sgst` as the other two ways a rate's tax
-     * can be written down - a rate is under one of them, never more than one, same
-     * as the Add Product dialog itself. A row is free to leave the ones it does not
-     * use blank.
-     *
-     * [REGIONAL_LANGUAGE_COLUMN] is not a per-product fact - see its own doc.
-     * [REGIONAL_NAME_COLUMN] is, and follows it: the first names the language, the
-     * second gives each product's name in that language.
-     *
-     * The regional pair is APPENDED rather than slotted in beside `product_name`,
-     * where it would read more naturally. Every column before it keeps the position
-     * it has always had, so a sheet downloaded from an older till - or one an
-     * operator has been filling in for months - still lines up. The import reads by
-     * heading rather than by position (see CsvUtils.parse), so a sheet with no
-     * regional columns at all imports exactly as before.
+     * Four because four is what the shop's master has, and this sheet is that master.
+     * The number is written once here so the columns, the export and the import all
+     * agree on it rather than each counting to four separately.
      */
-    val header = listOf(
-        "product_name", CATEGORY_CODE_COLUMN, "hsn_code", "bar_code",
-        RATE_NAME_ID_COLUMN, "rate", "unit_id", "cgst", "sgst", "igst", "vat",
-        "discount", "discount_type", "selling_price", "purchase_price",
-        REGIONAL_LANGUAGE_COLUMN, REGIONAL_NAME_COLUMN
-    )
+    const val RATE_SLOTS = 4
+
+    /**
+     * The columns, in order - the shop's own sheet, with IGST added.
+     *
+     * This is not a layout invented here. It is the item master these tills have
+     * always been filled in from, reproduced heading for heading so an operator can
+     * carry on using the file they already keep, and so a sheet exported from the
+     * shop's other system uploads without being rearranged first.
+     *
+     * ## Four units, four rates
+     *
+     * UNIT_1..UNIT_4 with RATE_1..RATE_4 beside them: one product row can describe up
+     * to [RATE_SLOTS] ways of selling the same item - by piece, by half, by kilo -
+     * each with its own price. Each becomes a rate row on the product and the first
+     * becomes the default. It is the RATE that decides a slot is used: a slot with no
+     * rate is not a price this shop sells at, whatever its unit cell says, and a
+     * priced slot with no unit is still a price and still imports.
+     *
+     * ## PRODUCT_ID and CATEGORY_NAME
+     *
+     * The two lead, because they are what the row IS rather than what it says: which
+     * product this is, and which department it belongs to.
+     *
+     * PRODUCT_ID is a plain number - 1, 2, 3, 4 - the same one the Products screen
+     * shows and the database stores. CATEGORY is the department's NAME rather than its
+     * number, because that column is filled in and checked by a person: a column of
+     * bare ids cannot be read, and cannot be typed without the Category master open
+     * beside the spreadsheet. See [PRODUCT_ID_COLUMN] and [CATEGORY_NAME_COLUMN] for
+     * what each does on the way back in, and what naming a department costs.
+     *
+     * ## PRODUCT_IGST is the addition
+     *
+     * Placed with the other two rates rather than at the end, because SGST, CGST and
+     * IGST are three answers to one question and belong read together. A row uses the
+     * pair or the single, never both - the same rule the Add Product form follows.
+     *
+     * VAT_FLAG holds a VAT rate where the goods are under VAT instead. STOCK is the
+     * opening quantity and is ignored on a till that does not track stock.
+     */
+    val header: List<String> =
+        listOf(
+            PRODUCT_ID_COLUMN.uppercase(), "PRODUCT_NAME",
+            REGIONAL_NAME_COLUMN.uppercase(), CATEGORY_NAME_COLUMN.uppercase()
+        ) +
+            (1..RATE_SLOTS).map { "UNIT_$it" } +
+            (1..RATE_SLOTS).map { "RATE_$it" } +
+            listOf(
+                "PRODUCT_SGST", "PRODUCT_CGST", "PRODUCT_IGST", "VAT_FLAG",
+                "PRODUCT_DISCOUNT", STOCK_COLUMN, "HSN_NUMBER", "BAR_CODE",
+                "PURCHASE_PRICE", "selling_price", REGIONAL_LANGUAGE_COLUMN
+            )
+
+    /**
+     * The unit and rate cells of slot [slot] (1-based), as the pair of headings they
+     * are read back under - lower case, the way a parsed sheet is keyed.
+     *
+     * Both the export and the import ask for a slot's columns here rather than
+     * building "unit_$slot" in three places, so a sheet written under one spelling
+     * cannot be read back under another.
+     */
+    fun slotColumns(slot: Int): Pair<String, String> = "unit_$slot" to "rate_$slot"
 
     /**
      * The heading the opening stock is filled in under - the quantity of the item
      * the till is to start counting from.
      *
-     * A column only a till that tracks stock is given, and only one such a till
-     * reads back: with Stock off there is no count for a figure to open, so putting
-     * the column on the sheet would ask the operator for a number nothing would ever
-     * do anything with. [ProductBulkImporter] ignores it in that case whatever the
-     * sheet says - a file filled in while Stock was on must not quietly start
-     * writing batches once it has been turned off.
+     * A column every sheet carries, because it is a column of the shop's own master -
+     * but only a till that tracks stock reads it back. [ProductBulkImporter] reads
+     * past it whatever the sheet says when Stock is off: the setting, not the file,
+     * decides whether this till counts anything, and a sheet filled in while Stock
+     * was on must not quietly start writing batches once it has been turned off.
      */
     const val STOCK_COLUMN = "stock"
 
     /**
-     * The columns for *this* till: [header], with [STOCK_COLUMN] appended where
-     * stock is tracked.
+     * The columns for this till.
      *
-     * Appended rather than slotted in among the others so that both sheets stay
-     * readable as the same sheet, and so a file downloaded from a till with stock on
-     * still imports on one with it off - the columns before it have not moved.
+     * STOCK is part of the sheet now rather than appended for a till that tracks it -
+     * it is a column of the shop's own master, and a sheet whose shape depends on a
+     * setting is a sheet that stops lining up when the setting moves. A till with
+     * stock off simply ignores what is in it; see [ProductBulkImporter], which will
+     * not write batches for a till that keeps no count.
      */
-    fun columns(context: Context): List<String> =
-        if (GeneralSettingsDao.isStockEnabled(context)) header + STOCK_COLUMN else header
+    fun columns(context: Context): List<String> = header
 
     /**
-     * Example rows, taken from the operator's own item master so the sheet shows
-     * real products at real rates rather than "Apple, 120".
+     * Example rows, in the shop's own master format.
      *
-     * Between them they cover the three units and the three GST rates in use, and
-     * both a discounted line and an undiscounted one, so every column is shown
-     * filled in at least once. `igst` and `vat` are left blank throughout - every
-     * sample line already carries its tax as `cgst`/`sgst`, and a rate is under one
-     * of the three, never more than one. [REGIONAL_LANGUAGE_COLUMN] is shown filled
-     * in on the first row only and blank on the rest, since one is all a sheet needs.
+     * They are the shop's real dishes at their real rates, taken from the sheet this
+     * template was reproduced from - a template of invented products teaches the
+     * operator nothing about how their own file should look.
      *
-     * [REGIONAL_NAME_COLUMN] is filled in on EVERY row, because it is the one
-     * regional column that is a fact about the product rather than about the sheet.
-     * The samples are the brand names respelled in the language the first row names,
-     * which is what a shop actually writes there - a name off the packet, not a
-     * translation of one.
+     * Between them they show what each column is for: a product sold three ways, one
+     * sold two ways, ones sold a single way, a CGST/SGST pair, a lone IGST, a VAT
+     * line and an untaxed line.
+     *
+     * The ids run 1, 2, 3, 4, 5 and the first three rows share one department, which is
+     * what those two columns look like on a real sheet: [PRODUCT_ID_COLUMN] counts the
+     * rows, [CATEGORY_NAME_COLUMN] repeats wherever products belong together - and it
+     * repeats as the same WORD, which is what makes a mistyped one visible in a
+     * spreadsheet where a mistyped number would not be.
+     *
+     * The unit cells are written as the symbols the Unit master holds, since that is
+     * what someone filling this in by hand should write. A sheet exported from another
+     * system often carries that system's unit ID there instead, and a whole number is
+     * read as one - see [ProductBulkImporter.unitIdForSlot].
+     *
+     * ## The two language cells are left EMPTY here
+     *
+     * [REGIONAL_NAME_COLUMN] and [REGIONAL_LANGUAGE_COLUMN] are filled in by
+     * [sampleRows] (the Context one) against whatever language the till is on, not
+     * written into these strings. They used to be hard-coded Marathi, so a shop
+     * working in Hindi downloaded a template whose examples were in a script they do
+     * not use and whose language column said MARATHI - and uploading it unedited set
+     * the till to Marathi. A template is meant to be an example of THIS shop's sheet.
      */
     val sampleRows = listOf(
-        "Amul Premium Pack 100L,DEPT001,40120,,1,498.75,Ltr,2.5,2.5,,,5,P,473.81,399,Hindi,अमूल प्रीमियम पैक 100L",
-        "Britannia Premium Refill 200g,DEPT002,190531,,1,393.75,PCS,9,9,,,5,P,374.06,315,,ब्रिटानिया प्रीमियम रिफिल 200g",
-        "Tata Sampann Premium Value 300g,DEPT003,110412,,1,31.25,PCS,2.5,2.5,,,10,P,29.69,25,,टाटा संपन्न प्रीमियम वैल्यू 300g",
-        "Fortune Premium Combo 400L,DEPT004,151219,,1,158.75,Ltr,2.5,2.5,,,5,P,150.81,127,,फॉर्च्यून प्रीमियम कॉम्बो 400L",
-        "Aashirvaad Premium Regular 500KG,DEPT005,110100,,1,81.25,KG,2.5,2.5,,,10,P,77.19,65,,आशीर्वाद प्रीमियम रेगुलर 500KG"
+        "1,GINGER CRISPY,,Chinese,PLT,HALF,,,220,120,,,2.5,2.5,,,0,100,21069099,8901234500011,150,220,",
+        "2,VEG MANCHURIAN,,Chinese,PLT,HALF,QTR,,160,90,50,,2.5,2.5,,,0,100,21069099,,100,160,",
+        "3,PANEER CHILLY,,Chinese,PLT,,,,210,,,,,,5,,5,100,21069099,8901234500028,140,210,",
+        "4,SCHEZWAN SAUCE,,Sauces,PCS,,,,25,,,,,,,5,0,250,21039090,,18,25,",
+        "5,COLD DRINK,,Beverages,BTL,,,,40,,,,,,,,0,60,22021010,8901234500042,30,40,"
     )
 
     /**
-     * An opening quantity for each of [sampleRows], shown only on a till that tracks
-     * stock.
+     * [sampleRows] with the two language cells filled in for THIS till.
      *
-     * Whole numbers against the PCS lines and a fractional one against a litre line,
-     * so the sheet shows without saying it that the column takes the quantity the
-     * item is actually counted in rather than a count of packets.
+     * The regional name is written on every row, in the language picked at the top of
+     * the Products master - the same translation that screen shows in its Regional
+     * Name column, through the same [ProductName.inPrintLanguage] the download uses.
+     * So the example the operator opens is an example of their own sheet: it shows
+     * what goes in that column, in the script they actually read.
+     *
+     * The LANGUAGE is named on the first row only, since one is all a sheet needs -
+     * see [REGIONAL_LANGUAGE_COLUMN]. Filling every row would be filling in the same
+     * answer five times and would teach the operator to do the same.
+     *
+     * In English both cells stay empty, and that is right rather than a gap: English
+     * is the absence of a regional name (see [ProductName.applies]), so a template on
+     * an English till shows the column present and unfilled, which is exactly how an
+     * English shop's own sheet looks.
      */
-    private val sampleStock = listOf("24", "40", "18", "12.5", "60")
+    private fun sampleRows(context: Context): List<String> = sampleRows(AppLanguage.of(context))
 
-    /** [sampleRows], each carrying its opening quantity, for a till that tracks stock. */
-    private fun sampleRows(context: Context): List<String> =
-        if (!GeneralSettingsDao.isStockEnabled(context)) sampleRows
-        else sampleRows.mapIndexed { i, row -> "$row,${sampleStock.getOrElse(i) { "0" }}" }
+    /**
+     * [sampleRows] filled in for [language] - the testable half of the Context one
+     * above, which only reads which language the till is on.
+     */
+    fun sampleRows(language: PrintLanguage.Language): List<String> {
+        val nameAt = header.indexOf(REGIONAL_NAME_COLUMN.uppercase())
+        val languageAt = header.indexOf(REGIONAL_LANGUAGE_COLUMN)
+        val englishAt = header.indexOf("PRODUCT_NAME")
+        return sampleRows.mapIndexed { row, line ->
+            val cells = splitCsvRow(line).toMutableList()
+            cells[nameAt] = ProductName.inPrintLanguage(language, cells[englishAt])
+            if (row == 0 && ProductName.applies(language)) cells[languageAt] = language.englishName
+            cells.joinToString(",")
+        }
+    }
 
     /**
      * The sheet to hand the operator.
      *
      * A file shipped at `assets/`[FILE_NAME] wins, so a real catalogue can be put in
-     * front of them without this having to change - such a file is taken as written
-     * and is the one place [STOCK_COLUMN] is not added for them, since only whoever
-     * shipped it knows what its columns mean. Absent one, the columns for this till
-     * and the sample rows are written out - still a correct sheet to fill in, just a
-     * short one.
+     * front of them without this having to change - such a file is taken exactly as
+     * written, since only whoever shipped it knows what its columns mean. Absent one,
+     * the columns and the sample rows are written out - still a correct sheet to fill
+     * in, just a short one.
      */
     fun content(context: Context): String =
         runCatching { context.assets.open(FILE_NAME).bufferedReader().use { it.readText() } }
@@ -231,4 +375,34 @@ object ProductCsvTemplate {
                 (listOf(columns(context).joinToString(",")) + sampleRows(context))
                     .joinToString("\n") + "\n"
             }
+
+    /** What the downloaded workbook is called. */
+    const val EXCEL_FILE_NAME = "item_master_template.xlsx"
+
+    /**
+     * The same sheet as [content], as rows of cells rather than as one comma string -
+     * which is what a workbook is written from. See [Xlsx].
+     *
+     * Split from the CSV rather than parsed back out of it: a template cell may
+     * legitimately hold a comma (a category once did), and splitting the finished CSV
+     * on commas would tear such a row into the wrong number of columns. The rows are
+     * built from the same two lists the CSV is built from, so the two files carry the
+     * same sheet by construction.
+     *
+     * A sheet SHIPPED as an asset stays the caller's business: it is text, it may have
+     * been written by hand, and it is handed over as it is rather than being taken
+     * apart and rebuilt here.
+     */
+    fun rows(context: Context): List<List<String>> =
+        listOf(columns(context)) + sampleRows(context).map { splitCsvRow(it) }
+
+    /**
+     * One template row, split on the commas that separate cells.
+     *
+     * The sample rows are written as plain strings in this file and hold no quoted
+     * commas, so a plain split is right for them - but it is written as its own
+     * function so that a row which ever does gain one fails here, where it can be
+     * seen, rather than silently shifting every column after it.
+     */
+    private fun splitCsvRow(row: String): List<String> = row.split(",")
 }

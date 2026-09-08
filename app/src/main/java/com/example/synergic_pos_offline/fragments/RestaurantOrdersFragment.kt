@@ -93,6 +93,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     ) {
         val completed: Boolean get() = status.equals("COMPLETED", ignoreCase = true)
 
+        /**
+         * Parked by the counter, to be picked back up - see [STATUS_HOLD].
+         *
+         * A held order is a real running order and nothing about it is copied
+         * anywhere: it keeps its token, its items, its discount and its customer, and
+         * it is still a row in the database - so a held order survives the app being
+         * killed, the battery dying, or the tablet being put down for an hour. It is
+         * simply not counted among the ACTIVE orders while it waits, which is the only
+         * thing the status changes.
+         */
+        val held: Boolean get() = status.equals(STATUS_HOLD, ignoreCase = true)
+
         /** A counter order settled at the counter - "Print & Settlement" in one press. */
         val takeAway: Boolean get() = type.equals(TYPE_TAKE_AWAY, ignoreCase = true)
 
@@ -576,6 +588,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // QSR needs no table either - tapping it opens a QSR order the same way.
         view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnQsr)
             .setOnClickListener { openCounterOrder(TYPE_QSR) }
+        // Park the counter order, and the list of what is parked - QSR only, and only
+        // raised on the panel for a QSR order. See [onQsrHold].
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnQsrHold)
+            .setOnClickListener { onQsrHold() }
+        view.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnQsrHeld)
+            .setOnClickListener { showQsrHeldDialog() }
         // Dine In switches the segment and opens the floor plan.
         //
         // The two halves of this control now answer the same way. Take Away above
@@ -790,6 +808,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 // screen the customer actually pays from.
                                 discount = b.discount,
                                 discountDisplay = b.discountDisplay,
+                                discountRate = b.discountPercent,
                                 lineDiscounts = order.items.map { line ->
                                     com.example.synergic_pos_offline.utils.CartMath.lineDiscount(
                                         line.toMathLine(), cartConfig(),
@@ -960,7 +979,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // moment the operator moves to another order - see [selectOrder], which
         // rebuilds this list - so an empty order is visible for exactly as long as
         // somebody is standing on it.
-        val shown = orders.filter { it.items.isNotEmpty() || it.selected }
+        // A HELD ORDER IS NOT AN ACTIVE ONE either, and for the same reason: nobody is
+        // working on it. It was put down on purpose and is waiting under Held (n),
+        // which is where the counter goes to find it - leaving it in the active list
+        // as well would show one order in two places and make the active count read
+        // as more work outstanding than there is.
+        val shown = orders.filter { !it.held && (it.items.isNotEmpty() || it.selected) }
 
         // Active-orders count badge, and the same count on the button that slides the
         // list in - with the list closed that button is the only place it shows.
@@ -990,12 +1014,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             card.findViewById<TextView>(R.id.tvOrderCashier).text = o.cashier
             card.findViewById<TextView>(R.id.tvOrderAmount).text = o.amount
             card.findViewById<TextView>(R.id.tvOrderStatus).apply {
-                // An empty split sub-table reads as Available until it gets items.
-                text = when {
-                    o.completed -> "Completed • Billed"
-                    o.id.contains(" ") && o.items.isEmpty() -> "Available"
-                    else -> "In Progress"
-                }
+                text = orderStatusLabel(o)
                 setTextColor(accent)
                 backgroundTintList = ColorStateList.valueOf(soft)
             }
@@ -1011,6 +1030,24 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             card.tag = o.dbId          // so its total can be patched without a rebuild
             list.addView(card)
         }
+    }
+
+    /**
+     * How far along an order is, in the words the Active Orders cards use.
+     *
+     * [STATUS_AVAILABLE] is the odd one: an empty split sub-table reads as Available
+     * until it gets items - it is a seat of a split nobody has used yet, not an order
+     * in progress.
+     *
+     * One definition because it is now read in two places - the cards on the sales
+     * screen and the summary panel in the Choose Table popup - and two orders of the
+     * same shop showing different words for the same state is exactly what that panel
+     * was added to avoid.
+     */
+    private fun orderStatusLabel(order: OrderCard): String = when {
+        order.completed -> "Completed • Billed"
+        order.id.contains(" ") && order.items.isEmpty() -> STATUS_AVAILABLE
+        else -> "In Progress"
     }
 
     /** Marks [order] active, repaints the list, and loads its own cart into the detail panel. */
@@ -1104,6 +1141,24 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // unpaid, once as part of settling.
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnPrintKot)
             .visibility = if (order.qsr) View.GONE else View.VISIBLE
+        // HOLD BELONGS TO QSR, and takes the row the two prints just vacated.
+        //
+        // Quick service is the one mode where a customer can stall mid-order - they
+        // change their mind at the counter, or step aside to find their money - with a
+        // queue behind them and nothing to park the order ON. Dine-in has the table and
+        // take-away has the token: both are already a place to leave an order and come
+        // back to it. QSR is rung up and settled in one go, so without this the counter
+        // has to either hold the queue or lose what was typed.
+        val qsrHold = order.qsr && !order.completed
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnQsrHold)
+            .visibility = if (qsrHold) View.VISIBLE else View.GONE
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnQsrHeld).apply {
+            visibility = if (qsrHold) View.VISIBLE else View.GONE
+            // The count is on the button because it is the only place it shows - there
+            // is no badge for it, and a counter needs to know something is waiting
+            // without opening the list to find out.
+            text = "Held (${heldQsrOrders().size})"
+        }
         root.findViewById<TextView>(R.id.tvDetailGuests).text =
             if (counter) order.id.replace("TA-", "Token #")
             else if (order.section.isNotBlank()) "${order.section}  ·  ${order.type}" else order.type
@@ -1341,7 +1396,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             return toast("Can't cancel — items already sent to kitchen. Remove them (and Print KOT to cancel) first.")
         }
         val label = if (order.counter)
-            order.id.replace("TA-", "Take Away Token #") else "Table ${order.id}"
+            "${order.type} ${order.id.replace("TA-", "Token #")}" else "Table ${order.id}"
         // An empty split part is not an order being thrown away - it is a seat of a
         // split nobody used, and cancelling it is how the operator gives that seat
         // back. Asking "remove all its items?" about a part with no items reads as a
@@ -1401,8 +1456,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // not quietly handed back when QSR was asked for. They are different modes with
         // different buttons at the far end, and reusing across them would put an order
         // in front of the operator that bills the other way.
+        // A HELD order is never reused, whatever is on it. It was parked deliberately
+        // and is waiting to be picked back up by name; handing it back as "a fresh
+        // order" would put someone else's items in front of the next customer.
         val reusable = orders.firstOrNull {
-            it.type.equals(type, ignoreCase = true) && !it.completed && it.items.isEmpty()
+            it.type.equals(type, ignoreCase = true) && !it.completed && !it.held &&
+                it.items.isEmpty()
         }
         if (reusable != null) {
             // RENUMBERED to whatever Token Numbering says now.
@@ -1435,6 +1494,275 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 "QSR order started — add items, then Print Bill"
             else "Take-away order started — add items, then Settlement"
         )
+    }
+
+    // ---- QSR hold ----------------------------------------------------------
+
+    /**
+     * Parks the open QSR order and opens a fresh one for the next customer.
+     *
+     * The counter case this is for: a customer stalls half way through ordering -
+     * changes their mind, steps aside to find their money - with a queue behind them.
+     * Dine-in can leave it on the table and take-away can leave it on the token, both
+     * of which are already somewhere to put an order down. QSR is rung up and settled
+     * in one press, so without this the counter either holds the queue or throws away
+     * what was typed.
+     *
+     * NOTHING IS COPIED. The order is already a row in `td_running_order` with its
+     * items, its discount and its customer on it, so holding it is a change of status
+     * and nothing more - which is why a held order survives the app being killed,
+     * where the grocery till's held bills (kept in memory, see CheckoutSession) do not.
+     *
+     * An EMPTY order is refused. There is nothing on it to come back to, and it would
+     * sit in the Held list as a token with no items - the same reasoning that keeps
+     * empty orders out of the active list.
+     */
+    private fun onQsrHold() {
+        val order = currentOrder() ?: return
+        if (!order.qsr) return toast("Hold is for QSR orders")
+        if (order.completed) return toast("Order already billed")
+        if (order.items.isEmpty()) return toast("Nothing to hold - add items first")
+
+        roDao.setStatus(order.dbId, STATUS_HOLD)
+        order.status = STATUS_HOLD
+        val token = order.id.replace("TA-", "Token #")
+        // Straight into the next customer, the way the grocery till's Hold clears the
+        // cart and starts a new sale. The held order drops out of the active list on
+        // this rebuild, since it is no longer the selected one.
+        openCounterOrder(TYPE_QSR)
+        toast("$token put on hold")
+    }
+
+    /** The parked QSR orders - what Held (n) counts and lists. */
+    private fun heldQsrOrders(): List<OrderCard> = orders.filter { it.qsr && it.held }
+
+    /**
+     * The parked orders, listed by token; picking one puts it back on the screen.
+     *
+     * Deliberately the same shape as the grocery till's held-bills picker - token,
+     * what is on it, when it was parked, what it comes to - so an operator who works
+     * both modes reads one list.
+     */
+    private fun showQsrHeldDialog() {
+        val held = heldQsrOrders()
+        if (held.isEmpty()) return toast("No QSR orders on hold")
+
+        val items = held.map { o ->
+            com.example.synergic_pos_offline.utils.DialogUtils.ListItem(
+                title = o.id.replace("TA-", "Token #"),
+                subtitle = listOfNotNull(
+                    "${o.items.size} item(s)",
+                    o.phone.takeIf { it.isNotBlank() },
+                    "held ${o.time}"
+                ).joinToString(" - "),
+                trailing = "₹ ${money(payableTotal(computeBill(o).total))}"
+            )
+        }
+        com.example.synergic_pos_offline.utils.DialogUtils.showList(
+            requireContext(),
+            title = "Held QSR Orders",
+            items = items,
+            subtitle = "Tap an order to bring it back"
+        ) { index -> held.getOrNull(index)?.let { resumeQsrHeld(it) } }
+    }
+
+    /**
+     * Brings a held order back to the counter.
+     *
+     * No confirmation, unlike the grocery till's restore. There it has to ask, because
+     * restoring REPLACES whatever is in the cart and the parked sale is the only copy
+     * of itself. Here the order on screen is its own running order and is not touched:
+     * bringing this one forward leaves it exactly where it was, so there is nothing to
+     * warn about and nothing to undo.
+     */
+    private fun resumeQsrHeld(order: OrderCard) {
+        roDao.setStatus(order.dbId, "RUNNING")
+        order.status = "RUNNING"
+        selectOrder(order)
+        toast("${order.id.replace("TA-", "Token #")} restored")
+    }
+
+    /**
+     * Fills the Choose Table popup's right-hand panel: what is already running on the
+     * floor, and what it comes to.
+     *
+     * READ ONLY, deliberately. Nothing in it is tappable - an order is opened from the
+     * Active Orders list behind this popup, and a row that looks like a control but
+     * answers to nothing is worse than plain text. It is here to be glanced at while a
+     * table is being chosen, which is the moment the question "what is already out
+     * there, and for how much" actually comes up. Reading it used to mean closing the
+     * picker and going back to the list this popup covers.
+     *
+     * Built from [orders], the list the screen behind is already holding, and priced
+     * through the same [computeBill]/[payableTotal] pair the order panel and the bill
+     * itself use - so a figure here and the same figure anywhere else cannot disagree.
+     *
+     * What counts as active is what the Active Orders list counts, down to the same
+     * filter and the same status words - see [orderStatusLabel]. An empty order is a
+     * token nobody has spent and a held one is deliberately put aside; a BILLED one is
+     * still a table sitting there owing the money on it, so it stays.
+     */
+    private fun fillActiveSummary(root: View, accent: Int) {
+        val rows = root.findViewById<LinearLayout>(R.id.llActiveSummaryRows) ?: return
+        val empty = root.findViewById<TextView>(R.id.tvActiveSummaryEmpty)
+        val count = root.findViewById<TextView>(R.id.tvActiveSummaryCount)
+        val total = root.findViewById<TextView>(R.id.tvActiveSummaryTotal)
+        val scroller = rows.parent as? View
+
+        // THE SAME ORDERS THE ACTIVE ORDERS LIST SHOWS - see [refreshOrders], which
+        // filters the cards on the screen behind this popup exactly this way.
+        //
+        // A BILLED order is included, and deliberately. Its slip has been printed but
+        // it has not been settled - settlement is what deletes the running order - so
+        // it is a table still sitting there owing the money on it, which is precisely
+        // what this panel is for. It was excluded before, and a table that had asked
+        // for its bill dropped out of the summary while still occupying the floor.
+        //
+        // A HELD order stays out: it was put aside on purpose and is waiting under
+        // Held, not standing on the floor.
+        val active = orders.filter { it.items.isNotEmpty() && !it.held }
+        rows.removeAllViews()
+        count.text = active.size.toString()
+        count.backgroundTintList = ColorStateList.valueOf(accent)
+
+        // The panel shows EITHER its rows or its empty note, never a scroller of
+        // nothing above a line that says there is nothing.
+        scroller?.visibility = if (active.isEmpty()) View.GONE else View.VISIBLE
+        empty?.visibility = if (active.isEmpty()) View.VISIBLE else View.GONE
+
+        var sum = 0.0
+        active.forEach { order ->
+            val amount = payableTotal(computeBill(order).total)
+            sum += amount
+            rows.addView(activeSummaryRow(order, amount, accent, summaryStatus(order)))
+        }
+        total.text = "₹ ${money(sum)}"
+        total.setTextColor(accent)
+    }
+
+    /**
+     * One line of the panel: which order, and what it stands at.
+     *
+     * The name on the left is the one the operator uses for it - a table with its
+     * room, a token with its number - and the amount sits hard right, so a column of
+     * them can be read down as figures rather than hunted for at the end of each
+     * line. The order type goes underneath in small text: a take-away and a table can
+     * both be "5" to look at, and the money means something different for each.
+     */
+    /**
+     * The status to show against one row of the panel - or null to show none.
+     *
+     * ## Billed first, and in the list's own words
+     *
+     * Whether the bill has gone out is the thing worth knowing about an order on this
+     * floor, so it is asked first and answered in exactly the words the Active Orders
+     * cards use - [orderStatusLabel], shared with them. A shop should not have to
+     * learn two vocabularies for one state because it read it on two screens.
+     *
+     * Blue for billed, because that is the colour the floor plan beside this panel
+     * already gives Bill Pending; green for one still in progress, which is the
+     * plan's own Available green re-used for "nothing outstanding on it yet".
+     *
+     * [STATUS_AVAILABLE] returns NULL rather than a label. It means an order with
+     * nothing on it, and every row here has something on it - so the word could only
+     * ever be wrong, and printing it would put a column of the same untrue thing down
+     * the panel.
+     *
+     * ## The counter's own line
+     *
+     * A take-away or QSR ticket that has not been billed has no floor status to
+     * report, so it says whether the kitchen has it - the thing that actually decides
+     * what happens to it next. Spelled out rather than folded into the floor palette,
+     * since it is not a floor status.
+     */
+    private fun summaryStatus(order: OrderCard): StatusLook? {
+        val label = orderStatusLabel(order)
+        return when {
+            label == STATUS_AVAILABLE -> null
+            order.completed -> StatusLook(label, 0xFF2563EB.toInt())
+            order.counter && kotSent(order) -> StatusLook("Sent to kitchen", 0xFF2563EB.toInt())
+            order.counter -> StatusLook("Not sent yet", 0xFFB45309.toInt())
+            else -> StatusLook(label, 0xFF16A34A.toInt())
+        }
+    }
+
+    private fun activeSummaryRow(
+        order: OrderCard,
+        amount: Double,
+        accent: Int,
+        /** Null where there is nothing worth saying - see [summaryStatus]. */
+        status: StatusLook?
+    ): View {
+        val density = resources.displayMetrics.density
+        fun dp(value: Int) = (value * density).toInt()
+
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(9), dp(16), dp(9))
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    addView(
+                        TextView(context).apply {
+                            text = if (order.counter) order.id.replace("TA-", "Token #")
+                            else tableDisplayName(order)
+                            textSize = 16f
+                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                            maxLines = 1
+                            ellipsize = android.text.TextUtils.TruncateAt.END
+                            setTextColor(resources.getColor(R.color.text_main, null))
+                        }
+                    )
+                    addView(
+                        TextView(context).apply {
+                            // Type and time: which kind of order, and how long it has
+                            // been standing - the two things that decide whether a
+                            // figure on this panel is worth walking over to.
+                            text = listOfNotNull(order.type, order.time.takeIf { it.isNotBlank() })
+                                .joinToString("  ·  ")
+                            textSize = 12.5f
+                            maxLines = 1
+                            setTextColor(resources.getColor(R.color.text_secondary, null))
+                        }
+                    )
+                }
+            )
+            // Amount over status, both hard right. The money is what the panel is
+            // read for, so it takes the top line where the eye lands; the status sits
+            // under it in the smaller type, as the type and time do on the left.
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = android.view.Gravity.END
+                    addView(
+                        TextView(context).apply {
+                            text = "₹ ${money(amount)}"
+                            textSize = 16f
+                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                            setTextColor(accent)
+                        }
+                    )
+                    // Left off entirely rather than drawn blank: an empty line under
+                    // the amount would leave that row taller than its neighbours for
+                    // nothing.
+                    if (status != null) {
+                        addView(
+                            TextView(context).apply {
+                                text = status.label
+                                textSize = 12.5f
+                                maxLines = 1
+                                // The status's own colour, keyed to the floor plan's -
+                                // a row reading billed in the same blue as the card is
+                                // one fact stated twice, not two to reconcile.
+                                setTextColor(status.color)
+                            }
+                        )
+                    }
+                }
+            )
+        }
     }
 
     /** Choose Table, greyed out the same way the other dine-in-only actions are. */
@@ -1840,7 +2168,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun openNewOrder(table: String, section: String, phone: String, type: String) {
         val root = view ?: return
         val now = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
-        val cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—"
+        // The PERSON's name, not their login id - it is stamped onto the running order
+        // and printed on the table's bill. See SessionManager.cashierName.
+        val cashier = com.example.synergic_pos_offline.utils.SessionManager.cashierName
 
         // The table's own assigned waiter (Database Settings › Table), where this
         // order has a table at all - a Take Away order opens with section blank and
@@ -2260,7 +2590,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val parent = order.id
         val section = order.section
         val waiterId = roDao.findByTable(parent, section)?.waiterId
-        val cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—"
+        // The PERSON's name, not their login id - it is stamped onto the running order
+        // and printed on the table's bill. See SessionManager.cashierName.
+        val cashier = com.example.synergic_pos_offline.utils.SessionManager.cashierName
 
         // Part A keeps the existing order, so it is occupied if that order has been
         // SENT to the kitchen - the same rule as everywhere else. Items merely typed
@@ -2961,6 +3293,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val emptyNote = v.findViewById<TextView>(R.id.tvNoTables)
 
         val tables = loadTables()
+        // The floor as it stands, beside the plan itself - see [fillActiveSummary].
+        fillActiveSummary(v, accent)
         // The rooms themselves, and nothing else: AC, Non AC, Terrace. There is no
         // All chip - a floor plan is read one room at a time, because that is how a
         // room is stood in, and "every table in the building at once" is a view of
@@ -4257,7 +4591,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val empty = v.findViewById<TextView>(R.id.tvOrderItemsEmpty)
 
         val label = if (order.counter)
-            "Take Away ${order.id}" else "Table ${order.id}"
+            "${order.type} ${order.id.replace("TA-", "Token #")}" else "Table ${order.id}"
         v.findViewById<TextView>(R.id.tvOrderItemsTitle).text = "Order Items — $label"
 
         fun fill() {
@@ -4336,6 +4670,30 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * paying and what they handed over.
      */
     private fun showQuickPayment(order: OrderCard) {
+        // NO POPUP WHERE THERE IS NOTHING TO ASK.
+        //
+        // With Payment Mode off and Cash Reception off there is one mode, already
+        // chosen, and no change to work out - so this dialog was a single Cash tile
+        // and a total the operator had just read off the panel behind it, waiting for
+        // a tap that could only mean one thing. Both counter modes settle straight
+        // through instead, as cash, by the same path the Confirm button uses.
+        //
+        // Take-away and QSR only. A table is not settled from here.
+        if (!com.example.synergic_pos_offline.utils.PaymentModeSetting.settlementHasAQuestion(requireContext())) {
+            val due = payableTotal(computeBill(order).total)
+            // Tendered = the exact amount. Nobody was asked what they handed over, so
+            // there is no change to record and none is claimed - see settlePaidOrder,
+            // which books the difference as the money given back.
+            printThenSettle(
+                order,
+                com.example.synergic_pos_offline.utils.PaymentModeSetting.CASH_LABEL,
+                due
+            )
+            // The same return the Confirm button makes - see the note on it below.
+            view?.post { if (isAdded) showChooseTableDialog() }
+            return
+        }
+
         val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
         val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_quick_payment, null)
@@ -4348,6 +4706,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // charges are all the one figure - not the exact total with the rounding
         // sprung on the counter only once the bill is saved.
         val total = payableTotal(computeBill(order).total)
+        // THE ORDER'S OWN TYPE, not "Take Away".
+        //
+        // This dialog settles both counter modes, and its title was written when
+        // take-away was the only one - so a QSR ticket was settled under a heading
+        // naming the other mode. See OrderCard.counter's own note: that is the whole
+        // family of bugs QSR introduced by splitting "has no table" from "is a
+        // take-away".
+        v.findViewById<TextView>(R.id.tvQpTitle).text = "${order.type} — Settlement"
         v.findViewById<TextView>(R.id.tvQpTotal).text = "₹ ${money(total)}"
         v.findViewById<TextView>(R.id.tvQpSubtitle).text = buildString {
             append(order.id.replace("TA-", "Token #"))
@@ -4386,6 +4752,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             v.findViewById<com.google.android.material.button.MaterialButton>(id).setOnClickListener {
                 payMethod = name; paintMethods()
             }
+        }
+
+        // App Settings' Payment Mode. Off, this till does not ask how a sale was paid,
+        // so the take-away counter is not asked either: Card and Online come down and
+        // the order settles as cash - which is also what the slip will say. Read here
+        // rather than when the screen was built, since the dialog is raised fresh each
+        // time and the setting may have been changed since.
+        if (!com.example.synergic_pos_offline.utils.PaymentModeSetting.asked(requireContext())) {
+            payMethod = com.example.synergic_pos_offline.utils.PaymentModeSetting.CASH_LABEL
+            com.example.synergic_pos_offline.utils.PaymentModeSetting.cashOnly(
+                v.findViewById(R.id.btnQpCard), v.findViewById(R.id.btnQpOnline)
+            )
         }
 
         // Pre-filled with the exact amount, the way the checkout screen fills it: the
@@ -4681,8 +5059,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // The table as the bill's own field - see Draft.table. Carries its section,
         // since a table number repeats in every section.
         val who = customerFor(order.phone)
+        // A counter order is named by ITS OWN MODE and its token - "QSR Token #7", not
+        // "Take Away Token #7". This was hard-coded to Take Away, so every QSR bill
+        // went out over the counter naming the wrong mode; the customer's own copy
+        // said one thing and the till's reports said another.
         val billTable = if (order.counter)
-            "Take Away ${order.id.replace("TA-", "Token #")}"
+            "${order.type} ${order.id.replace("TA-", "Token #")}"
         else if (order.section.isBlank()) order.id
         else "${order.id} (${order.section})"
         val now = java.text.SimpleDateFormat("dd-MM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
@@ -4709,13 +5091,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // The slip shows what came off, whichever way it was arrived at - the
             // customer-facing figure, not the raw one the lines above are priced
             // against (see BillBreakdown.discount vs .discountDisplay).
-            discount = b.discountDisplay, roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
+            discount = b.discountDisplay, discountPercent = b.discountPercent,
+            roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
             paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),
             serviceCharge = b.service,   // shown as its own totals line, not an item
             // The figures already quoted on the order panel, handed to the slip rather
             // than worked out again - so what prints is what the customer was told.
             charges = b.charges.map { it.name to it.amount },
             chargeTypes = b.charges.map { it.type.name },
+            // The rate each percentage charge was set at, so the slip can print it.
+            chargeValues = b.charges.map { it.value },
             chargeApplicabilities = b.charges.map { it.applicability.store() },
             orderType = chargeOrderType,
             returnAmount = (tendered - payableTotal(b.total)).coerceAtLeast(0.0)   // cash to hand back
@@ -5334,8 +5719,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * of them it was once a second section has a table 1 too.
      */
     private fun tableLabel(order: OrderCard): String = when {
+        // Named by its OWN mode - a QSR ticket is not a take-away one.
         order.counter ->
-            order.id.replace("TA-", "Take Away Token #")
+            "${order.type} ${order.id.replace("TA-", "Token #")}"
         order.section.isBlank() -> "Table ${order.id}"
         else -> "Table ${order.id} (${order.section})"
     }
@@ -5352,6 +5738,27 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
          */
         const val TYPE_TAKE_AWAY = "Take Away"
         const val TYPE_QSR = "QSR"
+
+        /**
+         * `td_running_order.status` for an order the counter has parked - see
+         * [OrderCard.held] and [onQsrHold].
+         *
+         * A stored string, named here for the same reason the types are: it is written
+         * on one screen and read back on another, and a status that is only "HOLD" in
+         * one of two comparisons is an order that never comes back.
+         */
+        const val STATUS_HOLD = "HOLD"
+
+        /**
+         * The one order state the Choose Table panel does NOT print - see
+         * [orderStatusLabel] and [fillActiveSummary].
+         *
+         * "Available" says an order has nothing on it. A row in a panel of active
+         * orders is already an order with something on it, so the word would only ever
+         * appear where it cannot be true, and a status that is always the same word is
+         * a column of noise.
+         */
+        const val STATUS_AVAILABLE = "Available"
 
         const val MENU_TRANSFER = 1
         const val MENU_MERGE = 2

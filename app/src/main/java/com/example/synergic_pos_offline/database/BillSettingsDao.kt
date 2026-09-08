@@ -305,22 +305,24 @@ class BillSettingsDao(context: Context) {
      */
     fun clearAllBills() {
         val db = helper.writableDatabase
-        db.setForeignKeyConstraintsEnabled(false)
+        // Deleted child-first, with foreign keys left switched on - see the note in
+        // BillErase.clearFloor. This carried the same runtime toggle and survived only
+        // by luck of timing: Android throws from it whenever another connection is in
+        // use, and this runs on a worker thread while the till's UI is still live. The
+        // order below already goes child before parent, so nothing here needs
+        // enforcement turned off - a print and a payment before the bill they are
+        // against, the KOT lines before their KOT, the bill lines before their bill.
+        db.beginTransaction()
         try {
-            db.beginTransaction()
-            try {
-                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_PRINTS}")
-                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_PAYMENTS}")
-                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT_ITEMS}")
-                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT}")
-                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS}")
-                db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILLS}")
-                db.setTransactionSuccessful()
-            } finally {
-                db.endTransaction()
-            }
+            db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_PRINTS}")
+            db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_PAYMENTS}")
+            db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT_ITEMS}")
+            db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT}")
+            db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS}")
+            db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILLS}")
+            db.setTransactionSuccessful()
         } finally {
-            db.setForeignKeyConstraintsEnabled(true)
+            db.endTransaction()
         }
     }
 

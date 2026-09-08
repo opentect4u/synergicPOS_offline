@@ -33,15 +33,36 @@
         android:orientation="vertical"
         android:padding="28dp">
 
-        <TextView
-            android:id="@+id/tvQuickCustomerTitle"
+        <!-- Title with the close cross over its right-hand end - the same header
+             arrangement dialog_form.xml uses, so the two customer popups (grocery's
+             and the restaurant's) close the same way and look the same doing it. -->
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Customer Details"
-            android:textSize="21sp"
-            android:textStyle="bold"
-            android:gravity="center"
-            android:textColor="@color/text_main" />
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/tvQuickCustomerTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:text="Customer Details"
+                android:textSize="21sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:paddingHorizontal="40dp"
+                android:textColor="@color/text_main" />
+
+            <ImageButton
+                android:id="@+id/btnQuickCustomerClose"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="end|center_vertical"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Close"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_close" />
+        </FrameLayout>
 
         <!-- Says what the phone field does, so the auto-fill is expected rather than
              surprising - a name appearing in a box nobody typed in reads as a fault. -->

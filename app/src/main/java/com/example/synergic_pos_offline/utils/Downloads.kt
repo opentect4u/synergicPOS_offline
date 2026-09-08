@@ -119,6 +119,38 @@ object Downloads {
             }.absolutePath
         }
 
+    /**
+     * The same, for a file that is not text.
+     *
+     * An Excel workbook is a ZIP, so it cannot go through the [String] overload: text
+     * is encoded on the way out, and encoding a ZIP produces a file Excel refuses to
+     * open. The bytes are written exactly as given.
+     */
+    fun save(
+        context: Context,
+        fileName: String,
+        content: ByteArray,
+        mimeType: String
+    ): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val resolver = context.contentResolver
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("could not create file")
+            resolver.openOutputStream(uri)?.use { it.write(content) }
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            "Downloads/$fileName"
+        } else {
+            val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            File(dir, fileName).apply { writeBytes(content) }.absolutePath
+        }
+
     fun save(
         context: Context,
         fileName: String,

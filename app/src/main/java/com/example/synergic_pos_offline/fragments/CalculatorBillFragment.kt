@@ -51,7 +51,7 @@ class CalculatorBillFragment : Fragment(), TitledScreen {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        val printedBy = SessionManager.currentUser?.userId?.uppercase() ?: "---"
+        val printedBy = SessionManager.cashierName
         PeriodReportRenderer(requireContext())
             .populate(view, CalculatorBill.content(bill), printedBy)
 

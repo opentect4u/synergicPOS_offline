@@ -61,7 +61,7 @@ object PeriodReportPrinter {
         config: ThermalPrinter.Config,
         result: (String) -> Unit
     ) {
-        val printedBy = SessionManager.currentUser?.userId?.uppercase() ?: "---"
+        val printedBy = SessionManager.cashierName
         val capture = PeriodReportRenderer(context)
             .renderToBitmap(content, printedBy, config.paperDots)
         if (capture == null) {

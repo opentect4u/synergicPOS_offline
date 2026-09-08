@@ -248,7 +248,12 @@ class ReturnDao(private val context: Context) {
         val list = mutableListOf<BillLine>()
         helper.readableDatabase.rawQuery(
             """
-            SELECT i.id, i.product_id, COALESCE(p.product_name, 'Item'),
+            SELECT i.id, i.product_id,
+                   -- The LINE'S own name first: a product replaced by a bulk upload
+                   -- is gone, and the line kept the name it was sold under. Falling
+                   -- straight to 'Item' would have made every historical line on a
+                   -- return screen read 'Item'.
+                   COALESCE(NULLIF(TRIM(i.product_name), ''), p.product_name, 'Item'),
                    i.quantity, i.rate, i.cgst_rate, i.sgst_rate, i.vat_rate,
                    COALESCE(i.discount_amount, 0),
                    COALESCE((SELECT SUM(ri.return_quantity)

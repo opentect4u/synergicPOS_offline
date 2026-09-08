@@ -30,6 +30,9 @@
         android:orientation="vertical"
         android:padding="26dp">
 
+        <!-- Set in code from the order's own type - this dialog settles a QSR ticket
+             as well as a take-away one. The text below is only what the preview shows;
+             see RestaurantOrdersFragment.showQuickPayment. -->
         <TextView
             android:id="@+id/tvQpTitle"
             android:layout_width="match_parent"

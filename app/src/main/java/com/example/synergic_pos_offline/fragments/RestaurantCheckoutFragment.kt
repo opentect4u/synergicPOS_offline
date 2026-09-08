@@ -158,6 +158,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
      */
     private val billDiscount get() = arguments?.getDouble(ARG_DISCOUNT) ?: 0.0
     private val discountDisplay get() = arguments?.getDouble(ARG_DISCOUNT_DISPLAY) ?: billDiscount
+    private val discountPercent get() = arguments?.getDouble(ARG_DISCOUNT_PERCENT) ?: 0.0
     private val lineDiscounts: DoubleArray get() = arguments?.getDoubleArray(ARG_LINE_DISCOUNTS) ?: DoubleArray(0)
     private val discountPreTax get() = arguments?.getBoolean(ARG_DISCOUNT_PRE_TAX) ?: true
 
@@ -234,6 +235,17 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 }
             }
 
+        // App Settings' Payment Mode, which this screen was not reading at all - so a
+        // restaurant that had switched the question off was still being offered Card
+        // and Online here, and could settle a table by a mode the till says it does
+        // not take. Off, the sale is cash and Cash is the only tile left standing.
+        if (!com.example.synergic_pos_offline.utils.PaymentModeSetting.asked(requireContext())) {
+            payMethod = com.example.synergic_pos_offline.utils.PaymentModeSetting.CASH_LABEL
+            com.example.synergic_pos_offline.utils.PaymentModeSetting.cashOnly(
+                view.findViewById(R.id.btnPayCard), view.findViewById(R.id.btnPayOnline)
+            )
+        }
+
         // Amount tendered → change due.
         val etTendered = view.findViewById<TextInputEditText>(R.id.etTendered)
         val tvChange = view.findViewById<TextView>(R.id.tvChangeDue)
@@ -301,7 +313,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         val draft = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft(
             billNumber = com.example.synergic_pos_offline.database.BillDao(ctx).nextBillNumber(),
             dateTime = java.text.SimpleDateFormat("dd-MM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date()),
-            cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—",
+            cashier = com.example.synergic_pos_offline.utils.SessionManager.cashierName,
             customer = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Customer(
                 phone = customer.takeIf { it != "Walk-in" && it.isNotBlank() }
             ),
@@ -322,6 +334,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             // The customer-facing figure ([discountDisplay]), not [billDiscount] -
             // the preview must show the same DISCOUNT the actual printed slip will.
             discount = discountDisplay,
+            discountPercent = discountPercent,
             roundOff = roundOffAmount,
             netAmount = payableTotal,
             paymentModes = listOf(payMethod.uppercase(java.util.Locale.US)),
@@ -330,6 +343,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             // "BOTH" here just means "keep it", since that decision was already made.
             charges = charges.map { it.first to it.second },
             chargeTypes = charges.map { it.third },
+            // The rate each percentage charge was set at - already carried onto this
+            // screen for [chargeLabel], and now onto the slip as well.
+            chargeValues = charges.indices.map { chargeValues.getOrNull(it) ?: 0.0 },
             chargeApplicabilities = charges.map { "BOTH" },
             orderType = chargeOrderType,
             returnAmount = run {
@@ -520,6 +536,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_ORDER_TYPE = "order_type"
         private const val ARG_DISCOUNT = "discount"
         private const val ARG_DISCOUNT_DISPLAY = "discount_display"
+        /** The RATE the whole-bill discount was given at - see Draft.discountPercent. */
+        private const val ARG_DISCOUNT_PERCENT = "discount_percent"
         private const val ARG_LINE_DISCOUNTS = "line_discounts"
         private const val ARG_DISCOUNT_PRE_TAX = "discount_pre_tax"
         private const val ARG_CGST = "cgst"
@@ -597,6 +615,16 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             itemwiseDiscount: Boolean = false,
             discount: Double = 0.0,
             discountDisplay: Double = discount,
+            /**
+             * The RATE the whole-bill discount was given at, for the slip's DISCOUNT line.
+             *
+             * NOT called discountPercent: the Bundle below is built inside
+             * `RestaurantCheckoutFragment().apply { }`, so an unqualified name that matches an
+             * instance property resolves to THAT property rather than to this parameter - and
+             * the property reads `arguments`, which is still null here. It would have compiled
+             * and written 0.0 every time.
+             */
+            discountRate: Double = 0.0,
             lineDiscounts: DoubleArray = DoubleArray(0),
             discountPreTax: Boolean = true,
             cgst: Double = 0.0,
@@ -629,6 +657,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putString(ARG_ORDER_TYPE, orderType)
                 putDouble(ARG_DISCOUNT, discount)
                 putDouble(ARG_DISCOUNT_DISPLAY, discountDisplay)
+                putDouble(ARG_DISCOUNT_PERCENT, discountRate)
                 putDoubleArray(ARG_LINE_DISCOUNTS, lineDiscounts)
                 putBoolean(ARG_DISCOUNT_PRE_TAX, discountPreTax)
                 putDouble(ARG_CGST, cgst)

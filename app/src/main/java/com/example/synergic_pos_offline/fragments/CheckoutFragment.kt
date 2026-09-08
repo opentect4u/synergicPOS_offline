@@ -147,6 +147,16 @@ class CheckoutFragment : Fragment(), TitledScreen {
         btnPaymentCard.setOnClickListener { selectPaymentMethod("CARD", btnPaymentCard) }
         btnPaymentUPI.setOnClickListener { selectPaymentMethod("UPI", btnPaymentUPI) }
 
+        // App Settings' Payment Mode. Off, this till does not ask how a sale was paid
+        // and every sale is cash, so Card and UPI come down and Cash is left standing
+        // alone - the same rule the other three checkout screens follow. This one was
+        // reading the setting not at all. See PaymentModeSetting.
+        if (!com.example.synergic_pos_offline.utils.PaymentModeSetting.asked(requireContext())) {
+            com.example.synergic_pos_offline.utils.PaymentModeSetting.cashOnly(
+                btnPaymentCard, btnPaymentUPI
+            )
+        }
+
         // Set Cash as default
         selectPaymentMethod("CASH", btnPaymentCash)
     }

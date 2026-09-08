@@ -140,9 +140,17 @@ class ProductsFragment : DataTableFragment() {
      */
     private fun downloadTemplate() {
         try {
+            // A WORKBOOK, as the template now is. This file's whole purpose is to be
+            // edited and uploaded back, so it has to be the same kind of file the
+            // upload page hands out - a shop exporting its catalogue and a shop
+            // starting from the template are filling in one sheet either way.
             val savedTo = Downloads.save(
-                requireContext(), ProductCsvExport.FILE_NAME,
-                ProductCsvExport.content(requireContext())
+                requireContext(),
+                ProductCsvExport.EXCEL_FILE_NAME,
+                com.example.synergic_pos_offline.utils.Xlsx.write(
+                    ProductCsvExport.rows(requireContext()), "Item Master"
+                ),
+                com.example.synergic_pos_offline.utils.Xlsx.MIME
             )
             toast("Products saved to $savedTo")
         } catch (e: Exception) {
@@ -227,7 +235,7 @@ class ProductsFragment : DataTableFragment() {
         // from code - see item_product_language_picker.xml.
         val row = LayoutInflater.from(ctx).inflate(R.layout.item_product_language_picker, container, false)
         val act = row.findViewById<MaterialAutoCompleteTextView>(R.id.actProductLanguage)
-        act.setAdapter(ArrayAdapter(ctx, android.R.layout.simple_list_item_1, languages.map { languageLabel(it) }))
+        act.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, languages.map { languageLabel(it) }))
         act.setText(languageLabel(AppLanguage.of(ctx)), false)
         act.setOnItemClickListener { _, _, position, _ ->
             languages.getOrNull(position)?.let { chooseAppLanguage(it) }
@@ -1022,8 +1030,7 @@ class ProductsFragment : DataTableFragment() {
     }
 
     private fun bindOptions(view: AutoCompleteTextView, options: List<Option>, selectedId: Int?) {
-        view.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, options.map { it.label })
+        view.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(requireContext(), options.map { it.label })
         )
         view.setOnItemClickListener { _, _, position, _ -> view.tag = options[position].id }
         options.firstOrNull { it.id == selectedId }?.let {
@@ -1044,7 +1051,7 @@ class ProductsFragment : DataTableFragment() {
     ) {
         val slabs = DatabaseHelper.GST_SLABS
         val labels = slabs.map { pctLabel(it) }
-        view.setAdapter(ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, labels))
+        view.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(requireContext(), labels))
 
         fun apply(rate: Double) {
             view.tag = rate
@@ -1065,8 +1072,7 @@ class ProductsFragment : DataTableFragment() {
 
     private fun bindDiscountType(view: AutoCompleteTextView, selectedCode: String?) {
         val codes = listOf("P" to "Percentage", "A" to "Amount")
-        view.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, codes.map { it.second })
+        view.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(requireContext(), codes.map { it.second })
         )
         view.setOnItemClickListener { _, _, position, _ -> view.tag = codes[position].first }
         // Default to Percentage when the user hasn't chosen a discount type.
@@ -1079,7 +1085,7 @@ class ProductsFragment : DataTableFragment() {
 
     /** Binds a plain string dropdown; the picked value is stored on the view's tag. */
     private fun bindStrings(view: AutoCompleteTextView, items: List<String>) {
-        view.setAdapter(ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, items))
+        view.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(requireContext(), items))
         view.setOnItemClickListener { _, _, position, _ -> view.tag = items[position] }
     }
 
