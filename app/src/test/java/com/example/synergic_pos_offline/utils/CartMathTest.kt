@@ -176,6 +176,30 @@ class CartMathTest {
     }
 
     /**
+     * A ₹1,180 INCLUSIVE (MRP) line, 18% GST (9% CGST + 9% SGST), 20% bill-wise
+     * PRE-tax: the discount is a share of the ₹1,000 base that MRP strips down to
+     * (₹200.00), not the ₹1,180 on the shelf (which would give ₹236.00) - so GST is
+     * re-charged on the discounted ₹800.00 base (₹72.00 CGST + ₹72.00 SGST) for a
+     * final ₹944.00, exactly the textbook MRP pre-tax-discount worked example: MRP
+     * ÷ 1.18 = base 1,000 → 20% off = 800 → +18% GST = 944.
+     */
+    @Test
+    fun `a bill-wise pre-tax discount on an inclusive cart is a share of the stripped base`() {
+        val lines = listOf(
+            CartMath.Line(qty = 1.0, rate = 1180.0, cgstRate = 9.0, sgstRate = 9.0)
+        )
+        val c = CartMath.Config(
+            taxEnabled = true, inclusive = true, discountPreTax = true,
+            itemwiseDiscount = false, billwiseDiscount = true
+        )
+        val totals = CartMath.totals(lines, c, GstCalculator.DiscountMode.PERCENT, 20.0)
+        assertEquals(200.0, totals.discount, delta)
+        assertEquals(72.0, totals.cgst, delta)
+        assertEquals(72.0, totals.sgst, delta)
+        assertEquals(944.0, totals.total, delta)
+    }
+
+    /**
      * A ₹600 + ₹200 INCLUSIVE (MRP) cart, 5% GST, 5% bill-wise POST-tax: GST is
      * charged on the discounted value - the same rule an item-wise post-tax
      * discount already follows - so each line's own CGST comes to 13.57 and 4.52

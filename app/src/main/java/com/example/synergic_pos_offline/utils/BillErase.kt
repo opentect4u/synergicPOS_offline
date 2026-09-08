@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.synergic_pos_offline.database.BillDao
 import com.example.synergic_pos_offline.database.BillSettingsDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
+import com.example.synergic_pos_offline.database.TaxSettingsDao
 
 /**
  * Throws away the bills and starts the book again from the Start No. in Bill
@@ -98,6 +99,14 @@ object BillErase {
      * worked out in advance: it is the same call the sale screen will make, so what
      * the operator is told is what they will actually get.
      *
+     * Tax Settings go back to a fresh till's own default too - MRP, tax on, any
+     * discount post-tax - see [TaxSettingsDao.resetToFreshTillDefault]. A till with
+     * no bills at all reads the same whichever of the three routes emptied it
+     * (Erase Bills, a Start Bill No. change, or a Tax Mode change); the Tax Mode
+     * change route saves its own chosen mode straight afterward, through the
+     * ordinary screen save, so the operator's actual choice still wins there rather
+     * than this default.
+     *
      * Blocking, and the caller is expected to have taken a backup first - see
      * [AutoBackup.backupBefore].
      */
@@ -105,6 +114,7 @@ object BillErase {
         val bills = preview(context).bills
         BillSettingsDao(context).clearAllBills()
         val floor = clearFloor(context)
+        TaxSettingsDao(context).resetToFreshTillDefault()
         return Outcome(
             bills = bills,
             nextNumber = BillDao(context).nextBillNumber(),

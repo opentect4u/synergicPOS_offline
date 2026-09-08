@@ -122,7 +122,7 @@ class DashboardHomeFragment : Fragment() {
         }
         
         if (fragment != null) {
-            parentFragmentManager.beginTransaction()
+            requireActivity().supportFragmentManager.beginTransaction()
                 .replace(R.id.fragment_container, fragment)
                 .addToBackStack(null)
                 .commit()

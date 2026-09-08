@@ -22,7 +22,6 @@ import com.example.synergic_pos_offline.utils.BillRounding
 import com.example.synergic_pos_offline.utils.CartDensity
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
-import com.example.synergic_pos_offline.utils.ProductName
 import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.example.synergic_pos_offline.utils.Quantity
@@ -135,6 +134,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** Whether stock is tracked, as of the last catalogue read. Gates the ceiling below. */
     private var stockTrackingOn = false
+
+    /**
+     * The shop's own product names for the master's current language, read once per
+     * catalogue load - see [RegionalName.map]. Empty in English, or wherever nothing
+     * has been written, in which case [RegionalName.forScreen] falls back to the
+     * usual on-screen respelling.
+     */
+    private var regionalNames: Map<String, String> = emptyMap()
 
     /**
      * The catalogue behind the Add Item grid, kept on the fragment so the stock
@@ -1835,7 +1842,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val now = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
         val cashier = com.example.synergic_pos_offline.utils.SessionManager.currentUser?.userId ?: "—"
 
-        val dbId = roDao.createOrder(table, section, null, type, phone, cashier)
+        // The table's own assigned waiter (Database Settings › Table), where this
+        // order has a table at all - a Take Away order opens with section blank and
+        // carries none. Read here, at order creation, because this is a bill's only
+        // chance to record who served it: nothing later ever revisits waiter_id.
+        val waiterId = if (section.isNotBlank()) tableDao.waiterIdForTable(table, section) else null
+        val dbId = roDao.createOrder(table, section, waiterId, type, phone, cashier)
         if (dbId == -1L) { toast("Could not create order"); return }
         // THE TABLE IS NOT MARKED OCCUPIED HERE.
         //
@@ -2468,7 +2480,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val language = AppLanguage.of(requireContext())
         return com.example.synergic_pos_offline.utils.SearchSuggestions.Item(
             id = gp.product.id,
-            name = ProductName.inAppLanguage(language, gp.product.name),
+            name = com.example.synergic_pos_offline.utils.RegionalName.forScreen(regionalNames, language, gp.product.name),
             meta = listOfNotNull(
             gp.product.category.takeIf { it.isNotBlank() },
             gp.prepTime.takeIf { it.isNotBlank() }?.let { t -> if (t.contains("min", true)) t else "$t min" },
@@ -2501,6 +2513,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /** Loads the current store's products (rate + tax split + category + food/spice), for the grid. */
     private fun loadProductsFromDb(): List<GridProduct> {
         val db = com.example.synergic_pos_offline.database.DatabaseHelper.getInstance(requireContext()).readableDatabase
+        // One query for the whole catalogue's regional names, same as the Products
+        // master's own table and the grocery sale screen - see [RegionalName.map].
+        regionalNames = com.example.synergic_pos_offline.utils.RegionalName.map(requireContext())
         val store = currentStoreId(db)
         val cats = com.example.synergic_pos_offline.database.CategoryDao(requireContext())
             .getAll().associate { it.id to it.name }
@@ -3736,7 +3751,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val gp = items[position]
             val p = gp.product
             val language = AppLanguage.of(holder.itemView.context)
-            holder.itemView.findViewById<TextView>(R.id.tvName).text = ProductName.inAppLanguage(language, p.name)
+            holder.itemView.findViewById<TextView>(R.id.tvName).text =
+                com.example.synergic_pos_offline.utils.RegionalName.forScreen(regionalNames, language, p.name)
             holder.itemView.findViewById<TextView>(R.id.tvPrice).text = "₹ ${money(p.price)}"
             holder.itemView.findViewById<TextView>(R.id.tvSku).text = p.sku
 

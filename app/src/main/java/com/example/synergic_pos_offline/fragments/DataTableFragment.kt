@@ -134,6 +134,18 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
      */
     open val wrappingColumns: Set<Int> get() = emptySet()
 
+    /**
+     * Set true to let the operator drag a header cell to reorder the columns.
+     *
+     * Off by default - most masters here have three or four columns, where a fixed
+     * order is one less thing to think about. A screen with enough of them that
+     * scanning down a particular one matters opts in.
+     *
+     * The order lives only for as long as this screen is open; reopening it starts
+     * from [columns]' own order again.
+     */
+    open val columnsReorderable: Boolean get() = false
+
     /** Invoked when a row's inline switch is toggled. Persist + reflect the new state. */
     open fun onSwitchToggled(row: DataRow, isOn: Boolean) {}
 
@@ -192,6 +204,14 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
      */
     open val showsSelection: Boolean get() = true
 
+    /**
+     * The columns' current left-to-right order, as indices into [columns] - identity
+     * ([0, 1, 2, ...]) until [columnsReorderable] lets the operator drag one out of
+     * place. Read by the header (labels) and by [DataTableAdapter] (cells) alike, so
+     * the two can never show a row's values under the wrong heading.
+     */
+    private val columnOrder = mutableListOf<Int>()
+
     private val allRows = mutableListOf<DataRow>()
     // The full result of the current search/filter. [visibleRows] is the paged slice
     // of this that the adapter actually renders; select-all and the empty state still
@@ -229,9 +249,12 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         rvTable = view.findViewById(R.id.rvTable)
         tvEmpty = view.findViewById(R.id.tvEmpty)
 
+        columnOrder.clear()
+        columnOrder.addAll(columns.indices)
+
         adapter = DataTableAdapter(
             visibleRows,
-            columns.size,
+            columnOrder,
             selectedIds,
             thumbnailColumn,
             { loadThumbnail(it) },
@@ -342,13 +365,14 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             header.addView(spacer)
         }
 
-        for (col in columns) {
+        columnOrder.forEachIndexed { position, columnIndex ->
             val tv = TextView(ctx)
             tv.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            tv.text = col
+            tv.text = columns[columnIndex]
             tv.setTextColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.text_secondary))
             tv.textSize = 15f
             tv.setTypeface(tv.typeface, android.graphics.Typeface.BOLD)
+            if (columnsReorderable) wireColumnDrag(tv, position, header)
             header.addView(tv)
         }
         val actions = TextView(ctx)
@@ -359,6 +383,59 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         actions.textSize = 15f
         actions.setTypeface(actions.typeface, android.graphics.Typeface.BOLD)
         header.addView(actions)
+    }
+
+    /**
+     * Lets [cell] - the header label at [position] in [columnOrder] - be long-pressed
+     * and dragged onto another header cell to swap the two columns' places.
+     *
+     * Built on the platform's own drag-and-drop ([View.startDragAndDrop]) rather than
+     * a touch-move gesture tracked by hand, so a long press does not fight the
+     * RecyclerView's own scrolling underneath it - the system owns the gesture once
+     * the drag starts, the same way it does for text selection.
+     *
+     * The dragged cell's [position] rides in the [ClipData] rather than being looked
+     * up again on drop: [header] is about to be rebuilt out from under this listener
+     * the moment the drop is handled, so nothing here reads its own view's position
+     * back off anything that might already be stale.
+     */
+    private fun wireColumnDrag(cell: TextView, position: Int, header: LinearLayout) {
+        cell.tag = position
+        cell.setOnLongClickListener { view ->
+            val clip = android.content.ClipData.newPlainText(DRAG_LABEL, position.toString())
+            view.startDragAndDrop(clip, View.DragShadowBuilder(view), null, 0)
+            true
+        }
+        cell.setOnDragListener { view, event ->
+            when (event.action) {
+                android.view.DragEvent.ACTION_DRAG_STARTED -> true
+                android.view.DragEvent.ACTION_DRAG_ENTERED -> {
+                    view.alpha = 0.5f
+                    true
+                }
+                android.view.DragEvent.ACTION_DRAG_EXITED -> {
+                    view.alpha = 1f
+                    true
+                }
+                android.view.DragEvent.ACTION_DROP -> {
+                    view.alpha = 1f
+                    val from = event.clipData.getItemAt(0).text?.toString()?.toIntOrNull()
+                    val to = view.tag as? Int
+                    if (from != null && to != null && from != to) {
+                        val moved = columnOrder.removeAt(from)
+                        columnOrder.add(to, moved)
+                        buildHeader(header)
+                        adapter.notifyDataSetChanged()
+                    }
+                    true
+                }
+                android.view.DragEvent.ACTION_DRAG_ENDED -> {
+                    view.alpha = 1f
+                    true
+                }
+                else -> true
+            }
+        }
     }
 
     private fun updateSelectionUI() {
@@ -717,7 +794,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     private inner class DataTableAdapter(
         private val rows: List<DataRow>,
-        private val columnCount: Int,
+        /** The live column order - see [columnOrder]. Read fresh on every bind, so a
+         *  drag reorder applied between binds is picked up without rebuilding rows. */
+        private val columnOrder: List<Int>,
         private val selectedIds: MutableSet<String>,
         private val thumbnailColumn: Int?,
         private val thumbnailProvider: (DataRow) -> Bitmap?,
@@ -760,7 +839,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             bindThumbnail(holder, row, ctx)
 
             holder.llCells.removeAllViews()
-            for (i in 0 until columnCount) {
+            for (i in columnOrder) {
                 if (i == thumbnailColumn) {
                     holder.llCells.addView(buildThumbnailCell(ctx, row))
                     continue
@@ -929,5 +1008,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         private const val THUMB_PX = 120
         /** Cell values (lowercased) that render the inline switch as ON. */
         private val ON_VALUES = setOf("on", "enabled", "yes", "active", "true")
+        /** [android.content.ClipData] label for a column-reorder drag - not read back,
+         *  only what a debugger or the system's own drag log would show it as. */
+        private const val DRAG_LABEL = "column"
     }
 }
