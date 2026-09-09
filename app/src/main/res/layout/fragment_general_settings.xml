@@ -227,9 +227,11 @@
                         android:id="@+id/swQuantityStatus" style="@style/BillSettingSwitch" />
                 </LinearLayout>
 
+                <!-- Customer Info - commented out, not removed; the setting and the
+                     switch below still exist for [GeneralSettingsFragment] to bind
+                     and save, this row is just off screen.
                 <View style="@style/BillSettingDivider" />
 
-                <!-- Customer Info -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">
                         <TextView style="@style/BillSettingTitle" android:text="Customer Info" />
@@ -239,6 +241,7 @@
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swCustomerInfo" style="@style/BillSettingSwitch" />
                 </LinearLayout>
+                -->
 
                 <View style="@style/BillSettingDivider" />
 

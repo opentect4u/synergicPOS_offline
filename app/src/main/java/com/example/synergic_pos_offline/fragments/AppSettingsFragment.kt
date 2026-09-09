@@ -33,7 +33,12 @@ class AppSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swOtherCharges: SwitchMaterial
     private lateinit var swParcelCharge: SwitchMaterial
     private lateinit var swDirectAddToCart: SwitchMaterial
-    private lateinit var swBiometricLogin: SwitchMaterial
+    // Biometric Login's row is commented out (see the layout), not removed - we
+    // may need it back. [storedBiometricLogin] keeps whatever value is already
+    // saved surviving every other switch's autosave in the meantime, the same way
+    // [storedCouponMode] does for Coupon Mode below.
+    // private lateinit var swBiometricLogin: SwitchMaterial
+    private var storedBiometricLogin = false
     private lateinit var swShift: SwitchMaterial
     private lateinit var cardRestaurantSettings: View
     // Coupon Mode is commented out rather than removed - we may need it back. Its
@@ -62,9 +67,9 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         swOtherCharges = view.findViewById(R.id.swOtherCharges)
         swParcelCharge = view.findViewById(R.id.swParcelCharge)
         swDirectAddToCart = view.findViewById(R.id.swDirectAddToCart)
-        swBiometricLogin = view.findViewById(R.id.swBiometricLogin)
+        // swBiometricLogin = view.findViewById(R.id.swBiometricLogin)
         swShift = view.findViewById(R.id.swShift)
-        bindBiometric(view)
+        // bindBiometric(view)
         cardRestaurantSettings = view.findViewById(R.id.cardRestaurantSettings)
         // swCouponMode = view.findViewById(R.id.swCouponMode)
         swKot = view.findViewById(R.id.swKot)
@@ -85,7 +90,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         SettingsAutoSave.onChange(
             ::onSave,
             swManualRate, swCashReception, swPaymentMode, swOtherCharges, swParcelCharge,
-            swDirectAddToCart, swBiometricLogin, swShift,
+            swDirectAddToCart, /* swBiometricLogin, */ swShift,
             /* swCouponMode, */ swKot, swTableMerge, swTableShift, swTableSplit
         )
 
@@ -103,7 +108,8 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         swOtherCharges.isChecked = s.otherCharges
         swParcelCharge.isChecked = s.parcelCharge
         swDirectAddToCart.isChecked = s.directAddToCart
-        swBiometricLogin.isChecked = s.biometricLogin
+        // swBiometricLogin.isChecked = s.biometricLogin
+        storedBiometricLogin = s.biometricLogin
         swShift.isChecked = s.shift
         // swCouponMode.isChecked = s.couponMode
         storedCouponMode = s.couponMode
@@ -120,7 +126,8 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         otherCharges = swOtherCharges.isChecked,
         parcelCharge = swParcelCharge.isChecked,
         directAddToCart = swDirectAddToCart.isChecked,
-        biometricLogin = swBiometricLogin.isChecked,
+        // biometricLogin = swBiometricLogin.isChecked,
+        biometricLogin = storedBiometricLogin,
         shift = swShift.isChecked,
         // couponMode = swCouponMode.isChecked,
         couponMode = storedCouponMode,
@@ -130,20 +137,26 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         tableSplit = swTableSplit.isChecked
     )
 
-    /**
-     * Says what the fingerprint switch will actually get you on *this* tablet.
-     *
-     * A device with no reader, or one with nothing enrolled on it, can have the
-     * setting switched on all day and the login screen will still show only the
-     * password form. Said here, where it can be acted on, rather than left to be
-     * discovered at the login screen - which is the wrong moment to learn that
-     * nobody has registered a fingerprint yet.
-     */
-    private fun bindBiometric(view: View) {
-        val reason = BiometricLogin.unavailableReason(requireContext())
-        view.findViewById<TextView>(R.id.tvBiometricSub).text = reason
-            ?: "Offer the fingerprint reader on the login screen, beside the password"
-    }
+    // bindBiometric and the fingerprint-specific half of onSave are commented out
+    // with the row they served - see storedBiometricLogin's own note. Nothing on
+    // this now-hidden screen changes biometricLogin any more, so there is nothing
+    // for either to say or act on: forget()-on-off and the "just turned on" note
+    // both only ever fired off a switch this screen no longer shows.
+    //
+    // /**
+    //  * Says what the fingerprint switch will actually get you on *this* tablet.
+    //  *
+    //  * A device with no reader, or one with nothing enrolled on it, can have the
+    //  * setting switched on all day and the login screen will still show only the
+    //  * password form. Said here, where it can be acted on, rather than left to be
+    //  * discovered at the login screen - which is the wrong moment to learn that
+    //  * nobody has registered a fingerprint yet.
+    //  */
+    // private fun bindBiometric(view: View) {
+    //     val reason = BiometricLogin.unavailableReason(requireContext())
+    //     view.findViewById<TextView>(R.id.tvBiometricSub).text = reason
+    //         ?: "Offer the fingerprint reader on the login screen, beside the password"
+    // }
 
     /**
      * Writes the switches as they stand. Called by every switch on the screen - see
@@ -152,38 +165,28 @@ class AppSettingsFragment : Fragment(), TitledScreen {
      * NO "SAVED" DIALOG. It was the Save button's receipt, and with the button gone a
      * dialog on every flip would be a box to dismiss for each switch touched. The
      * switch showing its new position is the confirmation.
-     *
-     * The fingerprint note stays, because it is not a receipt - it says the setting is
-     * on and STILL will not work yet, which the switch cannot show on its own. Only
-     * when it has just been turned on, and only when there is something to say.
      */
     private fun onSave() {
-        val settings = collect()
-        dao.save(settings)
-        // Switching it off revokes rather than hides: the operator a fingerprint would
-        // have signed in is forgotten, so turning it back on offers nobody until
-        // somebody has signed in with a password again.
-        if (!settings.biometricLogin) {
-            BiometricLogin.forget(requireContext())
-            return
-        }
-        val note = when {
-            BiometricLogin.unavailableReason(requireContext()) != null ->
-                "Fingerprint login is on, but this device cannot use it yet: " +
-                    BiometricLogin.unavailableReason(requireContext())
-            BiometricLogin.offeredUser(requireContext()) == null ->
-                "Fingerprint login is on. Sign in once with a password, and the " +
-                    "fingerprint reader will be offered next time."
-            else -> null
-        }
-        // Said once, as the switch goes on - not again on every later flip of some
-        // other switch, which would re-announce a caveat nothing had changed about.
-        if (note != null && !biometricNoteShown) {
-            biometricNoteShown = true
-            android.widget.Toast.makeText(requireContext(), note, android.widget.Toast.LENGTH_LONG).show()
-        }
+        dao.save(collect())
+        // if (!settings.biometricLogin) {
+        //     BiometricLogin.forget(requireContext())
+        //     return
+        // }
+        // val note = when {
+        //     BiometricLogin.unavailableReason(requireContext()) != null ->
+        //         "Fingerprint login is on, but this device cannot use it yet: " +
+        //             BiometricLogin.unavailableReason(requireContext())
+        //     BiometricLogin.offeredUser(requireContext()) == null ->
+        //         "Fingerprint login is on. Sign in once with a password, and the " +
+        //             "fingerprint reader will be offered next time."
+        //     else -> null
+        // }
+        // if (note != null && !biometricNoteShown) {
+        //     biometricNoteShown = true
+        //     android.widget.Toast.makeText(requireContext(), note, android.widget.Toast.LENGTH_LONG).show()
+        // }
     }
 
-    /** Whether the fingerprint caveat has already been said this visit. */
-    private var biometricNoteShown = false
+    // /** Whether the fingerprint caveat has already been said this visit. */
+    // private var biometricNoteShown = false
 }
