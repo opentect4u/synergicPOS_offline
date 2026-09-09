@@ -1290,26 +1290,14 @@ class BillReceiptRenderer(context: Context) {
             val chargesTotal = if (useStored) BillRounding.toPaise(storedCharges) else recomputedTotal
             val breakdownAgrees = kotlin.math.abs(recomputedTotal - chargesTotal) < 0.01
 
-            // THE CHARGES' OWN TAX.
+            // THE CHARGES CARRY NO TAX OF THEIR OWN.
             //
-            // A fresh sale (draft != null) has no stored figure yet to read, so its
-            // charge-tax is worked out live, the same way CartMath.totals() worked
-            // it out for the screen that quoted it - see [inflateForCharges]. Not
-            // under MRP (inclusive) Post-Tax, though - see CartMath.totals()'s own
-            // note on why a charge is not taxed there at all - which this has to
-            // match, or a fresh print quotes tax on the charge that the same sale's
-            // own reprint (reading the header's already-untaxed figure back) does not.
-            //
-            // Not folded into loadItems() itself: for a grocery draft, chargesTotal
-            // above is only known AFTER totals.itemsSubtotal exists (it is what the
-            // charge is computed against), so the charges principal cannot be known
-            // before loadItems() runs for every caller - a pass after both are built
-            // is the only ordering that works uniformly.
-            if (draft != null && chargesTotal > 0.0 && taxEnabled && !(inclusive && !discountPreTax)) {
-                val (inflatedTotals, inflatedSlabs) = inflateForCharges(partRaws, totals, taxSlabs, chargesTotal)
-                totals = inflatedTotals
-                taxSlabs = inflatedSlabs
-            }
+            // Service, Parcel or any other extra charge joins the bill at its own
+            // flat value and nothing more - see CartMath.totals()'s own note on
+            // why. A fresh print (draft != null) has no stored figure to read yet,
+            // but there is nothing to add here either: [totals]/[taxSlabs] already
+            // hold the goods' own tax and only that, so a fresh print and the same
+            // sale's own reprint agree without either working the charge's tax out.
             // A reprint (draft == null) reads exactly as it did on the day - not by
             // recomputing the charge-tax again (a second, independent formula can
             // only ever agree with the first by luck - see BillWiseReportDao's own
@@ -1371,14 +1359,14 @@ class BillReceiptRenderer(context: Context) {
             // render's own fully-assembled pre-round figure - rather than trusted
             // from draft.roundOff, which was computed by a SEPARATE calculation
             // (the Orders screen's CartMath) against ITS OWN total. The two totals
-            // are built the same way in principle, but round differently in detail
-            // - CartMath rounds a charge's spread tax once, summed; inflateForCharges
-            // above rounds it per line, to keep every printed "SGST @ X%" row
-            // reconciling with the total beside it (see that function's own note).
-            // A round-off computed against one of those totals and then added to
-            // the other does not necessarily land on a whole rupee - which is
-            // exactly the "1066.98" fault this replaces: the round-off zeroed the
-            // paisa of a number this render was not actually about to print.
+            // are built the same way in principle, but each line's own tax is
+            // rounded to the paisa independently in both places, and a rounding a
+            // paisa apart on one line is enough to leave the two grand totals a
+            // paisa apart too. A round-off computed against one of those totals and
+            // then added to the other does not necessarily land on a whole rupee -
+            // which is exactly the "1066.98" fault this replaces: the round-off
+            // zeroed the paisa of a number this render was not actually about to
+            // print.
             //
             // A saved bill's round-off is still read, never recomputed - that
             // figure is what the customer was actually charged, and reprinting a
@@ -2156,98 +2144,27 @@ class BillReceiptRenderer(context: Context) {
     }
 
     /**
-     * Folds a fresh bill's extra-charges TAX into an already-built [totals]/
-     * [taxSlabs] - never the charge's own principal, which keeps printing on its
-     * own row (see "THE SHOP'S EXTRA CHARGES" above) and joins [payable]
-     * separately, exactly as before.
-     *
-     * [chargesPrincipal] is spread across [raws] by each line's share of the
-     * gross subtotal - the same rule a bill-wise discount is spread by (see
-     * CartMath.lineDiscount) - and taxed at that line's own cgstRate/sgstRate/
-     * vatRate, not a blended one. Folded into the SAME cgst/sgst/vat sums and the
-     * SAME rate-slab bucket [loadItems] already built for that line's own goods
-     * tax, rather than into the unused [BillTotals.otherTax] hook: otherTax would
-     * inflate [BillTotals.grandTotal] correctly but leave the individually
-     * PRINTED "SGST @ X%"/"CGST @ X%" rows understated, so the slip's own tax
-     * lines would no longer add up to its own total - every line on a printed
-     * slip has to reconcile, not just the figure at the foot of it.
-     */
-    private fun inflateForCharges(
-        raws: List<RawLine>,
-        totals: BillTotals,
-        taxSlabs: List<TaxSlab>,
-        chargesPrincipal: Double
-    ): Pair<BillTotals, List<TaxSlab>> {
-        val grossSubtotal = raws.sumOf { it.subtotal }
-        if (grossSubtotal <= 0.0) return totals to taxSlabs
-
-        var cgstAdd = 0.0
-        var sgstAdd = 0.0
-        var vatAdd = 0.0
-        // rate, rate, rate, cgstAdd, sgstAdd, vatAdd - the same key scheme
-        // loadItems uses, so a line's charge-tax share lands in the SAME row its
-        // own goods tax does.
-        val slabAdd = LinkedHashMap<Long, DoubleArray>()
-        raws.forEach { raw ->
-            val share = raw.subtotal / grossSubtotal * chargesPrincipal
-            val c = BillRounding.toPaise(GstCalculator.taxAmount(share, raw.cgstRate))
-            val s = BillRounding.toPaise(GstCalculator.taxAmount(share, raw.sgstRate))
-            val v = BillRounding.toPaise(GstCalculator.taxAmount(share, raw.vatRate))
-            if (c + s + v <= 0.0) return@forEach
-            cgstAdd += c; sgstAdd += s; vatAdd += v
-            val vatLine = v > 0.0 && c + s <= 0.0
-            val key = Math.round((raw.cgstRate + raw.sgstRate + raw.vatRate) * 100.0) * 2 +
-                (if (vatLine) 1L else 0L)
-            val acc = slabAdd.getOrPut(key) { DoubleArray(6) }
-            acc[0] = raw.cgstRate; acc[1] = raw.sgstRate; acc[2] = raw.vatRate
-            acc[3] += c; acc[4] += s; acc[5] += v
-        }
-        if (cgstAdd + sgstAdd + vatAdd <= 0.0) return totals to taxSlabs
-
-        // Every line that owes a charge-tax share already carries its own goods
-        // tax at the same rate - a nonzero rate against a nonzero gross always
-        // produced a nonzero goods tax in loadItems, so it was already bucketed.
-        // The fresh-slab fallback below is a safety net for the rare exception -
-        // a line whose own goods tax happened to round away to nothing - not the
-        // normal case.
-        val inflatedSlabs = taxSlabs.map { slab ->
-            val vatLine = slab.hasVat && !slab.hasGst
-            val key = Math.round((slab.cgstRate + slab.sgstRate + slab.vatRate) * 100.0) * 2 +
-                (if (vatLine) 1L else 0L)
-            val add = slabAdd.remove(key) ?: return@map slab
-            slab.copy(cgst = slab.cgst + add[3], sgst = slab.sgst + add[4], vat = slab.vat + add[5])
-        } + slabAdd.values.map { add ->
-            TaxSlab(add[0], add[1], add[2], base = 0.0, cgst = add[3], sgst = add[4], vat = add[5])
-        }
-
-        return totals.copy(
-            cgst = totals.cgst + cgstAdd,
-            sgst = totals.sgst + sgstAdd,
-            vat = totals.vat + vatAdd
-        ) to inflatedSlabs
-    }
-
-    /**
      * Reconciles a REPRINT's per-line CGST/SGST/VAT against the bill's own header
-     * row - `td_bill_items` is deliberately goods-only (see [inflateForCharges]),
-     * so a bill whose extra charges were taxed has a header total this sum falls
-     * short of, and a reprint that only ever read the lines under-quoted the tax
-     * every other reading of the same bill (Bill Wise Report, a fresh print) shows.
+     * row - `td_bill_items` is deliberately goods-only (see `BillDao`'s item-insert
+     * loop), so a bill sold before this app stopped taxing extra charges has a
+     * header total its per-line sum falls short of, and a reprint that only ever
+     * read the lines would under-quote the tax every other reading of that bill
+     * (Bill Wise Report, its own original print) shows.
      *
-     * A no-op for the ordinary bill and for every bill sold before charges were
-     * ever taxed - [storedCgst]/[storedSgst]/[storedVat] already equal the line sum
-     * for both, so there is nothing to add and nothing here can move an old bill's
-     * printed figures. It only fires on the gap this specific bill's own row proves
-     * exists, never on a live setting that has since changed.
+     * A no-op for the ordinary bill, and for every bill sold since extra charges
+     * stopped carrying any tax at all - [storedCgst]/[storedSgst]/[storedVat]
+     * already equal the line sum for both, so there is nothing to add and nothing
+     * here can move a current bill's printed figures. It only fires on the gap an
+     * OLDER bill's own row proves exists, never on a live setting that has since
+     * changed.
      *
      * The gap is spread across the existing slabs by each one's own share of the
-     * tax already in it - not re-derived from the charge principal at each line's
-     * rate, the way [inflateForCharges] does it for a fresh sale, because that is a
-     * SECOND formula and a second formula can only ever match the header's stored
-     * figure by luck (a different rounding order, as that function's own note on
-     * itself says). Spreading the bill's own already-correct gap instead makes the
-     * totals equal the header EXACTLY, by construction, whichever way the figure
-     * now in [totals] was arrived at when the sale was made.
+     * tax already in it - not re-derived from a charge principal at each line's
+     * rate, because that would be a SECOND formula, and a second formula can only
+     * ever match the header's stored figure by luck. Spreading the bill's own
+     * already-correct gap instead makes the totals equal the header EXACTLY, by
+     * construction, whichever way the figure now in [totals] was arrived at when
+     * the sale was made.
      */
     private fun reconcileWithStoredTax(
         totals: BillTotals,

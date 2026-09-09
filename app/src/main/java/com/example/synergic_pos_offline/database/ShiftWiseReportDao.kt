@@ -88,6 +88,7 @@ class ShiftWiseReportDao(context: Context) {
         val totalServiceCharge: Double get() = total { it.serviceCharge }
         val totalOtherCharges: Double get() = total { it.otherCharges }
         val totalParcelCharge: Double get() = total { it.parcelCharge }
+        val totalRoundOff: Double get() = total { it.roundOff }
         val totalAmount: Double get() = total { it.netAmount }
 
         /** How many people on the shift actually billed over the period. */

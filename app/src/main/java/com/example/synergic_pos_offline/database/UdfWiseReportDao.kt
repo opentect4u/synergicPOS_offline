@@ -118,7 +118,11 @@ class UdfWiseReportDao(context: Context) {
          * The take-away and QSR bills folded into the totals above but kept out of
          * [rows] - see [Counter]. Zero on a shop that only serves tables.
          */
-        val counter: Counter = Counter()
+        val counter: Counter = Counter(),
+        /** [counter], split to just its QSR half - see [counterTakeaway]. */
+        val counterQsr: Counter = Counter(),
+        /** [counter], split to just its take-away half - see [counterQsr]. */
+        val counterTakeaway: Counter = Counter()
     ) {
         /** Every tax the range charged, however the regimes split it. */
         val totalTax: Double get() = BillRounding.toPaise(totalCgst + totalSgst + totalIgst + totalVat)
@@ -197,7 +201,9 @@ class UdfWiseReportDao(context: Context) {
         // money the shop took that day, and a summary that leaves it out is not the
         // day's takings and does not agree with any other report of the same period.
         // So the counter's own figures are read separately and added to every total.
-        val counter = counterTotals(from, to)
+        val counterQsr = counterTotals(from, to, "QSR")
+        val counterTakeaway = counterTotals(from, to, "TAKE AWAY")
+        val counter = combine(counterQsr, counterTakeaway)
         return Report(
             fromDate = from,
             toDate = to,
@@ -212,22 +218,42 @@ class UdfWiseReportDao(context: Context) {
             totalOtherCharges = BillRounding.toPaise(rows.sumOf { it.otherCharges } + counter.otherCharges),
             totalParcelCharge = BillRounding.toPaise(rows.sumOf { it.parcelCharge } + counter.parcelCharge),
             totalBillAmount = BillRounding.toPaise(rows.sumOf { it.billAmount } + counter.billAmount),
-            counter = counter
+            counter = counter,
+            counterQsr = counterQsr,
+            counterTakeaway = counterTakeaway
         )
     }
 
+    /** Every field of two [Counter]s, added together. */
+    private fun combine(a: Counter, b: Counter): Counter = Counter(
+        bills = a.bills + b.bills,
+        cgst = BillRounding.toPaise(a.cgst + b.cgst),
+        sgst = BillRounding.toPaise(a.sgst + b.sgst),
+        igst = BillRounding.toPaise(a.igst + b.igst),
+        vat = BillRounding.toPaise(a.vat + b.vat),
+        discount = BillRounding.toPaise(a.discount + b.discount),
+        serviceCharge = BillRounding.toPaise(a.serviceCharge + b.serviceCharge),
+        otherCharges = BillRounding.toPaise(a.otherCharges + b.otherCharges),
+        parcelCharge = BillRounding.toPaise(a.parcelCharge + b.parcelCharge),
+        billAmount = BillRounding.toPaise(a.billAmount + b.billAmount)
+    )
+
     /**
-     * What the take-away and QSR bills of the period came to.
+     * What the counter's bills of one order type - "QSR" or "TAKE AWAY" - came to
+     * over the period.
      *
      * A separate query rather than a second pass over the row query, because those two
      * ask different questions: the rows are grouped by table and a counter order has no
      * table to group by. Read with no grouping at all - one line for the whole counter,
-     * which is all the summary shows of it.
+     * which is all the summary shows of it. Split by [orderType] rather than read once
+     * under [SQL_COUNTER_ORDER], so QSR and Take Away can each be its own summary line
+     * instead of one blended figure neither tax authority nor the operator's own till
+     * roll actually reports as a single thing.
      *
-     * The same date, cancellation and rounding rules as the rows, so the two halves of
-     * the summary are measured the same way.
+     * The same date, cancellation and rounding rules as the rows, so every reading of
+     * the same period agrees.
      */
-    private fun counterTotals(from: String, to: String): Counter {
+    private fun counterTotals(from: String, to: String, orderType: String): Counter {
         helper.readableDatabase.rawQuery(
             """
             SELECT COUNT(*) AS bills,
@@ -242,10 +268,10 @@ class UdfWiseReportDao(context: Context) {
                    SUM(COALESCE(b.net_amount,0)) AS billamt
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
-              AND $SQL_COUNTER_ORDER
+              AND UPPER(COALESCE(b.order_type, '')) = ?
               AND COALESCE(b.bill_status, '') <> 'CANCELLED'
             """.trimIndent(),
-            arrayOf(from, to)
+            arrayOf(from, to, orderType)
         ).use { c ->
             if (!c.moveToFirst()) return Counter()
             val other = BillRounding.toPaise(c.getDouble(7))

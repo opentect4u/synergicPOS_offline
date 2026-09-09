@@ -76,7 +76,26 @@ class ItemWiseReportDao(context: Context) {
          * one flat pair of totals instead, for the period's own bills, the same
          * way [TaxReportDao] does.
          */
-        val charges: TaxReportDao.BillCharges = TaxReportDao.BillCharges(0.0, 0.0)
+        val charges: TaxReportDao.BillCharges = TaxReportDao.BillCharges(0.0, 0.0),
+        /**
+         * The period's whole-bill discount, off `td_bills.tot_discount_amount` -
+         * NON-MRP bills only.
+         *
+         * [Line.amount] already nets a discount out - it is the item's line total
+         * less its own tax, and a discounted line's total is the discounted one - so
+         * every figure above still adds up without this. What it does not do is let
+         * the report SAY what was discounted, which is why the same-period Bill Wise
+         * Report's own Bill Amount could look smaller than this report's total for no
+         * reason the reader could see: the discount was already inside AMOUNT,
+         * invisible.
+         *
+         * NON-MRP billing only. Under MRP the discount comes off a price that
+         * already has its tax folded in, worked out per line rather than stated as
+         * one bill-level figure the way a non-MRP bill's `tot_discount_amount` is -
+         * so a single period total here would answer a different question than the
+         * one this line is meant to.
+         */
+        val totalDiscount: Double = 0.0
     ) {
         val itemCount: Int get() = lines.size
         val totalQuantity: Double get() = total { it.quantity }
@@ -112,7 +131,8 @@ class ItemWiseReportDao(context: Context) {
          */
         val totalNetAmount: Double get() = BillRounding.toPaise(
             totalAmount + totalSgst + totalCgst + totalIgst + totalVat +
-                totalServiceCharge + totalOtherCharges + totalParcelCharge + totalRoundOff
+                totalServiceCharge + totalOtherCharges + totalParcelCharge + totalRoundOff -
+                totalDiscount
         )
 
         val isEmpty: Boolean get() = lines.isEmpty()
@@ -250,8 +270,33 @@ class ItemWiseReportDao(context: Context) {
             }
         return Report(
             fromDate, toDate, lines,
-            TaxReportDao.billCharges(helper.readableDatabase, fromDate, toDate, store)
+            TaxReportDao.billCharges(helper.readableDatabase, fromDate, toDate, store),
+            exclusiveDiscount(fromDate, toDate, store)
         )
+    }
+
+    /**
+     * The period's own whole-bill discount, off `td_bills.tot_discount_amount` -
+     * NON-MRP bills only. See [Report.totalDiscount] for why: under MRP the
+     * discount is already worked into every line's own [Line.amount], so a
+     * bill-level figure here would be counted a second time.
+     */
+    private fun exclusiveDiscount(fromDate: String, toDate: String, store: Long?): Double {
+        val storeClause = if (store != null) "AND store_id = ?" else ""
+        val args = mutableListOf(fromDate, toDate).apply { if (store != null) add(store.toString()) }
+        helper.readableDatabase.rawQuery(
+            """
+            SELECT COALESCE(SUM(tot_discount_amount), 0)
+            FROM ${DatabaseHelper.Tables.TD_BILLS}
+            WHERE substr(COALESCE(NULLIF(TRIM(bill_date_time), ''), bill_date || ' 00:00'), 1, 10) BETWEEN ? AND ?
+              AND COALESCE(is_voided, 0) = 0
+              AND COALESCE(bill_status, 'COMPLETED') <> 'CANCELLED'
+              AND COALESCE(is_mrp_billing, 0) = 0
+              $storeClause
+            """.trimIndent(),
+            args.toTypedArray()
+        ).use { c -> if (c.moveToFirst()) return BillRounding.toPaise(c.getDouble(0)) }
+        return 0.0
     }
 
     /** The signed-in user's store; the registration row is the fallback. */

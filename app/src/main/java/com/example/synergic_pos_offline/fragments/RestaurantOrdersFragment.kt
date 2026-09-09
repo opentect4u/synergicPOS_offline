@@ -1641,6 +1641,26 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     /**
+     * How many tables are free, taken and waiting to be paid - read with the same
+     * [lookOf] the grid paints its cards with, so these three numbers can never name
+     * a state the legend under the grid does not.
+     *
+     * Every table in the building, not just the room the chips currently show: the
+     * count sits beside the choice of order kind, made before a room is picked, so it
+     * answers for the floor as a whole rather than for whichever room happens to be
+     * showing when the picker opens.
+     */
+    private fun fillTableStatusCounts(root: View, tables: List<TableTile>) {
+        val looks = tables.map { lookOf(it.status).label }
+        root.findViewById<TextView>(R.id.tvCountAvailable)?.text =
+            "${looks.count { it == "Available" }} Available"
+        root.findViewById<TextView>(R.id.tvCountOccupied)?.text =
+            "${looks.count { it == "Occupied" }} Occupied"
+        root.findViewById<TextView>(R.id.tvCountBillPending)?.text =
+            "${looks.count { it == "Bill Pending" }} Bill Pending"
+    }
+
+    /**
      * One line of the panel: which order, and what it stands at.
      *
      * The name on the left is the one the operator uses for it - a table with its
@@ -1659,9 +1679,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * cards use - [orderStatusLabel], shared with them. A shop should not have to
      * learn two vocabularies for one state because it read it on two screens.
      *
-     * Blue for billed, because that is the colour the floor plan beside this panel
-     * already gives Bill Pending; green for one still in progress, which is the
-     * plan's own Available green re-used for "nothing outstanding on it yet".
+     * Both colours are the floor plan's OWN, not a palette of this panel's choosing:
+     * blue for billed is Bill Pending's blue, and red for one still in progress is
+     * Occupied's red - the same two the table's own card wears behind this popup.
+     * A row here and the card it is reporting on were briefly two colours for one
+     * fact (green here, red there), which is the mismatch this keys against instead.
      *
      * [STATUS_AVAILABLE] returns NULL rather than a label. It means an order with
      * nothing on it, and every row here has something on it - so the word could only
@@ -1682,7 +1704,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             order.completed -> StatusLook(label, 0xFF2563EB.toInt())
             order.counter && kotSent(order) -> StatusLook("Sent to kitchen", 0xFF2563EB.toInt())
             order.counter -> StatusLook("Not sent yet", 0xFFB45309.toInt())
-            else -> StatusLook(label, 0xFF16A34A.toInt())
+            // Occupied's own red - see the note above on why this is no longer green.
+            else -> StatusLook(label, 0xFFDC2626.toInt())
         }
     }
 
@@ -1696,14 +1719,38 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val density = resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
 
-        return LinearLayout(requireContext()).apply {
+        // The strip IS the row's own floor colour, the same red/blue [lookOf] paints
+        // the table's card with - so telling occupied from billed on this panel takes
+        // one glance at the edge, the way it already does on the floor plan beside it.
+        // Grey where there is no status to key it to (a counter order not yet sent
+        // has its own amber/blue via [status], so this only falls back on the rare
+        // row [summaryStatus] itself returns null for).
+        val stripColor = status?.color ?: 0xFFB0B6BE.toInt()
+
+        lateinit var details: LinearLayout
+        lateinit var chevron: TextView
+
+        val header = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(9), dp(16), dp(9))
+            isClickable = true
+            isFocusable = true
+            val ripple = android.util.TypedValue()
+            context.theme.resolveAttribute(android.R.attr.selectableItemBackground, ripple, true)
+            background = androidx.core.content.ContextCompat.getDrawable(context, ripple.resourceId)
+            setPadding(0, dp(9), dp(16), dp(9))
+            addView(
+                View(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(dp(4), ViewGroup.LayoutParams.MATCH_PARENT)
+                    setBackgroundColor(stripColor)
+                }
+            )
             addView(
                 LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        marginStart = dp(12)
+                    }
                     addView(
                         TextView(context).apply {
                             text = if (order.counter) order.id.replace("TA-", "Token #")
@@ -1760,6 +1807,77 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                             }
                         )
                     }
+                }
+            )
+            // What opens on a tap: this order's own items, priced the same plain
+            // qty-x-rate way the cart panel behind this popup already totals a group
+            // by (see renderCart) - a quick answer to "what is on this bill", without
+            // leaving the picker to find the order and open it.
+            addView(
+                TextView(context).apply {
+                    text = "▸"
+                    textSize = 13f
+                    setPadding(dp(10), 0, 0, 0)
+                    setTextColor(resources.getColor(R.color.text_secondary, null))
+                }.also { chevron = it }
+            )
+            setOnClickListener {
+                val expand = details.visibility != View.VISIBLE
+                details.visibility = if (expand) View.VISIBLE else View.GONE
+                chevron.text = if (expand) "▾" else "▸"
+            }
+        }
+
+        details = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setBackgroundColor(0xFFF0F2F5.toInt())
+            setPadding(dp(16) + dp(4) + dp(12), dp(6), dp(16), dp(10))
+            if (order.items.isEmpty()) {
+                addView(
+                    TextView(context).apply {
+                        text = "No items yet"
+                        textSize = 12.5f
+                        setPadding(0, dp(4), 0, dp(4))
+                        setTextColor(resources.getColor(R.color.text_secondary, null))
+                    }
+                )
+            } else {
+                order.items.forEach { item -> addView(activeSummaryItemRow(item)) }
+            }
+        }
+
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(header)
+            addView(details)
+        }
+    }
+
+    /** One product of an expanded [activeSummaryRow] - its name, quantity and
+     *  subtotal, priced the same plain qty x rate way [renderCart] totals a group. */
+    private fun activeSummaryItemRow(item: CartItem): View {
+        val density = resources.displayMetrics.density
+        fun dp(value: Int) = (value * density).toInt()
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, dp(4), 0, dp(4))
+            addView(
+                TextView(context).apply {
+                    text = "${item.name}  ×${qtyText(item.qty)}"
+                    textSize = 12.5f
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setTextColor(resources.getColor(R.color.text_main, null))
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                }
+            )
+            addView(
+                TextView(context).apply {
+                    text = "₹ ${money(item.qty * item.rate)}"
+                    textSize = 12.5f
+                    setTextColor(resources.getColor(R.color.text_secondary, null))
                 }
             )
         }
@@ -3047,7 +3165,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         var selectedCat = "All"
         var query = ""
 
-        val adapter = ProductAdapter(accent) { picked -> onProductPicked(picked) { etSearch.setText("") } }
+        // Only when there is something TO clear. setText() fires the watcher below
+        // whether or not the text actually changes, and that watcher refilters the
+        // whole grid - see [refreshProducts]. Tapping a tile is overwhelmingly a
+        // browse, not a search, so the box is already empty and every one of those
+        // taps was paying for a refilter (a full re-sort of the whole menu, under
+        // "All") that changed nothing on screen - which is exactly why adding felt
+        // slower there than in one course.
+        fun clearSearchIfAny() { if (!etSearch.text.isNullOrEmpty()) etSearch.setText("") }
+
+        val adapter = ProductAdapter(accent) { picked -> onProductPicked(picked) { clearSearchIfAny() } }
         // Seven to a row AT LEAST, and more wherever the width allows - the same rule
         // as the grocery sale screen's shelf, so the menu shows as much of itself as it
         // can at once and the same card comes out the same size in both trades.
@@ -3153,7 +3280,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // Direct Add to Cart rule, the same quantity popup when it is off - so an
             // item cannot come onto the order by a different route than the grid's.
             allProducts.firstOrNull { it.product.id == picked.id }?.let { gp ->
-                onProductPicked(gp.product) { etSearch.setText("") }
+                onProductPicked(gp.product) { clearSearchIfAny() }
             }
         }
 
@@ -3163,7 +3290,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // inside the search box's own watcher and empties that box as its first act.
         suggestions?.onExactCode = { scanned ->
             allProducts.firstOrNull { it.product.id == scanned.id }?.let { gp ->
-                etSearch.post { onProductPicked(gp.product) { etSearch.setText("") } }
+                etSearch.post { onProductPicked(gp.product) { clearSearchIfAny() } }
             }
         }
         etSearch.addTextChangedListener {
@@ -3295,6 +3422,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val tables = loadTables()
         // The floor as it stands, beside the plan itself - see [fillActiveSummary].
         fillActiveSummary(v, accent)
+        // The floor in three numbers, beside the choice of order kind - see the
+        // layout's own note on [R.id.llTableStatusCounts]. Read off every table
+        // [lookOf] would paint the same colour for, split parts included, so a count
+        // here never disagrees with what the grid below is actually showing.
+        fillTableStatusCounts(v, tables)
         // The rooms themselves, and nothing else: AC, Non AC, Terrace. There is no
         // All chip - a floor plan is read one room at a time, because that is how a
         // room is stood in, and "every table in the building at once" is a view of

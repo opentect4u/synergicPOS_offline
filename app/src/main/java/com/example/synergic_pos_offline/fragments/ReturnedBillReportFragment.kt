@@ -84,7 +84,7 @@ class ReturnedBillReportFragment : PeriodReportFragment<ReturnedBillReportDao.Re
             if (report.hasDiscount) add("Total Discount" to money(report.totalDiscount))
             add("Total CGST" to money(report.totalCgst))
             add("Total SGST" to money(report.totalSgst))
-            add("Total IGST" to money(report.totalIgst))
+            if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
             if (report.hasVat) add("Total VAT" to money(report.totalVat))
             add("Total Tax Reversed" to money(report.totalTax))
         }

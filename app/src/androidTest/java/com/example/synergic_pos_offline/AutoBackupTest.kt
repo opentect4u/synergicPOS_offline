@@ -106,6 +106,32 @@ class AutoBackupTest {
         )
     }
 
+    // ---- Retention -------------------------------------------------------------
+
+    /**
+     * Pruning never leaves more than [AutoBackup.MAX_FOLDERS] day-folders standing.
+     *
+     * A same-day run cannot exercise the cross-day deletion itself - every backup
+     * this test can take lands in today's one folder, so there is only ever one
+     * day to count - but it does confirm the function runs against this device's
+     * real POSbackup folder without disturbing today's own files, which a
+     * fumbled day comparison (an off-by-one, a wrong format) would have broken.
+     */
+    @Test
+    fun pruningLeavesTodaysFolderAlone() {
+        AutoBackup.save(ctx, enabled = true, intervalHours = AutoBackup.MIN_INTERVAL_HOURS)
+        AppSettingsDao(ctx).put("Auto Backup Last Run", "")
+        val outcome = AutoBackup.runIfDue(ctx)
+        assertTrue("a backup should have been taken to prune around", outcome.taken)
+
+        AutoBackup.pruneToRecentFolders(ctx)
+
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val stillThere = com.example.synergic_pos_offline.utils.BackupFiles.list(ctx, AutoBackup.FOLDER)
+            .any { it.name == outcome.savedTo?.substringAfterLast('/') }
+        assertTrue("today's own backup, the only day on the device, must survive its own prune", stillThere)
+    }
+
     @Test
     fun aBackupBecomesDueOnceTheIntervalHasPassed() {
         AutoBackup.save(ctx, enabled = true, intervalHours = 2)

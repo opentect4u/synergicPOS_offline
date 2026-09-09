@@ -222,4 +222,29 @@ class MasterDataTest {
     private fun count(table: String): Int =
         db.rawQuery("SELECT COUNT(*) FROM $table", null)
             .use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+
+    // ---- Retention -------------------------------------------------------------
+
+    /**
+     * Exporting more than [MasterData.MAX_KEPT] times never leaves more than
+     * [MasterData.MAX_KEPT] files behind - whatever this device already held in
+     * [MasterData.FOLDER] before the test, since the folder is real and shared
+     * with whatever the operator has actually exported on it.
+     */
+    @Test
+    fun pruningNeverLeavesMoreThanTheKeptCount() {
+        repeat(MasterData.MAX_KEPT + 2) { i ->
+            com.example.synergic_pos_offline.utils.Downloads.stream(
+                ctx, "zz_masterdata_prune_test_$i.sql", "application/sql", MasterData.FOLDER
+            ) { it.write("-- prune test $i") }
+        }
+
+        MasterData.pruneToRecentExports(ctx)
+
+        val remaining = com.example.synergic_pos_offline.utils.BackupFiles.list(ctx, MasterData.FOLDER)
+        assertTrue(
+            "at most ${MasterData.MAX_KEPT} export(s) should remain, found ${remaining.size}",
+            remaining.size <= MasterData.MAX_KEPT
+        )
+    }
 }

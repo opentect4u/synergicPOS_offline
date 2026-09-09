@@ -200,8 +200,10 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         // order - one report should not be two vocabularies depending on whether it
         // is being read on glass or on paper.
         summaryLines(r).forEach { (label, value) -> summary.addView(summaryRow(label, value)) }
-        summary.addView(summaryRow("Total Amount", money(r.totalAmount), emphasised = true))
+        // Round Off last - the final adjustment the Total below already includes,
+        // not a figure left dangling under it. See [summaryLines] and [printContent].
         summary.addView(summaryRow("Round Off Amount", money(r.totalRoundOff)))
+        summary.addView(summaryRow("Total Amount", money(r.totalAmount), emphasised = true))
     }
 
     /**
@@ -217,7 +219,7 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         add("Taxable Amount" to money(r.totalMrp))
         add("SGST Amount" to money(r.totalSgst))
         add("CGST Amount" to money(r.totalCgst))
-        if (r.totalIgst > 0.0) add("IGST Amount" to money(r.totalIgst))
+        if (r.hasIgst) add("IGST Amount" to money(r.totalIgst))
         if (r.hasVat) add("VAT Amount" to money(r.totalVat))
         add("Discount Amount" to money(r.totalDiscount))
         // Shown only where the period actually carried one - a shop that never
@@ -274,13 +276,16 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
                 add("Taxable Amount" to money(r.totalMrp))
                 add("SGST Amount" to money(r.totalSgst))
                 add("CGST Amount" to money(r.totalCgst))
-                if (r.totalIgst > 0.0) add("IGST Amount" to money(r.totalIgst))
+                if (r.hasIgst) add("IGST Amount" to money(r.totalIgst))
                 if (r.hasVat) add("VAT Amount" to money(r.totalVat))
+                add("Discount Amount" to money(r.totalDiscount))
                 if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
                 if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
                 if (r.totalParcelCharge > 0.005) add("Parcel Charge" to money(r.totalParcelCharge))
-                add("Total Amount" to money(r.totalAmount))
+                // Round Off last - the final adjustment the Total already includes,
+                // not a figure left dangling under it.
                 add("Round Off Amount" to money(r.totalRoundOff))
+                add("Total Amount" to money(r.totalAmount))
             }.map { (label, value) -> label.uppercase().padEnd(LABEL_WIDTH) + " :" to value },
             emptyNote = "No bills in this period."
         )

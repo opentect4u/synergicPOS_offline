@@ -128,6 +128,21 @@ object BackupFiles {
         head.contains("INSERT INTO ", ignoreCase = true) ||
             head.contains("Synergic POS data backup")
 
+    /**
+     * Deletes [found], returning whether it actually went.
+     *
+     * Best-effort, like every other backup-file operation here: called from a prune
+     * that must not fail the backup it just took over a file that turned out to be
+     * open, or a permission withdrawn since it was written.
+     */
+    fun delete(context: Context, found: Found): Boolean = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            context.contentResolver.delete(found.uri, null, null) > 0
+        } else {
+            found.uri.path?.let { File(it).delete() } ?: false
+        }
+    }.getOrDefault(false)
+
     /** "1.4 MB" / "820 KB", for a file the operator is choosing between. */
     fun sizeLabel(bytes: Long): String = when {
         bytes <= 0 -> ""

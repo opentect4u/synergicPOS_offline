@@ -171,12 +171,14 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
         // period's, counter sales included. Without this line an operator adds up the
         // rows, comes out short of the Bill Amount below, and reports a mismatch. With
         // it, the difference is the line they are reading.
-        if (r.counter.any) {
+        if (r.counterQsr.any) {
             summary.addView(
-                summaryRow(
-                    "Take Away / QSR (${r.counter.bills} bill(s))",
-                    money(r.counter.billAmount)
-                )
+                summaryRow("QSR (${r.counterQsr.bills} bill(s))", money(r.counterQsr.billAmount))
+            )
+        }
+        if (r.counterTakeaway.any) {
+            summary.addView(
+                summaryRow("Take Away (${r.counterTakeaway.bills} bill(s))", money(r.counterTakeaway.billAmount))
             )
         }
         summary.addView(summaryRow("Bill Amount", money(r.totalBillAmount), emphasised = true))
@@ -203,8 +205,11 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
             if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
             if (r.totalParcelCharge > 0.005) add("Parcel Charge" to money(r.totalParcelCharge))
             // Named in the download too, for the same reason the screen names it.
-            if (r.counter.any) {
-                add("Take Away / QSR (${r.counter.bills} bill(s))" to money(r.counter.billAmount))
+            if (r.counterQsr.any) {
+                add("QSR (${r.counterQsr.bills} bill(s))" to money(r.counterQsr.billAmount))
+            }
+            if (r.counterTakeaway.any) {
+                add("Take Away (${r.counterTakeaway.bills} bill(s))" to money(r.counterTakeaway.billAmount))
             }
             add("Bill Amount" to money(r.totalBillAmount))
         }
@@ -237,9 +242,15 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
                 add("CGST AMOUNT :" to money(r.totalCgst))
                 if (r.hasIgst) add("IGST AMOUNT :" to money(r.totalIgst))
                 if (r.hasVat) add("VAT AMOUNT  :" to money(r.totalVat))
+                add("DISC. AMOUNT:" to money(r.totalDiscount))
                 if (r.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(r.totalServiceCharge))
                 if (r.totalOtherCharges > 0.005) add("EXTRA CHGS  :" to money(r.totalOtherCharges))
                 if (r.totalParcelCharge > 0.005) add("PARCEL CHG  :" to money(r.totalParcelCharge))
+                // NAMED, not folded into the total silently - see drawTable's own
+                // note. The table rows above are tables/Dine-In only, so without
+                // these lines a reader summing them would come up short of TOTAL.
+                if (r.counterQsr.any) add("QSR AMOUNT  :" to money(r.counterQsr.billAmount))
+                if (r.counterTakeaway.any) add("TAKEAWAY AMT:" to money(r.counterTakeaway.billAmount))
             },
             total = "TOTAL  :" to money(r.totalBillAmount),
             emptyNote = "No bills in this period."

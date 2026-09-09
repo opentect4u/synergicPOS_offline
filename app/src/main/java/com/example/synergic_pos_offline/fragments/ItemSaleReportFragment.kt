@@ -69,9 +69,12 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
             // reading two lines of zeroes - and one that does has them counted.
             if (report.hasIgst) add("IGST Amount" to money(report.totalIgst))
             if (report.hasVat) add("VAT Amount" to money(report.totalVat))
+            if (report.totalDiscount > 0.005) add("Discount Amount" to money(report.totalDiscount))
             if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
             if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
             if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
+            // Last, always - the final adjustment before the total below it, not a
+            // figure left dangling after it.
             if (kotlin.math.abs(report.totalRoundOff) > 0.005) {
                 add("Round Off Amount" to money(report.totalRoundOff))
             }
@@ -126,13 +129,16 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
                 add("CGST Amount" to money(report.totalCgst))
                 if (report.hasIgst) add("IGST Amount" to money(report.totalIgst))
                 if (report.hasVat) add("VAT Amount" to money(report.totalVat))
+                if (report.totalDiscount > 0.005) add("Discount Amount" to money(report.totalDiscount))
                 if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
                 if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
                 if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
-                add("Total Amount" to money(report.totalNetAmount))
+                // Last before the total, not after it - the final adjustment the
+                // total itself already includes, not a figure left dangling below it.
                 if (kotlin.math.abs(report.totalRoundOff) > 0.005) {
                     add("Round Off Amount" to money(report.totalRoundOff))
                 }
+                add("Total Amount" to money(report.totalNetAmount))
             }.map { (label, value) -> label.uppercase().padEnd(16) + " :" to value },
             emptyNote = "Nothing was sold in this period."
         )

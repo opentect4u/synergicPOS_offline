@@ -130,11 +130,18 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
             container.addView(divider())
             container.addView(twoCol(item.name, qtyFmt(item.qty), bold = false))
             container.addView(threeCol(money(item.amount), money(item.sgst), money(item.cgst), bold = false))
+            // IGST/VAT are a bill-level regime, not a third column beside SGST/CGST -
+            // most lines carry neither, and a blank third-and-fourth column on every
+            // row would be noise. Shown as its own line only on a line that has one.
+            if (item.igst > 0.005) container.addView(twoCol("  IGST", money(item.igst), bold = false))
+            if (item.vat > 0.005) container.addView(twoCol("  VAT", money(item.vat), bold = false))
         }
         container.addView(divider())
         container.addView(total("TOTAL QTY :", qtyFmt(r.totalQty)))
         container.addView(total("TOTAL SGST:", money(r.totalSgst)))
         container.addView(total("TOTAL CGST:", money(r.totalCgst)))
+        if (r.hasIgst) container.addView(total("TOTAL IGST:", money(r.totalIgst)))
+        if (r.hasVat) container.addView(total("TOTAL VAT :", money(r.totalVat)))
         if (r.totalServiceCharge > 0.005) container.addView(total("SERVICE CHG:", money(r.totalServiceCharge)))
         if (r.totalOtherCharges > 0.005) container.addView(total("EXTRA CHGS:", money(r.totalOtherCharges)))
         if (r.totalParcelCharge > 0.005) container.addView(total("PARCEL CHG:", money(r.totalParcelCharge)))
@@ -152,15 +159,29 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
     private fun sheetOf(r: CustomerItemWiseReportDao.Report) = ReportExport.Sheet(
         title = screenTitle,
         subtitle = "${r.customerName}   •   ${pretty(r.fromDate)} to ${pretty(r.toDate)}",
-        columns = listOf("ITEM NAME", "QUANTITY", "AMOUNT", "SGST", "CGST"),
-        alignEnd = listOf(false, true, true, true, true),
+        columns = buildList {
+            add("ITEM NAME"); add("QUANTITY"); add("AMOUNT"); add("SGST"); add("CGST")
+            if (r.hasIgst) add("IGST")
+            if (r.hasVat) add("VAT")
+        },
+        alignEnd = buildList {
+            add(false); add(true); add(true); add(true); add(true)
+            if (r.hasIgst) add(true)
+            if (r.hasVat) add(true)
+        },
         rows = r.items.map {
-            listOf(it.name, qtyFmt(it.qty), money(it.amount), money(it.sgst), money(it.cgst))
+            buildList {
+                add(it.name); add(qtyFmt(it.qty)); add(money(it.amount)); add(money(it.sgst)); add(money(it.cgst))
+                if (r.hasIgst) add(money(it.igst))
+                if (r.hasVat) add(money(it.vat))
+            }
         },
         summary = buildList {
             add("Total Qty" to qtyFmt(r.totalQty))
             add("Total SGST" to money(r.totalSgst))
             add("Total CGST" to money(r.totalCgst))
+            if (r.hasIgst) add("Total IGST" to money(r.totalIgst))
+            if (r.hasVat) add("Total VAT" to money(r.totalVat))
             if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
             if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
             if (r.totalParcelCharge > 0.005) add("Parcel Charge" to money(r.totalParcelCharge))

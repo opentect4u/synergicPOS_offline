@@ -100,6 +100,11 @@ class ShiftWiseReportFragment : PeriodReportFragment<ShiftWiseReportDao.Report>(
             if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
             if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
             if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
+            // Last - the final adjustment [totalOf] already includes, not a figure
+            // left for the reader to add in themselves.
+            if (kotlin.math.abs(report.totalRoundOff) > 0.005) {
+                add("Round Off" to money(report.totalRoundOff))
+            }
         }
 
     /** The one figure the report is read for: what the shift took. */
