@@ -7,7 +7,6 @@ import com.example.synergic_pos_offline.utils.AutoBackup
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -40,46 +39,59 @@ class AutoBackupTest {
     }
 
     @Test
-    fun theDefaultIsEveryHour() {
+    fun theDefaultIsOneOfTheChoicesOffered() {
         // Cleared, so what comes back is the default rather than a leftover.
         AppSettingsDao(ctx).put("Auto Backup Interval Hours", "")
-        assertEquals(1, AutoBackup.settings(ctx).intervalHours)
-        assertEquals(1, AutoBackup.DEFAULT_INTERVAL_HOURS)
+        assertEquals(AutoBackup.DEFAULT_INTERVAL_HOURS, AutoBackup.settings(ctx).intervalHours)
+        // A default the dropdown cannot show would leave the field blank on a till
+        // nobody has touched the setting on.
+        assertTrue(
+            "the default must be one of ${AutoBackup.INTERVAL_CHOICES}",
+            AutoBackup.DEFAULT_INTERVAL_HOURS in AutoBackup.INTERVAL_CHOICES
+        )
     }
 
+    /**
+     * Whatever is stored, what comes back is a value the dropdown can show.
+     *
+     * The interval used to be typed, so a till updating into this version can be
+     * carrying any number from 1 to 168. Snapped to the nearest choice rather than
+     * clamped into a range: clamping fixes 0 and 100000 but leaves 3 sitting there,
+     * and 3 is not on the list, so the field would come up blank on a till with a
+     * perfectly good setting stored.
+     */
     @Test
-    fun anAskedForIntervalIsHeldToSomethingSane() {
+    fun aStoredIntervalIsBroughtOntoTheList() {
+        listOf(0, 1, 3, 5, 7, 9, 24, 168, 100000).forEach { stored ->
+            AppSettingsDao(ctx).put("Auto Backup Interval Hours", stored.toString())
+            val read = AutoBackup.settings(ctx).intervalHours
+            assertTrue(
+                "$stored came back as $read, which is not one of ${AutoBackup.INTERVAL_CHOICES}",
+                read in AutoBackup.INTERVAL_CHOICES
+            )
+        }
+
+        // The nearest, not merely any of them - and a tie goes to the shorter gap,
+        // because backing up sooner than asked is the safe way to be wrong.
+        assertEquals(2, AutoBackup.nearestInterval(1))
+        assertEquals(2, AutoBackup.nearestInterval(3))
+        assertEquals(4, AutoBackup.nearestInterval(5))
+        assertEquals(12, AutoBackup.nearestInterval(24))
+        assertEquals(6, AutoBackup.nearestInterval(6))
+    }
+
+    /** Saving is held to the list too, not just reading. */
+    @Test
+    fun anAskedForIntervalIsHeldToTheList() {
         AutoBackup.save(ctx, enabled = true, intervalHours = 0)
-        assertEquals(
-            "below an hour the till would spend its day reading its own database",
-            AutoBackup.MIN_INTERVAL_HOURS, AutoBackup.settings(ctx).intervalHours
-        )
+        assertEquals(AutoBackup.MIN_INTERVAL_HOURS, AutoBackup.settings(ctx).intervalHours)
         AutoBackup.save(ctx, enabled = true, intervalHours = 100000)
         assertEquals(AutoBackup.MAX_INTERVAL_HOURS, AutoBackup.settings(ctx).intervalHours)
     }
 
-    /**
-     * Only whole numbers of hours above zero are accepted.
-     *
-     * Refused rather than corrected: silently turning a typed 0 into a 1 is how an
-     * operator ends up believing they set something they did not.
-     */
-    @Test
-    fun onlyWholeNumbersAboveZeroAreAccepted() {
-        listOf("", " ", "0", "00", "-1", "1.5", "1,5", "abc", "1a", "169", "999")
-            .forEach { assertNull("\"$it\" should be refused", AutoBackup.validHours(it)) }
-
-        assertEquals(1, AutoBackup.validHours("1"))
-        assertEquals(6, AutoBackup.validHours("6"))
-        assertEquals(24, AutoBackup.validHours(" 24 "))
-        assertEquals(AutoBackup.MAX_INTERVAL_HOURS, AutoBackup.validHours("168"))
-        // A leading zero is still a whole number of hours.
-        assertEquals(2, AutoBackup.validHours("02"))
-    }
-
     @Test
     fun theFirstRunTakesOneAndTheNextDoesNot() {
-        AutoBackup.save(ctx, enabled = true, intervalHours = 1)
+        AutoBackup.save(ctx, enabled = true, intervalHours = AutoBackup.MIN_INTERVAL_HOURS)
         // No record of a previous run, so one is due immediately.
         AppSettingsDao(ctx).put("Auto Backup Last Run", "")
 
@@ -87,11 +99,13 @@ class AutoBackupTest {
         assertTrue("the first run should take a backup: ${first.error}", first.taken)
         assertTrue("it should say where it went", !first.savedTo.isNullOrBlank())
 
-        // Filed under POSbackup, in today's folder, named with the date and time.
+        // ONE folder, with the day in the file's own name - no date subfolder. See
+        // AutoBackup.FOLDER: everything that takes a backup files it in the same
+        // place, so there is one place for the shop to look.
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         assertTrue(
-            "should be filed under POSbackup/<date>, was ${first.savedTo}",
-            first.savedTo!!.contains("POSbackup/$today")
+            "should be filed straight under ${AutoBackup.FOLDER}/, was ${first.savedTo}",
+            first.savedTo!!.contains("${AutoBackup.FOLDER}/synergic_backup_$today")
         )
         assertTrue(
             "the name should carry the date and time, was ${first.savedTo}",
@@ -99,9 +113,9 @@ class AutoBackupTest {
                 .containsMatchIn(first.savedTo!!)
         )
 
-        // An hour has not passed, so the next check leaves it alone.
+        // The interval has not passed, so the next check leaves it alone.
         assertFalse(
-            "a second backup within the hour would fill the card",
+            "a second backup inside the interval would fill the card",
             AutoBackup.runIfDue(ctx).taken
         )
     }
@@ -109,27 +123,47 @@ class AutoBackupTest {
     // ---- Retention -------------------------------------------------------------
 
     /**
-     * Pruning never leaves more than [AutoBackup.MAX_FOLDERS] day-folders standing.
+     * The folder is never left holding more than [AutoBackup.MAX_BACKUPS] files,
+     * and the one just taken is always among the survivors.
      *
-     * A same-day run cannot exercise the cross-day deletion itself - every backup
-     * this test can take lands in today's one folder, so there is only ever one
-     * day to count - but it does confirm the function runs against this device's
-     * real POSbackup folder without disturbing today's own files, which a
-     * fumbled day comparison (an off-by-one, a wrong format) would have broken.
+     * BOTH HALVES MATTER. A prune that kept nothing would satisfy the count on its
+     * own, so the backup taken a moment ago is looked for by name afterwards: the
+     * newest file is the one a shop would actually restore from, and it is the one
+     * an off-by-one in the `drop` would take.
+     *
+     * Takes one more than the ceiling so there is genuinely something to delete -
+     * this is the case the old day-based ceiling could not reach at all, because
+     * every backup a test can take lands on the same day.
      */
     @Test
-    fun pruningLeavesTodaysFolderAlone() {
+    fun pruningKeepsOnlyTheMostRecentBackups() {
         AutoBackup.save(ctx, enabled = true, intervalHours = AutoBackup.MIN_INTERVAL_HOURS)
-        AppSettingsDao(ctx).put("Auto Backup Last Run", "")
-        val outcome = AutoBackup.runIfDue(ctx)
-        assertTrue("a backup should have been taken to prune around", outcome.taken)
+        val settings = AppSettingsDao(ctx)
+        var last: AutoBackup.Outcome? = null
+        repeat(AutoBackup.MAX_BACKUPS + 1) {
+            // Cleared each time so the interval never holds the next one back - it is
+            // the ceiling under test here, not the schedule.
+            settings.put("Auto Backup Last Run", "")
+            last = AutoBackup.runIfDue(ctx)
+            assertTrue("a backup should have been taken to prune around: ${last?.error}", last!!.taken)
+            // MediaStore records DATE_ADDED in whole SECONDS, and "newest first" is
+            // what the prune keeps. Four backups inside one second would be four files
+            // claiming the same instant, and which one survived would be the store's
+            // guess - a tie this test must not depend on either way. A real till backs
+            // up hourly, or when somebody presses a button; it never hits this.
+            Thread.sleep(1100)
+        }
 
-        AutoBackup.pruneToRecentFolders(ctx)
-
-        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-        val stillThere = com.example.synergic_pos_offline.utils.BackupFiles.list(ctx, AutoBackup.FOLDER)
-            .any { it.name == outcome.savedTo?.substringAfterLast('/') }
-        assertTrue("today's own backup, the only day on the device, must survive its own prune", stillThere)
+        val left = com.example.synergic_pos_offline.utils.BackupFiles.list(ctx, AutoBackup.FOLDER)
+        assertTrue(
+            "at most ${AutoBackup.MAX_BACKUPS} backups may stand, found ${left.size}: " +
+                left.joinToString { it.name },
+            left.size <= AutoBackup.MAX_BACKUPS
+        )
+        assertTrue(
+            "the backup just taken must survive its own prune, was ${last?.savedTo}",
+            left.any { it.name == last?.savedTo?.substringAfterLast('/') }
+        )
     }
 
     @Test

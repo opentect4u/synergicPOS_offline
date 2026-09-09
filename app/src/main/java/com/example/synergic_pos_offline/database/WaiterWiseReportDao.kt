@@ -45,6 +45,8 @@ class WaiterWiseReportDao(context: Context) {
         /** Parcel Charge's own share, broken out from [otherCharges] - see
          *  ChargeDao.Kind.PARCEL. Zero on a bill sold before this was tracked. */
         val parcelCharge: Double = 0.0,
+        /** What this bill was rounded by - signed, and already inside [total]. */
+        val roundOff: Double = 0.0,
         /** What the customer paid - the bill's net. */
         val total: Double
     ) {
@@ -64,6 +66,8 @@ class WaiterWiseReportDao(context: Context) {
         val serviceCharge: Double = 0.0,
         val otherCharges: Double = 0.0,
         val parcelCharge: Double = 0.0,
+        /** What this waiter's bills were rounded by, summed - see [Line.roundOff]. */
+        val roundOff: Double = 0.0,
         val billAmount: Double
     ) {
         val taxAmount: Double get() = cgst + sgst + igst + vat
@@ -103,6 +107,9 @@ class WaiterWiseReportDao(context: Context) {
         val totalServiceCharge: Double get() = if (allWaiters) totalRows { it.serviceCharge } else totalLines { it.serviceCharge }
         val totalOtherCharges: Double get() = if (allWaiters) totalRows { it.otherCharges } else totalLines { it.otherCharges }
         val totalParcelCharge: Double get() = if (allWaiters) totalRows { it.parcelCharge } else totalLines { it.parcelCharge }
+        /** What the period's bills were rounded by, summed - already inside
+         *  [totalAmount], not a charge on top of it. */
+        val totalRoundOff: Double get() = if (allWaiters) totalRows { it.roundOff } else totalLines { it.roundOff }
         /** The one figure the report is read for - a bill's net, summed. */
         val totalAmount: Double get() = if (allWaiters) totalRows { it.billAmount } else totalLines { it.total }
 
@@ -155,6 +162,7 @@ class WaiterWiseReportDao(context: Context) {
                    MAX(COALESCE(b.service_charge_amount, 0)),
                    MAX(COALESCE(b.tot_other_charges_amount, 0)),
                    MAX(COALESCE(b.parcel_charge_amount, 0)),
+                   MAX(COALESCE(b.tot_round_off_amount, 0)),
                    MAX(COALESCE(b.net_amount, 0))
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             LEFT JOIN ${DatabaseHelper.Tables.TD_BILL_ITEMS} i ON i.bill_id = b.receipt_no
@@ -186,7 +194,8 @@ class WaiterWiseReportDao(context: Context) {
                         serviceCharge = BillRounding.toPaise(c.getDouble(7)),
                         otherCharges = (BillRounding.toPaise(c.getDouble(8)) - BillRounding.toPaise(c.getDouble(9))).coerceAtLeast(0.0),
                         parcelCharge = BillRounding.toPaise(c.getDouble(9)),
-                        total = c.getDouble(10)
+                        roundOff = BillRounding.toPaise(c.getDouble(10)),
+                        total = c.getDouble(11)
                     )
                 )
             }
@@ -215,6 +224,7 @@ class WaiterWiseReportDao(context: Context) {
                    SUM(COALESCE(b.service_charge_amount, 0)) AS svc,
                    SUM(COALESCE(b.tot_other_charges_amount, 0)) AS other,
                    SUM(COALESCE(b.parcel_charge_amount, 0)) AS parcel,
+                   SUM(COALESCE(b.tot_round_off_amount, 0)) AS roundoff,
                    SUM(COALESCE(b.net_amount, 0)) AS billamt
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             LEFT JOIN ${DatabaseHelper.Tables.MD_WAITERS} w ON w.id = b.waiter_id
@@ -244,7 +254,8 @@ class WaiterWiseReportDao(context: Context) {
                         serviceCharge = BillRounding.toPaise(c.getDouble(7)),
                         otherCharges = (BillRounding.toPaise(c.getDouble(8)) - BillRounding.toPaise(c.getDouble(9))).coerceAtLeast(0.0),
                         parcelCharge = BillRounding.toPaise(c.getDouble(9)),
-                        billAmount = BillRounding.toPaise(c.getDouble(10))
+                        roundOff = BillRounding.toPaise(c.getDouble(10)),
+                        billAmount = BillRounding.toPaise(c.getDouble(11))
                     )
                 )
             }

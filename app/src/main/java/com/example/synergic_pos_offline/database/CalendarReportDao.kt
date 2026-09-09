@@ -43,6 +43,14 @@ class CalendarReportDao(context: Context) {
         /** Parcel Charge's own share, broken out from [totalOtherCharges] - see
          *  ChargeDao.Kind.PARCEL. Zero on a bill sold before this was tracked. */
         val totalParcelCharge: Double = 0.0,
+        /**
+         * What the period's bills were rounded by, summed.
+         *
+         * Signed, and summed rather than averaged: a period of bills rounded up and
+         * down in turn nets out to nearly nothing, which is the true figure - it is
+         * the adjustment already inside [totalAmount], not a charge of its own.
+         */
+        val totalRoundOff: Double = 0.0,
         /** What those bills came to - their net. */
         val totalAmount: Double
     ) {
@@ -83,6 +91,8 @@ class CalendarReportDao(context: Context) {
         val totalServiceCharge: Double get() = BillRounding.toPaise(lines.sumOf { it.totalServiceCharge })
         val totalOtherCharges: Double get() = BillRounding.toPaise(lines.sumOf { it.totalOtherCharges })
         val totalParcelCharge: Double get() = BillRounding.toPaise(lines.sumOf { it.totalParcelCharge })
+        /** What the range's bills were rounded by, in total - see [Line.totalRoundOff]. */
+        val totalRoundOff: Double get() = BillRounding.toPaise(lines.sumOf { it.totalRoundOff })
         val totalAmount: Double get() = BillRounding.toPaise(lines.sumOf { it.totalAmount })
 
         /** The best period of the range, for the summary to name. Null when empty. */
@@ -125,6 +135,7 @@ class CalendarReportDao(context: Context) {
                    COALESCE(SUM(b.service_charge_amount), 0),
                    COALESCE(SUM(b.tot_other_charges_amount), 0),
                    COALESCE(SUM(b.parcel_charge_amount), 0),
+                   COALESCE(SUM(b.tot_round_off_amount), 0),
                    COALESCE(SUM(b.net_amount), 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             WHERE $period BETWEEN ? AND ?
@@ -154,7 +165,8 @@ class CalendarReportDao(context: Context) {
                         totalServiceCharge = BillRounding.toPaise(c.getDouble(7)),
                         totalOtherCharges = (BillRounding.toPaise(c.getDouble(8)) - BillRounding.toPaise(c.getDouble(9))).coerceAtLeast(0.0),
                         totalParcelCharge = BillRounding.toPaise(c.getDouble(9)),
-                        totalAmount = BillRounding.toPaise(c.getDouble(10))
+                        totalRoundOff = BillRounding.toPaise(c.getDouble(10)),
+                        totalAmount = BillRounding.toPaise(c.getDouble(11))
                     )
                 )
             }

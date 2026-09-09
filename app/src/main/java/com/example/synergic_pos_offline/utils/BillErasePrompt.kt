@@ -108,7 +108,7 @@ object BillErasePrompt {
             "longer be reported or reprinted correctly. They will be thrown away, along " +
             "with their items, the payments taken against them, their print records and " +
             "their kitchen orders. It cannot be undone." +
-            "\n\nA backup is taken first, into Downloads/POSbackup - everything but this " +
+            "\n\nA backup is taken first, into Downloads/backup - everything but this " +
             "device's users and store registration, so restoring it later would not " +
             "disturb who can sign in." +
             counter +

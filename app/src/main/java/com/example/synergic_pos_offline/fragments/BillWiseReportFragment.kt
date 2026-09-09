@@ -220,13 +220,17 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         add("SGST Amount" to money(r.totalSgst))
         add("CGST Amount" to money(r.totalCgst))
         if (r.hasIgst) add("IGST Amount" to money(r.totalIgst))
-        if (r.hasVat) add("VAT Amount" to money(r.totalVat))
+        // VAT ALWAYS, zero or not. It was shown only where a bill in the period had
+        // been raised under VAT, which reads as the report having no VAT line at all
+        // to anyone whose period happens not to contain one - and a tax total that
+        // comes and goes is one a reader cannot trust to be complete when it is there.
+        add("VAT Amount" to money(r.totalVat))
         add("Discount Amount" to money(r.totalDiscount))
-        // Shown only where the period actually carried one - a shop that never
-        // charges Service or an Extra Charge should not read a zero row saying so.
-        if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
-        if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
-        if (r.totalParcelCharge > 0.005) add("Parcel Charge" to money(r.totalParcelCharge))
+        // The same reasoning: a charge that totals nothing this period still gets its
+        // row, so the summary is the same shape whatever period is asked for.
+        add("Service Charge" to money(r.totalServiceCharge))
+        add("Extra Charges" to money(r.totalOtherCharges))
+        add("Parcel Charge" to money(r.totalParcelCharge))
     }
 
     /** The screen as a downloadable table: the columns and rows it is drawing. */
@@ -277,11 +281,14 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
                 add("SGST Amount" to money(r.totalSgst))
                 add("CGST Amount" to money(r.totalCgst))
                 if (r.hasIgst) add("IGST Amount" to money(r.totalIgst))
-                if (r.hasVat) add("VAT Amount" to money(r.totalVat))
+                // The same lines the screen shows, on the same terms - see
+                // [summaryLines]. A slip that left out what the screen listed above it
+                // would be read as the two disagreeing.
+                add("VAT Amount" to money(r.totalVat))
                 add("Discount Amount" to money(r.totalDiscount))
-                if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
-                if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
-                if (r.totalParcelCharge > 0.005) add("Parcel Charge" to money(r.totalParcelCharge))
+                add("Service Charge" to money(r.totalServiceCharge))
+                add("Extra Charges" to money(r.totalOtherCharges))
+                add("Parcel Charge" to money(r.totalParcelCharge))
                 // Round Off last - the final adjustment the Total already includes,
                 // not a figure left dangling under it.
                 add("Round Off Amount" to money(r.totalRoundOff))

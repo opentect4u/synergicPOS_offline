@@ -43,7 +43,7 @@ object Downloads {
         context: Context,
         fileName: String,
         mimeType: String,
-        // Folders under Downloads to put it in, e.g. "POSbackup/2026-08-08". Created
+        // Folders under Downloads to put it in, e.g. "backup". Created
         // as needed; empty means Downloads itself.
         folder: String = "",
         // Replace any file already at this name/path instead of letting MediaStore add

@@ -59,18 +59,21 @@ abstract class CalendarReportFragment : PeriodReportFragment<CalendarReportDao.R
                 }
             }
             // Each tax its own line rather than one blended figure - a GST return is
-            // filed against SGST and CGST separately, and IGST/VAT earn their place
-            // only where a bill in the range actually carried one.
+            // filed against SGST and CGST separately.
             add("Total SGST" to money(report.totalSgst))
             add("Total CGST" to money(report.totalCgst))
             if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
-            if (report.hasVat) add("Total VAT" to money(report.totalVat))
+            // VAT and the charges ALWAYS, zero or not. They were shown only where the
+            // range actually carried one, which left the summary a different shape for
+            // every range asked for - and a reader who cannot see the row cannot tell
+            // "none was charged" from "this report does not total it".
+            add("Total VAT" to money(report.totalVat))
             add("Total Discount" to money(report.totalDiscount))
-            // Shown only where the range actually carried one - a shop that never
-            // charges Service or an Extra Charge should not read a zero row saying so.
-            if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
-            if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
-            if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
+            add("Service Charge" to money(report.totalServiceCharge))
+            add("Extra Charges" to money(report.totalOtherCharges))
+            add("Parcel Charge" to money(report.totalParcelCharge))
+            // Last - the final adjustment the Total Amount below already includes.
+            add("Round Off Amount" to money(report.totalRoundOff))
         }
 
     /** The one figure the report is read for. */
@@ -126,11 +129,13 @@ abstract class CalendarReportFragment : PeriodReportFragment<CalendarReportDao.R
                 add("TOTAL SGST  :" to money(report.totalSgst))
                 add("TOTAL CGST  :" to money(report.totalCgst))
                 if (report.hasIgst) add("TOTAL IGST  :" to money(report.totalIgst))
-                if (report.hasVat) add("TOTAL VAT   :" to money(report.totalVat))
+                // The same lines the screen shows, on the same terms - see [summaryOf].
+                add("TOTAL VAT   :" to money(report.totalVat))
                 add("TOTAL DISC. :" to money(report.totalDiscount))
-                if (report.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(report.totalServiceCharge))
-                if (report.totalOtherCharges > 0.005) add("EXTRA CHGS  :" to money(report.totalOtherCharges))
-                if (report.totalParcelCharge > 0.005) add("PARCEL CHG  :" to money(report.totalParcelCharge))
+                add("SERVICE CHG :" to money(report.totalServiceCharge))
+                add("EXTRA CHGS  :" to money(report.totalOtherCharges))
+                add("PARCEL CHG  :" to money(report.totalParcelCharge))
+                add("ROUND OFF   :" to money(report.totalRoundOff))
             },
             total = "TOTAL AMOUNT:" to money(report.totalAmount),
             emptyNote = "No bills in this range."

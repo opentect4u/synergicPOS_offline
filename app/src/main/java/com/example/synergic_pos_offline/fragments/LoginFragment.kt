@@ -34,6 +34,7 @@ import com.example.synergic_pos_offline.utils.NetworkMonitor
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.TransactionRollOver
 import at.favre.lib.crypto.bcrypt.BCrypt
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
@@ -623,6 +624,7 @@ class LoginFragment : Fragment() {
         alignMasterDataToStore(user.storeId)
         // Cache md_app_settings to local storage, chunked by type (B / T / G / A).
         SettingsCache.storeFromDb(requireContext())
+        rollOverOldTransactions()
         val roleText = if (user.role == UserRole.ADMIN) "Admin" else "General User"
         Toast.makeText(requireContext(), "Welcome $roleText!", Toast.LENGTH_SHORT).show()
 
@@ -648,6 +650,35 @@ class LoginFragment : Fragment() {
             .replace(R.id.fragment_container, landing)
             .commit()
 
+    }
+
+
+    /**
+     * Ages out the transactions that have fallen outside the roll-over window.
+     *
+     * ON LOGIN, because that is the one moment the till is reliably awake with nobody
+     * mid-sale and no report open on the rows about to go. See [TransactionRollOver],
+     * which owns the rule and does the deleting.
+     *
+     * OFF THE MAIN THREAD AND WITHOUT WAITING, on purpose twice over. It reads and
+     * writes every transaction table and takes a full backup first, which is not
+     * something to hold a login behind - and nothing it can touch is anything the
+     * landing screen is about to show, since the newest row it will delete is already
+     * a year old. So the operator goes straight in and this runs behind them.
+     *
+     * Silent unless it fails, and even then only to the log. It is a standing
+     * arrangement the shop set up on the About screen, not news; a dialog on the way
+     * in every day would be read once and dismissed unread thereafter. Any failure
+     * leaves the old transactions exactly where they are and lets the login carry on.
+     */
+    private fun rollOverOldTransactions() {
+        val context = requireContext().applicationContext
+        Thread {
+            val outcome = TransactionRollOver.runOnLogin(context)
+            if (outcome.error != null) {
+                android.util.Log.e("SynergicPOS", "Transaction roll-over failed: ${outcome.error}")
+            }
+        }.start()
     }
 
     /**
