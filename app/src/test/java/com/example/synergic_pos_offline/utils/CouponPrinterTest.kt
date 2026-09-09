@@ -85,4 +85,38 @@ class CouponPrinterTest {
     fun `an empty bill produces no coupons`() {
         assertTrue(CouponPrinter.group(emptyList(), "42", "").isEmpty())
     }
+
+    // ---- Consolidated (splitting off) ---------------------------------------
+
+    private fun consolidate(vararg lines: CategorisedLine) =
+        CouponPrinter.consolidate(lines.toList(), "42", "26-08-2026 12:38")
+
+    @Test
+    fun `consolidated coupon carries every item regardless of counter`() {
+        val coupons = consolidate(
+            CategorisedLine("Sweets", "Kaju Katli", 1.0),
+            CategorisedLine("Snacks", "Samosa", 2.0),
+            CategorisedLine("", "Loose Item", 1.0)
+        )
+        assertEquals(1, coupons.size)
+        assertEquals(false, coupons.single().showCounter)
+        assertEquals(
+            listOf("Kaju Katli", "Samosa", "Loose Item"),
+            coupons.single().lines.map { it.name }
+        )
+    }
+
+    @Test
+    fun `a nameless line is dropped from the consolidated coupon too`() {
+        val coupons = consolidate(
+            CategorisedLine("Sweets", "  ", 1.0),
+            CategorisedLine("Snacks", "Samosa", 1.0)
+        )
+        assertEquals(listOf("Samosa"), coupons.single().lines.map { it.name })
+    }
+
+    @Test
+    fun `an empty bill produces no consolidated coupon either`() {
+        assertTrue(CouponPrinter.consolidate(emptyList(), "42", "").isEmpty())
+    }
 }

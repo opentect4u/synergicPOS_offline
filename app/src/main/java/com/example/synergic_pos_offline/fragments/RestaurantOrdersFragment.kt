@@ -865,6 +865,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // The menu is on the page now, so it has to be current whenever the page is:
         // a product edited, or stock moved by a settled bill, shows on the way back.
         reloadProductsAndRefresh()
+
+        // The search box holds focus the moment this screen is reached, so a scan
+        // is read the instant the operator turns to the menu rather than after a
+        // tap to wake the field up first - see its own click/focus listeners for
+        // why that focus stays silent rather than raising the keyboard.
+        view?.post {
+            if (isAdded) view?.findViewById<View>(R.id.etProductSearch)?.requestFocus()
+        }
     }
 
     /**
@@ -3301,8 +3309,24 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // is selected would be answering a question they did not ask.
             suggestions?.update(query, allProducts.map(::suggestionOf))
         }
-        // A search that has been left behind must not float over the next screen.
-        etSearch.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) suggestions?.dismiss() }
+        // FOCUS WITHOUT THE KEYBOARD, the same split the grocery sale screen's own
+        // search box makes - see PosBillingFragment.attachScanner's own note. This
+        // screen holds the box focused from the moment it is reached (see
+        // onResume), and focus alone raising a keyboard over the floor plan and
+        // the menu on every visit is not what that focus is for; a deliberate tap
+        // on the field still asks for one.
+        etSearch.showSoftInputOnFocus = false
+        etSearch.setOnClickListener {
+            etSearch.showSoftInputOnFocus = true
+            (ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as? android.view.inputmethod.InputMethodManager)
+                ?.showSoftInput(etSearch, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+        }
+        // A search that has been left behind must not float over the next screen,
+        // and back to silent so the NEXT visit is as quiet as this one.
+        etSearch.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) { etSearch.showSoftInputOnFocus = false; suggestions?.dismiss() }
+        }
         // The keyboard's Search key, and the Enter a hardware scanner sends after a
         // barcode: the query is finished either way, so the keyboard goes and the menu
         // - filtered to what was asked for - is left uncovered.

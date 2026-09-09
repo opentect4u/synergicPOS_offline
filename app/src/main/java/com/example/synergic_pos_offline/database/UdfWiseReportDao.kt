@@ -71,6 +71,10 @@ class UdfWiseReportDao(context: Context) {
         val billAmount: Double = 0.0
     ) {
         val any: Boolean get() = bills > 0
+
+        /** Everything this counter charged in tax, however the regime split it -
+         *  the same shape [Row.taxAmount] reports for a table's own group. */
+        val taxAmount: Double get() = cgst + sgst + igst + vat
     }
 
     /** One UDF (section-table) group. */

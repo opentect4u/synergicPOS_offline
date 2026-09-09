@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import com.example.synergic_pos_offline.database.BillSettingsDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 
 /**
@@ -67,24 +68,31 @@ object CouponPrinter {
      */
     private class Row(val left: String, val right: String, val paint: Paint)
 
-    /** One counter's coupon for one bill. */
+    /** One counter's coupon for one bill - or, unsplit, the whole bill's coupon. */
     data class Coupon(
         val category: String,
         val billNumber: String,
         val dateTime: String,
-        val lines: List<Line>
+        val lines: List<Line>,
+        /**
+         * False for the consolidated coupon a till without splitting prints - there
+         * is no counter to name, so the row that would name it is left out rather
+         * than printing one that names nothing.
+         */
+        val showCounter: Boolean = true
     )
 
     /**
-     * The coupons for [receiptNo], or empty when the setting is off or the bill has
-     * no items.
+     * The coupons for [receiptNo], or empty when coupon printing is off or the bill
+     * has no items.
      *
      * Reads the setting itself rather than trusting the caller, so every print path
      * that asks for a bill's slips gets the same answer without each having to
      * remember to check.
      */
     fun couponsFor(context: Context, receiptNo: Long, paperDots: Int): List<Bitmap> {
-        if (!enabled(context)) return emptyList()
+        val settings = settings(context) ?: return emptyList()
+        if (!settings.couponEnabled) return emptyList()
 
         // The whole thing under one runCatching, rendering included: a coupon is an
         // extra, and nothing that goes wrong producing one may stop the bill it came
@@ -92,7 +100,7 @@ object CouponPrinter {
         // they cannot be sent away without their bill.
         return runCatching {
             val (billNumber, dateTime, lines) = read(context, receiptNo)
-            draw(context, group(lines, billNumber, dateTime), paperDots)
+            draw(context, coupons(settings, lines, billNumber, dateTime), paperDots)
         }.getOrElse {
             android.util.Log.e(TAG, "Could not build the coupons for bill $receiptNo", it)
             emptyList()
@@ -114,19 +122,30 @@ object CouponPrinter {
         dateTime: String,
         paperDots: Int
     ): List<Bitmap> {
-        if (!enabled(context)) return emptyList()
+        val settings = settings(context) ?: return emptyList()
+        if (!settings.couponEnabled) return emptyList()
         return runCatching {
-            draw(context, group(lines, billNumber, dateTime), paperDots)
+            draw(context, coupons(settings, lines, billNumber, dateTime), paperDots)
         }.getOrElse {
             android.util.Log.e(TAG, "Could not build the coupons for bill $billNumber", it)
             emptyList()
         }
     }
 
-    /** Whether this till splits a bill into counter coupons at all. */
-    private fun enabled(context: Context): Boolean = runCatching {
-        com.example.synergic_pos_offline.database.BillSettingsDao(context).load().couponSplit
-    }.getOrDefault(false)
+    /** The bill settings, or null if they could not be read - fails coupon printing
+     *  closed rather than guessing at what the till wants. */
+    private fun settings(context: Context): BillSettingsDao.BillSettings? =
+        runCatching { BillSettingsDao(context).load() }.getOrNull()
+
+    /** Split per category when the till asks for that; one consolidated coupon otherwise. */
+    private fun coupons(
+        settings: BillSettingsDao.BillSettings,
+        lines: List<CategorisedLine>,
+        billNumber: String,
+        dateTime: String
+    ): List<Coupon> =
+        if (settings.couponSplit) group(lines, billNumber, dateTime)
+        else consolidate(lines, billNumber, dateTime)
 
     private fun draw(context: Context, coupons: List<Coupon>, paperDots: Int): List<Bitmap> {
         val language = PrintLanguage.of(context)
@@ -155,6 +174,25 @@ object CouponPrinter {
             grouped.getOrPut(counter) { mutableListOf() }.add(Line(name, line.quantity))
         }
         return grouped.map { (category, items) -> Coupon(category, billNumber, dateTime, items) }
+    }
+
+    /**
+     * Every sold line on one coupon, in the order they were rung up - no split by
+     * counter and no category named on it. What a till prints when coupons are on
+     * but [BillSettings.couponSplit] is off: one slip for the whole bill instead of
+     * one per counter.
+     */
+    internal fun consolidate(
+        lines: List<CategorisedLine>,
+        billNumber: String,
+        dateTime: String
+    ): List<Coupon> {
+        val items = lines.mapNotNull { line ->
+            val name = line.name.trim()
+            if (name.isEmpty()) null else Line(name, line.quantity)
+        }
+        if (items.isEmpty()) return emptyList()
+        return listOf(Coupon(category = "", billNumber, dateTime, items, showCounter = false))
     }
 
     private const val TAG = "CouponPrinter"
@@ -221,9 +259,14 @@ object CouponPrinter {
         val rows = mutableListOf<Row>()
         rows += Row(t("COUPON"), "", title)
         // The counter's own name, which is the category. Not translated: it is what
-        // this shop calls that counter, the way a store name or a table code is.
-        rows += Row("${t("COUNTER")} : ${coupon.category.uppercase()}", "", sub)
+        // this shop calls that counter, the way a store name or a table code is. Left
+        // out entirely for a consolidated coupon - see [Coupon.showCounter] - since
+        // there is no one counter to name.
+        if (coupon.showCounter) {
+            rows += Row("${t("COUNTER")} : ${coupon.category.uppercase()}", "", sub)
+        }
         rows += Row("${t("COUPON NO")}: ${coupon.billNumber}", coupon.dateTime, sub)
+        val headerIndex = rows.size
         rows += Row(t("ITEM"), t("QUANTITY"), header)
         coupon.lines.forEach { line ->
             rows += Row(
@@ -234,8 +277,9 @@ object CouponPrinter {
         }
 
         // A rule under the identifying block and another under the column headings,
-        // the two places the eye needs a break.
-        val ruleBefore = setOf(3, 4)
+        // the two places the eye needs a break. Found by the header's own position
+        // rather than a fixed index, since [showCounter] can leave a row out above it.
+        val ruleBefore = setOf(headerIndex, headerIndex + 1)
 
         fun layout(canvas: Canvas?): Float {
             var y = padTop

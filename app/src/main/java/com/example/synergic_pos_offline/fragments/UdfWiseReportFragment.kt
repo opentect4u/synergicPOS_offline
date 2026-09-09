@@ -150,6 +150,23 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
 
         val summary = root.findViewById<LinearLayout>(R.id.llReportSummary)
         summary.removeAllViews()
+        // NAMED, not folded in silently, and FIRST - before any other figure.
+        //
+        // The table above is tables only - a UDF is a table - but the totals below
+        // are the whole period's, counter sales included. Without these lines an
+        // operator adds up the table rows, comes out short of the Bill Amount at
+        // the foot, and reports a mismatch. Plain named totals, the same shape
+        // every other figure in this summary already takes - not a row styled
+        // after the table above, which read as a second table rather than a
+        // summary of one.
+        fun counterLines(label: String, counter: UdfWiseReportDao.Counter) {
+            summary.addView(summaryRow("Total $label Bills", counter.bills.toString()))
+            summary.addView(summaryRow("Total $label Tax", money(counter.taxAmount)))
+            summary.addView(summaryRow("Total $label Discount", money(counter.discount)))
+            summary.addView(summaryRow("Total $label Amount", money(counter.billAmount)))
+        }
+        if (r.counterQsr.any) counterLines("QSR", r.counterQsr)
+        if (r.counterTakeaway.any) counterLines("Take Away", r.counterTakeaway)
         summary.addView(summaryRow("Total Groups", r.rows.size.toString()))
         summary.addView(summaryRow("Total Bills", r.totalBills.toString()))
         // Each tax its own line rather than one blended figure - a GST return is
@@ -165,22 +182,6 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
         if (r.totalServiceCharge > 0.005) summary.addView(summaryRow("Service Charge", money(r.totalServiceCharge)))
         if (r.totalOtherCharges > 0.005) summary.addView(summaryRow("Extra Charges", money(r.totalOtherCharges)))
         if (r.totalParcelCharge > 0.005) summary.addView(summaryRow("Parcel Charge", money(r.totalParcelCharge)))
-        // NAMED, not folded in silently.
-        //
-        // The table is tables only - a UDF is a table - but the totals are the whole
-        // period's, counter sales included. Without this line an operator adds up the
-        // rows, comes out short of the Bill Amount below, and reports a mismatch. With
-        // it, the difference is the line they are reading.
-        if (r.counterQsr.any) {
-            summary.addView(
-                summaryRow("QSR (${r.counterQsr.bills} bill(s))", money(r.counterQsr.billAmount))
-            )
-        }
-        if (r.counterTakeaway.any) {
-            summary.addView(
-                summaryRow("Take Away (${r.counterTakeaway.bills} bill(s))", money(r.counterTakeaway.billAmount))
-            )
-        }
         summary.addView(summaryRow("Bill Amount", money(r.totalBillAmount), emphasised = true))
     }
 
@@ -194,6 +195,16 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
             listOf(it.udf, it.bills.toString(), money(it.taxAmount), money(it.discount), money(it.billAmount))
         },
         summary = buildList {
+            // First, and the same four columns the table itself reports a group
+            // by - see drawTable's own note on why these lead rather than trail.
+            fun counterLines(label: String, counter: UdfWiseReportDao.Counter) {
+                add("$label Bills" to counter.bills.toString())
+                add("$label Tax Amt" to money(counter.taxAmount))
+                add("$label Discount" to money(counter.discount))
+                add("$label Bill Amt" to money(counter.billAmount))
+            }
+            if (r.counterQsr.any) counterLines("QSR", r.counterQsr)
+            if (r.counterTakeaway.any) counterLines("Take Away", r.counterTakeaway)
             add("Total Groups" to r.rows.size.toString())
             add("Total Bills" to r.totalBills.toString())
             add("SGST Amount" to money(r.totalSgst))
@@ -204,13 +215,6 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
             if (r.totalServiceCharge > 0.005) add("Service Charge" to money(r.totalServiceCharge))
             if (r.totalOtherCharges > 0.005) add("Extra Charges" to money(r.totalOtherCharges))
             if (r.totalParcelCharge > 0.005) add("Parcel Charge" to money(r.totalParcelCharge))
-            // Named in the download too, for the same reason the screen names it.
-            if (r.counterQsr.any) {
-                add("QSR (${r.counterQsr.bills} bill(s))" to money(r.counterQsr.billAmount))
-            }
-            if (r.counterTakeaway.any) {
-                add("Take Away (${r.counterTakeaway.bills} bill(s))" to money(r.counterTakeaway.billAmount))
-            }
             add("Bill Amount" to money(r.totalBillAmount))
         }
     )
@@ -238,6 +242,18 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
                 listOf(row.udf, row.bills.toString(), money(row.taxAmount), money(row.discount), money(row.billAmount))
             },
             summary = buildList {
+                // NAMED, not folded into the total silently - see drawTable's own
+                // note - and FIRST: the same four figures the table itself reports
+                // a group by (bills, tax, discount, bill amount), for the counter
+                // sales the table rows above (tables/Dine-In only) cannot show.
+                fun counterLines(prefix: String, counter: UdfWiseReportDao.Counter) {
+                    add("$prefix BILLS :" to counter.bills.toString())
+                    add("$prefix TAX   :" to money(counter.taxAmount))
+                    add("$prefix DISC. :" to money(counter.discount))
+                    add("$prefix AMT   :" to money(counter.billAmount))
+                }
+                if (r.counterQsr.any) counterLines("QSR", r.counterQsr)
+                if (r.counterTakeaway.any) counterLines("TAKEAWAY", r.counterTakeaway)
                 add("SGST AMOUNT :" to money(r.totalSgst))
                 add("CGST AMOUNT :" to money(r.totalCgst))
                 if (r.hasIgst) add("IGST AMOUNT :" to money(r.totalIgst))
@@ -246,11 +262,6 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
                 if (r.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(r.totalServiceCharge))
                 if (r.totalOtherCharges > 0.005) add("EXTRA CHGS  :" to money(r.totalOtherCharges))
                 if (r.totalParcelCharge > 0.005) add("PARCEL CHG  :" to money(r.totalParcelCharge))
-                // NAMED, not folded into the total silently - see drawTable's own
-                // note. The table rows above are tables/Dine-In only, so without
-                // these lines a reader summing them would come up short of TOTAL.
-                if (r.counterQsr.any) add("QSR AMOUNT  :" to money(r.counterQsr.billAmount))
-                if (r.counterTakeaway.any) add("TAKEAWAY AMT:" to money(r.counterTakeaway.billAmount))
             },
             total = "TOTAL  :" to money(r.totalBillAmount),
             emptyNote = "No bills in this period."
