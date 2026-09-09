@@ -343,20 +343,27 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private lateinit var rgDiscountMode: RadioGroup
     private lateinit var btnCustomerInfo: ImageButton
 
-    // Auto-prompts for the customer once, the first time this screen is shown after
-    // arriving from "Sale". The same fragment instance is reused when checkout pops
-    // back here, so this flag keeps the dialog from reopening on that return.
-    private var promptedForCustomer = false
-
-    /**
-     * Whether a sale captures the customer at all - General Settings' "Customer
-     * Info". Off, this screen never asks and offers no way to attach one, so the
-     * sale reaches checkout with no customer and its `customer_id` stays null. A
-     * credit sale still asks, but it does that at checkout, not here.
-     */
-    private val capturesCustomer: Boolean by lazy {
-        GeneralSettingsDao(requireContext()).load().customerInfo
-    }
+    // CUSTOMER CAPTURE NO LONGER GATED ON GENERAL SETTINGS' "CUSTOMER INFO" - commented
+    // out below rather than removed, the same way the restaurant screen's own Add
+    // Customer button stopped reading this setting: "GENERAL SETTINGS' CUSTOMER INFO
+    // DOES NOT GATE THIS, and briefly did." there applies here too now. The button
+    // stays where it is, always offered; adding a customer is the operator's own
+    // choice, not something a setting decides for them, and pressing the button is
+    // already that choice being made. No customer attached still means no customer
+    // data shown and none on the bill - exactly as it always did with the setting off -
+    // it just no longer takes a setting to get there.
+    //
+    // private var promptedForCustomer = false
+    //
+    // /**
+    //  * Whether a sale captures the customer at all - General Settings' "Customer
+    //  * Info". Off, this screen never asks and offers no way to attach one, so the
+    //  * sale reaches checkout with no customer and its `customer_id` stays null. A
+    //  * credit sale still asks, but it does that at checkout, not here.
+    //  */
+    // private val capturesCustomer: Boolean by lazy {
+    //     GeneralSettingsDao(requireContext()).load().customerInfo
+    // }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -534,9 +541,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         btnCalculator.setOnClickListener { showCalculatorDialog() }
         btnCustomer.setOnClickListener { showCustomerDialog() }
         btnAddCustomer.setOnClickListener { showCustomerDialog() }
-        // With customer capture off there is nothing for these to collect, so they
-        // go rather than sit there and be refused.
-        btnCustomer.visibility = if (capturesCustomer) View.VISIBLE else View.GONE
+        // The button stays where it is, always - see the note above capturesCustomer's
+        // old declaration.
+        // btnCustomer.visibility = if (capturesCustomer) View.VISIBLE else View.GONE
         view.findViewById<ImageButton>(R.id.btnRemoveCust).setOnClickListener { setCustomer(null, null) }
         btnHeld.setOnClickListener { showHeldDialog() }
         btnHold.setOnClickListener { onHold() }
@@ -545,13 +552,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // Re-apply the current customer rather than clearing it: the view is recreated
         // when checkout pops back, and the sale must survive that unless the operator
         // chose "Start new sale" (which resets via startNewSale()).
-        if (capturesCustomer) {
-            setCustomer(customerName, customerPhone, currentCustomerData)
-        } else {
-            // Also clears anything captured before the setting was turned off, so a
-            // sale in progress cannot carry a customer the receipt will not print.
-            setCustomer(null, null)
-        }
+        setCustomer(customerName, customerPhone, currentCustomerData)
         loadCategoriesAndProducts()
         updateHeldButton()
         applyFilter()
@@ -614,13 +615,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
             toast("Bill restored")
         }
 
-        // First arrival from "Sale": prompt to add a customer. Guarded so it opens
-        // only on entry and never when checkout returns to this screen (a completed
-        // sale returns via the startFreshSale path above, which already returns).
-        if (capturesCustomer && !promptedForCustomer) {
-            promptedForCustomer = true
-            showCustomerDialog()
-        }
+        // NO AUTO-PROMPT. Used to open the customer dialog on first arrival while
+        // General Settings' Customer Info was on - commented out with the setting
+        // that drove it, not carried forward: the button pressed is already the
+        // operator saying they want a customer, the same way the restaurant
+        // screen's own Add Customer never stops the screen to ask either.
+        //
+        // if (capturesCustomer && !promptedForCustomer) {
+        //     promptedForCustomer = true
+        //     showCustomerDialog()
+        // }
 
         updateHeldButton()
         updateOrderNo()
@@ -1072,7 +1076,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 field.post { field.setText(""); directAddScanned(p) }
             }
         }
-        field.addTextChangedListener(simpleWatcher {
+        val watcher = simpleWatcher {
             onQueryChanged(it)
             applyFilter()
             // Suggested from the WHOLE shelf, not the open category: someone who
@@ -1080,10 +1084,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
             // different category is selected would answer a question they did not
             // ask.
             box.update(it, menu.map(::suggestionOf))
-        })
+        }
+        field.addTextChangedListener(watcher)
         // The gun, read before the field: see attachScanner/ScanState. Everything
         // past this point is for a person typing - a scan never reaches any of it.
-        attachScanner(field)
+        // The watcher above is passed through so ScanState can clear the field
+        // WITHOUT running it - see the note on [ScanState.clearFieldQuietly].
+        attachScanner(field, watcher, onQueryChanged)
         // The keyboard's Search key, and the Enter a hardware scanner sends after a
         // barcode: the query is finished either way, so the keyboard goes and the
         // shelf - filtered to what was asked for - is left uncovered.
@@ -1148,7 +1155,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * someone typing; when the next one arrives too fast to be a hand, the field is
      * emptied of it and the buffer - which has been keeping it all along - carries on.
      */
-    private inner class ScanState(private val field: TextInputEditText) {
+    private inner class ScanState(
+        private val field: TextInputEditText,
+        private val watcher: TextWatcher,
+        private val onQueryChanged: (String) -> Unit
+    ) {
         private val scanBuffer = StringBuilder()
         private var lastKeyTime = 0L
         private var scanning = false
@@ -1174,7 +1185,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             if (gap <= SCAN_GAP_MS && scanBuffer.isNotEmpty()) {
                 // Too fast for a hand: this is a gun, and the burst started one
                 // character ago - take that one back out of the field.
-                if (!scanning) { scanning = true; field.setText("") }
+                if (!scanning) { scanning = true; clearFieldQuietly() }
                 scanBuffer.append(ch.toChar())
                 return true
             }
@@ -1201,12 +1212,33 @@ class PosBillingFragment : Fragment(), TitledScreen {
             val wasScanning = scanning
             scanning = false
             if (!wasScanning || code.length < SearchSuggestions.SCAN_MIN) return false
-            field.setText("")
+            clearFieldQuietly()
             // Not found is worth saying out loud: the code was swallowed, so a
             // silent failure would leave the operator with a beep, an unchanged
             // bill and no idea which of the two happened.
             if (!addScannedCode(code)) toast("No product with code $code")
             return true
+        }
+
+        /**
+         * Empties the field without running the box's own text watcher - the gun
+         * is managing its own buffer here, not asking to see a different shelf, so
+         * the filter/grid rebuild and the suggestion-dropdown re-rank that watcher
+         * normally does for a cleared box would be pure waste run for every
+         * character of every scan: one to take the burst's first character back
+         * out the moment it is recognised as a gun, and another once the code is
+         * resolved - each a full [applyFilter] plus a [SearchSuggestions.update]
+         * built off the WHOLE catalogue, under "All" the reason adding by scan
+         * read as slow there and nowhere else. [onQueryChanged] still runs on its
+         * own, cheaply, so the screen's own query state still ends up "" - the
+         * watcher is skipped only for the expensive parts it would otherwise do
+         * on the way there.
+         */
+        private fun clearFieldQuietly() {
+            field.removeTextChangedListener(watcher)
+            field.setText("")
+            field.addTextChangedListener(watcher)
+            onQueryChanged("")
         }
 
         /** Resolves a scan that stopped without an Enter, shortly after the keys stop. */
@@ -1218,7 +1250,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
         }
     }
 
-    private fun attachScanner(etSearch: TextInputEditText) {
+    private fun attachScanner(
+        etSearch: TextInputEditText,
+        watcher: TextWatcher,
+        onQueryChanged: (String) -> Unit
+    ) {
         // FOCUS WITHOUT THE KEYBOARD.
         //
         // A gun's key events go to whatever has focus, so this field has to hold it
@@ -1244,7 +1280,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             if (!hasFocus) { etSearch.showSoftInputOnFocus = false; dismissSuggestions() }
         }
 
-        val state = ScanState(etSearch)
+        val state = ScanState(etSearch, watcher, onQueryChanged)
         etSearch.setOnKeyListener { _, keyCode, event ->
             if (event.action != android.view.KeyEvent.ACTION_DOWN) return@setOnKeyListener false
             state.onKeyDown(keyCode, event)
@@ -1520,24 +1556,34 @@ class PosBillingFragment : Fragment(), TitledScreen {
         customerName = name
         customerPhone = phone
         currentCustomerData = customerData
-        if (!capturesCustomer) {
-            btnAddCustomer.visibility = View.GONE
-            llCustomerInfo.visibility = View.GONE
-            currentCustomerData = null
-            return
-        }
-        if (name == null && phone == null) {
-            btnAddCustomer.visibility = View.VISIBLE
-            llCustomerInfo.visibility = View.GONE
-            currentCustomerData = null
-        } else {
-            btnAddCustomer.visibility = View.GONE
-            llCustomerInfo.visibility = View.VISIBLE
-            tvCustName.text = name ?: "Customer"
-            tvCustSub.text = phone ?: "No phone"
-            // Show info button only if we have actual customer data (not default "Customer")
-            btnCustomerInfo.visibility = if (customerData != null) View.VISIBLE else View.GONE
-        }
+        // No longer gated on capturesCustomer - see the note above its old
+        // declaration.
+        // if (!capturesCustomer) {
+        //     btnAddCustomer.visibility = View.GONE
+        //     llCustomerInfo.visibility = View.GONE
+        //     currentCustomerData = null
+        //     return
+        // }
+        // CUSTOMER INFO STAYS HIDDEN, WHETHER OR NOT ONE IS ATTACHED - commented out
+        // below rather than removed. The Add Customer button is offered no matter
+        // what; a customer attached to the sale is carried through to checkout the
+        // same as it always was (see onCheckout), it is just not shown back on a
+        // card here any more. Whether one is on the sale stays this screen's own
+        // quiet business - optional to add, and never displayed either way.
+        btnAddCustomer.visibility = View.VISIBLE
+        llCustomerInfo.visibility = View.GONE
+        // if (name == null && phone == null) {
+        //     btnAddCustomer.visibility = View.VISIBLE
+        //     llCustomerInfo.visibility = View.GONE
+        //     currentCustomerData = null
+        // } else {
+        //     btnAddCustomer.visibility = View.GONE
+        //     llCustomerInfo.visibility = View.VISIBLE
+        //     tvCustName.text = name ?: "Customer"
+        //     tvCustSub.text = phone ?: "No phone"
+        //     // Show info button only if we have actual customer data (not default "Customer")
+        //     btnCustomerInfo.visibility = if (customerData != null) View.VISIBLE else View.GONE
+        // }
     }
 
     private fun showCustomerDialog() {
@@ -2040,13 +2086,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
             CheckoutSession.discountMode = discountMode
             CheckoutSession.discountValue = discountValue
         }
-        // Cleared rather than left alone when capture is off: the session outlives a
-        // single sale, so a customer from an earlier one would otherwise ride along
-        // and end up on this bill.
-        CheckoutSession.customerName = customerName.takeIf { capturesCustomer }
-        CheckoutSession.customerPhone = customerPhone.takeIf { capturesCustomer }
-        CheckoutSession.customerId =
-            if (capturesCustomer) currentCustomerData?.get("id") as? Long else null
+        // Whatever setCustomer last set - which is null/null/null on a sale with
+        // nobody attached, since clearSale() (the only way this screen ever starts
+        // a new one) already runs setCustomer(null, null) itself. That is what used
+        // to stop a customer from an earlier sale riding along on the session into
+        // this one, before this read the setting instead; it still does, and no
+        // longer needs the setting's help to.
+        CheckoutSession.customerName = customerName
+        CheckoutSession.customerPhone = customerPhone
+        CheckoutSession.customerId = currentCustomerData?.get("id") as? Long
         // heldOrders needs no copying: both screens read the one list on the session.
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_container, PosCheckoutFragment())

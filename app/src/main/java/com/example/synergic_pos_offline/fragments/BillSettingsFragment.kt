@@ -251,6 +251,17 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         // anything. See [onStartNoSettled].
         etStartBillNo.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) onStartNoSettled() }
 
+        // Coupon printing/splitting and the take-away token are a restaurant's own
+        // settings - a grocery till has no counters to split a coupon between and
+        // no take-away token to number. Hidden rather than removed: the settings
+        // themselves are untouched (bind/collect still round-trip whatever is
+        // stored), so a till switched from restaurant back to grocery does not lose
+        // what it had, it just cannot see or change it while it is grocery.
+        val isRestaurant = com.example.synergic_pos_offline.utils.SettingsCache
+            .value(requireContext(), "G", "Mode") == "R"
+        view.findViewById<View>(R.id.llCouponSection).isVisible = isRestaurant
+        view.findViewById<View>(R.id.cardTokenNumbering).isVisible = isRestaurant
+
         // Applies the theme accent to switches, radios, headers, button, inputs.
         ThemeManager.applyTheme(view)
         com.example.synergic_pos_offline.utils.SettingsHighlighter.apply(

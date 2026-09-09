@@ -50,7 +50,13 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var etSaleReturnDays: TextInputEditText
     private lateinit var swLastBillStatus: SwitchMaterial
     private lateinit var swQuantityStatus: SwitchMaterial
-    private lateinit var swCustomerInfo: SwitchMaterial
+    // Customer Info's row is commented out (see the layout), not removed - we may
+    // need it back. [storedCustomerInfo] keeps whatever value is already saved
+    // surviving every other switch's autosave in the meantime, the same way
+    // AppSettingsFragment.storedCouponMode carries a value its own screen no
+    // longer edits.
+    // private lateinit var swCustomerInfo: SwitchMaterial
+    private var storedCustomerInfo = false
     private lateinit var rgItemRate: RadioGroup
     private lateinit var actProductSort: MaterialAutoCompleteTextView
     private lateinit var rgLandingScreen: RadioGroup
@@ -79,7 +85,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         etSaleReturnDays = view.findViewById(R.id.etSaleReturnDays)
         swLastBillStatus = view.findViewById(R.id.swLastBillStatus)
         swQuantityStatus = view.findViewById(R.id.swQuantityStatus)
-        swCustomerInfo = view.findViewById(R.id.swCustomerInfo)
+        // swCustomerInfo = view.findViewById(R.id.swCustomerInfo)
         rgItemRate = view.findViewById(R.id.rgItemRate)
         actProductSort = view.findViewById(R.id.actProductSort)
         rgLandingScreen = view.findViewById(R.id.rgLandingScreen)
@@ -96,7 +102,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         // Section access is an admin-only control: only an admin sees or sets it.
         swLastBillStatus.isChecked = s.lastBillStatus
         swQuantityStatus.isChecked = s.quantityStatus
-        swCustomerInfo.isChecked = s.customerInfo
+        // swCustomerInfo.isChecked = s.customerInfo
+        storedCustomerInfo = s.customerInfo
         rgItemRate.check(
             if (s.itemRate == ItemRate.MULTIPLE) R.id.rbItemRateMultiple else R.id.rbItemRateSingle
         )
@@ -200,7 +207,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 quantityStatus = swQuantityStatus.isChecked,
                 itemRate = itemRateVal,
                 productSort = productSortVal,
-                customerInfo = swCustomerInfo.isChecked,
+                // customerInfo = swCustomerInfo.isChecked,
+                customerInfo = storedCustomerInfo,
                 landingScreen = landingScreenVal,
                 stockFlag = swStockFlag.isChecked,
                 stockAlert = alertApply,
@@ -287,7 +295,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         actMode.setOnItemClickListener { _, _, _, _ -> onModeChosen() }
         SettingsAutoSave.onChange(
             ::autoSave,
-            swLastBillStatus, swQuantityStatus, swCustomerInfo, swNegativeStock,
+            swLastBillStatus, swQuantityStatus, /* swCustomerInfo, */ swNegativeStock,
             rgItemRate, rgLandingScreen, actProductSort
         )
         SettingsAutoSave.onTyped(::autoSave, etSaleReturnDays, etStockAlertQty)

@@ -107,28 +107,39 @@
 
                 <View style="@style/BillSettingDivider" />
 
-                <!-- Coupon printing -->
-                <LinearLayout style="@style/BillSettingRow">
-                    <LinearLayout style="@style/BillSettingText">
-                        <TextView style="@style/BillSettingTitle" android:text="Coupon Printing" />
-                        <TextView style="@style/BillSettingSub" android:text="Print a counter coupon with every bill, on its own half-cut slip." />
-                    </LinearLayout>
-                    <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/swCouponEnabled" style="@style/BillSettingSwitch" />
-                </LinearLayout>
-
-                <View style="@style/BillSettingDivider" />
-
-                <!-- Coupon splitting (only meaningful while coupon printing is on) -->
+                <!-- Coupon printing/splitting - restaurant only. Grocery hides the
+                     whole block (llCouponSection) in code; the setting itself is
+                     untouched, so a till switched from restaurant to grocery keeps
+                     whatever it had stored, just off screen here. -->
                 <LinearLayout
-                    android:id="@+id/llCouponSplit"
-                    style="@style/BillSettingRow">
-                    <LinearLayout style="@style/BillSettingText">
-                        <TextView style="@style/BillSettingTitle" android:text="Coupon Splitting" />
-                        <TextView style="@style/BillSettingSub" android:text="On: one coupon per category, so a customer can take one to each counter. Off: one consolidated coupon with every item, no category shown." />
+                    android:id="@+id/llCouponSection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <!-- Coupon printing -->
+                    <LinearLayout style="@style/BillSettingRow">
+                        <LinearLayout style="@style/BillSettingText">
+                            <TextView style="@style/BillSettingTitle" android:text="Coupon Printing" />
+                            <TextView style="@style/BillSettingSub" android:text="Print a counter coupon with every bill, on its own half-cut slip." />
+                        </LinearLayout>
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/swCouponEnabled" style="@style/BillSettingSwitch" />
                     </LinearLayout>
-                    <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/swCouponSplit" style="@style/BillSettingSwitch" />
+
+                    <View style="@style/BillSettingDivider" />
+
+                    <!-- Coupon splitting (only meaningful while coupon printing is on) -->
+                    <LinearLayout
+                        android:id="@+id/llCouponSplit"
+                        style="@style/BillSettingRow">
+                        <LinearLayout style="@style/BillSettingText">
+                            <TextView style="@style/BillSettingTitle" android:text="Coupon Splitting" />
+                            <TextView style="@style/BillSettingSub" android:text="On: one coupon per category, so a customer can take one to each counter. Off: one consolidated coupon with every item, no category shown." />
+                        </LinearLayout>
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/swCouponSplit" style="@style/BillSettingSwitch" />
+                    </LinearLayout>
                 </LinearLayout>
 
                 <!-- Total amount font size -->
@@ -286,6 +297,7 @@
              has climbed into the thousands is a number nobody can shout across a
              counter. -->
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardTokenNumbering"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"

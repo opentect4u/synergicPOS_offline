@@ -40,9 +40,10 @@
                         android:id="@+id/swManualRate" style="@style/BillSettingSwitch" />
                 </LinearLayout>
 
+                <!-- Biometric Login - commented out, not removed; we may need it
+                     back. See AppSettingsFragment's storedBiometricLogin note.
                 <View style="@style/BillSettingDivider" />
 
-                <!-- Biometric Login -->
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">
                         <TextView style="@style/BillSettingTitle" android:text="Biometric Login" />
@@ -52,6 +53,7 @@
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swBiometricLogin" style="@style/BillSettingSwitch" />
                 </LinearLayout>
+                -->
 
                 <View style="@style/BillSettingDivider" />
 
