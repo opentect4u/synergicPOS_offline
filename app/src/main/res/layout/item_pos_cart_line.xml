@@ -2,21 +2,25 @@
 <!--
   One line of the grocery cart.
 
-  SIZED SO TEN FIT. The cart column is about 438dp between the ticket header and the
-  fold below it, and a bill of ten is an ordinary shop of one. At the 56dp this row
-  used to stand, seven fitted and the eighth item pushed the first off the top - so
+  SIZED SO TEN FIT, mostly. The cart column is about 438dp between the ticket header
+  and the fold below it, and a bill of ten is an ordinary shop of one. At the 56dp this
+  row used to stand, seven fitted and the eighth item pushed the first off the top - so
   the operator scrolled a list they had just typed, to check it against the counter.
-  Ten rows in 438dp means 43dp a row, and the 13dp came off the parts of the row that
-  were space rather than information:
+  Ten rows in 438dp means 43dp a row, and most of the 13dp came off the parts of the
+  row that were space rather than information:
 
       10dp -> 5dp   vertical padding, top and bottom
-      30dp -> 28dp  the stepper buttons, still over the 24dp a fingertip needs
       -4dp each     includeFontPadding on both lines of text, which is invisible
                     leading the font asks for and this row cannot afford
 
-  Nothing was taken out to get there: the name, the unit price, the stepper, the line
-  total and the delete are all still on it, at the same sizes. The row is tighter, not
-  emptier.
+  The stepper is the one exception, and deliberately spends back some of that room: it
+  went 30dp -> 28dp in the pass above, then back up to 34dp - a counter's + and - are
+  tapped far more than anything else on the row, and a mistouch between them is a
+  wrong quantity on the bill, not a cosmetic slip. Ten rows is the target, not a limit
+  enforced at the stepper's expense.
+
+  Nothing else was taken out to get there: the name, the unit price, the line total
+  and the delete are all still on it, at the same sizes.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -30,10 +34,11 @@
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
-        <!-- Scroll Marker (Accent for newest item) -->
+        <!-- Scroll Marker (Accent for newest item) - a bit wider than a plain rule,
+             so the row it marks does not start flush against the panel's own edge. -->
         <View
             android:id="@+id/vNewMarker"
-            android:layout_width="4dp"
+            android:layout_width="8dp"
             android:layout_height="32dp"
             android:background="@color/primary_blue"
             android:visibility="invisible" />
@@ -77,11 +82,13 @@
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
 
-            <!-- Qty stepper -->
+            <!-- Qty stepper - the pair a counter's thumb lands on most, so it is
+                 sized well past the row's other tap targets rather than squeezed
+                 to match them; see the file's own note above. -->
             <ImageButton
                 android:id="@+id/btnMinus"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_minus"
                 app:tint="@color/text_secondary"
@@ -89,7 +96,7 @@
 
             <TextView
                 android:id="@+id/tvQty"
-                android:layout_width="28dp"
+                android:layout_width="30dp"
                 android:layout_height="wrap_content"
                 android:text="1"
                 android:gravity="center"
@@ -99,8 +106,8 @@
 
             <ImageButton
                 android:id="@+id/btnPlus"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_add"
                 app:tint="@color/text_secondary"

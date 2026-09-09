@@ -2405,7 +2405,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvCartEmpty.visibility = if (cart.isEmpty()) View.VISIBLE else View.GONE
 
         val totalQty = cart.sumOf { it.qty }
-        tvItemCount.text = "${qtyText(totalQty)} item${if (totalQty != 1.0) "s" else ""}"
+        // How many distinct products, not how many lines - the same product split
+        // across two lines at different rates (Multiple item-rate mode) is still
+        // one product on the bill, just counted twice if this went by line instead.
+        val productCount = cart.map { it.product.id }.distinct().size
+        tvItemCount.text = "$productCount product${if (productCount != 1) "s" else ""}, " +
+            "${qtyText(totalQty)} count${if (totalQty != 1.0) "s" else ""}"
 
         tvSubtotal.text = money(subtotal())
         // Item-wise discount has no single whole-bill figure to show here - each

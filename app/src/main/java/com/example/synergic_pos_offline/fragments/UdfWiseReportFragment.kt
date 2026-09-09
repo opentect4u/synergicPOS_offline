@@ -241,19 +241,30 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
             rows = r.rows.map { row ->
                 listOf(row.udf, row.bills.toString(), money(row.taxAmount), money(row.discount), money(row.billAmount))
             },
+            // The counter sales (QSR, Takeaway) as a small table of their own at the
+            // top of the summary - the table above reports tables/Dine-In only, so
+            // these have no row up there to sit in - laid out in the SAME columns,
+            // blank where the table's own first column would name a UDF, since a
+            // counter sale is not one. Printed as a table rather than the "LABEL :
+            // value" lines every other total below still is, so it reads as a second,
+            // shorter version of the report's own table instead of a run of figures.
+            summaryColumns = listOf("", "BILLS", "TAX AMT", "DISC.", "BILL AMT"),
+            summaryRows = buildList {
+                if (r.counterQsr.any) add(
+                    listOf(
+                        "QSR", r.counterQsr.bills.toString(),
+                        money(r.counterQsr.taxAmount), money(r.counterQsr.discount), money(r.counterQsr.billAmount)
+                    )
+                )
+                if (r.counterTakeaway.any) add(
+                    listOf(
+                        "TAKEAWAY", r.counterTakeaway.bills.toString(),
+                        money(r.counterTakeaway.taxAmount), money(r.counterTakeaway.discount),
+                        money(r.counterTakeaway.billAmount)
+                    )
+                )
+            },
             summary = buildList {
-                // NAMED, not folded into the total silently - see drawTable's own
-                // note - and FIRST: the same four figures the table itself reports
-                // a group by (bills, tax, discount, bill amount), for the counter
-                // sales the table rows above (tables/Dine-In only) cannot show.
-                fun counterLines(prefix: String, counter: UdfWiseReportDao.Counter) {
-                    add("$prefix BILLS :" to counter.bills.toString())
-                    add("$prefix TAX   :" to money(counter.taxAmount))
-                    add("$prefix DISC. :" to money(counter.discount))
-                    add("$prefix AMT   :" to money(counter.billAmount))
-                }
-                if (r.counterQsr.any) counterLines("QSR", r.counterQsr)
-                if (r.counterTakeaway.any) counterLines("TAKEAWAY", r.counterTakeaway)
                 add("SGST AMOUNT :" to money(r.totalSgst))
                 add("CGST AMOUNT :" to money(r.totalCgst))
                 if (r.hasIgst) add("IGST AMOUNT :" to money(r.totalIgst))

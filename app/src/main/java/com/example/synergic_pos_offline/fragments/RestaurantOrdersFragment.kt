@@ -4529,6 +4529,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // being cooked for that table and it genuinely is taken.
         reloadItems(order)
         renderCart()
+        // The line just added renders at the top of the panel - see renderCart's own
+        // note - so the panel is scrolled back up to show it, the same way the
+        // grocery sale screen's cart scrolls to its own top on every add. Posted,
+        // since the new row has to be laid out before there is anything to scroll to.
+        view?.findViewById<android.widget.ScrollView>(R.id.svOrderItems)?.let { scroller ->
+            scroller.post { scroller.scrollTo(0, 0) }
+        }
     }
 
     /** "N item(s) added" for the running Direct-Add-to-Cart toast; [total] is the
@@ -4594,9 +4601,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // because part of it is still waiting to go.
         //
         // NOTHING IS HIDDEN FROM THE BILL. The totals below, the KOT, the printed bill
-        // and the More popup all read order.items - the whole order - and only this
-        // list is narrowed. See updateTotals and showOrderItemsDialog.
-        val cart = if (locked) all else all.filter { it.pending > 0.0 }
+        // and the More popup all read order.items - the whole order, in the order it
+        // was rung up in, which those never have reason to disturb - and only this
+        // list is narrowed AND reversed: the panel is what a waiter is watching while
+        // they build the next round, and the line they just added is the one they
+        // want to find without hunting for it at the bottom.
+        val cart = (if (locked) all else all.filter { it.pending > 0.0 }).asReversed()
         val sentOnly = all.size - cart.size
 
         // Says where the rest of the order is, on the header and in the list's own
@@ -4779,7 +4789,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         fun fill() {
             val current = currentOrder()
-            val items = current?.items.orEmpty()
+            // Newest first, the same order the panel behind this dialog reads in -
+            // see renderCart's own note.
+            val items = current?.items.orEmpty().asReversed()
             val locked = current?.completed == true
             container.removeAllViews()
             items.forEach { item ->
