@@ -50,6 +50,8 @@ class BillSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swProductSerial: SwitchMaterial
     private lateinit var swBillTime: SwitchMaterial
     private lateinit var swTwoCopy: SwitchMaterial
+    private lateinit var swCouponEnabled: SwitchMaterial
+    private lateinit var llCouponSplit: View
     private lateinit var swCouponSplit: SwitchMaterial
     private lateinit var etStartBillNo: TextInputEditText
     private lateinit var rgReset: RadioGroup
@@ -107,6 +109,8 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         swProductSerial = view.findViewById(R.id.swProductSerial)
         swBillTime = view.findViewById(R.id.swBillTime)
         swTwoCopy = view.findViewById(R.id.swTwoCopy)
+        swCouponEnabled = view.findViewById(R.id.swCouponEnabled)
+        llCouponSplit = view.findViewById(R.id.llCouponSplit)
         swCouponSplit = view.findViewById(R.id.swCouponSplit)
         etStartBillNo = view.findViewById(R.id.etStartBillNo)
         rgReset = view.findViewById(R.id.rgReset)
@@ -196,6 +200,17 @@ class BillSettingsFragment : Fragment(), TitledScreen {
             pickUpiQr.launch("image/*")
         }
 
+        // Splitting only means anything once coupons print at all - see
+        // [applyCouponState]. Turning printing off takes splitting with it, the same
+        // way Stock Alert follows Stock in General Settings: a dependent switch left
+        // on but greyed out would still be "on" in the data nobody can see or change.
+        applyCouponState()
+        swCouponEnabled.setOnCheckedChangeListener { _, on ->
+            if (!on) swCouponSplit.isChecked = false
+            applyCouponState()
+            autoSave()
+        }
+
         // SAVED AS EACH CONTROL MOVES - there is no Save button any more.
         //
         // Attached after [bind], so loading the stored values is not mistaken for the
@@ -251,7 +266,9 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         swProductSerial.isChecked = s.productSerialNumber
         swBillTime.isChecked = s.timeOnBill
         swTwoCopy.isChecked = s.twoCopyBill
+        swCouponEnabled.isChecked = s.couponEnabled
         swCouponSplit.isChecked = s.couponSplit
+        applyCouponState()
         etStartBillNo.setText(s.startBillNo.toString())
         swBillNoChar.isChecked = s.billNoCharEnabled
         tilPrefix.isVisible = s.billNoCharEnabled
@@ -294,6 +311,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         roundOff = swRoundOff.isChecked,
         amountInWords = swAmountWords.isChecked,
         twoCopyBill = swTwoCopy.isChecked,
+        couponEnabled = swCouponEnabled.isChecked,
         couponSplit = swCouponSplit.isChecked,
         startBillNo = etStartBillNo.text?.toString()?.toIntOrNull() ?: 0,
         resetMode = when (rgReset.checkedRadioButtonId) {
@@ -329,6 +347,20 @@ class BillSettingsFragment : Fragment(), TitledScreen {
     )
 
     private fun upiIdText(): String = etUpiId.text?.toString()?.trim().orEmpty()
+
+    /** Greys the splitting row out while coupon printing itself is off - splitting
+     *  has nothing to decide until there is a coupon to split. */
+    private fun applyCouponState() {
+        val on = swCouponEnabled.isChecked
+        llCouponSplit.setRowEnabled(on)
+        swCouponSplit.isEnabled = on
+    }
+
+    /** Greys a settings row out when the flag it depends on is off. */
+    private fun View.setRowEnabled(enabled: Boolean) {
+        isEnabled = enabled
+        alpha = if (enabled) 1f else 0.45f
+    }
 
     /** Shows what the next bill number will look like with the current inputs. */
     private fun updatePreview() {

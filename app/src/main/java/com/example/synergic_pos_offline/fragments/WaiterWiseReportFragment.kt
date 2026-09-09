@@ -63,19 +63,25 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
      * [ALL_LABEL] picked instead: the UDF-Wise Report's own columns, WAITER
      * standing in for UDF - one row per waiter, summed across the period.
      */
+    // Evenly spaced rather than each fitted tight to its own header: WAITER (and
+    // BILL, in the single-waiter table) is the one column holding text and keeps
+    // the extra room text needs, but the figure columns beside it are all the
+    // SAME width as one another - see [FIGURE_COL_DP] - so the row reads as one
+    // even grid instead of the numbers bunching up wherever a header happened to
+    // be short.
     override fun columnsFor(report: WaiterWiseReportDao.Report): List<Column> =
         if (report.allWaiters) listOf(
-            Column("WAITER", 140, alignEnd = false),
-            Column("BILLS", 90, alignEnd = true),
-            Column("TAX AMT", 110, alignEnd = true),
-            Column("DISC.", 100, alignEnd = true),
-            Column("BILL AMT", 130, alignEnd = true)
+            Column("WAITER", 150, alignEnd = false),
+            Column("BILLS", FIGURE_COL_DP, alignEnd = true),
+            Column("TAX AMT", FIGURE_COL_DP, alignEnd = true),
+            Column("DISC.", FIGURE_COL_DP, alignEnd = true),
+            Column("BILL AMT", FIGURE_COL_DP, alignEnd = true)
         ) else listOf(
-            Column("BILL", 130, alignEnd = true),
-            Column("ITEMS", 110, alignEnd = true),
-            Column("TAX", 110, alignEnd = true),
-            Column("DISC", 110, alignEnd = true),
-            Column("TOTAL", 130, alignEnd = true)
+            Column("BILL", 150, alignEnd = true),
+            Column("ITEMS", FIGURE_COL_DP, alignEnd = true),
+            Column("TAX", FIGURE_COL_DP, alignEnd = true),
+            Column("DISC", FIGURE_COL_DP, alignEnd = true),
+            Column("TOTAL", FIGURE_COL_DP, alignEnd = true)
         )
 
     override fun rowsOf(report: WaiterWiseReportDao.Report): List<List<String>> =
@@ -148,7 +154,15 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
             style = PeriodReportRenderer.Style.CLASSIC,
             range = "F.DT:${shortDate(report.fromDate)}" to "TO.DT:${shortDate(report.toDate)}",
             columns = listOf("WAITER", "BILLS", "TAX AMT", "DISC.", "BILL AMT"),
-            evenColumns = true,
+            // NOT evenColumns - WAITER holds a name, and forcing it to share an
+            // equal fifth of the roll with four short figures is the printed
+            // version of the same clutter the on-screen table had: the figures
+            // sit needlessly wide while a long name is the one thing actually
+            // fighting for room. Left at the default instead - the same one the
+            // UDF-Wise Report's identically-shaped table already prints with -
+            // each figure column is measured to its own content and WAITER takes
+            // whatever is left, ellipsizing if a name genuinely does not fit
+            // rather than shrinking every column's type size to make room for it.
             rows = rowsOf(report),
             summary = buildList {
                 add("SGST AMOUNT :" to money(report.totalSgst))
@@ -196,5 +210,9 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
         /** The dropdown's own wording for "every waiter" - matches the Payment-Wise
          *  Report's own All entry. */
         const val ALL_LABEL = "All"
+
+        /** Every figure column's width, in both tables - see [columnsFor]'s own note
+         *  on why they are all one width rather than each fitted to its header. */
+        const val FIGURE_COL_DP = 115
     }
 }

@@ -177,7 +177,11 @@ object KotPrinter {
         val cancelHdr = PrintType.paint(PrintType.BODY_SP, bold = true)
         val note = PrintType.paint(PrintType.SMALL_SP)
 
-        val padX = width * 0.04f
+        // Wider than a bare crop margin - enough that ITEM and QUANTITY read as
+        // sitting inside the ticket rather than run up against its own edges. The
+        // header row moves with it: ITEM starts further right, QUANTITY ends
+        // further left, since both are drawn padX in from their own edge below.
+        val padX = width * 0.065f
         val padTop = width * 0.04f
         // Feed margin before the cut, plus a fixed 10dp under it.
         //

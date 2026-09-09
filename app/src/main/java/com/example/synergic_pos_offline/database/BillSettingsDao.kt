@@ -182,10 +182,21 @@ class BillSettingsDao(context: Context) {
          */
         val upiPayeeName: String = "",
         /**
-         * Whether a bill also prints a coupon per category - see `CouponPrinter`.
+         * Whether a bill also prints a counter coupon at all - see `CouponPrinter`.
+         *
+         * Off by default: a shop with no counters has nothing for a coupon to send
+         * anyone to, and it stays off until this is switched on. [couponSplit] only
+         * has anything to decide once this is on - with it off, a coupon prints as
+         * one consolidated slip.
+         */
+        val couponEnabled: Boolean = false,
+        /**
+         * Whether the coupon splits by category - see `CouponPrinter`.
          *
          * Off by default. A shop with one counter has nothing to split: the coupons
          * would be a second copy of the bill in pieces, on paper nobody asked for.
+         * With it off (and [couponEnabled] on) the till still prints one coupon, just
+         * consolidated - every item on it, with no per-category demarcation.
          */
         val couponSplit: Boolean = false
     )
@@ -216,6 +227,7 @@ class BillSettingsDao(context: Context) {
             upiQrEnabled = map[KEY_UPI_QR_ENABLED]?.toBool() ?: d.upiQrEnabled,
             upiId = map[KEY_UPI_ID] ?: d.upiId,
             upiPayeeName = map[KEY_UPI_PAYEE_NAME] ?: d.upiPayeeName,
+            couponEnabled = map[KEY_COUPON_ENABLED]?.toBool() ?: d.couponEnabled,
             couponSplit = map[KEY_COUPON_SPLIT]?.toBool() ?: d.couponSplit
         )
     }
@@ -244,6 +256,7 @@ class BillSettingsDao(context: Context) {
         put(KEY_UPI_QR_ENABLED, if (s.upiQrEnabled) "1" else "0")
         put(KEY_UPI_ID, s.upiId.trim())
         put(KEY_UPI_PAYEE_NAME, s.upiPayeeName.trim())
+        put(KEY_COUPON_ENABLED, if (s.couponEnabled) "1" else "0")
         put(KEY_COUPON_SPLIT, if (s.couponSplit) "1" else "0")
         refreshCache()
     }
@@ -416,6 +429,7 @@ class BillSettingsDao(context: Context) {
         private const val KEY_UPI_QR_ENABLED = "Bill Upi Qr Enabled"
         private const val KEY_UPI_ID = "Bill Upi Id"
         private const val KEY_UPI_PAYEE_NAME = "Bill Upi Payee Name"
+        private const val KEY_COUPON_ENABLED = "Bill Coupon Enabled"
         private const val KEY_COUPON_SPLIT = "Bill Coupon Split"
         private const val KEY_TEMPLATE_PAPER = "Bill Template Paper Width"
 

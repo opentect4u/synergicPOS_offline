@@ -680,6 +680,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         updateHeldButton()
         updateOrderNo()
+
+        // The search box holds focus the moment this screen is reached, so a scan
+        // is read the instant the operator turns to the shelf rather than after a
+        // tap to wake the field up first. Silent, not a keyboard springing up over
+        // the products - see attachScanner's own note on why focus and the
+        // keyboard were split apart. Posted, after the dialog above (if it opened)
+        // has had its own chance at focus.
+        view?.post {
+            if (isAdded) view?.findViewById<TextInputEditText>(R.id.etSearch)?.requestFocus()
+        }
     }
 
     /**
