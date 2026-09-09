@@ -51,6 +51,13 @@ class TaxReportFragment : PeriodReportFragment<TaxReportDao.Report>() {
             if (report.charges.service > 0.005) add("Service Charge" to money(report.charges.service))
             if (report.charges.other > 0.005) add("Extra Charges" to money(report.charges.other))
             if (report.charges.parcel > 0.005) add("Parcel Charge" to money(report.charges.parcel))
+            // Last, as an FYI figure alongside the charges above it - it rides on the
+            // same `td_bills` read they do (see BillCharges), and is no more a tax
+            // than they are, so it sits with them rather than inside [totalOf]'s own
+            // Total Tax.
+            if (kotlin.math.abs(report.charges.roundOff) > 0.005) {
+                add("Round Off" to money(report.charges.roundOff))
+            }
         }
 
     /** The one figure the report is read for. */
@@ -90,6 +97,9 @@ class TaxReportFragment : PeriodReportFragment<TaxReportDao.Report>() {
                 if (report.charges.service > 0.005) add("SERVICE CHG :" to money(report.charges.service))
                 if (report.charges.other > 0.005) add("EXTRA CHGS  :" to money(report.charges.other))
                 if (report.charges.parcel > 0.005) add("PARCEL CHG  :" to money(report.charges.parcel))
+                if (kotlin.math.abs(report.charges.roundOff) > 0.005) {
+                    add("ROUND OFF   :" to money(report.charges.roundOff))
+                }
             },
             emptyNote = "No tax was charged in this period."
         )

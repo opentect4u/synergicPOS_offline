@@ -436,6 +436,92 @@ class ProductBulkImporterTest {
         assertNotNull("the earlier product should still be there", productId("$productPrefix Old"))
     }
 
+    /**
+     * A row whose PRODUCT_ID names a product this till already has updates that
+     * product in place - it does not step around the taken id into a duplicate,
+     * which is what asking for one used to do.
+     */
+    @Test
+    fun appendUpdatesACommonProductInPlace() {
+        ProductBulkImporter.import(context, listOf(row("$productPrefix Common", newCategory, newUnit)))
+        val id = productId("$productPrefix Common")
+        requireNotNull(id)
+        val before = productCount()
+
+        val edited = row("$productPrefix Common", newCategory, newUnit, rate = "600", selling = "550") +
+            (ProductCsvTemplate.PRODUCT_ID_COLUMN to id.toString())
+        val result = ProductBulkImporter.import(context, listOf(edited), ProductBulkImporter.Mode.APPEND)
+
+        assertEquals("no duplicate should be created", before, productCount())
+        assertEquals("the update should be reported as a replace, not a fresh import", 1, result.replaced)
+        assertEquals(0, result.imported)
+        assertEquals(id, productId("$productPrefix Common"))
+        assertEquals(600.0, stored("$productPrefix Common")["rate"]!!.toDouble(), 0.001)
+    }
+
+    /**
+     * Updating a common product replaces its rates wholesale - the sheet's own
+     * rate rows, not the old ones plus the new, and not a stale extra slot left
+     * behind when the sheet now prices it more simply than it did before.
+     */
+    @Test
+    fun appendUpdatingACommonProductReplacesItsRates() {
+        ProductBulkImporter.import(context, listOf(row("$productPrefix Rates", newCategory, newUnit)))
+        val id = productId("$productPrefix Rates")
+        requireNotNull(id)
+        assertEquals(1, rateCountFor(id))
+
+        val edited = row("$productPrefix Rates", newCategory, newUnit) +
+            (ProductCsvTemplate.PRODUCT_ID_COLUMN to id.toString())
+        ProductBulkImporter.import(context, listOf(edited), ProductBulkImporter.Mode.APPEND)
+
+        assertEquals("one row's worth of rates, not the old plus the new", 1, rateCountFor(id))
+    }
+
+    /**
+     * The whole point: a common product's own id (and so every bill, return or
+     * stock row that names it) survives being updated - because it is UPDATED,
+     * never deleted and recreated.
+     */
+    @Test
+    fun appendUpdatingACommonProductKeepsItsTransactionLink() {
+        ProductBulkImporter.import(context, listOf(row("$productPrefix Linked", newCategory, newUnit)))
+        val id = productId("$productPrefix Linked")
+        requireNotNull(id)
+        billItemId = sellProduct(id)
+
+        val edited = row("$productPrefix Linked", newCategory, newUnit, rate = "700") +
+            (ProductCsvTemplate.PRODUCT_ID_COLUMN to id.toString())
+        ProductBulkImporter.import(context, listOf(edited), ProductBulkImporter.Mode.APPEND)
+
+        assertEquals("the product keeps its own id", id, productId("$productPrefix Linked"))
+        val stillLinked = db.rawQuery(
+            "SELECT product_id FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} WHERE id = ?",
+            arrayOf(billItemId.toString())
+        ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null }
+        assertEquals("the bill line should still point at the same product", id, stillLinked)
+    }
+
+    /**
+     * A product the sheet never mentions is left exactly as it is - an Append
+     * only ever adds or updates, and removing anything is Replace's job alone.
+     */
+    @Test
+    fun appendNeverRemovesAProductTheSheetDoesNotMention() {
+        ProductBulkImporter.import(context, listOf(row("$productPrefix Untouched", newCategory, newUnit)))
+        assertNotNull(productId("$productPrefix Untouched"))
+
+        ProductBulkImporter.import(
+            context, listOf(row("$productPrefix Other", newCategory, newUnit)),
+            ProductBulkImporter.Mode.APPEND
+        )
+
+        assertNotNull(
+            "a product absent from the sheet must survive an Append",
+            productId("$productPrefix Untouched")
+        )
+    }
+
     /** Replace clears the catalogue before importing, so only the sheet is left. */
     @Test
     fun replaceClearsTheUnusedProductsFirst() {

@@ -21,8 +21,13 @@ import java.util.Locale
  * `Downloads/POSbackup/<date>/synergic_backup_<date>_<time>.sql` - a folder per day,
  * so a fortnight of hourly backups is fourteen folders rather than three hundred
  * files in one, and a name that says when it was taken so the right one can be
- * picked out without opening any of them. Manual backups land in the same place: two
- * conventions for the same file would only mean hunting in two places.
+ * picked out without opening any of them. Manual backups, and the safety copy taken
+ * before an irreversible action, land in the same place: two conventions for the
+ * same file would only mean hunting in two places.
+ *
+ * Never more than [MAX_FOLDERS] of those day-folders stand at once - the oldest
+ * goes the moment a backup would make a fourth, whichever of the three ways here
+ * took it. See [pruneToRecentFolders].
  *
  * ## When it runs
  *
@@ -48,8 +53,11 @@ object AutoBackup {
     /** When the last automatic backup was taken, as epoch millis. */
     private const val KEY_LAST_RUN = "Auto Backup Last Run"
 
-    /** How many days of backups to keep before the oldest are cleared away. */
+    /** How long backups are kept before the oldest are cleared away - the number. */
     private const val KEY_RETENTION = "Auto Backup Retention Days"
+
+    /** The unit [KEY_RETENTION]'s number is counted in - "DAYS"/"MONTHS"/"YEARS". */
+    private const val KEY_RETENTION_UNIT = "Auto Backup Retention Unit"
 
     /** The folder every backup goes under, automatic or not. */
     const val FOLDER = "POSbackup"
@@ -67,34 +75,74 @@ object AutoBackup {
     const val MAX_INTERVAL_HOURS = 168
 
     /**
-     * How long a backup is kept before it is cleared away, in days.
+     * How long a backup is kept before it is cleared away - a number and the unit
+     * it counts in, typed on the About screen rather than chosen off a fixed list:
+     * "keep for 5 years" is not a figure seven/fifteen/thirty/sixty/ninety days
+     * could ever say.
      *
-     * The window rolls: at seven days, today's backups join the folder and the ones
-     * from eight days ago leave it, so the shop always has the last week and never an
-     * ever-growing pile. The choices the About screen offers.
+     * Shorter than [MAX_FOLDERS]' own hard ceiling of 3 day-folders and it never
+     * matters - [MAX_FOLDERS] is already tighter; longer, and this is the one
+     * actually deciding what stays. Both run on every prune (see
+     * [pruneOldBackups]), so a shop that wants years of backups on file genuinely
+     * gets them, and a till backing up hourly still never holds more than 3 days.
      */
-    val RETENTION_CHOICES = listOf(7, 15, 30, 60, 90)
+    enum class RetentionUnit(val label: String, val storedName: String) {
+        DAYS("Days", "DAYS"),
+        MONTHS("Months", "MONTHS"),
+        YEARS("Years", "YEARS");
+
+        companion object {
+            /** [storedName] read back, or [DAYS] for anything else - including
+             *  nothing stored at all, which is every till before this setting
+             *  existed and every one still on its default. */
+            fun fromStored(v: String?): RetentionUnit =
+                entries.firstOrNull { it.storedName == v } ?: DAYS
+        }
+    }
 
     /** How long backups are kept when nobody has said otherwise. */
-    const val DEFAULT_RETENTION_DAYS = 7
+    const val DEFAULT_RETENTION_VALUE = 7
+    val DEFAULT_RETENTION_UNIT = RetentionUnit.DAYS
+
+    /** The narrowest and widest number that can be typed, whatever the unit. */
+    const val MIN_RETENTION_VALUE = 1
+    const val MAX_RETENTION_VALUE = 999
+
+    /**
+     * The most day-folders [FOLDER] is ever left holding, whatever the retention
+     * days setting says.
+     *
+     * A HARD CEILING, not a choice on a settings screen: a till backing up every
+     * hour would otherwise keep a folder a day for as long as
+     * [Settings.retentionDays] says to, which is a lot of hourly backups sitting
+     * on a shop's device for 30, 60 or 90 days. Whichever backup was just taken -
+     * automatic, manual, or the safety copy before an irreversible action -
+     * always leaves at most this many days on disk; see [pruneToRecentFolders].
+     */
+    const val MAX_FOLDERS = 3
 
     // ---- The setting ---------------------------------------------------------
 
     data class Settings(
         val enabled: Boolean,
         val intervalHours: Int,
-        /** Days of backups to keep - see [RETENTION_CHOICES]. */
-        val retentionDays: Int = DEFAULT_RETENTION_DAYS
-    )
+        /** How long backups are kept, and in what unit - see [RetentionUnit]. */
+        val retentionValue: Int = DEFAULT_RETENTION_VALUE,
+        val retentionUnit: RetentionUnit = DEFAULT_RETENTION_UNIT
+    ) {
+        /** "5 Years", "7 Days" - the About screen's own reading of the pair. */
+        val retentionLabel: String get() = "$retentionValue ${retentionUnit.label}"
+    }
 
     fun settings(context: Context): Settings {
         val dao = AppSettingsDao(context)
         val hours = dao.get(KEY_INTERVAL)?.toIntOrNull() ?: DEFAULT_INTERVAL_HOURS
-        val days = dao.get(KEY_RETENTION)?.toIntOrNull() ?: DEFAULT_RETENTION_DAYS
+        val value = dao.get(KEY_RETENTION)?.toIntOrNull() ?: DEFAULT_RETENTION_VALUE
         return Settings(
             enabled = dao.get(KEY_ENABLED) == "1",
             intervalHours = hours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS),
-            retentionDays = days.coerceAtLeast(1)
+            retentionValue = value.coerceIn(MIN_RETENTION_VALUE, MAX_RETENTION_VALUE),
+            retentionUnit = RetentionUnit.fromStored(dao.get(KEY_RETENTION_UNIT))
         )
     }
 
@@ -118,7 +166,8 @@ object AutoBackup {
         context: Context,
         enabled: Boolean,
         intervalHours: Int,
-        retentionDays: Int = settings(context).retentionDays
+        retentionValue: Int = settings(context).retentionValue,
+        retentionUnit: RetentionUnit = settings(context).retentionUnit
     ) {
         val dao = AppSettingsDao(context)
         dao.put(KEY_ENABLED, if (enabled) "1" else "0")
@@ -126,7 +175,25 @@ object AutoBackup {
             KEY_INTERVAL,
             intervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS).toString()
         )
-        dao.put(KEY_RETENTION, retentionDays.coerceAtLeast(1).toString())
+        dao.put(
+            KEY_RETENTION,
+            retentionValue.coerceIn(MIN_RETENTION_VALUE, MAX_RETENTION_VALUE).toString()
+        )
+        dao.put(KEY_RETENTION_UNIT, retentionUnit.storedName)
+    }
+
+    /**
+     * [typed] read as a retention number, or null where it is not one to accept.
+     *
+     * A whole number in range only - the same shape [validHours] asks of the
+     * interval field, refused rather than clamped so the screen can say what was
+     * wrong with what was actually typed instead of quietly storing something else.
+     */
+    fun validRetentionValue(typed: String): Int? {
+        val trimmed = typed.trim()
+        if (trimmed.isEmpty() || !trimmed.all { it.isDigit() }) return null
+        val value = trimmed.toIntOrNull() ?: return null
+        return value.takeIf { it in MIN_RETENTION_VALUE..MAX_RETENTION_VALUE }
     }
 
     /** When the last automatic backup was taken, or null if none has been. */
@@ -214,11 +281,17 @@ object AutoBackup {
      */
     fun backupBefore(context: Context, action: String): String {
         val now = Date()
-        return Downloads.stream(
+        val savedTo = Downloads.stream(
             context, fileName(now, action), "application/sql", folderFor(now)
         ) { writer ->
             DatabaseBackup.exportTo(context, writer, DatabaseBackup.DEVICE_IDENTITY)
         }
+        // Every backup prunes, this one included - "automatic or manual, anything"
+        // is what keeps the folder count honest; a safety copy taken here is no
+        // different from one the timer took. After the write, same as everywhere
+        // else: a failed prune must never cost the copy that was just made safe.
+        runCatching { pruneOldBackups(context) }
+        return savedTo
     }
 
     // ---- Retention -----------------------------------------------------------
@@ -226,11 +299,16 @@ object AutoBackup {
     /**
      * Deletes the backups that have aged out of the retention window.
      *
-     * The window is counted in whole days from today, and a backup's day is read from
-     * the folder it sits in (`POSbackup/2026-08-17`) rather than from a file timestamp:
-     * the folder is what the backup itself declared its day to be, and it survives the
-     * file being copied about. A retention of 7 keeps today plus the six days before
-     * it; on the eighth day the oldest of them goes.
+     * A backup's day is read from the folder it sits in (`POSbackup/2026-08-17`)
+     * rather than from a file timestamp: the folder is what the backup itself
+     * declared its day to be, and it survives the file being copied about.
+     *
+     * The window itself is [Settings.retentionValue] counted in
+     * [Settings.retentionUnit] - DAYS keeps today plus the N-1 days before it, so a
+     * retention of 7 days keeps a week and clears the eighth day the moment it is
+     * reached; MONTHS and YEARS are a genuine rolling calendar window back from
+     * today (5 years keeps everything from the same date five years ago onward),
+     * not the number of days that happens to span.
      *
      * Best-effort by design - a backup that cannot be deleted (a file held open, a
      * permission withdrawn) is left where it is rather than failing the backup that
@@ -239,9 +317,13 @@ object AutoBackup {
      * @return how many files were removed
      */
     fun pruneOldBackups(context: Context): Int {
-        val keepDays = settings(context).retentionDays
+        val settings = settings(context)
         val cutoff = Calendar.getInstance().apply {
-            add(Calendar.DAY_OF_YEAR, -(keepDays - 1))
+            when (settings.retentionUnit) {
+                RetentionUnit.DAYS -> add(Calendar.DAY_OF_YEAR, -(settings.retentionValue - 1))
+                RetentionUnit.MONTHS -> add(Calendar.MONTH, -settings.retentionValue)
+                RetentionUnit.YEARS -> add(Calendar.YEAR, -settings.retentionValue)
+            }
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.time
@@ -287,7 +369,54 @@ object AutoBackup {
             }
         }
         if (removed > 0) {
-            android.util.Log.i("AutoBackup", "retention $keepDays day(s): removed $removed old backup file(s)")
+            android.util.Log.i(
+                "AutoBackup",
+                "retention ${settings.retentionLabel}: removed $removed old backup file(s)"
+            )
+        }
+        // The days window on its own can leave a great many folders standing - a
+        // till backing up every hour under a 60- or 90-day setting - so the hard
+        // ceiling runs every time too, after it, so it is pruning whatever the days
+        // window left rather than a folder list already down to what a caller
+        // expects to see it act on.
+        return removed + pruneToRecentFolders(context)
+    }
+
+    /**
+     * Deletes whichever of [FOLDER]'s day-folders are not among the [MAX_FOLDERS]
+     * most recent, however many days [pruneOldBackups]'s own window would have let
+     * stand.
+     *
+     * A day is read off each file's own recorded time rather than off a MediaStore
+     * path, so it works the same way on every OS version [BackupFiles.list] does -
+     * one function, not the two branches [pruneOldBackups] still needs for its own
+     * WHERE-clause deletion. Every file of a day outside the kept set goes with it;
+     * a folder is not a real object in either storage model, only the files filed
+     * under its name are.
+     *
+     * @return how many files were removed
+     */
+    fun pruneToRecentFolders(context: Context, keepFolders: Int = MAX_FOLDERS): Int {
+        val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        // Newest first already - see BackupFiles.list - so the first appearance of
+        // each day, in order, is the order the days themselves were last written in.
+        val all = BackupFiles.list(context, FOLDER)
+        val days = all.map { dayFormat.format(Date(it.takenAt)) }.distinct()
+        val staleDays = days.drop(keepFolders).toSet()
+        if (staleDays.isEmpty()) return 0
+
+        var removed = 0
+        all.forEach { found ->
+            if (dayFormat.format(Date(found.takenAt)) in staleDays) {
+                if (BackupFiles.delete(context, found)) removed++
+            }
+        }
+        if (removed > 0) {
+            android.util.Log.i(
+                "AutoBackup",
+                "kept the $keepFolders most recent day(s): removed $removed backup file(s) " +
+                    "from ${staleDays.size} older day(s)"
+            )
         }
         return removed
     }

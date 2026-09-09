@@ -209,6 +209,20 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private val menu = mutableListOf<Product>()
 
     /**
+     * [menu], grouped by category in tab order - the "All" view's own sort, kept
+     * ready rather than worked out again on every call to [applyFilter].
+     *
+     * Recomputing this from the whole catalogue used to happen on every single tap
+     * that added a product - [resetBrowsing] refilters the grid after every add so
+     * a search left in the box does not have to be cleared by hand, and that refilter
+     * re-sorted the ENTIRE catalogue by category whenever "All" was open. A handful
+     * of products was cheap enough not to notice; a shop's whole shelf sorted on
+     * every tap was not - which is exactly why adding felt slow under "All" and fine
+     * under one category. See [rebuildAllSorted].
+     */
+    private var allSorted: List<Product> = emptyList()
+
+    /**
      * Whether stock is being tracked, as of the last catalogue load. Gates the
      * cart's stock ceiling - with the flag off there is no count to sell past.
      */
@@ -400,6 +414,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 // The whole strip, "All" among them - it is dragged like any other
                 // tab now, so its place has to be remembered like any other tab.
                 com.example.synergic_pos_offline.utils.CategoryOrder.remember(categories)
+                // "All" reads its own order off [allSorted] rather than working it
+                // out fresh each time - see its own note - so a drag that changes
+                // the order this cache was built from has to rebuild it, or "All"
+                // would keep showing the shelf in the order it had before the drag.
+                rebuildAllSorted()
+                if (activeCategory == "All") applyFilter()
             }
         )
 
@@ -777,6 +797,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // In a real scenario, this would query md_products from database
         // For now, maintaining the existing product list structure
         loadProductsFromDatabase()
+        rebuildAllSorted()
+    }
+
+    /** Recomputes [allSorted] - called wherever [menu] or the category order changes. */
+    private fun rebuildAllSorted() {
+        val rank = categories.withIndex().associate { (i, name) -> name to i }
+        allSorted = menu.sortedBy { rank[it.category] ?: Int.MAX_VALUE }
     }
 
     private fun loadProductsFromDatabase() {
@@ -936,36 +963,48 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private fun applyFilter() {
         filteredProducts.clear()
-        val matching = menu.filter { p ->
-            (activeCategory == "All" || p.categoryId == activeCategoryId) &&
-                // Name, SKU (serial number), and barcode only - no HSN.
-                (query.isEmpty() || p.name.contains(query, true) ||
-                    p.sku.contains(query) || p.barcode.contains(query))
-        }
-        // UNDER "ALL", THE SHELF IS GROUPED BY CATEGORY - in the tab order.
+        // THE PLAIN "ALL, NOTHING TYPED" CASE IS THE COMMON ONE, AND THE CHEAP PATH.
         //
-        // "All" is the whole catalogue at once, and the whole catalogue in creation
-        // order is a shelf nobody reads: a soap, a rice, a biscuit, another soap, in
-        // whatever order the products happened to be entered. Ordering it by the tabs
-        // above puts every dairy line together and every atta line together, and puts
-        // those blocks in the order the shop dragged its tabs into.
-        //
-        // Sorted only, never filtered: every product that matched is still shown. And
-        // sortedBy is stable, so within a category the products keep the order they
-        // already had.
-        //
-        // Uncategorised products sort last - they belong to no block, and the end is
-        // the one place they do not break one.
-        filteredProducts.addAll(
-            if (activeCategory != "All") matching
-            else {
-                // Ranked on the product's own category NAME - it carries one already,
-                // and the tab strip is a list of names, so the two line up without
-                // going back through ids. See CategoryOrder for what sets that order.
-                val rank = categories.withIndex().associate { (i, name) -> name to i }
-                matching.sortedBy { rank[it.category] ?: Int.MAX_VALUE }
+        // This is called on every keystroke, every category tap - and on every
+        // completed add-to-cart, since [resetBrowsing] refilters so a leftover
+        // search does not have to be cleared by hand. Most of those calls change
+        // nothing about which products would show: [allSorted] is already exactly
+        // this view, kept ready rather than re-filtered and re-sorted from the whole
+        // catalogue on every one of them - see its own note.
+        if (activeCategory == "All" && query.isEmpty()) {
+            filteredProducts.addAll(allSorted)
+        } else {
+            val matching = menu.filter { p ->
+                (activeCategory == "All" || p.categoryId == activeCategoryId) &&
+                    // Name, SKU (serial number), and barcode only - no HSN.
+                    (query.isEmpty() || p.name.contains(query, true) ||
+                        p.sku.contains(query) || p.barcode.contains(query))
             }
-        )
+            // UNDER "ALL", THE SHELF IS GROUPED BY CATEGORY - in the tab order.
+            //
+            // "All" is the whole catalogue at once, and the whole catalogue in creation
+            // order is a shelf nobody reads: a soap, a rice, a biscuit, another soap, in
+            // whatever order the products happened to be entered. Ordering it by the tabs
+            // above puts every dairy line together and every atta line together, and puts
+            // those blocks in the order the shop dragged its tabs into.
+            //
+            // Sorted only, never filtered: every product that matched is still shown. And
+            // sortedBy is stable, so within a category the products keep the order they
+            // already had.
+            //
+            // Uncategorised products sort last - they belong to no block, and the end is
+            // the one place they do not break one.
+            filteredProducts.addAll(
+                if (activeCategory != "All") matching
+                else {
+                    // Ranked on the product's own category NAME - it carries one already,
+                    // and the tab strip is a list of names, so the two line up without
+                    // going back through ids. See CategoryOrder for what sets that order.
+                    val rank = categories.withIndex().associate { (i, name) -> name to i }
+                    matching.sortedBy { rank[it.category] ?: Int.MAX_VALUE }
+                }
+            )
+        }
         // Only the first page reaches the adapter; the rest arrives as the grid is
         // scrolled. The empty state still asks the WHOLE filtered result, so "no
         // products" means none matched rather than none drawn yet.
@@ -2036,35 +2075,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
         }
     }
 
-    private fun taxAmt(): Double = taxOf(cart, discountAmt()) + chargeTaxOf(cart, extraChargesTotal())
-
-    /**
-     * The cart's extra charges, taxed at each line's own rate and spread by its
-     * share of the gross subtotal - the same rule [lineTaxRaw]'s own pre-tax
-     * discount spread uses, applied instead to [chargesPrincipal]. Folded into
-     * [taxAmt] rather than kept apart, so the charge's tax comes out of the
-     * bill's existing GST/VAT figure, not a column of its own - [extraChargesTotal]
-     * still joins [taxedTotal] once, on its own, untaxed, so nothing here is
-     * counted twice.
-     *
-     * Kept separate from [taxOf] itself, which a HELD bill's own snapshot also
-     * calls with [lines] that are not necessarily [cart] - [extraChargesTotal] is
-     * hard-wired to the live cart, so folding this into [taxOf] would tax a held
-     * bill's preview against the wrong (current) cart's charge.
-     */
-    private fun chargeTaxOf(lines: List<CartLine>, chargesPrincipal: Double): Double {
-        if (chargesPrincipal <= 0.0 || !taxEnabled) return 0.0
-        val sub = lines.sumOf { it.product.price * it.qty }
-        if (sub <= 0.0) return 0.0
-        return lines.sumOf { line ->
-            val share = line.product.price * line.qty / sub * chargesPrincipal
-            BillRounding.toPaise(
-                GstCalculator.taxAmount(share, line.product.cgst) +
-                    GstCalculator.taxAmount(share, line.product.sgst) +
-                    GstCalculator.taxAmount(share, line.product.vat)
-            )
-        }
-    }
+    // The cart's own tax only - the shop's extra charges (Service, Parcel, or any
+    // other) are never taxed, whatever rate the goods on this bill carry. They
+    // join the bill at their own flat value via [extraChargesTotal], added
+    // untaxed and last - see [taxedTotal].
+    private fun taxAmt(): Double = taxOf(cart, discountAmt())
 
     /**
      * Taxed value before rounding; what the round-off line is measured against.

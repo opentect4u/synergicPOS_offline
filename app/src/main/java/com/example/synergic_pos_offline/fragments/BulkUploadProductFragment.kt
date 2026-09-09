@@ -27,24 +27,26 @@ import com.google.android.material.button.MaterialButton
 /**
  * Dedicated "Bulk Upload Products" page reached from the Products screen.
  *
- * The operator downloads an Excel template to see the structure, fills it in a
- * spreadsheet, and uploads it — every row becomes a product, under the department
- * its CATEGORY_ID names. A preview is shown before anything is written.
+ * The operator downloads a sheet - either the blank template, or the Products
+ * screen's own export of the current catalogue, with every product's own id on
+ * it - fills it in a spreadsheet, and uploads it. A preview is shown before
+ * anything is written.
  *
- * ## The sheet IS the product list
+ * ## The upload MERGES, it does not wipe
  *
- * An upload REPLACES the catalogue. The till ends up holding what the file holds:
- * upload a sheet of four items over a till of three and the till has those four.
+ * A row whose [ProductCsvTemplate.PRODUCT_ID_COLUMN] names a product this till
+ * already has - the shape a sheet takes once it was exported, edited and brought
+ * back - UPDATES that product in place: its fields and its rates become the
+ * sheet's, and its id (with every bill, return or stock record that names it) is
+ * untouched. A row naming no id, or one this till has never used, is simply
+ * added. A product the sheet never mentions at all is left exactly as it is -
+ * nothing is deleted just for being absent from the file. See
+ * [ProductBulkImporter.Mode.APPEND].
  *
- * There used to be an Append/Replace choice here, defaulting to Append. It made every
- * upload a decision, and the wrong answer is not one the operator can undo from the
- * till - Append quietly doubled a catalogue that was meant to be corrected and
- * re-uploaded. One outcome, stated on the preview and confirmed once, is the honest
- * reading of what "upload my product list" means.
- *
- * A product that has been SOLD is still kept, because deleting it would take the
- * bills it appears on with it - see [ProductBulkImporter.replaceCounts], which is
- * what the confirmation counts.
+ * This used to be a hard Replace: the whole catalogue cleared first and put back
+ * from the sheet, wiping the link between every existing product and its bills
+ * whether or not that product was still in the file. Matching by id and updating
+ * in place is what makes a corrected re-upload safe without that.
  *
  * There is no category to pick on this page: one upload can carry the whole
  * catalogue, and a sheet holding twenty categories cannot be filed under a single
@@ -298,10 +300,11 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         }
 
         view.findViewById<MaterialButton>(R.id.btnPreviewCancel).setOnClickListener { dialog.dismiss() }
-        // ALWAYS A REPLACE. The sheet IS the product list after an upload - the till
-        // holds what the file holds and nothing else. See [ProductBulkImporter.Mode].
+        // ALWAYS AN APPEND - see [ProductBulkImporter.Mode.APPEND]: a common id is
+        // updated in place, everything else is added, nothing on the till is
+        // removed just for being absent from the sheet.
         view.findViewById<MaterialButton>(R.id.btnPreviewSubmit).setOnClickListener {
-            confirmReplace(ctx) { runImport(ctx, rows, dialog) }
+            confirmMerge(ctx, rows) { runImport(ctx, rows, dialog) }
         }
 
         ThemeManager.applyTheme(view)
@@ -310,29 +313,31 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
 
 
     /**
-     * Asks once before the upload, stating what it will actually do to *this* till -
-     * which products go, and which cannot.
+     * Asks once before the upload, stating what it will actually do to *this*
+     * till - which products it updates, and which it adds.
      *
-     * This is now the ONLY thing standing between the button and the catalogue, since
-     * the mode is no longer a choice - so it names real products off this till rather
-     * than describing replacement in general. Deleting the catalogue is not something
-     * the operator can undo from here.
+     * Lighter than the old Replace confirmation, and deliberately: nothing is
+     * deleted, so there is no catalogue to lose. What CAN still surprise an
+     * operator is a product's fields and rates being overwritten by the sheet -
+     * that is worth a glance before it happens, which is what this is for.
      *
-     * A till with nothing on it yet is not worth stopping for: there is nothing to
-     * lose, and a confirmation that always says "0 products" trains people to tap
-     * through the one that matters.
+     * Skipped when nothing would be updated: a sheet of entirely new products
+     * has nothing on this till to overwrite, and a confirmation that never says
+     * anything but "N new product(s)" trains people to tap through the one that
+     * matters.
      */
-    private fun confirmReplace(ctx: android.content.Context, onConfirm: () -> Unit) {
-        val counts = ProductBulkImporter.replaceCounts(ctx)
-        if (counts.total == 0) { onConfirm(); return }
+    private fun confirmMerge(
+        ctx: android.content.Context, rows: List<Map<String, String>>, onConfirm: () -> Unit
+    ) {
+        val counts = ProductBulkImporter.mergeCounts(ctx, rows)
+        if (counts.toUpdate == 0) { onConfirm(); return }
 
         DialogUtils.showConfirm(
             context = ctx,
-            title = "These products will be overridden",
-            message = overrideReport(counts),
+            title = "These products will be updated",
+            message = mergeReport(counts),
             positiveText = "Confirm & Upload",
             negativeText = "Cancel",
-            destructive = true,
             // A column of product names, not a sentence - see [DialogUtils.showConfirm].
             messageStart = true,
             onConfirm = onConfirm
@@ -340,49 +345,27 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
     }
 
     /**
-     * The override report: which products this upload takes off the till, and which
-     * it cannot.
+     * The merge report: which products this upload updates, and how many it adds.
      *
-     * BY NAME, not by count. "This removes 9 product(s)" is a number an operator can
-     * only agree to on trust - they cannot tell from it whether the sheet they are
-     * about to upload is the right one, and the mistake is only visible afterwards,
-     * when the catalogue is already gone. Reading "Coffee, Tea, Sugar" is what makes
-     * it possible to notice that the wrong file was picked while Cancel is still on
-     * screen.
-     *
-     * The KEPT list is the other half and matters just as much: those products stay
-     * whatever the sheet says, because they are on a bill or a stock record and
-     * deleting them would take those records with them. An operator who expects the
-     * sheet to be the whole catalogue needs to see the ones that will still be there
-     * beside it - otherwise the upload "did not work" and nothing said why.
-     *
-     * Both lists are trimmed to [ProductBulkImporter.NAMES_LISTED] with the remainder
-     * counted, so a long catalogue still produces a message that can be read.
+     * BY NAME, not by count - see the same reasoning the old Replace confirmation
+     * carried: a number is agreed to on trust, a name is checked against what the
+     * operator meant to upload. Trimmed to [ProductBulkImporter.NAMES_LISTED] with
+     * the remainder counted, so a long sheet still produces a message that can be
+     * read.
      */
-    private fun overrideReport(counts: ProductBulkImporter.ReplaceCounts): String {
-        fun listed(names: List<String>, total: Int): String {
-            val shown = names.take(ProductBulkImporter.NAMES_LISTED)
-            val more = total - shown.size
-            return shown.joinToString("\n") { "  • $it" } +
-                if (more > 0) "\n  • …and $more more" else ""
-        }
-
+    private fun mergeReport(counts: ProductBulkImporter.MergeCounts): String {
+        val shown = counts.toUpdateNames.take(ProductBulkImporter.NAMES_LISTED)
+        val more = counts.toUpdate - shown.size
         return buildString {
-            append("The sheet you are uploading becomes the whole product list.")
-            if (counts.removable > 0) {
-                append("\n\nRemoved from this till (${counts.removable}), with their rates and stock:\n")
-                append(listed(counts.removableNames, counts.removable))
-            }
-            // What a hard replace costs, said before it is agreed to rather than
-            // discovered in a report weeks later. The bills themselves are NOT touched
-            // and still name their items - only the link from a sold line back to a
-            // product record goes, and it cannot be put back.
             append(
-                "\n\nBills, returns and stock records are kept and still show their item " +
-                    "names, but they will no longer be linked to a product - so reports " +
-                    "that group past sales by product cannot do so for these."
+                "${counts.toUpdate} product(s) already on this till will be updated with " +
+                    "the sheet's values - their fields and rates, replaced:\n"
             )
-            append("\n\nThis cannot be undone.")
+            append(shown.joinToString("\n") { "  • $it" })
+            if (more > 0) append("\n  • …and $more more")
+            if (counts.toAdd > 0) {
+                append("\n\n${counts.toAdd} new product(s) will be added.")
+            }
         }
     }
 
@@ -392,11 +375,11 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         rows: List<Map<String, String>>,
         preview: AlertDialog
     ) {
-        val result = ProductBulkImporter.import(ctx, rows, ProductBulkImporter.Mode.REPLACE)
+        val result = ProductBulkImporter.import(ctx, rows, ProductBulkImporter.Mode.APPEND)
         preview.dismiss()
         val summary = buildString {
-            append("${result.imported} product(s) uploaded successfully.")
-            if (result.removed > 0) append("\n${result.removed} existing product(s) removed.")
+            append("${result.imported} new product(s) added.")
+            if (result.replaced > 0) append("\n${result.replaced} existing product(s) updated.")
             if (result.skipped > 0) append("\n${result.skipped} row(s) skipped.")
             append("\nApp language set to ${result.languageApplied}.")
             result.languageWarning?.let { append("\n$it") }
