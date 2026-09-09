@@ -801,7 +801,9 @@ class BillReceiptRenderer(context: Context) {
                        COALESCE(tot_cgst_amount, 0), COALESCE(tot_sgst_amount, 0),
                        COALESCE(tot_vat_amount, 0),
                        -- Appended, so every column index above keeps its place.
-                       COALESCE(tot_discount_percentage, 0)
+                       -- The rate is only meaningful where discount_type says the operator gave
+                       -- one; a FLAT discount stores a derived figure that was never quoted.
+                       COALESCE(tot_discount_percentage, 0), COALESCE(discount_type, '')
                 FROM ${billsTableFor(db, receiptNo)} WHERE receipt_no = ?
                 """.trimIndent(),
                 arrayOf(receiptNo.toString())
@@ -812,7 +814,12 @@ class BillReceiptRenderer(context: Context) {
                 storedCgst = c.getDouble(14)
                 storedSgst = c.getDouble(15)
                 storedVat = c.getDouble(16)
-                storedDiscountPercent = c.getDouble(17)
+                // ONLY a discount the operator actually gave as a percentage carries a rate.
+                // discount_type is what the sale recorded - see BillDao, which writes
+                // PERCENTAGE or FLAT - and tot_discount_percentage holds a DERIVED figure
+                // either way, so reading it alone put an invented rate on a flat discount.
+                storedDiscountPercent =
+                    if (c.getString(18).orEmpty().equals("PERCENTAGE", true)) c.getDouble(17) else 0.0
                 billNumber = c.getString(0) ?: receiptNo.toString()
                 dateTime = c.getString(1) ?: c.getString(2) ?: ""
                 customerId = if (c.isNull(3)) null else c.getLong(3)
