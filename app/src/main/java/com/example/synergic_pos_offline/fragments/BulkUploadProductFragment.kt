@@ -37,11 +37,20 @@ import com.google.android.material.button.MaterialButton
  * A row whose [ProductCsvTemplate.PRODUCT_ID_COLUMN] names a product this till
  * already has - the shape a sheet takes once it was exported, edited and brought
  * back - UPDATES that product in place: its fields and its rates become the
- * sheet's, and its id (with every bill, return or stock record that names it) is
- * untouched. A row naming no id, or one this till has never used, is simply
- * added. A product the sheet never mentions at all is left exactly as it is -
- * nothing is deleted just for being absent from the file. See
+ * sheet's. A row naming no id, or one this till has never used, is simply added.
+ * A product the sheet never mentions at all is left exactly as it is - nothing is
+ * deleted just for being absent from the file. See
  * [ProductBulkImporter.Mode.APPEND].
+ *
+ * ## An updated product takes its BILLS with it
+ *
+ * The one thing an update does delete. A common id does not add a product beside
+ * the old one - it replaces what that id MEANS, so every bill rung up against it
+ * is a bill for goods this till can no longer describe: it would reprint and
+ * report under the new product's name, price and tax. Those bills are deleted,
+ * active and cancelled alike, with their items, payments, returns and ledger
+ * entries - see [ProductBulkImporter.deleteBillsFor]. The count is named in the
+ * confirmation before the upload runs, and again in the summary after.
  *
  * This used to be a hard Replace: the whole catalogue cleared first and put back
  * from the sheet, wiping the link between every existing product and its bills
@@ -316,10 +325,11 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
      * Asks once before the upload, stating what it will actually do to *this*
      * till - which products it updates, and which it adds.
      *
-     * Lighter than the old Replace confirmation, and deliberately: nothing is
-     * deleted, so there is no catalogue to lose. What CAN still surprise an
-     * operator is a product's fields and rates being overwritten by the sheet -
-     * that is worth a glance before it happens, which is what this is for.
+     * No catalogue is lost - nothing is removed for being absent from the sheet -
+     * but two things here can still surprise an operator: a product's fields and
+     * rates being overwritten by the row that shares its id, and the BILLS that
+     * product was rung up against going with it. Both are named before it runs, and
+     * the dialog turns destructive once the second one applies.
      *
      * Skipped when nothing would be updated: a sheet of entirely new products
      * has nothing on this till to overwrite, and a confirmation that never says
@@ -334,10 +344,14 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
 
         DialogUtils.showConfirm(
             context = ctx,
-            title = "These products will be updated",
+            title = if (counts.billsToDelete > 0) "These products and their bills"
+                    else "These products will be updated",
             message = mergeReport(counts),
             positiveText = "Confirm & Upload",
             negativeText = "Cancel",
+            // Red once bills are going with it - the dialog is no longer just
+            // reporting an overwrite, it is asking to delete sales.
+            destructive = counts.billsToDelete > 0,
             // A column of product names, not a sentence - see [DialogUtils.showConfirm].
             messageStart = true,
             onConfirm = onConfirm
@@ -366,6 +380,20 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
             if (counts.toAdd > 0) {
                 append("\n\n${counts.toAdd} new product(s) will be added.")
             }
+            // THE PART THAT CANNOT BE UNDONE, stated before it happens.
+            //
+            // Replacing a product replaces what its old bills were FOR, so those
+            // bills go - see ProductBulkImporter.deleteBillsFor. An operator agreeing
+            // to "update 12 products" is not agreeing to lose a day's sales unless
+            // this says so, in the number it will actually cost them.
+            if (counts.billsToDelete > 0) {
+                append("\n\n${counts.billsToDelete} bill(s) were rung up against those ")
+                append("products and will be DELETED - active and cancelled alike, with ")
+                append("their items, payments, returns and ledger entries.")
+                append("\n\nThe stock they moved is left as it is: the goods did leave ")
+                append("the shelf, whatever the catalogue says now.")
+                append("\n\nThis cannot be undone.")
+            }
         }
     }
 
@@ -380,6 +408,12 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         val summary = buildString {
             append("${result.imported} new product(s) added.")
             if (result.replaced > 0) append("\n${result.replaced} existing product(s) updated.")
+            // Said plainly. Replacing a product takes its bills with it, and an
+            // operator who is not told here finds them missing from a report later
+            // with nothing to connect the two.
+            if (result.billsDeleted > 0) {
+                append("\n${result.billsDeleted} bill(s) for the replaced products were deleted.")
+            }
             if (result.skipped > 0) append("\n${result.skipped} row(s) skipped.")
             append("\nApp language set to ${result.languageApplied}.")
             result.languageWarning?.let { append("\n$it") }

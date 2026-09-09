@@ -734,6 +734,23 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     /** The discount as a percentage of what it was taken off, purely for
      *  display/records - the actual math always works from [discountAmt], whichever
      *  way it was entered. */
+
+    /**
+     * The rate to PRINT beside the discount, or 0 where there is none to print.
+     *
+     * The rate the operator actually typed - not [discountPctForDisplay], which
+     * divides the amount by the base and so answers "what percentage did this come
+     * to" for every discount, including one entered as a flat figure. That derived
+     * number is right for the report column it feeds; it is wrong on a slip, where
+     * "DISCOUNT @5.19%" states a rate nobody agreed to for a bill that was simply
+     * given fifty rupees off.
+     *
+     * Zero under ITEM-WISE as well. That discount belongs to the lines, each with its
+     * own rate, and there is no single figure for the bill's own line to carry.
+     */
+    private fun discountPctForLabel(): Double =
+        if (!itemwiseDiscountActive && discountMode == GstCalculator.DiscountMode.PERCENT)
+            discountValue else 0.0
     private fun discountPctForDisplay(): Double {
         val base = discountBase()
         return if (base > 0) discountAmtForReport() / base * 100.0 else 0.0
@@ -1167,7 +1184,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             discount = discountAmtForReport(),
             // The rate it was given at, so the slip prints "DISCOUNT @5%" rather than the
             // amount alone - the same figure the bill is saved with.
-            discountPercent = discountPctForDisplay(),
+            discountPercent = discountPctForLabel(),
             roundOff = roundOffAmt(),
             netAmount = total(),
             paymentModes = listOf(method.name),

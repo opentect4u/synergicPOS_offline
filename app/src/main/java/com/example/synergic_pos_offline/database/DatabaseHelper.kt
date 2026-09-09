@@ -55,6 +55,8 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "regional_name", "TEXT")
         runCatching { db.execSQL(SQL_CREATE_MD_PRODUCT_NAMES) }
         migrateRegionalNamesToTable(db)
+        // Bills saved before the restaurant path recorded VAT - see the function.
+        repairMissingBillVat(db)
         // WHAT THE LINE WAS SOLD AS. A bill line recorded a product_id and nothing
         // else, and the name was fetched back by joining md_products at print time -
         // so the name on a reprint was never the bill's own, it was whatever the
@@ -672,6 +674,50 @@ class DatabaseHelper private constructor(context: Context) :
      * has a row for that language, and the source column is cleared as it goes, so a
      * second pass finds nothing to do.
      */
+
+    /**
+     * Puts back the bill-level VAT that the restaurant save used to drop.
+     *
+     * `RestaurantOrdersFragment.persistBill` passed cgst and sgst but not VAT, so
+     * `tot_vat_amount` saved as 0 on every restaurant bill however much VAT the sale
+     * had actually charged. The LINES carried it correctly all along; only the bill's
+     * own column was empty.
+     *
+     * That is invisible on the original slip, which prints from the live figures, and
+     * shows on the DUPLICATE - a reprint reconciles its tax against these columns (see
+     * BillReceiptRenderer.reconcileWithStoredTax), so a bill whose tax was all VAT
+     * reprinted with no tax at all.
+     *
+     * Fixing the save only helps bills written from now on. This repairs the ones
+     * already saved, from the bill's OWN LINES - the figures that were right - so a
+     * duplicate of an old bill prints what the customer was actually charged.
+     *
+     * Narrow on purpose: only a bill whose stored VAT is zero while its lines total
+     * more than zero. A bill that genuinely charged no VAT has nothing to sum and is
+     * not touched, and one already correct is left alone, so this can run on every
+     * open without ever moving a figure twice.
+     */
+    private fun repairMissingBillVat(db: SQLiteDatabase) {
+        runCatching {
+            db.execSQL(
+                """
+                UPDATE ${Tables.TD_BILLS}
+                   SET tot_vat_amount = (
+                         SELECT ROUND(SUM(COALESCE(bi.vat_amount, 0)), 2)
+                           FROM ${Tables.TD_BILL_ITEMS} bi
+                          WHERE bi.bill_id = ${Tables.TD_BILLS}.receipt_no
+                       ),
+                       vat_flag = 1
+                 WHERE COALESCE(tot_vat_amount, 0) = 0
+                   AND (
+                         SELECT SUM(COALESCE(bi.vat_amount, 0))
+                           FROM ${Tables.TD_BILL_ITEMS} bi
+                          WHERE bi.bill_id = ${Tables.TD_BILLS}.receipt_no
+                       ) > 0
+                """.trimIndent()
+            )
+        }.onFailure { android.util.Log.e("DBMigrate", "Could not repair bill VAT totals", it) }
+    }
     private fun migrateRegionalNamesToTable(db: SQLiteDatabase) {
         runCatching {
             val pending = db.rawQuery(
