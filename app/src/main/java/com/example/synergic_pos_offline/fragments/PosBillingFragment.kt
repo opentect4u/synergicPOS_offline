@@ -1349,7 +1349,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // next one is searched for from scratch, and a search left in the box would
         // otherwise have to be cleared by hand before it could be. Only on a
         // completed add - a cancelled dialog leaves the operator's search alone.
-        resetBrowsing()
+        //
+        // SKIPPED WHEN IT WOULD BE A NO-OP. Already "All" with both boxes empty is
+        // already the state resetBrowsing sets - and getting there is not free: it
+        // re-feeds the whole catalogue to [productPager], which rewinds the grid to
+        // its first page and rebinds it, photos included, then queues the overscan
+        // pages behind it. Fine on a small category's own list, and exactly why
+        // adding felt slow specifically under "All" and fine under one category -
+        // every tap paid to rebuild a grid that was already showing precisely what
+        // it was about to be told to show again.
+        if (activeCategory != "All" || queryId.isNotEmpty() || queryName.isNotEmpty()) {
+            resetBrowsing()
+        }
     }
 
     /** "N item(s) added" for the running Direct-Add-to-Cart toast; [total] is the
