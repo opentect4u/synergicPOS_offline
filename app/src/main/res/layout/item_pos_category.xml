@@ -4,18 +4,20 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
+    <!-- Filled solid: background colour is set per-tab in code, since it follows
+         the theme accent (yellowish for the active tab). -->
     <TextView
         android:id="@+id/tvCategory"
         android:layout_width="wrap_content"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:gravity="center"
-        android:paddingHorizontal="20dp"
+        android:paddingHorizontal="14dp"
         android:text="All"
         android:textSize="13sp"
         android:textStyle="bold"
         android:maxLines="1"
-        android:textColor="@color/text_secondary" />
+        android:textColor="@android:color/white" />
 
     <View
         android:id="@+id/vUnderline"

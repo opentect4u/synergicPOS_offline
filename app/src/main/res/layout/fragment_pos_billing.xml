@@ -150,13 +150,17 @@
                     app:icon="@android:drawable/ic_menu_myplaces"
                     app:cornerRadius="12dp" />
 
+                <!-- Two separate boxes rather than one combined field: each searches
+                     its own thing (product id / name), and a scan resolves in either -
+                     see PosBillingFragment#wireSearchField. -->
                 <com.google.android.material.textfield.TextInputLayout
-                    android:id="@+id/tilSearch"
+                    android:id="@+id/tilSearchId"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:hint="Scan barcode or search name / SKU"
+                    android:layout_marginEnd="8dp"
+                    android:hint="Scan barcode or search Product ID"
                     app:startIconDrawable="@android:drawable/ic_menu_search"
                     app:boxCornerRadiusTopStart="12dp"
                     app:boxCornerRadiusTopEnd="12dp"
@@ -164,7 +168,29 @@
                     app:boxCornerRadiusBottomEnd="12dp">
 
                     <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etSearch"
+                        android:id="@+id/etSearchId"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="number"
+                        android:imeOptions="actionSearch"
+                        android:maxLines="1" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/tilSearchName"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="Scan barcode or search product name"
+                    app:startIconDrawable="@android:drawable/ic_menu_search"
+                    app:boxCornerRadiusTopStart="12dp"
+                    app:boxCornerRadiusTopEnd="12dp"
+                    app:boxCornerRadiusBottomStart="12dp"
+                    app:boxCornerRadiusBottomEnd="12dp">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etSearchName"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:inputType="text"

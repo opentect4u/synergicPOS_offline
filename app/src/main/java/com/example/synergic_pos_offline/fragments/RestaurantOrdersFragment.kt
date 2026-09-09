@@ -2991,6 +2991,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         val productSort = com.example.synergic_pos_offline.database.GeneralSettingsDao
             .productSort(requireContext())
+
+        // Every product's rate and every unit, read once each rather than a rate
+        // query and a unit query PER PRODUCT - see [loadRateMaps] and
+        // [loadUnitCache]. A shop with a few hundred dishes used to turn opening
+        // this screen into a few hundred extra round trips to SQLite; reading both
+        // tables whole, up front, is what actually keeps this screen opening at
+        // once regardless of how large the menu has grown.
+        val (defaultRates, ratesByProduct) = loadRateMaps(db, multipleRates)
+        val unitCache = loadUnitCache(db)
+
         val out = mutableListOf<GridProduct>()
         db.query(
             "md_products",
@@ -3003,7 +3013,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 // Only sellable items reach the Add Item grid: a product explicitly set
                 // Unavailable in the master is hidden. Unset (blank) counts as available.
                 if (c.getString(7)?.equals("Unavailable", ignoreCase = true) == true) continue
-                val id = c.getLong(0).toString()
+                val idLong = c.getLong(0)
+                val id = idLong.toString()
                 val name = c.getString(1).orEmpty()
                 // The SKU is the product's own id; the barcode is searched on too.
                 val sku = id
@@ -3014,33 +3025,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 val spice = c.getString(6).orEmpty()
                 val prepTime = c.getString(8).orEmpty()
                 val image = if (c.isNull(9)) null else c.getBlob(9)
-                var price = 0.0; var cgst = 0.0; var sgst = 0.0; var vat = 0.0
-                var disc = 0.0; var discType: String? = null; var unitId: Long? = null
-                db.query(
-                    "md_product_rates",
-                    arrayOf("rate", "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type", "unit_id"),
-                    "product_id = ?", arrayOf(id), null, null, "\"default\" DESC, id ASC", "1"
-                ).use { r ->
-                    if (r.moveToFirst()) {
-                        price = if (r.isNull(0)) 0.0 else r.getDouble(0)
-                        cgst = if (r.isNull(1)) 0.0 else r.getDouble(1)
-                        sgst = if (r.isNull(2)) 0.0 else r.getDouble(2)
-                        vat = if (r.isNull(3)) 0.0 else r.getDouble(3)
-                        disc = if (r.isNull(4)) 0.0 else r.getDouble(4)
-                        discType = r.getString(5)
-                        unitId = if (r.isNull(6)) null else r.getLong(6)
-                    }
-                }
-                val (unitSymbol, allowFraction) = unitInfo(db, unitId)
-                val rates = if (multipleRates) loadRates(db, id) else emptyList()
-                val level = if (stockTrackingOn) levels[c.getLong(0)] else null
+
+                val rate = defaultRates[idLong]
+                val (unitSymbol, allowFraction) = unitCache[rate?.unitId] ?: ("" to false)
+                val rates = if (multipleRates) ratesByProduct[idLong].orEmpty() else emptyList()
+                val level = if (stockTrackingOn) levels[idLong] else null
                 out.add(
                     GridProduct(
                         ProductEntryDialog.Product(
-                            id = id, name = name, sku = sku, category = catName, price = price,
-                            hsn = hsn, unit = unitSymbol, allowFraction = allowFraction, 
-                            cgst = cgst, sgst = sgst, vat = vat,
-                            discValue = disc, discType = discType, rates = rates,
+                            id = id, name = name, sku = sku, category = catName, price = rate?.rate ?: 0.0,
+                            hsn = hsn, unit = unitSymbol, allowFraction = allowFraction,
+                            cgst = rate?.cgst ?: 0.0, sgst = rate?.sgst ?: 0.0, vat = rate?.vat ?: 0.0,
+                            discValue = rate?.discValue ?: 0.0, discType = rate?.discType, rates = rates,
                             stock = com.example.synergic_pos_offline.utils.StockBadge.stateOf(level),
                             stockQty = level?.quantity ?: 0.0
                         ),
@@ -3054,46 +3050,82 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         return out
     }
 
-    /** Every rate row for a product (default first), for the popup's rate dropdown. */
-    private fun loadRates(db: android.database.sqlite.SQLiteDatabase, productId: String): List<ProductEntryDialog.Rate> {
-        val out = mutableListOf<ProductEntryDialog.Rate>()
+    /** One product's default rate row - the fields [loadProductsFromDb] used to
+     *  read with a per-product query. */
+    private data class RateRow(
+        val rate: Double, val cgst: Double, val sgst: Double, val vat: Double,
+        val discValue: Double, val discType: String?, val unitId: Long?
+    )
+
+    /**
+     * Every product's default rate, and (in Multiple-rate mode) every rate on it,
+     * in one pass over md_product_rates instead of one query per product.
+     *
+     * Ordered `product_id ASC, "default" DESC, id ASC` - the same tie-break the old
+     * per-product query used (`"default" DESC, id ASC` with a `product_id = ?`
+     * filter) - so the first row seen for a product is exactly the row that query
+     * would have returned.
+     */
+    private fun loadRateMaps(
+        db: android.database.sqlite.SQLiteDatabase,
+        multipleRates: Boolean
+    ): Pair<Map<Long, RateRow>, Map<Long, List<ProductEntryDialog.Rate>>> {
+        val defaults = linkedMapOf<Long, RateRow>()
+        val allByProduct = if (multipleRates) linkedMapOf<Long, MutableList<ProductEntryDialog.Rate>>() else null
         db.query(
             "md_product_rates",
-            arrayOf("rate_name", "rate", "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type"),
-            "product_id = ?", arrayOf(productId), null, null, "\"default\" DESC, id ASC"
+            arrayOf(
+                "product_id", "rate_name", "rate", "cgst_rate", "sgst_rate",
+                "vat_rate", "discount", "discount_type", "unit_id"
+            ),
+            null, null, null, null, "product_id ASC, \"default\" DESC, id ASC"
         ).use { c ->
-            var i = 1
             while (c.moveToNext()) {
-                out.add(
-                    ProductEntryDialog.Rate(
-                        name = c.getString(0)?.takeIf { it.isNotBlank() } ?: "Rate ${i}",
-                        rate = if (c.isNull(1)) 0.0 else c.getDouble(1),
-                        cgst = if (c.isNull(2)) 0.0 else c.getDouble(2),
-                        sgst = if (c.isNull(3)) 0.0 else c.getDouble(3),
-                        vat = if (c.isNull(4)) 0.0 else c.getDouble(4),
-                        discValue = if (c.isNull(5)) 0.0 else c.getDouble(5),
-                        discType = c.getString(6)
+                if (c.isNull(0)) continue
+                val pid = c.getLong(0)
+                val rate = if (c.isNull(2)) 0.0 else c.getDouble(2)
+                val cgst = if (c.isNull(3)) 0.0 else c.getDouble(3)
+                val sgst = if (c.isNull(4)) 0.0 else c.getDouble(4)
+                val vat = if (c.isNull(5)) 0.0 else c.getDouble(5)
+                val discValue = if (c.isNull(6)) 0.0 else c.getDouble(6)
+                val discType = c.getString(7)
+                val unitId = if (c.isNull(8)) null else c.getLong(8)
+
+                if (!defaults.containsKey(pid)) {
+                    defaults[pid] = RateRow(rate, cgst, sgst, vat, discValue, discType, unitId)
+                }
+                if (allByProduct != null) {
+                    val list = allByProduct.getOrPut(pid) { mutableListOf() }
+                    list.add(
+                        ProductEntryDialog.Rate(
+                            name = c.getString(1)?.takeIf { it.isNotBlank() } ?: "Rate ${list.size + 1}",
+                            rate = rate, cgst = cgst, sgst = sgst, vat = vat,
+                            discValue = discValue, discType = discType
+                        )
                     )
-                )
-                i++
+                }
+            }
+        }
+        return defaults to (allByProduct ?: emptyMap())
+    }
+
+    /** Every unit's symbol and fraction flag, read once rather than a query per
+     *  product - md_units is a short master list, not something worth asking
+     *  again for every row that names one. */
+    private fun loadUnitCache(db: android.database.sqlite.SQLiteDatabase): Map<Long, Pair<String, Boolean>> {
+        val out = mutableMapOf<Long, Pair<String, Boolean>>()
+        db.query(
+            "md_units", arrayOf("id", "unit_symbol", "fraction_flag", "unit_name"),
+            null, null, null, null, null
+        ).use { c ->
+            while (c.moveToNext()) {
+                // Resolved the way the printed bill resolves it, so the screen and
+                // the slip never name the same unit differently.
+                out[c.getLong(0)] = com.example.synergic_pos_offline.database.UnitDao
+                    .shortNameOf(c.getString(1), c.getString(3)) to (c.getInt(2) == 1)
             }
         }
         return out
-    }
-
-    /** A unit's symbol and whether it allows fractional quantities (fraction_flag). */
-    private fun unitInfo(db: android.database.sqlite.SQLiteDatabase, unitId: Long?): Pair<String, Boolean> {
-        if (unitId == null) return "" to false
-        db.query("md_units", arrayOf("unit_symbol", "fraction_flag", "unit_name"),
-            "id = ?", arrayOf(unitId.toString()), null, null, null, "1").use { c ->
-            // Resolved the way the printed bill resolves it, so the screen and the
-            // slip never name the same unit differently.
-            if (c.moveToFirst()) return (
-                com.example.synergic_pos_offline.database.UnitDao
-                    .shortNameOf(c.getString(0), c.getString(2)) to (c.getInt(1) == 1)
-                )
-        }
-        return "" to false
     }
 
     private fun currentStoreId(db: android.database.sqlite.SQLiteDatabase): Long? {
@@ -3890,6 +3922,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun lighten(color: Int, amount: Float = 0.13f): Int =
         ColorUtils.blendARGB(color, Color.WHITE, amount)
 
+    /** The active category tab's own fill - a warm gold, not derived from the
+     *  theme colour, so the pressed-in tab reads the same on every theme. */
+    private val ACTIVE_TAB_COLOR = 0xFFFFB300.toInt()
+
     /** The stored status behind a label the strip shows - the inverse of [lookOf]. */
     private fun statusFor(label: String): String =
         if (label == "Bill Pending") "Billing" else label
@@ -4177,24 +4213,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): VH =
             VH(TextView(parent.context).apply {
                 textSize = 15f
-                setPadding(dp(10), dp(10), dp(10), dp(12))
+                setPadding(dp(7), dp(7), dp(7), dp(9))
                 layoutParams = android.view.ViewGroup.LayoutParams(
                     android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                     android.view.ViewGroup.LayoutParams.WRAP_CONTENT
                 )
             })
 
-        /** Selected category shows an accent underline; the rest are muted. */
+        /** Every tab filled in the theme colour, white text throughout; the active
+         *  one a shade darker rather than a colour of its own, so the strip still
+         *  reads as one set with the one tab pressed in. */
         override fun onBindViewHolder(holder: VH, position: Int) {
             val name = names[position]
             val on = name == selected()
             holder.tv.text = name
-            holder.tv.setTextColor(if (on) accent else 0xFF9AA0A6.toInt())
-            holder.tv.setTypeface(
-                null,
-                if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL
-            )
-            holder.tv.background = if (on) underline(accent) else null
+            holder.tv.setTextColor(Color.WHITE)
+            holder.tv.setTypeface(null, if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            holder.tv.setBackgroundColor(if (on) ACTIVE_TAB_COLOR else accent)
             holder.tv.setOnClickListener {
                 onPick(name)
                 notifyDataSetChanged()
@@ -4202,14 +4237,6 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
 
         override fun getItemCount() = names.size
-    }
-
-    /** A thin accent line drawn along the bottom edge, for the active tab. */
-    private fun underline(accent: Int): android.graphics.drawable.Drawable {
-        val line = android.graphics.drawable.GradientDrawable().apply { setColor(accent) }
-        return android.graphics.drawable.LayerDrawable(arrayOf(line)).apply {
-            setLayerInset(0, 0, dp(38), 0, 0)  // push the fill down so only a 2dp strip shows
-        }
     }
 
     private fun dp(value: Int): Int = (resources.displayMetrics.density * value).toInt()

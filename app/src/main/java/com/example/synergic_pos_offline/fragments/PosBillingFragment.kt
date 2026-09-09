@@ -134,10 +134,19 @@ class PosBillingFragment : Fragment(), TitledScreen {
     }
 
     /**
-     * The search dropdown over the shelf. Held on the fragment so it can be dismissed
-     * when the screen goes away - a popup window outlives the view that anchored it.
+     * The search dropdown over the shelf - one per search box, since each box is
+     * its own field to type into and anchors its own popup. Held on the fragment
+     * so both can be dismissed when the screen goes away - a popup window
+     * outlives the view that anchored it.
      */
-    private var suggestions: SearchSuggestions? = null
+    private var suggestionsId: SearchSuggestions? = null
+    private var suggestionsName: SearchSuggestions? = null
+
+    /** Dismisses whichever of the two search boxes' dropdowns happens to be open. */
+    private fun dismissSuggestions() {
+        suggestionsId?.dismiss()
+        suggestionsName?.dismiss()
+    }
 
     /**
      * One shelf product as a suggestion row.
@@ -243,7 +252,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private var activeCategory = "All"
     private var activeCategoryId: Long? = null
-    private var query = ""
+    /** The Product ID box's own typed text - matched against SKU and barcode. */
+    private var queryId = ""
+    /** The Name box's own typed text - matched against name and barcode. Both
+     *  boxes narrow the shelf together when both hold text - see [applyFilter]. */
+    private var queryName = ""
     private var discountMode = GstCalculator.DiscountMode.PERCENT
     private var discountValue = 0.0
     private var couponApplied = false
@@ -468,86 +481,17 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // Search. Typing narrows the shelf behind, as it always has, and drops the
         // best few matches out of the box itself - the shortcut to the top of a grid
         // that is seven tiles wide and can hide a match below the fold.
-        val etSearch = view.findViewById<TextInputEditText>(R.id.etSearch)
-        suggestions = SearchSuggestions(ctx, etSearch, accent) { picked ->
-            // Picking a suggestion does exactly what tapping its tile does: through
-            // showProductDialog, which is where App Settings' Direct Add to Cart is
-            // read. On, the item goes straight into the cart at its default rate and
-            // no popup opens; off, the rate/quantity popup opens as it always did.
-            // One way in, so nothing can be skipped by coming through the search box
-            // rather than off the shelf.
-            menu.firstOrNull { it.id == picked.id }?.let { p ->
-                showProductDialog(p)
-                // Then empty the box, which is what makes it a flow rather than one
-                // lookup: the shelf comes back whole and the cursor is ready for the
-                // next item. Without this the search stays filtered to the thing just
-                // added and has to be cleared by hand between every scan.
-                //
-                // Except when it was refused: an out-of-stock product is turned away
-                // with a toast and nothing is added, so the query stays up to be
-                // corrected or retried rather than being wiped for no result.
-                if (p.stock != "out") etSearch.setText("")
-            }
-        }
-        // A scanned barcode that names one product goes STRAIGHT onto the bill: one
-        // line, at its own rate, no list to pick from and no popup to dismiss.
         //
-        // This deliberately does not go through showProductDialog, which is the path a
-        // tapped tile takes. That path asks App Settings whether Direct Add to Cart is
-        // on and opens the rate/quantity popup when it is not - and a scan has already
-        // answered both questions. The gun named one product exactly, and it named one
-        // of it; stopping to confirm a rate turns a half-second per item into a
-        // dialog per item, which is the entire reason a counter owns a scanner.
-        //
-        // Scan the same item twice and the line goes to 2, the way a second tap does.
-        // addToCart carries the refusals with it - out of stock, and over the stock
-        // that is there - so bypassing the popup skips the asking, never the checking.
-        //
-        // Posted, because this fires from inside the search box's own text watcher and
-        // its first act is to empty that box: the next scan then lands in a clear
-        // field, which on a counter is the very next thing to happen.
-        suggestions?.onExactCode = { scanned ->
-            menu.firstOrNull { it.id == scanned.id }?.let { p ->
-                etSearch.post { etSearch.setText(""); directAddScanned(p) }
-            }
-        }
-        etSearch.addTextChangedListener(simpleWatcher {
-            query = it
-            applyFilter()
-            // Suggested from the WHOLE shelf, not the open category: someone who types
-            // a product name has named the product, and hiding it because a different
-            // category is selected would answer a question they did not ask.
-            suggestions?.update(query, menu.map(::suggestionOf))
-        })
-        // The gun, read before the field: see attachScanner. Everything below this is
-        // for a person typing - a scan never reaches any of it. It also owns this
-        // field's focus listener, which both dismisses a left-behind search and puts
-        // the soft keyboard back to silent for the next scan.
-        attachScanner(etSearch)
-        // The keyboard's Search key, and the Enter a hardware scanner sends after a
-        // barcode: the query is finished either way, so the keyboard goes and the
-        // shelf - filtered to what was asked for - is left uncovered.
-        etSearch.setOnEditorActionListener { _, actionId, event ->
-            val done = actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
-                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
-                event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER
-            if (done) {
-                suggestions?.dismiss()
-                // A scanner ends every barcode with Enter, which makes this the one
-                // moment the query is KNOWN to be finished - and the safety net for
-                // every scan the per-keystroke path could not recognise: a barcode
-                // shorter than SCAN_MIN, or a product whose bar_code column is empty
-                // and is only findable by its SKU. Matching a SKU is safe here in a
-                // way it is not while typing, because Enter is a deliberate "resolve
-                // this code", not a character on the way to a name.
-                //
-                // Harmless after a scan the keystroke path already caught: it emptied
-                // the box, so there is no code left here to resolve twice.
-                if (addScannedCode(etSearch.text?.toString().orEmpty())) etSearch.setText("")
-                suggestions?.hideKeyboard()
-            }
-            done
-        }
+        // Two boxes rather than one combined field: the ID box only ever matches a
+        // product's id/SKU, the Name box only ever matches its name, and both keep
+        // narrowing the shelf together for as long as either holds text - see
+        // [applyFilter]. Barcode matches in EITHER box, typed or scanned - a scan is
+        // not something the operator chose a box for, it is the gun naming a product,
+        // and it has to work wherever it lands.
+        val etSearchId = view.findViewById<TextInputEditText>(R.id.etSearchId)
+        val etSearchName = view.findViewById<TextInputEditText>(R.id.etSearchName)
+        suggestionsId = wireSearchField(etSearchId) { queryId = it }
+        suggestionsName = wireSearchField(etSearchName) { queryName = it }
         // Discount - hidden entirely when Tax Settings' Discount is on and item-wise.
         view.findViewById<View>(R.id.sectionDiscount).visibility =
             if (showDiscountBox) View.VISIBLE else View.GONE
@@ -681,14 +625,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
         updateHeldButton()
         updateOrderNo()
 
-        // The search box holds focus the moment this screen is reached, so a scan
-        // is read the instant the operator turns to the shelf rather than after a
-        // tap to wake the field up first. Silent, not a keyboard springing up over
-        // the products - see attachScanner's own note on why focus and the
-        // keyboard were split apart. Posted, after the dialog above (if it opened)
-        // has had its own chance at focus.
+        // The Product ID box holds focus the moment this screen is reached, so a
+        // scan is read the instant the operator turns to the shelf rather than
+        // after a tap to wake a field up first - either box reads a scan the same
+        // way, so this is just which one starts with the cursor. Silent, not a
+        // keyboard springing up over the products - see attachScanner's own note
+        // on why focus and the keyboard were split apart. Posted, after the dialog
+        // above (if it opened) has had its own chance at focus.
         view?.post {
-            if (isAdded) view?.findViewById<TextInputEditText>(R.id.etSearch)?.requestFocus()
+            if (isAdded) view?.findViewById<TextInputEditText>(R.id.etSearchId)?.requestFocus()
         }
     }
 
@@ -769,8 +714,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
         clockHandler.removeCallbacks(clockRunnable)
         // A ListPopupWindow is a window, not a child of this view: left showing, it
         // would float over whatever replaces this screen.
-        suggestions?.release()
-        suggestions = null
+        suggestionsId?.release()
+        suggestionsId = null
+        suggestionsName?.release()
+        suggestionsName = null
     }
 
     // ---- Filtering / cart --------------------------------------------------
@@ -837,6 +784,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
         stockTrackingOn = stockOn
         val levels = if (stockOn) StockDao(requireContext()).levels(store?.toInt() ?: 0) else emptyMap()
         val productSort = GeneralSettingsDao.productSort(requireContext())
+
+        // Every product's rate and every unit, read once each rather than a rate
+        // query and a unit query PER PRODUCT - see [loadRateMaps] and
+        // [loadUnitCache]. A shop with a few hundred products used to turn opening
+        // this screen into a few hundred extra round trips to SQLite; reading both
+        // tables whole, up front, is what actually keeps this screen opening at
+        // once regardless of how large the catalogue has grown.
+        val (defaultRates, ratesByProduct) = loadRateMaps(db, multipleRates)
+        val unitCache = loadUnitCache(db)
+
         db.query(
             "md_products",
             arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id",
@@ -846,7 +803,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
             null, null, productSort.orderBy
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                val productId = cursor.getLong(0).toString()
+                val idLong = cursor.getLong(0)
+                val productId = idLong.toString()
                 val productName = cursor.getString(1) ?: ""
                 val barcode = cursor.getString(2) ?: ""
                 val hsn = cursor.getString(3) ?: "0000"
@@ -864,108 +822,116 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 // Get the category name
                 val categoryName = categoryItems.find { it.id == categoryId }?.name ?: ""
 
-                // Query the product's default rate row (rate + its own tax split).
-                db.query(
-                    "md_product_rates",
-                    arrayOf("rate", "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type", "unit_id"),
-                    "product_id = ?",
-                    arrayOf(productId),
-                    null, null, "\"default\" DESC, id ASC", "1"
-                ).use { rateCursor ->
-                    var price = 0.0
-                    var cgst = 0.0
-                    var sgst = 0.0
-                    var vat = 0.0
-                    var discValue = 0.0
-                    var discType: String? = null
-                    var unitId: Long? = null
-                    if (rateCursor.moveToFirst()) {
-                        price = if (rateCursor.isNull(0)) 0.0 else rateCursor.getDouble(0)
-                        cgst = if (rateCursor.isNull(1)) 0.0 else rateCursor.getDouble(1)
-                        sgst = if (rateCursor.isNull(2)) 0.0 else rateCursor.getDouble(2)
-                        vat = if (rateCursor.isNull(3)) 0.0 else rateCursor.getDouble(3)
-                        discValue = if (rateCursor.isNull(4)) 0.0 else rateCursor.getDouble(4)
-                        discType = rateCursor.getString(5)
-                        unitId = if (rateCursor.isNull(6)) null else rateCursor.getLong(6)
-                    }
-                    val (unitSymbol, allowFraction) = unitInfo(db, unitId)
+                val rate = defaultRates[idLong]
+                val (unitSymbol, allowFraction) = unitCache[rate?.unitId] ?: ("" to false)
+                // In Multiple mode, every rate for the popup's dropdown.
+                val rates = if (multipleRates) ratesByProduct[idLong].orEmpty() else emptyList()
 
-                    // In Multiple mode, gather every rate for the popup's dropdown.
-                    val rates = if (multipleRates) loadRates(db, productId) else emptyList()
+                val level = if (stockOn) levels[idLong] else null
+                val stockState = StockBadge.stateOf(level)
 
-                    val level = if (stockOn) levels[cursor.getLong(0)] else null
-                    val stockState = StockBadge.stateOf(level)
-
-                    // Create product with database values
-                    val product = Product(
-                        id = productId,
-                        name = productName,
-                        // The SKU is the product's own id - md_products.sku holds the
-                        // same value, set by a trigger - so every product has one,
-                        // whether or not it was ever given a barcode.
-                        sku = productId,
-                        barcode = barcode,
-                        category = categoryName,
-                        categoryId = categoryId,
-                        price = price,
-                        stock = stockState,
-                        stockQty = level?.quantity ?: 0.0,
-                        hsn = hsn,
-                        cgst = cgst,
-                        sgst = sgst,
-                        vat = vat,
-                        unit = unitSymbol,
-                        allowFraction = allowFraction,
-                        discValue = discValue,
-                        discType = discType,
-                        rates = rates
-                    )
-                    menu.add(product)
-                }
+                // Create product with database values
+                val product = Product(
+                    id = productId,
+                    name = productName,
+                    // The SKU is the product's own id - md_products.sku holds the
+                    // same value, set by a trigger - so every product has one,
+                    // whether or not it was ever given a barcode.
+                    sku = productId,
+                    barcode = barcode,
+                    category = categoryName,
+                    categoryId = categoryId,
+                    price = rate?.rate ?: 0.0,
+                    stock = stockState,
+                    stockQty = level?.quantity ?: 0.0,
+                    hsn = hsn,
+                    cgst = rate?.cgst ?: 0.0,
+                    sgst = rate?.sgst ?: 0.0,
+                    vat = rate?.vat ?: 0.0,
+                    unit = unitSymbol,
+                    allowFraction = allowFraction,
+                    discValue = rate?.discValue ?: 0.0,
+                    discType = rate?.discType,
+                    rates = rates
+                )
+                menu.add(product)
             }
         }
     }
 
-    /** A unit's symbol and whether it allows fractional quantities (fraction_flag). */
-    private fun unitInfo(db: android.database.sqlite.SQLiteDatabase, unitId: Long?): Pair<String, Boolean> {
-        if (unitId == null) return "" to false
-        db.query("md_units", arrayOf("unit_symbol", "fraction_flag", "unit_name"),
-            "id = ?", arrayOf(unitId.toString()), null, null, null, "1").use { c ->
-            // Resolved the way the printed bill resolves it, so the screen and the
-            // slip never name the same unit differently.
-            if (c.moveToFirst()) return (
-                com.example.synergic_pos_offline.database.UnitDao
-                    .shortNameOf(c.getString(0), c.getString(2)) to (c.getInt(1) == 1)
-                )
-        }
-        return "" to false
-    }
+    /** One product's default rate row - the fields [loadProductsFromDatabase] used
+     *  to read with a per-product query. */
+    private data class RateRow(
+        val rate: Double, val cgst: Double, val sgst: Double, val vat: Double,
+        val discValue: Double, val discType: String?, val unitId: Long?
+    )
 
-    /** Every rate row for a product (default first), for the popup's rate dropdown. */
-    private fun loadRates(
-        db: android.database.sqlite.SQLiteDatabase, productId: String
-    ): List<ProductEntryDialog.Rate> {
-        val out = mutableListOf<ProductEntryDialog.Rate>()
+    /**
+     * Every product's default rate, and (in Multiple-rate mode) every rate on it,
+     * in one pass over md_product_rates instead of one query per product.
+     *
+     * Ordered `product_id ASC, "default" DESC, id ASC` - the same tie-break the old
+     * per-product query used (`"default" DESC, id ASC` with a `product_id = ?`
+     * filter) - so the first row seen for a product is exactly the row that query
+     * would have returned.
+     */
+    private fun loadRateMaps(
+        db: android.database.sqlite.SQLiteDatabase,
+        multipleRates: Boolean
+    ): Pair<Map<Long, RateRow>, Map<Long, List<ProductEntryDialog.Rate>>> {
+        val defaults = linkedMapOf<Long, RateRow>()
+        val allByProduct = if (multipleRates) linkedMapOf<Long, MutableList<ProductEntryDialog.Rate>>() else null
         db.query(
             "md_product_rates",
-            arrayOf("rate_name", "rate", "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type"),
-            "product_id = ?", arrayOf(productId),
-            null, null, "\"default\" DESC, id ASC"
+            arrayOf(
+                "product_id", "rate_name", "rate", "cgst_rate", "sgst_rate",
+                "vat_rate", "discount", "discount_type", "unit_id"
+            ),
+            null, null, null, null, "product_id ASC, \"default\" DESC, id ASC"
         ).use { c ->
-            var i = 1
             while (c.moveToNext()) {
-                out.add(
-                    ProductEntryDialog.Rate(
-                        name = c.getString(0)?.takeIf { it.isNotBlank() } ?: "Rate ${i}",
-                        rate = if (c.isNull(1)) 0.0 else c.getDouble(1),
-                        cgst = if (c.isNull(2)) 0.0 else c.getDouble(2),
-                        sgst = if (c.isNull(3)) 0.0 else c.getDouble(3),
-                        vat = if (c.isNull(4)) 0.0 else c.getDouble(4),
-                        discValue = if (c.isNull(5)) 0.0 else c.getDouble(5),
-                        discType = c.getString(6)
+                if (c.isNull(0)) continue
+                val pid = c.getLong(0)
+                val rate = if (c.isNull(2)) 0.0 else c.getDouble(2)
+                val cgst = if (c.isNull(3)) 0.0 else c.getDouble(3)
+                val sgst = if (c.isNull(4)) 0.0 else c.getDouble(4)
+                val vat = if (c.isNull(5)) 0.0 else c.getDouble(5)
+                val discValue = if (c.isNull(6)) 0.0 else c.getDouble(6)
+                val discType = c.getString(7)
+                val unitId = if (c.isNull(8)) null else c.getLong(8)
+
+                if (!defaults.containsKey(pid)) {
+                    defaults[pid] = RateRow(rate, cgst, sgst, vat, discValue, discType, unitId)
+                }
+                if (allByProduct != null) {
+                    val list = allByProduct.getOrPut(pid) { mutableListOf() }
+                    list.add(
+                        ProductEntryDialog.Rate(
+                            name = c.getString(1)?.takeIf { it.isNotBlank() } ?: "Rate ${list.size + 1}",
+                            rate = rate, cgst = cgst, sgst = sgst, vat = vat,
+                            discValue = discValue, discType = discType
+                        )
                     )
-                )
-                i++
+                }
+            }
+        }
+        return defaults to (allByProduct ?: emptyMap())
+    }
+
+    /** Every unit's symbol and fraction flag, read once rather than a query per
+     *  product - md_units is a short master list, not something worth asking
+     *  again for every row that names one. */
+    private fun loadUnitCache(db: android.database.sqlite.SQLiteDatabase): Map<Long, Pair<String, Boolean>> {
+        val out = mutableMapOf<Long, Pair<String, Boolean>>()
+        db.query(
+            "md_units", arrayOf("id", "unit_symbol", "fraction_flag", "unit_name"),
+            null, null, null, null, null
+        ).use { c ->
+            while (c.moveToNext()) {
+                // Resolved the way the printed bill resolves it, so the screen and
+                // the slip never name the same unit differently.
+                out[c.getLong(0)] = com.example.synergic_pos_offline.database.UnitDao
+                    .shortNameOf(c.getString(1), c.getString(3)) to (c.getInt(2) == 1)
             }
         }
         return out
@@ -981,14 +947,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // nothing about which products would show: [allSorted] is already exactly
         // this view, kept ready rather than re-filtered and re-sorted from the whole
         // catalogue on every one of them - see its own note.
-        if (activeCategory == "All" && query.isEmpty()) {
+        if (activeCategory == "All" && queryId.isEmpty() && queryName.isEmpty()) {
             filteredProducts.addAll(allSorted)
         } else {
             val matching = menu.filter { p ->
                 (activeCategory == "All" || p.categoryId == activeCategoryId) &&
-                    // Name, SKU (serial number), and barcode only - no HSN.
-                    (query.isEmpty() || p.name.contains(query, true) ||
-                        p.sku.contains(query) || p.barcode.contains(query))
+                    // The two boxes narrow the shelf TOGETHER rather than as
+                    // alternatives: each only constrains anything while it holds
+                    // text, so leaving one empty is the same as not having typed
+                    // into it. Barcode matches in both, since a scan is not
+                    // something the operator chose a box for.
+                    (queryId.isEmpty() || p.sku.contains(queryId) || p.barcode.contains(queryId)) &&
+                    (queryName.isEmpty() || p.name.contains(queryName, true) || p.barcode.contains(queryName))
             }
             // UNDER "ALL", THE SHELF IS GROUPED BY CATEGORY - in the tab order.
             //
@@ -1065,6 +1035,82 @@ class PosBillingFragment : Fragment(), TitledScreen {
         return true
     }
 
+    /**
+     * Wires one of the two search boxes: its own suggestion dropdown, its own gun
+     * detection (see [ScanState]) and its own text watcher, feeding [onQueryChanged]
+     * so [applyFilter] learns that this box's own query moved.
+     *
+     * Everything past that is identical for both boxes - a picked suggestion or a
+     * resolved scan adds the same product the same way whichever box it came
+     * through, which is why this is written once and called twice.
+     */
+    private fun wireSearchField(
+        field: TextInputEditText,
+        onQueryChanged: (String) -> Unit
+    ): SearchSuggestions {
+        val accent = ThemeManager.getThemeColor(requireContext())
+        val box = SearchSuggestions(requireContext(), field, accent) { picked ->
+            // Picking a suggestion does exactly what tapping its tile does: through
+            // showProductDialog, which is where App Settings' Direct Add to Cart is
+            // read. On, the item goes straight into the cart at its default rate and
+            // no popup opens; off, the rate/quantity popup opens as it always did.
+            menu.firstOrNull { it.id == picked.id }?.let { p ->
+                showProductDialog(p)
+                // Then empty the box, which is what makes it a flow rather than one
+                // lookup - unless it was refused: an out-of-stock product is turned
+                // away with a toast and nothing is added, so the query stays up to
+                // be corrected or retried rather than being wiped for no result.
+                if (p.stock != "out") field.setText("")
+            }
+        }
+        // A scanned barcode that names one product goes STRAIGHT onto the bill: one
+        // line, at its own rate, no list to pick from and no popup to dismiss - the
+        // gun already named one product exactly. Posted, because this fires from
+        // inside the box's own text watcher and its first act is to empty that box.
+        box.onExactCode = { scanned ->
+            menu.firstOrNull { it.id == scanned.id }?.let { p ->
+                field.post { field.setText(""); directAddScanned(p) }
+            }
+        }
+        field.addTextChangedListener(simpleWatcher {
+            onQueryChanged(it)
+            applyFilter()
+            // Suggested from the WHOLE shelf, not the open category: someone who
+            // types a product name has named the product, and hiding it because a
+            // different category is selected would answer a question they did not
+            // ask.
+            box.update(it, menu.map(::suggestionOf))
+        })
+        // The gun, read before the field: see attachScanner/ScanState. Everything
+        // past this point is for a person typing - a scan never reaches any of it.
+        attachScanner(field)
+        // The keyboard's Search key, and the Enter a hardware scanner sends after a
+        // barcode: the query is finished either way, so the keyboard goes and the
+        // shelf - filtered to what was asked for - is left uncovered.
+        field.setOnEditorActionListener { _, actionId, event ->
+            val done = actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
+                event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER
+            if (done) {
+                box.dismiss()
+                // A scanner ends every barcode with Enter, which makes this the one
+                // moment the query is KNOWN to be finished - and the safety net for
+                // every scan the per-keystroke path could not recognise: a barcode
+                // shorter than SCAN_MIN, or a product whose bar_code column is empty
+                // and is only findable by its SKU. Matching a SKU is safe here in a
+                // way it is not while typing, because Enter is a deliberate "resolve
+                // this code", not a character on the way to a name.
+                //
+                // Harmless after a scan the keystroke path already caught: it
+                // emptied the box, so there is no code left here to resolve twice.
+                if (addScannedCode(field.text?.toString().orEmpty())) field.setText("")
+                box.hideKeyboard()
+            }
+            done
+        }
+        return box
+    }
+
     /** Adds [qty] units of [p] at [rate]. Merges with an existing line only when
      *  the same product is already in the cart at the same rate. */
     // ---- Barcode gun: caught before the search box ever sees it ----------------
@@ -1087,20 +1133,91 @@ class PosBillingFragment : Fragment(), TitledScreen {
     // character of any burst is always let through, and only a follow-on faster than
     // a human hand switches this on.
 
-    private val scanBuffer = StringBuilder()
-    private var lastKeyTime = 0L
-    private var scanning = false
+    /** Shared clock for both boxes' flush timers - a handler posts callbacks tied
+     *  to its own Runnable, so one clock serving two [ScanState]s is safe. */
     private val scanIdle = android.os.Handler(android.os.Looper.getMainLooper())
-    private var scanFlush: Runnable? = null
 
     /**
-     * Reads the gun straight off the key stream, so the code never reaches the field.
+     * One box's own gun-detection state - a buffer, a clock and a flag, kept apart
+     * from the other box's so a scan landing in the ID field and one landing in the
+     * Name field never step on each other's burst.
      *
-     * Returns true for the events it swallows. The first key of a burst is always
-     * passed through, because at that point it is indistinguishable from someone
-     * typing; when the next one arrives too fast to be a hand, the field is emptied of
-     * it and the buffer - which has been keeping it all along - carries on.
+     * Reads the gun straight off the key stream, so the code never reaches the field.
+     * [onKeyDown] returns true for the events it swallows. The first key of a burst
+     * is always passed through, because at that point it is indistinguishable from
+     * someone typing; when the next one arrives too fast to be a hand, the field is
+     * emptied of it and the buffer - which has been keeping it all along - carries on.
      */
+    private inner class ScanState(private val field: TextInputEditText) {
+        private val scanBuffer = StringBuilder()
+        private var lastKeyTime = 0L
+        private var scanning = false
+        private var scanFlush: Runnable? = null
+
+        fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+            if (keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+            ) {
+                // The gun's terminator. Only ours to act on if we were mid-scan;
+                // otherwise it is the operator pressing Enter and belongs to the
+                // editor-action handler.
+                return finishScan()
+            }
+
+            val ch = event.unicodeChar
+            if (ch == 0) return false
+
+            val gap = event.eventTime - lastKeyTime
+            lastKeyTime = event.eventTime
+            scheduleScanFlush()
+
+            if (gap <= SCAN_GAP_MS && scanBuffer.isNotEmpty()) {
+                // Too fast for a hand: this is a gun, and the burst started one
+                // character ago - take that one back out of the field.
+                if (!scanning) { scanning = true; field.setText("") }
+                scanBuffer.append(ch.toChar())
+                return true
+            }
+
+            // First key of a burst, or a human pace: keep it, show it, and wait to
+            // see what follows.
+            scanBuffer.setLength(0)
+            scanBuffer.append(ch.toChar())
+            scanning = false
+            return false
+        }
+
+        /**
+         * Resolves whatever the gun has spelled out. Returns whether it handled it.
+         *
+         * Guns that send no terminator are covered by [scheduleScanFlush], which
+         * calls this once the keys stop; the buffer is cleared either way, so a
+         * code cannot be resolved twice or bleed into the next scan.
+         */
+        fun finishScan(): Boolean {
+            scanFlush?.let { scanIdle.removeCallbacks(it) }
+            val code = scanBuffer.toString()
+            scanBuffer.setLength(0)
+            val wasScanning = scanning
+            scanning = false
+            if (!wasScanning || code.length < SearchSuggestions.SCAN_MIN) return false
+            field.setText("")
+            // Not found is worth saying out loud: the code was swallowed, so a
+            // silent failure would leave the operator with a beep, an unchanged
+            // bill and no idea which of the two happened.
+            if (!addScannedCode(code)) toast("No product with code $code")
+            return true
+        }
+
+        /** Resolves a scan that stopped without an Enter, shortly after the keys stop. */
+        private fun scheduleScanFlush() {
+            scanFlush?.let { scanIdle.removeCallbacks(it) }
+            val flush = Runnable { if (scanning) finishScan() }
+            scanFlush = flush
+            scanIdle.postDelayed(flush, SCAN_FLUSH_MS)
+        }
+    }
+
     private fun attachScanner(etSearch: TextInputEditText) {
         // FOCUS WITHOUT THE KEYBOARD.
         //
@@ -1124,73 +1241,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // as quiet as the last. Without this, one tap to type would leave the keyboard
         // arriving on every scan for the rest of the session.
         etSearch.setOnFocusChangeListener { _, hasFocus ->
-            if (!hasFocus) { etSearch.showSoftInputOnFocus = false; suggestions?.dismiss() }
+            if (!hasFocus) { etSearch.showSoftInputOnFocus = false; dismissSuggestions() }
         }
 
+        val state = ScanState(etSearch)
         etSearch.setOnKeyListener { _, keyCode, event ->
             if (event.action != android.view.KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-
-            if (keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
-                keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
-            ) {
-                // The gun's terminator. Only ours to act on if we were mid-scan;
-                // otherwise it is the operator pressing Enter and belongs to the
-                // editor-action handler.
-                return@setOnKeyListener finishScan(etSearch)
-            }
-
-            val ch = event.unicodeChar
-            if (ch == 0) return@setOnKeyListener false
-
-            val gap = event.eventTime - lastKeyTime
-            lastKeyTime = event.eventTime
-            scheduleScanFlush(etSearch)
-
-            if (gap <= SCAN_GAP_MS && scanBuffer.isNotEmpty()) {
-                // Too fast for a hand: this is a gun, and the burst started one
-                // character ago - take that one back out of the field.
-                if (!scanning) { scanning = true; etSearch.setText("") }
-                scanBuffer.append(ch.toChar())
-                return@setOnKeyListener true
-            }
-
-            // First key of a burst, or a human pace: keep it, show it, and wait to see
-            // what follows.
-            scanBuffer.setLength(0)
-            scanBuffer.append(ch.toChar())
-            scanning = false
-            false
+            state.onKeyDown(keyCode, event)
         }
-    }
-
-    /**
-     * Resolves whatever the gun has spelled out. Returns whether it handled the event.
-     *
-     * Guns that send no terminator are covered by [scheduleScanFlush], which calls
-     * this once the keys stop; the buffer is cleared either way, so a code cannot be
-     * resolved twice or bleed into the next scan.
-     */
-    private fun finishScan(etSearch: TextInputEditText): Boolean {
-        scanFlush?.let { scanIdle.removeCallbacks(it) }
-        val code = scanBuffer.toString()
-        scanBuffer.setLength(0)
-        val wasScanning = scanning
-        scanning = false
-        if (!wasScanning || code.length < SearchSuggestions.SCAN_MIN) return false
-        etSearch.setText("")
-        // Not found is worth saying out loud: the code was swallowed, so a silent
-        // failure would leave the operator with a beep, an unchanged bill and no
-        // idea which of the two happened.
-        if (!addScannedCode(code)) toast("No product with code $code")
-        return true
-    }
-
-    /** Resolves a scan that stopped without an Enter, shortly after the keys stop. */
-    private fun scheduleScanFlush(etSearch: TextInputEditText) {
-        scanFlush?.let { scanIdle.removeCallbacks(it) }
-        val flush = Runnable { if (scanning) finishScan(etSearch) }
-        scanFlush = flush
-        scanIdle.postDelayed(flush, SCAN_FLUSH_MS)
     }
 
     /**
@@ -1302,15 +1360,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
     }
 
     /**
-     * Puts the product grid back to "All Items" with an empty search box.
+     * Puts the product grid back to "All Items" with both search boxes empty.
      *
-     * The search text, the active category and the highlighted category chip are
-     * three separate pieces of state that have to move together; every caller that
-     * wants a clean grid goes through here so none of them can drift apart.
+     * The search text (both boxes' worth), the active category and the
+     * highlighted category chip are pieces of state that have to move together;
+     * every caller that wants a clean grid goes through here so none of them can
+     * drift apart.
      */
     private fun resetBrowsing() {
-        query = ""
-        view?.findViewById<TextInputEditText>(R.id.etSearch)?.setText("")
+        queryId = ""
+        queryName = ""
+        view?.findViewById<TextInputEditText>(R.id.etSearchId)?.setText("")
+        view?.findViewById<TextInputEditText>(R.id.etSearchName)?.setText("")
         activeCategory = "All"
         activeCategoryId = null
         categoryAdapter.notifyDataSetChanged()
@@ -1987,9 +2048,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
      *
      * Beyond emptying the cart, this reloads the catalogue and its photos and puts
      * the browsing state back to "All". The fragment survives while checkout sits on
-     * top of it, so [query] and [activeCategory] would otherwise still be holding
-     * the last sale's filter while the search box - rebuilt with the view - looks
-     * empty, leaving most of the grid mysteriously missing.
+     * top of it, so [queryId], [queryName] and [activeCategory] would otherwise
+     * still be holding the last sale's filter while the search boxes - rebuilt with
+     * the view - look empty, leaving most of the grid mysteriously missing.
      *
      * Held sales are deliberately untouched: they live on [CheckoutSession] and a
      * bill parked earlier is still parked.
@@ -2493,9 +2554,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
             val cat = categories[position]
             val accent = ThemeManager.getThemeColor(holder.itemView.context)
             val selected = cat == activeCategory
+            // Every tab filled in the theme colour; the active one filled yellowish
+            // instead, so it stands out on its own rather than as a shade of the
+            // rest. The underline strip below the text is filled the same, so the
+            // whole tab reads as one solid block.
+            val fill = if (selected) ACTIVE_TAB_COLOR else accent
             holder.tv.text = cat
-            holder.tv.setTextColor(if (selected) accent else Color.parseColor("#8A8A8A"))
-            holder.underline.setBackgroundColor(if (selected) accent else Color.TRANSPARENT)
+            holder.tv.setTextColor(Color.WHITE)
+            holder.tv.setBackgroundColor(fill)
+            holder.underline.setBackgroundColor(fill)
             holder.itemView.setOnClickListener {
                 activeCategory = cat
                 activeCategoryId = if (cat == "All") null else categoryItems.find { it.name == cat }?.id
@@ -2506,6 +2573,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         override fun getItemCount() = categories.size
     }
+
+    /** The active category tab's own fill - a warm gold, not derived from the
+     *  theme colour, so the pressed-in tab reads the same on every theme. */
+    private val ACTIVE_TAB_COLOR = 0xFFFFB300.toInt()
 
     private inner class ProductAdapter : RecyclerView.Adapter<ProductAdapter.VH>() {
         inner class VH(view: View) : RecyclerView.ViewHolder(view) {

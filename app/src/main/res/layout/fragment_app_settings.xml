@@ -153,7 +153,8 @@
                     android:text="RESTAURANT" android:textSize="12sp" android:letterSpacing="0.08"
                     android:textStyle="bold" android:textColor="@color/primary_blue" />
 
-                <!-- Coupon Mode -->
+                <!-- Coupon Mode - commented out, not removed; we may need it back.
+                     See AppSettingsFragment's storedCouponMode note.
                 <LinearLayout style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">
                         <TextView style="@style/BillSettingTitle" android:text="Coupon Mode" />
@@ -164,6 +165,7 @@
                 </LinearLayout>
 
                 <View style="@style/BillSettingDivider" />
+                -->
 
                 <!-- KOT -->
                 <LinearLayout style="@style/BillSettingRow">
