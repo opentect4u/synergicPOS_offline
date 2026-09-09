@@ -205,7 +205,25 @@ class PeriodReportRenderer(context: Context) {
          * declared in any of them. Naming a column that turns out to hold a figure
          * costs nothing - a cell with no letters in it comes back untouched.
          */
-        val nameColumns: Set<Int> = emptySet()
+        val nameColumns: Set<Int> = emptySet(),
+        /**
+         * A small second table set at the top of the summary, before the plain
+         * totals - its own header row and a row per line, measured and drawn with
+         * the identical [tableRow]/[measureTable] the report's own table above
+         * uses. Null where a report has nothing that reads as a table of its own
+         * within the summary.
+         *
+         * For a total that is itself a breakdown across a few figures - a
+         * counter's own bills/tax/discount/amount, printed the same way the
+         * report's rows are rather than as a run of "LABEL : value" lines, which
+         * is how a stray subtotal like it used to have to be said one figure at a
+         * time. The first column's header is typically blank, since what it holds
+         * is not the same thing down every row (a counter's name), not a heading
+         * the way the rest of the row is.
+         */
+        val summaryColumns: List<String>? = null,
+        /** Every row of [summaryColumns]' table, in its columns. */
+        val summaryRows: List<List<String>> = emptyList()
     )
 
     /**
@@ -492,7 +510,8 @@ class PeriodReportRenderer(context: Context) {
 
             // A report whose total is a row of the table has nothing to put here, and
             // the whole block comes off rather than printing an empty heading.
-            val hasSummary = content.summary.isNotEmpty() || content.total != null
+            val hasSummary = content.summary.isNotEmpty() || content.total != null ||
+                content.summaryRows.isNotEmpty()
             listOf(R.id.llPeriodSummaryBlock, R.id.tvPeriodSummaryRule).forEach {
                 view.findViewById<View>(it).visibility = if (hasSummary) View.VISIBLE else View.GONE
             }
@@ -500,6 +519,18 @@ class PeriodReportRenderer(context: Context) {
 
             val summary = view.findViewById<LinearLayout>(R.id.llPeriodSummary)
             summary.removeAllViews()
+            // The summary's own small table, first - measured and drawn exactly the
+            // way the report's own table above is, so a counter's bills/tax/discount/
+            // amount reads as a second, shorter version of the same table rather than
+            // a run of "LABEL : value" lines it would otherwise have to be broken
+            // into one figure at a time.
+            val summaryColumns = content.summaryColumns
+            if (summaryColumns != null && content.summaryRows.isNotEmpty()) {
+                val summaryMetrics = measureTable(listOf(summaryColumns) + content.summaryRows, paperDots)
+                summary.addView(tableRow(summaryColumns, summaryMetrics, bold = true))
+                content.summaryRows.forEach { summary.addView(tableRow(it, summaryMetrics)) }
+                summary.addView(rule())
+            }
             // A classic slip's totals are one plain list: same weight, same size, the
             // last line no different from the first. "TOTAL AMOUNT :" already says
             // which one it is, and a column of figures has to stay an even column to

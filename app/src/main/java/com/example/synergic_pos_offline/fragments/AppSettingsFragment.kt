@@ -36,11 +36,17 @@ class AppSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swBiometricLogin: SwitchMaterial
     private lateinit var swShift: SwitchMaterial
     private lateinit var cardRestaurantSettings: View
-    private lateinit var swCouponMode: SwitchMaterial
+    // Coupon Mode is commented out rather than removed - we may need it back. Its
+    // switch, row and autosave wiring are all commented below; [storedCouponMode]
+    // keeps whatever value is already saved surviving every other switch's
+    // autosave in the meantime, the same way BillSettingsFragment.currentFormat
+    // carries a value this screen no longer edits.
+    // private lateinit var swCouponMode: SwitchMaterial
     private lateinit var swKot: SwitchMaterial
     private lateinit var swTableMerge: SwitchMaterial
     private lateinit var swTableShift: SwitchMaterial
     private lateinit var swTableSplit: SwitchMaterial
+    private var storedCouponMode = false
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -60,7 +66,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         swShift = view.findViewById(R.id.swShift)
         bindBiometric(view)
         cardRestaurantSettings = view.findViewById(R.id.cardRestaurantSettings)
-        swCouponMode = view.findViewById(R.id.swCouponMode)
+        // swCouponMode = view.findViewById(R.id.swCouponMode)
         swKot = view.findViewById(R.id.swKot)
         swTableMerge = view.findViewById(R.id.swTableMerge)
         swTableShift = view.findViewById(R.id.swTableShift)
@@ -80,7 +86,7 @@ class AppSettingsFragment : Fragment(), TitledScreen {
             ::onSave,
             swManualRate, swCashReception, swPaymentMode, swOtherCharges, swParcelCharge,
             swDirectAddToCart, swBiometricLogin, swShift,
-            swCouponMode, swKot, swTableMerge, swTableShift, swTableSplit
+            /* swCouponMode, */ swKot, swTableMerge, swTableShift, swTableSplit
         )
 
         // Theme accent for switches, header and button.
@@ -99,7 +105,8 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         swDirectAddToCart.isChecked = s.directAddToCart
         swBiometricLogin.isChecked = s.biometricLogin
         swShift.isChecked = s.shift
-        swCouponMode.isChecked = s.couponMode
+        // swCouponMode.isChecked = s.couponMode
+        storedCouponMode = s.couponMode
         swKot.isChecked = s.kot
         swTableMerge.isChecked = s.tableMerge
         swTableShift.isChecked = s.tableShift
@@ -115,7 +122,8 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         directAddToCart = swDirectAddToCart.isChecked,
         biometricLogin = swBiometricLogin.isChecked,
         shift = swShift.isChecked,
-        couponMode = swCouponMode.isChecked,
+        // couponMode = swCouponMode.isChecked,
+        couponMode = storedCouponMode,
         kot = swKot.isChecked,
         tableMerge = swTableMerge.isChecked,
         tableShift = swTableShift.isChecked,
