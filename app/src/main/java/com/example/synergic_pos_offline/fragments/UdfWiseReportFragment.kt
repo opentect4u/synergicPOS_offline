@@ -92,6 +92,8 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
         downloads = ReportDownloads.wire(
             view, requireContext(), accent, { if (isAdded) toast(it) }
         ) { report?.let { sheetOf(it) } }
+
+        com.example.synergic_pos_offline.utils.ReportSummaryFold.wire(view)
     }
 
     // ---- Generating ----------------------------------------------------------
@@ -183,6 +185,8 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
         if (r.totalOtherCharges > 0.005) summary.addView(summaryRow("Extra Charges", money(r.totalOtherCharges)))
         if (r.totalParcelCharge > 0.005) summary.addView(summaryRow("Parcel Charge", money(r.totalParcelCharge)))
         summary.addView(summaryRow("Bill Amount", money(r.totalBillAmount), emphasised = true))
+        com.example.synergic_pos_offline.utils.ReportSummaryFold.setTotal(root, money(r.totalBillAmount))
+        com.example.synergic_pos_offline.utils.ReportSummaryFold.collapse(root)
     }
 
     /** The screen as a downloadable table: the columns and rows it is drawing. */

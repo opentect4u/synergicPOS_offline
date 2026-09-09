@@ -90,6 +90,8 @@ class CalculatorReportFragment : Fragment(), TitledScreen {
         downloads = ReportDownloads.wire(
             view, requireContext(), accent, { if (isAdded) toast(it) }
         ) { report?.let { sheetOf(it) } }
+
+        com.example.synergic_pos_offline.utils.ReportSummaryFold.wire(view)
     }
 
     private fun generate() {
@@ -145,6 +147,8 @@ class CalculatorReportFragment : Fragment(), TitledScreen {
         summary.removeAllViews()
         summary.addView(summaryRow("Total Bills", r.rows.size.toString()))
         summary.addView(summaryRow("Total Amount", money(r.totalAmount), emphasised = true))
+        com.example.synergic_pos_offline.utils.ReportSummaryFold.setTotal(root, money(r.totalAmount))
+        com.example.synergic_pos_offline.utils.ReportSummaryFold.collapse(root)
     }
 
     /** The screen as a downloadable table: the columns and rows it is drawing. */

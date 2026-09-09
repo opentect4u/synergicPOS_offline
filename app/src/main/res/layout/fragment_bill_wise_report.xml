@@ -281,14 +281,48 @@
                     android:orientation="vertical"
                     android:padding="12dp">
 
-                    <TextView
-                        android:id="@+id/tvSummaryTitle"
+                    <!-- Folded shut by default - see ReportSummaryFold. The header
+                         carries the total while it is; tapping it (or the chevron)
+                         unfolds llReportSummary below to the full breakdown. -->
+                    <LinearLayout
+                        android:id="@+id/llReportSummaryHeader"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="SUMMARY"
-                        android:textSize="11sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_secondary" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true">
+
+                        <TextView
+                            android:id="@+id/tvSummaryTitle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="SUMMARY"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_secondary" />
+
+                        <!-- Shown only while the detail below is folded shut. -->
+                        <TextView
+                            android:id="@+id/tvReportSummaryTotal"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="6dp"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_main" />
+
+                        <ImageButton
+                            android:id="@+id/btnToggleReportSummary"
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:src="@drawable/ic_expand_less"
+                            app:tint="@color/text_secondary"
+                            android:contentDescription="Expand summary" />
+                    </LinearLayout>
 
                     <!-- One row per figure, built by the fragment from the same
                          report object the rows and the printout come from. -->
@@ -297,7 +331,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:orientation="vertical" />
+                        android:orientation="vertical"
+                        android:visibility="gone" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
         </LinearLayout>

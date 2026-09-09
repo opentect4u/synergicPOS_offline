@@ -1,6 +1,8 @@
 package com.example.synergic_pos_offline.fragments
 
+import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
@@ -47,6 +49,7 @@ import com.google.android.material.textfield.TextInputEditText
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 import kotlin.math.min
 import com.example.synergic_pos_offline.utils.Quantity
 
@@ -239,6 +242,22 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     /** Product photos, decoded once per catalogue load and keyed by product id. */
     private val photoCache = mutableMapOf<String, android.graphics.Bitmap>()
+
+    /**
+     * Reads the catalogue - every product's rate/stock and its photo, decoded -
+     * off the main thread. See [loadProductsAsync]. One thread, so a second load
+     * queues behind a first still running rather than the two racing the
+     * database or [menu] itself.
+     */
+    private val catalogExecutor = Executors.newSingleThreadExecutor()
+
+    /**
+     * Bumped on every [loadProductsAsync] call. A result that comes back for a
+     * generation other than the current one is a stale load that a newer one
+     * has already overtaken - [startNewSale] calling this again before a first
+     * read has finished, say - and is dropped rather than applied over it.
+     */
+    private var catalogLoadGeneration = 0
 
     /**
      * The shop's own product names for the master's current language, read once per
@@ -553,9 +572,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // when checkout pops back, and the sale must survive that unless the operator
         // chose "Start new sale" (which resets via startNewSale()).
         setCustomer(customerName, customerPhone, currentCustomerData)
-        loadCategoriesAndProducts()
+        // The catalogue read (and its photo decoding) happens off the main
+        // thread now - see loadProductsAsync - so the grid fills in a moment
+        // after the rest of the screen rather than the screen waiting on it.
+        // applyFilter is what actually shows the grid, so it moves into the
+        // completion callback rather than running here against a menu that has
+        // not been read yet.
+        loadCategoriesAndProducts { applyFilter() }
         updateHeldButton()
-        applyFilter()
         updateTotals()
 
         // Theme everything, THEN restore each button's intended look
@@ -722,11 +746,23 @@ class PosBillingFragment : Fragment(), TitledScreen {
         suggestionsId = null
         suggestionsName?.release()
         suggestionsName = null
+        // A load already queued or running has nothing left to apply its result
+        // to; shutdownNow() drops what is queued and interrupts what is running
+        // rather than leaving either to finish into a torn-down screen.
+        catalogExecutor.shutdownNow()
     }
 
     // ---- Filtering / cart --------------------------------------------------
 
-    private fun loadCategoriesAndProducts() {
+    /**
+     * Rebuilds the category tabs, then reads the catalogue behind them.
+     *
+     * The tabs are cheap - one small table - and are rebuilt here, synchronously,
+     * same as always. The catalogue behind them is the expensive part on a shop
+     * of any size; see [loadProductsAsync] for why that half runs off the main
+     * thread, and [onLoaded] for what a caller does once it lands.
+     */
+    private fun loadCategoriesAndProducts(onLoaded: () -> Unit = {}) {
         val categoryDao = CategoryDao(requireContext())
         val dbCategories = categoryDao.getAll()
 
@@ -753,12 +789,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         }
 
         categoryAdapter.notifyDataSetChanged()
-
-        // Load products from hardcoded list but map to database categories
-        // In a real scenario, this would query md_products from database
-        // For now, maintaining the existing product list structure
-        loadProductsFromDatabase()
-        rebuildAllSorted()
+        loadProductsAsync(onLoaded)
     }
 
     /** Recomputes [allSorted] - called wherever [menu] or the category order changes. */
@@ -767,27 +798,88 @@ class PosBillingFragment : Fragment(), TitledScreen {
         allSorted = menu.sortedBy { rank[it.category] ?: Int.MAX_VALUE }
     }
 
-    private fun loadProductsFromDatabase() {
-        menu.clear()
-        val helper = DatabaseHelper.getInstance(requireContext())
+    /** What reading the catalogue off the main thread comes back with - see
+     *  [loadProductsAsync] and [buildCatalogue]. */
+    private data class CatalogueResult(
+        val products: List<Product>,
+        val photos: Map<String, Bitmap>,
+        val regionalNames: Map<String, String>,
+        val stockTrackingOn: Boolean
+    )
+
+    /**
+     * Reads every product's rate/stock and decodes every product's photo OFF the
+     * main thread, then applies the result back on it.
+     *
+     * A shop of a couple of thousand products, most carrying a photo, used to do
+     * all of that - the queries [buildCatalogue] still runs, and a
+     * [ImageUtils.decodeThumb] per photo on top of them - synchronously, right
+     * here, before this screen could accept a single tap. That is what a report
+     * of "billing is very slow after loading 2000 items" was: opening the sale
+     * screen (or Start New Sale, which re-reads the same way) froze the whole
+     * app for however long a couple of thousand JPEGs take to decode on this
+     * tablet's CPU. Reading is unavoidably as slow as the catalogue is large;
+     * making the operator's next tap wait behind it was not.
+     *
+     * [categoryItems] is read on the background thread - safe only because it
+     * was just rebuilt, synchronously, immediately above in
+     * [loadCategoriesAndProducts], and nothing touches it again until the
+     * result below is applied back on the main thread. Do not reorder either
+     * without keeping that true.
+     */
+    private fun loadProductsAsync(onLoaded: () -> Unit) {
+        val ctx = requireContext()
+        val generation = ++catalogLoadGeneration
+        val categoriesSnapshot = categoryItems.toList()
+        catalogExecutor.execute {
+            val result = runCatching { buildCatalogue(ctx, categoriesSnapshot) }
+                .onFailure { android.util.Log.e("PosBillingFragment", "Catalogue read failed", it) }
+                .getOrNull()
+            view?.post {
+                // Dropped rather than applied: either this screen is gone, or a
+                // newer load (Start New Sale, most likely) has already started
+                // and this one's result is exactly what that one is about to
+                // overwrite anyway.
+                if (!isAdded || generation != catalogLoadGeneration) return@post
+                if (result != null) {
+                    menu.clear()
+                    menu.addAll(result.products)
+                    photoCache.clear()
+                    photoCache.putAll(result.photos)
+                    regionalNames = result.regionalNames
+                    stockTrackingOn = result.stockTrackingOn
+                }
+                rebuildAllSorted()
+                onLoaded()
+            }
+        }
+    }
+
+    /**
+     * The actual catalogue read - everything [loadProductsAsync] runs off the
+     * main thread. Touches [ctx] and the database only; nothing here reads or
+     * writes a fragment field, which is what makes it safe to run on another
+     * thread at all.
+     */
+    private fun buildCatalogue(ctx: Context, categoryItems: List<CategoryItem>): CatalogueResult {
+        val menu = mutableListOf<Product>()
+        val photoCache = mutableMapOf<String, Bitmap>()
+        val helper = DatabaseHelper.getInstance(ctx)
         val db = helper.readableDatabase
         // Multiple item-rate mode: the product popup offers a rate dropdown.
-        val multipleRates = SettingsCache.value(requireContext(), "G", "Item Rate") == "M"
+        val multipleRates = SettingsCache.value(ctx, "G", "Item Rate") == "M"
 
-        // Query products with their rates — store-scoped like the Products master.
-        photoCache.clear()
         // One query for the whole catalogue's regional names, same as the Products
         // master's own table - see [RegionalName.map].
-        regionalNames = com.example.synergic_pos_offline.utils.RegionalName.map(requireContext())
+        val regionalNames = com.example.synergic_pos_offline.utils.RegionalName.map(ctx)
         val store = currentStoreId(db)
 
         // Stock is read once for the whole catalogue rather than per tile, and only
         // when it is being tracked - with the flag off the sale screen never asks the
         // stock tables anything, and every tile stays as it was before they existed.
-        val stockOn = GeneralSettingsDao.isStockEnabled(requireContext())
-        stockTrackingOn = stockOn
-        val levels = if (stockOn) StockDao(requireContext()).levels(store?.toInt() ?: 0) else emptyMap()
-        val productSort = GeneralSettingsDao.productSort(requireContext())
+        val stockOn = GeneralSettingsDao.isStockEnabled(ctx)
+        val levels = if (stockOn) StockDao(ctx).levels(store?.toInt() ?: 0) else emptyMap()
+        val productSort = GeneralSettingsDao.productSort(ctx)
 
         // Every product's rate and every unit, read once each rather than a rate
         // query and a unit query PER PRODUCT - see [loadRateMaps] and
@@ -861,9 +953,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 menu.add(product)
             }
         }
+        return CatalogueResult(menu, photoCache, regionalNames, stockOn)
     }
 
-    /** One product's default rate row - the fields [loadProductsFromDatabase] used
+    /** One product's default rate row - the fields [buildCatalogue] used
      *  to read with a per-product query. */
     private data class RateRow(
         val rate: Double, val cgst: Double, val sgst: Double, val vat: Double,
@@ -2117,8 +2210,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun startNewSale() {
         clearSale()
 
-        // Re-read the masters so anything edited mid-sale shows up, photos included.
-        loadCategoriesAndProducts()
+        // Re-read the masters so anything edited mid-sale shows up, photos
+        // included - off the main thread now, see loadProductsAsync. applyFilter
+        // runs again once that lands, on top of resetBrowsing's own call right
+        // below, so the grid ends up showing the FRESH catalogue rather than
+        // whatever resetBrowsing had to work with a moment earlier.
+        loadCategoriesAndProducts { applyFilter() }
 
         resetBrowsing()
         updateHeldButton()

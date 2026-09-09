@@ -117,6 +117,8 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         downloads = ReportDownloads.wire(
             view, requireContext(), accent, { if (isAdded) toast(it) }
         ) { report?.let { sheetOf(it) } }
+
+        com.example.synergic_pos_offline.utils.ReportSummaryFold.wire(view)
     }
 
     // ---- Generating ----------------------------------------------------------
@@ -204,6 +206,8 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         // not a figure left dangling under it. See [summaryLines] and [printContent].
         summary.addView(summaryRow("Round Off Amount", money(r.totalRoundOff)))
         summary.addView(summaryRow("Total Amount", money(r.totalAmount), emphasised = true))
+        com.example.synergic_pos_offline.utils.ReportSummaryFold.setTotal(root, money(r.totalAmount))
+        com.example.synergic_pos_offline.utils.ReportSummaryFold.collapse(root)
     }
 
     /**
