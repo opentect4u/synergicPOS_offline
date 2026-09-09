@@ -914,36 +914,14 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         return if (discountPreTax && sub > 0) gross / sub * discountAmt() else 0.0
     }
 
-    private fun cgstAmt() = lines.sumOf { lineTax(it).cgst + chargeTaxOf(it).cgst }
-    private fun sgstAmt() = lines.sumOf { lineTax(it).sgst + chargeTaxOf(it).sgst }
-    private fun vatAmt() = lines.sumOf { lineTax(it).vat + chargeTaxOf(it).vat }
+    // The lines' own tax only - the shop's extra charges (Service, Parcel, or any
+    // other) are never taxed, whatever rate the goods on this bill carry. They
+    // join the bill at their own flat value via [extraChargesTotal], added
+    // untaxed - see [taxedTotal].
+    private fun cgstAmt() = lines.sumOf { lineTax(it).cgst }
+    private fun sgstAmt() = lines.sumOf { lineTax(it).sgst }
+    private fun vatAmt() = lines.sumOf { lineTax(it).vat }
     private fun taxableSum() = lines.sumOf { lineTax(it).taxable }
-
-    /**
-     * This line's share of the shop's own extra charges, taxed at the line's own
-     * rate - the same gross-share spread [lineTaxRaw] applies to a pre-tax
-     * whole-bill discount, applied instead to [extraChargesTotal]. Folded into
-     * [cgstAmt]/[sgstAmt]/[vatAmt] rather than kept apart, so the charge's tax
-     * comes out of the bill's existing GST/VAT figure, not a column of its own.
-     *
-     * The charge's own PRINCIPAL is untouched by this - it still joins
-     * [taxedTotal] once, on its own, via [extraChargesTotal], so nothing here is
-     * counted twice.
-     */
-    private fun chargeTaxOf(line: CheckoutSession.Line): LineTax {
-        val principal = extraChargesTotal()
-        val sub = subtotal()
-        if (principal <= 0.0 || sub <= 0.0 || !taxEnabled) {
-            return LineTax(0.0, 0.0, 0.0, 0.0)
-        }
-        val share = line.price * line.qty / sub * principal
-        return LineTax(
-            0.0,
-            GstCalculator.taxAmount(share, line.cgstRate),
-            GstCalculator.taxAmount(share, line.sgstRate),
-            GstCalculator.taxAmount(share, line.vatRate)
-        ).toPaise()
-    }
 
     /** The further amount still owed to lines' own item-wise discount, on top of
      *  [taxableSum]/[cgstAmt]/[sgstAmt]/[vatAmt] - see [lineTax]. Zero unless

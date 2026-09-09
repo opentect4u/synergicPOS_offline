@@ -65,6 +65,7 @@ abstract class CalendarReportFragment : PeriodReportFragment<CalendarReportDao.R
             add("Total CGST" to money(report.totalCgst))
             if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
             if (report.hasVat) add("Total VAT" to money(report.totalVat))
+            add("Total Discount" to money(report.totalDiscount))
             // Shown only where the range actually carried one - a shop that never
             // charges Service or an Extra Charge should not read a zero row saying so.
             if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))

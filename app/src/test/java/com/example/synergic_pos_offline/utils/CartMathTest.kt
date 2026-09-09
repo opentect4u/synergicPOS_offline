@@ -5,12 +5,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * The shop's own extra charges (Service, Packing, Delivery, Parcel Charge) are
- * taxable too, at whatever GST/VAT rate(s) the goods on the bill carry - not a
- * rate of their own. These pin down [CartMath.totals]' own share of that: the
- * charge principal spread across lines by gross share, taxed at each line's own
- * rate, folded into cgst/sgst/vat without ever taxing (or discounting) the
- * charge's principal itself twice.
+ * The shop's own extra charges (Service, Packing, Delivery, Parcel Charge) carry
+ * no tax of their own, whatever GST/VAT rate(s) the goods on the bill carry -
+ * they join the bill once, at their own flat value, and nothing is worked out
+ * against them. These pin down [CartMath.totals]' own share of that: cgst/sgst/vat
+ * are the goods' tax alone, and the charge principal is added to the total
+ * untouched - never taxed, never discounted, never counted twice.
  */
 class CartMathTest {
 
@@ -34,43 +34,41 @@ class CartMathTest {
     )
 
     @Test
-    fun `a single-rate cart taxes the charge at exactly that rate`() {
+    fun `a charge on a single-rate cart adds nothing to cgst or sgst`() {
         // 100 + 200 = 300 subtotal, both lines 2.5% CGST + 2.5% SGST.
         val lines = listOf(
             CartMath.Line(qty = 1.0, rate = 100.0, cgstRate = 2.5, sgstRate = 2.5),
             CartMath.Line(qty = 1.0, rate = 200.0, cgstRate = 2.5, sgstRate = 2.5)
         )
-        // Goods tax: 300 * 5% = 15.00 (7.50 CGST + 7.50 SGST).
-        // Charge: 30.00 principal, taxed at the same 5% = 1.50 (0.75 + 0.75).
+        // Goods tax: 300 * 5% = 15.00 (7.50 CGST + 7.50 SGST). The 30.00 charge on
+        // top of it contributes nothing further - a 40% charge would read the same.
         val totals = CartMath.totals(
             lines, cfg(), GstCalculator.DiscountMode.PERCENT, 0.0,
             charges = listOf(charge(30.0))
         )
-        assertEquals(8.25, totals.cgst, delta)
-        assertEquals(8.25, totals.sgst, delta)
-        assertEquals(16.5, totals.tax, delta)
+        assertEquals(7.5, totals.cgst, delta)
+        assertEquals(7.5, totals.sgst, delta)
+        assertEquals(15.0, totals.tax, delta)
     }
 
     @Test
-    fun `each line's charge share is taxed at its OWN rate, not a blended one`() {
+    fun `a charge on a cart mixing rates still adds nothing to cgst or sgst`() {
         // 100 at 5% (2.5+2.5), 300 at 12% (6+6) - unequal shares AND unequal
-        // rates, so a bug that applies one line's rate to the whole charge, or
-        // averages the two, lands on a different figure than taxing each line's
-        // own share at its own rate.
+        // rates, so a regression that starts spreading the charge across lines
+        // again (by any rate, blended or not) would move this away from the
+        // goods-only figure.
         val lines = listOf(
             CartMath.Line(qty = 1.0, rate = 100.0, cgstRate = 2.5, sgstRate = 2.5),
             CartMath.Line(qty = 1.0, rate = 300.0, cgstRate = 6.0, sgstRate = 6.0)
         )
-        // Charge: 40.00 (10% of 400). Line 1's share (10.00) taxed at 5% = 0.50;
-        // line 2's share (30.00) taxed at 12% = 3.60. Charge tax = 4.10.
-        // Goods tax: 100*5% + 300*12% = 5.00 + 36.00 = 41.00.
-        // Total tax = 45.10, split evenly CGST/SGST since every rate here is.
+        // Goods tax only: 100*5% + 300*12% = 5.00 + 36.00 = 41.00, split evenly
+        // CGST/SGST since every rate here is. The 40.00 charge adds nothing to it.
         val totals = CartMath.totals(
             lines, cfg(), GstCalculator.DiscountMode.PERCENT, 0.0,
             charges = listOf(charge(40.0))
         )
-        assertEquals(22.55, totals.cgst, delta)
-        assertEquals(22.55, totals.sgst, delta)
+        assertEquals(20.5, totals.cgst, delta)
+        assertEquals(20.5, totals.sgst, delta)
     }
 
     @Test
@@ -118,7 +116,7 @@ class CartMathTest {
     }
 
     @Test
-    fun `the charge's principal is added exactly once, never taxed twice into itself`() {
+    fun `the charge's principal is added exactly once, and never taxed`() {
         val lines = listOf(
             CartMath.Line(qty = 1.0, rate = 100.0, cgstRate = 2.5, sgstRate = 2.5),
             CartMath.Line(qty = 1.0, rate = 200.0, cgstRate = 2.5, sgstRate = 2.5)
@@ -130,10 +128,10 @@ class CartMathTest {
         // chargesTotal stays the bare, untaxed figure handed in...
         assertEquals(30.0, totals.chargesTotal, delta)
         // ...and total is built from exactly goods + service + chargesTotal, with
-        // the charge's TAX already inside goods (via the inflated cgst/sgst) -
-        // not a second time via chargesTotal itself.
+        // goods carrying the goods' own tax alone - no charge tax anywhere to
+        // land in it, and none added again via chargesTotal either.
         assertEquals(totals.goods + totals.service + totals.chargesTotal, totals.total, delta)
-        assertEquals(346.5, totals.total, delta)
+        assertEquals(345.0, totals.total, delta)
     }
 
     @Test
@@ -229,11 +227,9 @@ class CartMathTest {
 
     /**
      * The same ₹600 + ₹200 INCLUSIVE cart, 10% bill-wise POST-tax discount, plus a
-     * ₹40 extra charge (5% of the ₹800 subtotal) - printed GRAND TOTAL 762.00,
-     * ₹2.00 too much, because the charge's own GST (5% of ₹40) was folded into
-     * cgst/sgst on top of it. Under MRP (inclusive) Post-Tax a charge is not taxed
-     * at all - its principal joins the total once, untouched, at exactly what it
-     * was configured as.
+     * ₹40 extra charge - its principal joins the total once, untouched, at exactly
+     * what it was configured as, the same as under every other tax setting (see
+     * the class doc).
      */
     @Test
     fun `a charge is not taxed on an inclusive post-tax bill`() {

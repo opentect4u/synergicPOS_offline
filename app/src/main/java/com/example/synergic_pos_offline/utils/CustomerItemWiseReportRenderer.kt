@@ -17,7 +17,8 @@ import java.util.Locale
 /**
  * Renders the Customer Item-Wise Report - a classic slip: machine ID and clock, the
  * date range, the customer's id and name, then a two-line row per product (name +
- * quantity, then amount + SGST + CGST) and the period totals.
+ * quantity, then amount + SGST + CGST, with a further IGST/VAT line of its own
+ * wherever a line actually carried one) and the period totals.
  *
  * Dedicated rather than [PeriodReportRenderer] because of the two-line rows and the
  * left-aligned customer block; it reuses the same receipt scaffolding.
@@ -94,11 +95,18 @@ class CustomerItemWiseReportRenderer(context: Context) {
                 twoCol(ProductName.inPrintLanguage(lang, item.name), qtyFmt(item.qty), bold = false)
             )
             root.addView(threeCol(money(item.amount), money(item.sgst), money(item.cgst), bold = false))
+            // IGST/VAT are a bill-level regime, not a third and fourth column beside
+            // SGST/CGST - most lines carry neither, so each earns its own line only
+            // on the line that actually has one, the same way the screen shows it.
+            if (item.igst > 0.005) root.addView(twoCol("  ${t("IGST")}", money(item.igst), bold = false))
+            if (item.vat > 0.005) root.addView(twoCol("  ${t("VAT")}", money(item.vat), bold = false))
         }
         root.addView(rule())
         root.addView(totalLine(t("TOTAL QTY :"), qtyFmt(report.totalQty)))
         root.addView(totalLine(t("TOTAL SGST:"), money(report.totalSgst)))
         root.addView(totalLine(t("TOTAL CGST:"), money(report.totalCgst)))
+        if (report.hasIgst) root.addView(totalLine(t("TOTAL IGST:"), money(report.totalIgst)))
+        if (report.hasVat) root.addView(totalLine(t("TOTAL VAT :"), money(report.totalVat)))
         root.addView(totalLine(t("TOTAL AMT :"), money(report.totalAmount)))
         root.addView(rule())
         return root

@@ -155,6 +155,7 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
                 add("CGST AMOUNT :" to money(report.totalCgst))
                 if (report.hasIgst) add("IGST AMOUNT :" to money(report.totalIgst))
                 if (report.hasVat) add("VAT AMOUNT  :" to money(report.totalVat))
+                add("DISC. AMOUNT:" to money(report.totalDiscount))
                 if (report.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(report.totalServiceCharge))
                 if (report.totalOtherCharges > 0.005) add("EXTRA CHGS  :" to money(report.totalOtherCharges))
                 if (report.totalParcelCharge > 0.005) add("PARCEL CHG  :" to money(report.totalParcelCharge))

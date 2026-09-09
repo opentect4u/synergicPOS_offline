@@ -226,18 +226,41 @@
                             android:textColor="@color/text_secondary" />
                     </LinearLayout>
 
+                    <!-- A number and its unit, not a fixed list - "5" + "Years" says
+                         something none of 7/15/30/60/90 days ever could. -->
                     <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/tilBackupRetention"
-                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
-                        android:layout_width="150dp"
+                        android:id="@+id/tilBackupRetentionValue"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="64dp"
                         android:layout_height="wrap_content"
                         app:boxCornerRadiusTopStart="12dp"
                         app:boxCornerRadiusTopEnd="12dp"
                         app:boxCornerRadiusBottomStart="12dp"
                         app:boxCornerRadiusBottomEnd="12dp">
 
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etBackupRetentionValue"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center"
+                            android:inputType="number"
+                            android:maxLength="3"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilBackupRetentionUnit"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="118dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+
                         <com.google.android.material.textfield.MaterialAutoCompleteTextView
-                            android:id="@+id/actBackupRetention"
+                            android:id="@+id/actBackupRetentionUnit"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:gravity="center"

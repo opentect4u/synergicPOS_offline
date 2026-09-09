@@ -109,6 +109,37 @@ object MasterData {
             context = context, only = TABLES, nullColumns = STORE_COLUMNS, title = TITLE
         )
 
+    /**
+     * The most exports [FOLDER] is ever left holding.
+     *
+     * [FOLDER] carries no per-day structure the way [AutoBackup]'s own backups do -
+     * one flat folder of files - so the count is of files directly, not of days.
+     */
+    const val MAX_KEPT = 3
+
+    /**
+     * Deletes whichever exports in [FOLDER] are not among the [keep] most recent,
+     * so a shop that exports its catalogue often is not left with every one it
+     * ever took.
+     *
+     * Called after every export, the same as [AutoBackup.pruneToRecentFolders] is
+     * called after every backup - one still on disk a moment ago now makes a
+     * fourth, and the oldest goes to make room for it.
+     *
+     * @return how many files were removed
+     */
+    fun pruneToRecentExports(context: Context, keep: Int = MAX_KEPT): Int {
+        val stale = BackupFiles.list(context, FOLDER).drop(keep)
+        var removed = 0
+        stale.forEach { if (BackupFiles.delete(context, it)) removed++ }
+        if (removed > 0) {
+            android.util.Log.i(
+                "MasterData", "kept the $keep most recent export(s): removed $removed older one(s)"
+            )
+        }
+        return removed
+    }
+
     // ---- Restore --------------------------------------------------------------
 
     /** Whether [head] is a catalogue export rather than a whole-database backup. */

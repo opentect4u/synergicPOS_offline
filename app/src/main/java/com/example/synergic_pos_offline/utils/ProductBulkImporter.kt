@@ -31,19 +31,28 @@ object ProductBulkImporter {
     /**
      * What an import does with the products already on the till.
      *
-     * The Bulk Upload screen only ever asks for [REPLACE] now - an uploaded sheet IS
-     * the product list, and choosing between the two on every upload was a decision
-     * whose wrong answer could not be undone from the till. See
-     * BulkUploadProductFragment.
+     * The Bulk Upload screen asks for [APPEND] now - see its own doc for what that
+     * means for a row whose [ProductCsvTemplate.PRODUCT_ID_COLUMN] names a product
+     * already here. [REPLACE] is kept for a caller that genuinely wants a clean
+     * sweep, but nothing in the app currently asks for it.
      */
     enum class Mode {
         /**
-         * Leaves them alone and adds the sheet's rows alongside.
+         * Merges the sheet into what is already here, rather than replacing it.
          *
-         * No longer offered by the upload screen. Kept because it is the behaviour
-         * anything importing a PART of a catalogue would want, and because the
-         * distinction is what [clearProducts] exists to make - not because a caller
-         * still picks it.
+         * A row is COMMON where its [ProductCsvTemplate.PRODUCT_ID_COLUMN] names a
+         * product this till already has - the shape a sheet takes when it was
+         * downloaded from the Products screen's own export, edited, and brought
+         * back. That product's own row is UPDATED in place - its fields and its
+         * rates become the sheet's - rather than stepping around the taken id into
+         * a duplicate, which is what asking for this mode used to do. Its id, and
+         * every bill, return or stock record that names it, are untouched: nothing
+         * is deleted to make room for it.
+         *
+         * A row naming no id, or an id this till has never used, is UNCOMMON and is
+         * simply added - the sheet's new products, alongside whatever is already
+         * here. A product on the till that the sheet never mentions at all is left
+         * exactly as it is; an Append only ever adds or updates, never removes.
          */
         APPEND,
 
@@ -56,8 +65,10 @@ object ProductBulkImporter {
     }
 
     /**
-     * How an import went: [imported] rows written, [skipped] rows that could not
-     * be, [removed] products a Replace cleared first.
+     * How an import went: [imported] new products written, [replaced] existing
+     * ones matched by id and updated in place instead (see [Mode.APPEND]),
+     * [skipped] rows that could not be written at all, [removed] products a
+     * Replace cleared first.
      *
      * [languageApplied] is what the till's screen language was set to - always
      * something, since [regionalLanguageOf] resolves a blank column to English
@@ -69,6 +80,7 @@ object ProductBulkImporter {
         val imported: Int,
         val skipped: Int,
         val removed: Int = 0,
+        val replaced: Int = 0,
         val languageApplied: String = PrintLanguage.Language.ENGLISH.englishName,
         val languageWarning: String? = null,
         /** Codes or rate ids the sheet named that this till has no row for. */
@@ -187,6 +199,43 @@ object ProductBulkImporter {
     }
 
     /**
+     * What an Append would do to THIS till before it runs - how many sheet rows
+     * update a product already here, and how many are new.
+     *
+     * [toUpdateNames] carries the ones being updated BY NAME, up to [NAMES_LISTED],
+     * for the same reason [replaceCounts] names what a Replace removes: a count
+     * says something is about to change, a name is what lets the operator tell
+     * whether it should. Read against the ROW's own name from the sheet, not the
+     * master's current one, since the sheet's is what it is about to become.
+     */
+    data class MergeCounts(
+        val total: Int,
+        val toUpdate: Int,
+        val toAdd: Int,
+        val toUpdateNames: List<String> = emptyList()
+    )
+
+    /** What an Append (see [Mode.APPEND]) would do to THIS till, before it runs. */
+    fun mergeCounts(context: Context, rows: List<Map<String, String>>): MergeCounts {
+        val db = DatabaseHelper.getInstance(context).readableDatabase
+        var validRows = 0
+        var toUpdate = 0
+        val toUpdateNames = mutableListOf<String>()
+        for (r in rows) {
+            val name = (r["product_name"] ?: r["item_name"]).orEmpty().trim()
+            if (name.isBlank()) continue
+            validRows++
+            val wantedId = cell(r, ProductCsvTemplate.PRODUCT_ID_COLUMN, "id")?.toLongOrNull()
+                ?.takeIf { it > 0 } ?: continue
+            if (productIdTaken(db, wantedId)) {
+                toUpdate++
+                if (toUpdateNames.size < NAMES_LISTED) toUpdateNames.add(name)
+            }
+        }
+        return MergeCounts(validRows, toUpdate, validRows - toUpdate, toUpdateNames)
+    }
+
+    /**
      * Clears every product the till is free to forget, with its rates, its stock and
      * its names.
      *
@@ -294,7 +343,8 @@ object ProductBulkImporter {
      * visible.
      *
      * [mode] decides what happens to the products already on the till:
-     * [Mode.APPEND] leaves them, [Mode.REPLACE] clears them first - see
+     * [Mode.APPEND] updates a row's product where its id is already here and adds
+     * it where it is not, [Mode.REPLACE] clears them all first - see
      * [clearProducts] for what "clears" can and cannot reach.
      *
      * A row's `stock` column opens that product's count, but only on a till that
@@ -331,7 +381,6 @@ object ProductBulkImporter {
         var unknownCategoryCodes = 0
         var unknownCategoryIds = 0
         var unknownRateNameIds = 0
-        var reassignedProductIds = 0
         // Asked once for the sheet, not once per row: the setting cannot change
         // half way through an import, and every row has to be treated the same way
         // whichever half of the file it is in.
@@ -339,6 +388,7 @@ object ProductBulkImporter {
         var imported = 0
         var skipped = 0
         var removed = 0
+        var replaced = 0
 
         val languageMatch = regionalLanguageOf(rows)
         // The sheet's regional names are filed under the language the sheet named, and
@@ -385,25 +435,50 @@ object ProductBulkImporter {
                     else -> null
                 }
 
-                // The id the sheet asks this product to be, where it asks for one and
-                // nothing on the till is already using it. See
-                // ProductCsvTemplate.PRODUCT_ID_COLUMN for why a taken id is stepped
-                // around rather than written over.
+                // The id the sheet asks this product to be. COMMON where this till
+                // already has a product under it - see [Mode.APPEND] - in which case
+                // that product is updated rather than stepped around into a
+                // duplicate, which is what asking for a taken id used to do.
                 val wantedId = cell(r, ProductCsvTemplate.PRODUCT_ID_COLUMN, "id")?.toLongOrNull()
                     ?.takeIf { it > 0 }
-                val freeId = wantedId?.takeIf { !productIdTaken(db, it) }
-                if (wantedId != null && freeId == null) reassignedProductIds++
+                val existingId = wantedId?.takeIf { mode == Mode.APPEND && productIdTaken(db, it) }
 
                 val product = ContentValues().apply {
-                    if (freeId != null) put("id", freeId)
+                    if (existingId == null && wantedId != null) put("id", wantedId)
                     if (storeId != null) put("store_id", storeId) else putNull("store_id")
                     put("product_name", name)
                     put("hsn_code", cell(r, "hsn_number", "hsn_code"))
                     put("bar_code", cell(r, "bar_code", "barcode"))
                     if (categoryId != null) put("category_id", categoryId) else putNull("category_id")
                 }
-                val productId = db.insert(DatabaseHelper.Tables.MD_PRODUCTS, null, product)
-                if (productId == -1L) { skipped++; continue }
+
+                val productId: Long
+                val isNewProduct: Boolean
+                if (existingId != null) {
+                    db.update(
+                        DatabaseHelper.Tables.MD_PRODUCTS, product,
+                        "id = ?", arrayOf(existingId.toString())
+                    )
+                    // Rates are replaced wholesale, not merged - the sheet's
+                    // RATE_1..4 rows ARE this product's rates now, the same way the
+                    // Add/Edit form replaces them when a rate is edited. Nothing on
+                    // a transaction points at a rate row directly (only at the
+                    // product and its batch), so deleting these cannot orphan a
+                    // bill, a return or a KOT line - see SQL_PRODUCTS_IN_USE's own
+                    // note on what a product row itself is protected by.
+                    db.delete(
+                        DatabaseHelper.Tables.MD_PRODUCT_RATES,
+                        "product_id = ?", arrayOf(existingId.toString())
+                    )
+                    productId = existingId
+                    isNewProduct = false
+                    replaced++
+                } else {
+                    val newId = db.insert(DatabaseHelper.Tables.MD_PRODUCTS, null, product)
+                    if (newId == -1L) { skipped++; continue }
+                    productId = newId
+                    isNewProduct = true
+                }
 
                 // The two figures are read from their own columns and neither stands
                 // in for the other: the rate is what the product is rated at, the
@@ -480,8 +555,15 @@ object ProductBulkImporter {
                 // The quantity the sheet says this item starts at, booked in exactly
                 // as the Add Product form's own opening stock is, and on the same
                 // transaction the product itself went in on.
-                stockDao?.let { dao ->
-                    openingStockOf(r)?.let { dao.recordOpening(db, productId, it, storeId, outletId) }
+                //
+                // NEW PRODUCTS ONLY. A row that replaced a common product already
+                // has whatever stock its own sales and adjustments left it at - re-
+                // booking the sheet's STOCK column on every re-upload would credit
+                // it that quantity again each time, on top of what is already there.
+                if (isNewProduct) {
+                    stockDao?.let { dao ->
+                        openingStockOf(r)?.let { dao.recordOpening(db, productId, it, storeId, outletId) }
+                    }
                 }
                 // The shop's own name for this product, in the language the sheet
                 // named - through the same DAO the Add/Edit form writes through, so a
@@ -492,7 +574,7 @@ object ProductBulkImporter {
                     regionalNameOf(r)
                         ?.let { nameDao.save(productId.toInt(), namesLanguage.code, it) }
                 }
-                imported++
+                if (isNewProduct) imported++
             }
             db.setTransactionSuccessful()
         } finally {
@@ -514,11 +596,6 @@ object ProductBulkImporter {
                 "$unknownCategoryIds row(s) named a " +
                     "${ProductCsvTemplate.CATEGORY_ID_COLUMN} this till has no department " +
                     "for - those products came in uncategorised."
-            else null,
-            if (reassignedProductIds > 0)
-                "$reassignedProductIds row(s) asked for a " +
-                    "${ProductCsvTemplate.PRODUCT_ID_COLUMN} another product already holds " +
-                    "- those came in under new ids rather than replacing it."
             else null,
             if (unknownCategoryCodes > 0)
                 "$unknownCategoryCodes row(s) named a " +
@@ -550,7 +627,7 @@ object ProductBulkImporter {
             else -> null
         }
         return Result(
-            imported, skipped, removed,
+            imported, skipped, removed, replaced,
             languageMatch.language.englishName, languageWarning, referenceWarning
         )
     }

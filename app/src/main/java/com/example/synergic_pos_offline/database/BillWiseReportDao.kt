@@ -115,6 +115,9 @@ class BillWiseReportDao(context: Context) {
          */
         val hasVat: Boolean get() = lines.any { it.isVat || it.vat > 0.0 }
 
+        /** Whether any bill in the period was raised under IGST - see [hasVat]. */
+        val hasIgst: Boolean get() = lines.any { it.igst > 0.0 }
+
         val isEmpty: Boolean get() = lines.isEmpty()
 
         private fun total(pick: (Line) -> Double): Double =

@@ -5,9 +5,10 @@ import com.example.synergic_pos_offline.utils.BillRounding
 
 /**
  * One customer's items over a period, for the Customer Item-Wise Report: every
- * product they bought with its quantity, amount and tax (SGST / CGST), plus the
- * period totals. The product name comes from the master; the figures are summed
- * across all that customer's (non-cancelled) bills in the range.
+ * product they bought with its quantity, amount and tax - SGST/CGST, or IGST/VAT
+ * on a bill raised under either of those regimes instead - plus the period totals.
+ * The product name comes from the master; the figures are summed across all that
+ * customer's (non-cancelled) bills in the range.
  */
 class CustomerItemWiseReportDao(context: Context) {
 
@@ -22,7 +23,11 @@ class CustomerItemWiseReportDao(context: Context) {
         val qty: Double,
         val amount: Double,
         val sgst: Double,
-        val cgst: Double
+        val cgst: Double,
+        /** Zero on a shop that never sells inter-state. */
+        val igst: Double = 0.0,
+        /** Zero on a GST-only shop. */
+        val vat: Double = 0.0
     )
 
     data class Report(
@@ -35,6 +40,8 @@ class CustomerItemWiseReportDao(context: Context) {
         val totalSgst: Double,
         val totalCgst: Double,
         val totalAmount: Double,
+        val totalIgst: Double = 0.0,
+        val totalVat: Double = 0.0,
         /**
          * This customer's Service Charge and other extra charges (Parcel Charge
          * among them) over the period, read off `td_bills` rather than folded
@@ -46,6 +53,12 @@ class CustomerItemWiseReportDao(context: Context) {
         val totalServiceCharge: Double get() = charges.service
         val totalOtherCharges: Double get() = charges.other
         val totalParcelCharge: Double get() = charges.parcel
+
+        /** Whether anything this customer bought carried IGST - most tills never do. */
+        val hasIgst: Boolean get() = items.any { it.igst > 0.0 }
+
+        /** Whether anything this customer bought carried VAT - most tills never do. */
+        val hasVat: Boolean get() = items.any { it.vat > 0.0 }
 
         val isEmpty: Boolean get() = items.isEmpty()
     }
@@ -85,7 +98,9 @@ class CustomerItemWiseReportDao(context: Context) {
                    SUM(COALESCE(bi.quantity, 0)) AS qty,
                    SUM(COALESCE(bi.item_total, bi.item_subtotal, 0)) AS amount,
                    SUM(COALESCE(bi.sgst_amount, 0)) AS sgst,
-                   SUM(COALESCE(bi.cgst_amount, 0)) AS cgst
+                   SUM(COALESCE(bi.cgst_amount, 0)) AS cgst,
+                   SUM(COALESCE(bi.igst_amount, 0)) AS igst,
+                   SUM(COALESCE(bi.vat_amount, 0)) AS vat
             FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} bi
             JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = bi.bill_id
             LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCTS} p ON p.id = bi.product_id
@@ -104,7 +119,9 @@ class CustomerItemWiseReportDao(context: Context) {
                         qty = c.getDouble(1),
                         amount = BillRounding.toPaise(c.getDouble(2)),
                         sgst = BillRounding.toPaise(c.getDouble(3)),
-                        cgst = BillRounding.toPaise(c.getDouble(4))
+                        cgst = BillRounding.toPaise(c.getDouble(4)),
+                        igst = BillRounding.toPaise(c.getDouble(5)),
+                        vat = BillRounding.toPaise(c.getDouble(6))
                     )
                 )
             }
@@ -119,6 +136,8 @@ class CustomerItemWiseReportDao(context: Context) {
             totalSgst = BillRounding.toPaise(items.sumOf { it.sgst }),
             totalCgst = BillRounding.toPaise(items.sumOf { it.cgst }),
             totalAmount = BillRounding.toPaise(items.sumOf { it.amount }),
+            totalIgst = BillRounding.toPaise(items.sumOf { it.igst }),
+            totalVat = BillRounding.toPaise(items.sumOf { it.vat }),
             charges = TaxReportDao.billCharges(helper.readableDatabase, from, to, store = null, customerId = customerId)
         )
     }

@@ -120,6 +120,65 @@
                     app:cornerRadius="10dp" />
             </com.google.android.material.button.MaterialButtonToggleGroup>
 
+            <!-- The floor, in three numbers - how many tables are free, taken and
+                 waiting to be paid. The grid answers the same question card by card,
+                 but only once every card is in view; this is the same fact read at a
+                 glance, right beside the choice of what kind of order to start. Dots
+                 tinted the same as the cards and the legend at the foot, so a number
+                 here and a colour there are one fact, not two to reconcile. -->
+            <LinearLayout
+                android:id="@+id/llTableStatusCounts"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="18dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <View
+                    android:layout_width="9dp"
+                    android:layout_height="9dp"
+                    android:background="@drawable/bg_legend_dot"
+                    android:backgroundTint="#16A34A" />
+                <TextView
+                    android:id="@+id/tvCountAvailable"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_marginEnd="14dp"
+                    android:text="0 Available"
+                    android:textSize="12.5sp"
+                    android:textColor="@color/text_secondary" />
+
+                <View
+                    android:layout_width="9dp"
+                    android:layout_height="9dp"
+                    android:background="@drawable/bg_legend_dot"
+                    android:backgroundTint="#DC2626" />
+                <TextView
+                    android:id="@+id/tvCountOccupied"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_marginEnd="14dp"
+                    android:text="0 Occupied"
+                    android:textSize="12.5sp"
+                    android:textColor="@color/text_secondary" />
+
+                <View
+                    android:layout_width="9dp"
+                    android:layout_height="9dp"
+                    android:background="@drawable/bg_legend_dot"
+                    android:backgroundTint="#2563EB" />
+                <TextView
+                    android:id="@+id/tvCountBillPending"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="0 Bill Pending"
+                    android:textSize="12.5sp"
+                    android:textColor="@color/text_secondary" />
+            </LinearLayout>
+
             <!-- The row's spare width, so the customer button sits at the far edge
                  and the two groups read as two. -->
             <View
@@ -246,10 +305,10 @@
                 android:layout_height="match_parent"
                 android:background="#E4E7EB" />
 
-            <!-- READ ONLY. Nothing here is tappable: an order is opened from the list
-                 behind this popup, and a tile that looks like a button but answers to
-                 nothing is worse than plain text. It is a summary to glance at while
-                 choosing a table, and that is all. -->
+            <!-- A row taps open to its own items and their subtotals, in place - the
+                 order itself is still only opened from the list behind this popup, so
+                 a tap here answers "what is on this bill" without leaving the picker
+                 to find out. -->
             <LinearLayout
                 android:id="@+id/llActiveSummary"
                 android:layout_width="330dp"

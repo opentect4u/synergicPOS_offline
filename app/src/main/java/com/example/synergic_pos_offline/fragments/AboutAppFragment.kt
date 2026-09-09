@@ -494,15 +494,21 @@ class AboutAppFragment : Fragment(), TitledScreen {
             R.id.tilAutoBackupHours
         )
 
-        // How long backups are kept. A fixed set of periods rather than a typed number:
-        // this is a filing decision, not a measurement, and every choice here is one
-        // somebody would actually make.
-        val retention = view.findViewById<com.google.android.material.textfield.MaterialAutoCompleteTextView>(
-            R.id.actBackupRetention
+        // How long backups are kept - a number and its unit, typed rather than
+        // chosen off a fixed list: "5" with "Years" says something none of
+        // 7/15/30/60/90 days ever could.
+        val retentionValue = view.findViewById<com.google.android.material.textfield.TextInputEditText>(
+            R.id.etBackupRetentionValue
         )
-        val retentionLabels = AutoBackup.RETENTION_CHOICES.map { "$it days" }
-        retention.setAdapter(
-            android.widget.ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, retentionLabels)
+        val retentionValueField = view.findViewById<com.google.android.material.textfield.TextInputLayout>(
+            R.id.tilBackupRetentionValue
+        )
+        val retentionUnit = view.findViewById<com.google.android.material.textfield.MaterialAutoCompleteTextView>(
+            R.id.actBackupRetentionUnit
+        )
+        val retentionUnitLabels = AutoBackup.RetentionUnit.entries.map { it.label }
+        retentionUnit.setAdapter(
+            android.widget.ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, retentionUnitLabels)
         )
 
         bindCloudBackup(view)
@@ -510,7 +516,8 @@ class AboutAppFragment : Fragment(), TitledScreen {
         val current = AutoBackup.settings(requireContext())
         toggle.isChecked = current.enabled
         hours.setText(current.intervalHours.toString())
-        retention.setText("${current.retentionDays} days", false)
+        retentionValue.setText(current.retentionValue.toString())
+        retentionUnit.setText(current.retentionUnit.label, false)
         intervalRow.visibility = if (current.enabled) View.VISIBLE else View.GONE
         showAutoBackupState(view)
 
@@ -526,6 +533,11 @@ class AboutAppFragment : Fragment(), TitledScreen {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
+        retentionValue.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { retentionValueField.error = null }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
 
         view.findViewById<MaterialButton>(R.id.btnSaveAutoBackup).setOnClickListener {
             val typed = hours.text?.toString()?.trim().orEmpty()
@@ -535,13 +547,20 @@ class AboutAppFragment : Fragment(), TitledScreen {
                 hoursField.error = hoursProblem(typed)
                 return@setOnClickListener
             }
+            val retentionTyped = retentionValue.text?.toString().orEmpty()
+            val keepValue = AutoBackup.validRetentionValue(retentionTyped)
+            if (keepValue == null) {
+                retentionValueField.error = "1-${AutoBackup.MAX_RETENTION_VALUE}"
+                return@setOnClickListener
+            }
             hoursField.error = null
+            retentionValueField.error = null
 
             val interval = value ?: AutoBackup.settings(requireContext()).intervalHours
-            // The chosen period, or whatever is already stored if the box was left alone.
-            val keepDays = retention.text?.toString()?.filter { it.isDigit() }?.toIntOrNull()
-                ?: AutoBackup.settings(requireContext()).retentionDays
-            AutoBackup.save(requireContext(), toggle.isChecked, interval, keepDays)
+            val keepUnit = AutoBackup.RetentionUnit.entries
+                .firstOrNull { it.label == retentionUnit.text?.toString() }
+                ?: AutoBackup.settings(requireContext()).retentionUnit
+            AutoBackup.save(requireContext(), toggle.isChecked, interval, keepValue, keepUnit)
 
             // The cloud half of the same card, stored by the same press - the backup
             // arrangement is one decision, not two that can drift apart.
@@ -560,7 +579,8 @@ class AboutAppFragment : Fragment(), TitledScreen {
             showCloudBackupState(view)
 
             hours.setText(interval.toString())
-            retention.setText("$keepDays days", false)
+            retentionValue.setText(keepValue.toString())
+            retentionUnit.setText(keepUnit.label, false)
             // Apply the window straight away, so a shortened period clears the backups
             // it just excluded rather than waiting for the next backup to do it.
             val removed = AutoBackup.pruneOldBackups(requireContext())
@@ -578,7 +598,11 @@ class AboutAppFragment : Fragment(), TitledScreen {
                                 ", while the app is open, into Downloads/POSbackup."
                         }
                     )
-                    append("\n\nBackups are kept for $keepDays days; older ones are cleared away.")
+                    append(
+                        "\n\nBackups are kept for $keepValue ${keepUnit.label.lowercase()}, " +
+                            "and never more than the ${AutoBackup.MAX_FOLDERS} most recent " +
+                            "day(s) either way; older ones are cleared away."
+                    )
                     if (removed > 0) append(" $removed old backup(s) removed just now.")
                     // Said here rather than left to be discovered when a backup is due.
                     if (cloudOn) {
@@ -685,7 +709,7 @@ class AboutAppFragment : Fragment(), TitledScreen {
         } else {
             val every = if (settings.intervalHours == 1) "every hour"
             else "every ${settings.intervalHours} hours"
-            "On - $every, while the app is open, kept ${settings.retentionDays} days. " +
+            "On - $every, while the app is open, kept ${settings.retentionLabel.lowercase()}. " +
                 "Last: ${AutoBackup.lastRunDescription(requireContext())}"
         }
     }
@@ -879,6 +903,9 @@ class AboutAppFragment : Fragment(), TitledScreen {
         val savedTo = Downloads.stream(
             requireContext(), MasterData.fileName(Date(), mode), "application/sql", MasterData.FOLDER
         ) { writer -> summary = MasterData.exportTo(requireContext(), writer) }
+        // Same rule as the database backups: the most recent few, never a pile that
+        // only grows. See MasterData.pruneToRecentExports.
+        MasterData.pruneToRecentExports(requireContext())
         val export = summary ?: error("nothing was written")
 
         onMain {
