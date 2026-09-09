@@ -829,8 +829,17 @@ object ProductBulkImporter {
      * `CATEGORY_NAME` is the current template's; `category` is what the template
      * carried before the column ever became an id, and a shop that has been filling
      * that sheet in for months should not have to rename a column to upload it.
+     * `product_department`/`department` are what the Category master's own dialog
+     * calls this ("Add Category / Department") - a sheet headed to match the screen
+     * it came from is a reasonable sheet, and one of these went unrecognised: every
+     * row naming a genuinely new department under it read as naming NONE, so the
+     * department was never created and the product landed uncategorised instead of
+     * pointing at it - see [categoryIdFor], which is the only one of the three ways
+     * to read a department that can create one.
      */
-    val CATEGORY_NAME_COLUMNS = listOf(ProductCsvTemplate.CATEGORY_NAME_COLUMN, "category")
+    val CATEGORY_NAME_COLUMNS = listOf(
+        ProductCsvTemplate.CATEGORY_NAME_COLUMN, "category", "product_department", "department"
+    )
 
     /** The department this row names, or null where it names none. */
     fun categoryNameOf(row: Map<String, String>): String? =
