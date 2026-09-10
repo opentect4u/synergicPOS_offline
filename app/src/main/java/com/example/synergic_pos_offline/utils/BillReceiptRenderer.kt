@@ -856,12 +856,11 @@ class BillReceiptRenderer(context: Context) {
                        COALESCE(tot_other_charges_amount, 0),
                        COALESCE(tot_cgst_amount, 0), COALESCE(tot_sgst_amount, 0),
                        COALESCE(tot_vat_amount, 0),
-                       -- Appended, so every column index above keeps its place.
-                       COALESCE(tot_discount_percentage, 0),
-                       COALESCE(tot_igst_amount, 0)
                        -- The rate is only meaningful where discount_type says the operator gave
                        -- one; a FLAT discount stores a derived figure that was never quoted.
-                       COALESCE(tot_discount_percentage, 0), COALESCE(discount_type, '')
+                       COALESCE(tot_discount_percentage, 0),
+                       -- Appended, so every column index above keeps its place.
+                       COALESCE(tot_igst_amount, 0), COALESCE(discount_type, '')
                 FROM ${billsTableFor(db, receiptNo)} WHERE receipt_no = ?
                 """.trimIndent(),
                 arrayOf(receiptNo.toString())
@@ -879,7 +878,7 @@ class BillReceiptRenderer(context: Context) {
                 // PERCENTAGE or FLAT - and tot_discount_percentage holds a DERIVED figure
                 // either way, so reading it alone put an invented rate on a flat discount.
                 storedDiscountPercent =
-                    if (c.getString(18).orEmpty().equals("PERCENTAGE", true)) c.getDouble(17) else 0.0
+                    if (c.getString(19).orEmpty().equals("PERCENTAGE", true)) c.getDouble(17) else 0.0
                 billNumber = c.getString(0) ?: receiptNo.toString()
                 dateTime = c.getString(1) ?: c.getString(2) ?: ""
                 customerId = if (c.isNull(3)) null else c.getLong(3)
@@ -2401,10 +2400,20 @@ class BillReceiptRenderer(context: Context) {
         val container = view.findViewById<LinearLayout>(R.id.llBillCaptions) ?: return
         container.removeAllViews()
 
+        // CANCELLED wins over DUPLICATE/BILL rather than joining it - a cancelled
+        // bill opened from Bill History is always also a reprint (see [openBill]'s
+        // own note), so without this a cancelled bill's slip carried both captions,
+        // when what it is is cancelled, not a second copy of a sale that still
+        // stands.
         val types = buildList {
-            add(if (duplicate) CaptionDao.Type.DUPLICATE else CaptionDao.Type.BILL)
+            add(
+                when {
+                    cancelled -> CaptionDao.Type.CANCELLED
+                    duplicate -> CaptionDao.Type.DUPLICATE
+                    else -> CaptionDao.Type.BILL
+                }
+            )
             if (creditSale) add(CaptionDao.Type.CREDIT)
-            if (cancelled) add(CaptionDao.Type.CANCELLED)
         }
         val captions = runCatching { CaptionDao(ctx).enabledFor(types) }.getOrDefault(emptyList())
 
@@ -2441,12 +2450,11 @@ class BillReceiptRenderer(context: Context) {
         // lines fix. Setting the matching caption replaces either, so the wording is
         // still the shop's to choose.
         var forced = false
-        if (duplicate && captions.none { it.type == CaptionDao.Type.DUPLICATE }) {
-            forceCaption("DUPLICATE BILL")
-            forced = true
-        }
         if (cancelled && captions.none { it.type == CaptionDao.Type.CANCELLED }) {
-            forceCaption("CANCELLED BILL")
+            forceCaption("Cancelled Bill")
+            forced = true
+        } else if (duplicate && captions.none { it.type == CaptionDao.Type.DUPLICATE }) {
+            forceCaption("Duplicate Bill")
             forced = true
         }
         if (!forced && captions.isEmpty()) return

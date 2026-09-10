@@ -463,6 +463,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
         categoryAdapter = CategoryAdapter()
         rvCategories.adapter = categoryAdapter
 
+        // Seeded once here, at the screen's own setup, from whatever this shop last
+        // dragged and saved - see [CategoryOrder.restore]'s own note on why this is
+        // not called from inside [loadCategoriesAndProducts], which runs again on
+        // every catalogue reload and would otherwise overwrite a drag made seconds
+        // ago with the value it was itself just saved as (harmless) or, on a device
+        // more than one shop signs into, leave a stale login's order in memory for
+        // a new one that never called this again.
+        com.example.synergic_pos_offline.utils.CategoryOrder.restore(ctx)
+
         // Hold a tab to pick it up and drag it along the strip - see [CategoryOrder].
         // "All" drags with the rest - it was held at position 0 while it could not be
         // dragged, which is no longer a reason for anything.
@@ -477,8 +486,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
             },
             onDropped = {
                 // The whole strip, "All" among them - it is dragged like any other
-                // tab now, so its place has to be remembered like any other tab.
-                com.example.synergic_pos_offline.utils.CategoryOrder.remember(categories)
+                // tab now, so its place has to be remembered like any other tab -
+                // and saved, so it survives a logout too, not only this session.
+                com.example.synergic_pos_offline.utils.CategoryOrder.persist(ctx, categories)
                 // "All" reads its own order off [allSorted] rather than working it
                 // out fresh each time - see its own note - so a drag that changes
                 // the order this cache was built from has to rebuild it, or "All"
@@ -1496,12 +1506,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * is there - so skipping the popup skips the asking, never the checking.
      */
     private fun directAddScanned(p: Product) {
-        val before = cart.sumOf { it.qty }
         addToCart(p, 1.0, p.price)
-        // Only when it actually went on: addToCart turns away what stock will not
-        // cover, and says why itself.
-        val after = cart.sumOf { it.qty }
-        if (after > before) toast(itemsAddedMessage(after))
     }
 
     /**
@@ -1623,13 +1628,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // any more; a search or a category is left up until the operator changes
         // it themselves. See [resetBrowsing] itself for the one place that reset
         // is still wanted: the next customer's sale, via [startNewSale].
-    }
-
-    /** "N item(s) added" for the running Direct-Add-to-Cart toast; [total] is the
-     *  cart's total quantity, shown whole when it has no fraction. */
-    private fun itemsAddedMessage(total: Double): String {
-        val display = if (total % 1.0 == 0.0) total.toInt().toString() else total.toString()
-        return "$display ${if (total == 1.0) "item" else "items"} added"
     }
 
     /**
