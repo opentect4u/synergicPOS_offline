@@ -352,7 +352,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val discountDisplay: Double = discount,
         /** How that discount was entered, for the record written to the bill. */
         val discountIsPercent: Boolean = true,
+        /**
+         * The percentage this discount COMES TO, derived from the amount - what the
+         * bill stores in `tot_discount_percentage` for reports to read.
+         *
+         * NOT what the slip prints beside DISCOUNT. That is [discountRateGiven]: a
+         * discount entered as a flat figure still has a percentage, and printing it
+         * would state a rate the shop never quoted.
+         */
         val discountPercent: Double = 0.0,
+        /**
+         * The rate the operator actually TYPED, or 0 where they typed an amount -
+         * the slip's "DISCOUNT @5%" and nothing else.
+         *
+         * Zero under item-wise too: that discount belongs to the lines, each with its
+         * own rate, so the bill has no single one to show.
+         */
+        val discountRateGiven: Double = 0.0,
         /**
          * The shop's own extra charges for this order - see the Extra Charges master.
          *
@@ -469,6 +485,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             discountIsPercent = discountMode == com.example.synergic_pos_offline.utils.GstCalculator.DiscountMode.PERCENT,
             discountPercent = com.example.synergic_pos_offline.utils.CartMath
                 .discountPercent(lines, cartConfig(), totals.discount),
+            discountRateGiven =
+                if (!itemwiseDiscountActive &&
+                    discountMode == com.example.synergic_pos_offline.utils.GstCalculator.DiscountMode.PERCENT
+                ) discount else 0.0,
             charges = charges
         )
     }
@@ -855,7 +875,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 // screen the customer actually pays from.
                                 discount = b.discount,
                                 discountDisplay = b.discountDisplay,
-                                discountRate = b.discountPercent,
+                                discountRate = b.discountRateGiven,
                                 lineDiscounts = order.items.map { line ->
                                     com.example.synergic_pos_offline.utils.CartMath.lineDiscount(
                                         line.toMathLine(), cartConfig(),
@@ -5547,7 +5567,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // The slip shows what came off, whichever way it was arrived at - the
             // customer-facing figure, not the raw one the lines above are priced
             // against (see BillBreakdown.discount vs .discountDisplay).
-            discount = b.discountDisplay, discountPercent = b.discountPercent,
+            discount = b.discountDisplay, discountPercent = b.discountRateGiven,
             roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
             paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),
             serviceCharge = b.service,   // shown as its own totals line, not an item
@@ -5710,6 +5730,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     cgstAmount = b.cgst,
                     sgstAmount = b.sgst,
                     igstAmount = b.igst,
+                    // VAT TOO. It was left off, so `tot_vat_amount` saved as 0 on
+                    // every restaurant bill however much VAT the sale actually
+                    // charged - the lines carried it, the bill did not.
+                    //
+                    // The original slip never showed the fault because it prints from
+                    // the live figures. A DUPLICATE reads the saved bill and
+                    // reconciles its tax to these columns, so the VAT vanished from
+                    // the reprint of a sale that had charged it - see
+                    // BillReceiptRenderer.reconcileWithStoredTax.
+                    //
+                    // A shop on GST never noticed: cgst and sgst were passed and VAT
+                    // was zero anyway. It only shows on a bill whose tax is ALL VAT.
+                    vatAmount = b.vat,
                     netAmount = payable,
                     roundOffAmount = roundOffAmount(b.total),
                     // The shop's own extra charges (Parcel Charge among them) - not the

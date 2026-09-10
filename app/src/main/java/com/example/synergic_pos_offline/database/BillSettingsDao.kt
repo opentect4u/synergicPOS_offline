@@ -324,6 +324,16 @@ class BillSettingsDao(context: Context) {
      * Deletes every bill and its related rows. Required when the start bill number
      * is changed while bills already exist, so numbering can restart cleanly.
      *
+     * ## EVERY bill - the cancelled ones too
+     *
+     * A cancelled bill is not flagged, it is MOVED: BillDeleteDao puts its header in
+     * td_bills_delete and its lines in td_bill_items_delete and takes the originals
+     * out of td_bills. That is what keeps a cancelled bill out of every sales report
+     * without teaching each report a new exclusion - but it also meant this cleared
+     * the live tables and left the whole archive standing, so a till told it had no
+     * bills went on listing them in the Void Bill Report and went on carrying them in
+     * every backup. The archive is emptied here with the rest.
+     *
      * Sale returns and the customer ledger deliberately survive this (see
      * [com.example.synergic_pos_offline.utils.BillErase]) and keep their
      * `original_bill_id` / `bill_id` pointing at the bill this deletes - a dangling
@@ -350,6 +360,13 @@ class BillSettingsDao(context: Context) {
             db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT}")
             db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS}")
             db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILLS}")
+            // The cancelled bills, which live in their own pair of tables - lines
+            // first, to match the order everything above is deleted in. Neither
+            // carries a foreign key (a cancelled bill's row has already left
+            // td_bills, so it could not), which is why they can go last without
+            // anything above them having to know.
+            db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS_DELETE}")
+            db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILLS_DELETE}")
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()

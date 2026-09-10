@@ -14,7 +14,7 @@ import java.io.File
  *
  * ## Why finding them is not simply listing a folder
  *
- * Backups go to `Downloads/POSbackup/<date>/` through MediaStore, and from Android 10
+ * Backups go to `Downloads/backup/` through MediaStore, and from Android 10
  * an app may only read what it put there itself. That ownership does not survive the
  * app being uninstalled: **a fresh installation cannot see the backups the previous
  * installation wrote**, which is exactly the case Restore Data exists for. Asking for
@@ -26,7 +26,7 @@ import java.io.File
  * was never removed from - and comes back empty otherwise. The way in that always
  * works is the system's own file picker, which grants access to whatever the operator
  * chooses without any permission at all; the caller falls back to it, and the
- * operator navigates to Downloads/POSbackup themselves.
+ * operator navigates to Downloads/backup themselves.
  */
 object BackupFiles {
 
@@ -51,6 +51,26 @@ object BackupFiles {
         else fromAppExternalFiles(context, folder)
     }.getOrDefault(emptyList()).sortedByDescending { it.takenAt }
 
+    /**
+     * Whether [name] is one of the backup files - INCLUDING one MediaStore has had
+     * to rename to avoid a clash.
+     *
+     * Asked because ".sql" is not always the end of the name. MediaStore will not
+     * overwrite, so a second file written to a name already taken is stored as
+     * `synergic_backup_2026-09-09_16-01-27.sql (1)` - and two backups CAN land on
+     * the same name, because the name is second-resolution and the safety copy taken
+     * before Erase Bills follows the manual backup an operator just pressed by less
+     * than that.
+     *
+     * A plain `endsWith(".sql")` missed exactly those files, which made them
+     * invisible twice over: the prune never counted them, so a folder promised to
+     * hold three backups quietly held four, and Restore never offered them - the one
+     * copy taken immediately before the destructive act was the one the operator
+     * could not get back.
+     */
+    private fun isBackupName(name: String): Boolean =
+        Regex("""\.sql( \(\d+\))?$""", RegexOption.IGNORE_CASE).containsMatchIn(name)
+
     private fun fromMediaStore(context: Context, folder: String): List<Found> {
         val found = mutableListOf<Found>()
         val columns = arrayOf(
@@ -61,16 +81,29 @@ object BackupFiles {
         )
         // Matched on the folder rather than the file name so a backup an operator has
         // renamed is still offered - the name is theirs to change, the folder is ours.
+        //
+        // THAT FOLDER, EXACTLY - not any path with the word in it. This was
+        // `LIKE '%$folder%'`, which was harmless while the folders were called
+        // "POSbackup" and "masterbackup", and stopped being harmless the moment the
+        // backups moved to a folder called "backup": "masterbackup" contains
+        // "backup", so every catalogue export the shop had taken was showing up as a
+        // database backup - and AutoBackup's prune, which deletes all but the most
+        // recent few of whatever this returns, would have deleted them.
+        //
+        // The trailing `/%` keeps anything filed BELOW the folder, so a backup still
+        // sitting in an old date subfolder is found; "masterbackup/" cannot match
+        // either form, because a "/" has to come before the name.
+        val base = "${Environment.DIRECTORY_DOWNLOADS}/${folder.trim('/')}"
         context.contentResolver.query(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
             columns,
-            "${MediaStore.Downloads.RELATIVE_PATH} LIKE ?",
-            arrayOf("%$folder%"),
+            "${MediaStore.Downloads.RELATIVE_PATH} = ? OR ${MediaStore.Downloads.RELATIVE_PATH} LIKE ?",
+            arrayOf("$base/", "$base/%"),
             "${MediaStore.Downloads.DATE_ADDED} DESC"
         )?.use { c ->
             while (c.moveToNext()) {
                 val name = c.getString(1) ?: continue
-                if (!name.endsWith(".sql", ignoreCase = true)) continue
+                if (!isBackupName(name)) continue
                 found.add(
                     Found(
                         name = name,
@@ -99,7 +132,7 @@ object BackupFiles {
         val root = File(base, folder)
         if (!root.isDirectory) return emptyList()
         return root.walkTopDown()
-            .filter { it.isFile && it.name.endsWith(".sql", ignoreCase = true) }
+            .filter { it.isFile && isBackupName(it.name) }
             .map { Found(it.name, Uri.fromFile(it), it.lastModified(), it.length()) }
             .toList()
     }

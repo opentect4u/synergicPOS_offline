@@ -56,6 +56,10 @@ class OperatorWiseReportFragment : PeriodReportFragment<OperatorWiseReportDao.Re
         buildList {
             add("Total Operators" to report.operatorCount.toString())
             add("Total Bills" to report.totalBills.toString())
+            // Shown zero or not. This report totalled nothing but the takings, so a
+            // VAT shop reading it had no way to see the tax inside the figure at the
+            // foot without going to another report for it.
+            add("VAT Amount" to money(report.totalVat))
         }
 
     /** The one figure the report is read for. */
@@ -88,7 +92,9 @@ class OperatorWiseReportFragment : PeriodReportFragment<OperatorWiseReportDao.Re
                     money(line.totalAmount)
                 )
             },
-            summary = emptyList(),
+            // The one total the slip carries beyond the footer row - the same line the
+            // screen shows, so the two do not state different things about a period.
+            summary = listOf("VAT AMOUNT :" to money(report.totalVat)),
             // A row of the table, so the two figures land under the columns they
             // total rather than at the right-hand edge together.
             footerRow = listOf("TOTAL :", report.totalBills.toString(), money(report.totalAmount)),

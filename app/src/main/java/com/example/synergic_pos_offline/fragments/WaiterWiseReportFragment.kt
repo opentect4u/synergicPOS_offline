@@ -96,19 +96,22 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
             if (report.allWaiters) add("Total Waiters" to report.waiterCount.toString())
             add("Total Bills" to report.billCount.toString())
             if (!report.allWaiters) add("Total Items" to StockDao.trim(report.totalItems))
-            // Each tax its own line rather than one blended figure - a GST return
-            // is filed against SGST and CGST separately, and IGST/VAT earn their
-            // place only where a bill in the period actually carried one.
+            // Each tax its own line rather than one blended figure - a GST return is
+            // filed against SGST and CGST separately.
             add("Total SGST" to money(report.totalSgst))
             add("Total CGST" to money(report.totalCgst))
             if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
-            if (report.hasVat) add("Total VAT" to money(report.totalVat))
+            // VAT and the charges ALWAYS, zero or not. They were shown only where the
+            // period actually carried one, which left the summary a different shape
+            // from one waiter or period to the next - and a reader who cannot see the
+            // row cannot tell "none was charged" from "this report does not total it".
+            add("Total VAT" to money(report.totalVat))
             add("Total Disc." to money(report.totalDiscount))
-            // Shown only where the period actually carried one - a shop that never
-            // charges Service or an Extra Charge should not read a zero row saying so.
-            if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
-            if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
-            if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
+            add("Service Charge" to money(report.totalServiceCharge))
+            add("Extra Charges" to money(report.totalOtherCharges))
+            add("Parcel Charge" to money(report.totalParcelCharge))
+            // Last - the final adjustment the total below already includes.
+            add("Round Off" to money(report.totalRoundOff))
         }
 
     /** The one figure the report is read for: what the waiter's tables took. */
@@ -168,11 +171,13 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
                 add("SGST AMOUNT :" to money(report.totalSgst))
                 add("CGST AMOUNT :" to money(report.totalCgst))
                 if (report.hasIgst) add("IGST AMOUNT :" to money(report.totalIgst))
-                if (report.hasVat) add("VAT AMOUNT  :" to money(report.totalVat))
+                // The same lines the screen shows, on the same terms - see [summaryOf].
+                add("VAT AMOUNT  :" to money(report.totalVat))
                 add("DISC. AMOUNT:" to money(report.totalDiscount))
-                if (report.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(report.totalServiceCharge))
-                if (report.totalOtherCharges > 0.005) add("EXTRA CHGS  :" to money(report.totalOtherCharges))
-                if (report.totalParcelCharge > 0.005) add("PARCEL CHG  :" to money(report.totalParcelCharge))
+                add("SERVICE CHG :" to money(report.totalServiceCharge))
+                add("EXTRA CHGS  :" to money(report.totalOtherCharges))
+                add("PARCEL CHG  :" to money(report.totalParcelCharge))
+                add("ROUND OFF   :" to money(report.totalRoundOff))
             },
             total = "TOTAL  :" to money(report.totalAmount),
             emptyNote = "No bills in this period."
@@ -196,11 +201,12 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
                 add("TOTAL SGST " to money(report.totalSgst))
                 add("TOTAL CGST " to money(report.totalCgst))
                 if (report.hasIgst) add("TOTAL IGST " to money(report.totalIgst))
-                if (report.hasVat) add("TOTAL VAT  " to money(report.totalVat))
+                add("TOTAL VAT  " to money(report.totalVat))
                 add("TOTAL DISC." to money(report.totalDiscount))
-                if (report.totalServiceCharge > 0.005) add("SERVICE CHG" to money(report.totalServiceCharge))
-                if (report.totalOtherCharges > 0.005) add("EXTRA CHGS " to money(report.totalOtherCharges))
-                if (report.totalParcelCharge > 0.005) add("PARCEL CHG " to money(report.totalParcelCharge))
+                add("SERVICE CHG" to money(report.totalServiceCharge))
+                add("EXTRA CHGS " to money(report.totalOtherCharges))
+                add("PARCEL CHG " to money(report.totalParcelCharge))
+                add("ROUND OFF  " to money(report.totalRoundOff))
                 add("GRAND TOTAL" to money(report.totalAmount))
             }.map { (label, value) -> "$label :" to value },
             emptyNote = "No bills for this waiter."

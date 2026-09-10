@@ -16,6 +16,7 @@ import android.widget.TextView
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
+import androidx.core.view.isVisible
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
@@ -36,6 +37,7 @@ import com.example.synergic_pos_offline.utils.MasterWipe
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.TransactionRollOver
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import java.io.File
@@ -90,6 +92,7 @@ class AboutAppFragment : Fragment(), TitledScreen {
         showSections(view)
 
         bindAutoBackup(view)
+        bindRollOverDesign(view)
         view.findViewById<MaterialButton>(R.id.btnBackupData).setOnClickListener { onBackup() }
         view.findViewById<MaterialButton>(R.id.btnRestoreData).setOnClickListener {
             // Anything, rather than a MIME filter: a .sql file is typed differently
@@ -488,12 +491,15 @@ class AboutAppFragment : Fragment(), TitledScreen {
             R.id.swAutoBackup
         )
         val intervalRow = view.findViewById<View>(R.id.llAutoBackupInterval)
-        val hours = view.findViewById<com.google.android.material.textfield.TextInputEditText>(
-            R.id.etAutoBackupHours
+        // Picked off a list, so there is no wrong value to type and no error to
+        // report - see AutoBackup.INTERVAL_CHOICES. Filled through Dropdowns so the
+        // menu offers all five rather than filtering itself down to the one already
+        // showing in the field.
+        val hours = view.findViewById<com.google.android.material.textfield.MaterialAutoCompleteTextView>(
+            R.id.actAutoBackupHours
         )
-        val hoursField = view.findViewById<com.google.android.material.textfield.TextInputLayout>(
-            R.id.tilAutoBackupHours
-        )
+        val hourLabels = AutoBackup.INTERVAL_CHOICES.map { AutoBackup.intervalLabel(it) }
+        com.example.synergic_pos_offline.utils.Dropdowns.fill(hours, hourLabels)
 
         // How long backups are kept - a number and its unit, typed rather than
         // chosen off a fixed list: "5" with "Years" says something none of
@@ -516,48 +522,42 @@ class AboutAppFragment : Fragment(), TitledScreen {
 
         val current = AutoBackup.settings(requireContext())
         toggle.isChecked = current.enabled
-        hours.setText(current.intervalHours.toString())
+        hours.setText(AutoBackup.intervalLabel(current.intervalHours), false)
         retentionValue.setText(current.retentionValue.toString())
         retentionUnit.setText(current.retentionUnit.label, false)
         intervalRow.visibility = if (current.enabled) View.VISIBLE else View.GONE
         showAutoBackupState(view)
 
-        // The switch only opens and closes the row it governs; it is stored on Save
-        // with everything else.
-        toggle.setOnCheckedChangeListener { _, isChecked ->
-            intervalRow.visibility = if (isChecked) View.VISIBLE else View.GONE
-            hoursField.error = null
-        }
-        // Clears a complaint as soon as the operator starts correcting it.
-        hours.addTextChangedListener(object : android.text.TextWatcher {
-            override fun afterTextChanged(s: android.text.Editable?) { hoursField.error = null }
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-        })
+        // The switch's listener is set at the bottom of this function, once
+        // persistAutoBackup exists - it both opens the row and stores the change.
         retentionValue.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) { retentionValueField.error = null }
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
 
-        view.findViewById<MaterialButton>(R.id.btnSaveAutoBackup).setOnClickListener {
-            val typed = hours.text?.toString()?.trim().orEmpty()
-            val value = AutoBackup.validHours(typed)
-            if (toggle.isChecked && value == null) {
-                // Said on the field itself, where the wrong value is.
-                hoursField.error = hoursProblem(typed)
-                return@setOnClickListener
-            }
+        /**
+         * Stores the backup arrangement. [announce] only when the operator asked for
+         * it outright; an auto-save must not put a dialog up on every keystroke.
+         */
+        fun persistAutoBackup(announce: Boolean) {
             val retentionTyped = retentionValue.text?.toString().orEmpty()
             val keepValue = AutoBackup.validRetentionValue(retentionTyped)
             if (keepValue == null) {
                 retentionValueField.error = "1-${AutoBackup.MAX_RETENTION_VALUE}"
-                return@setOnClickListener
+                return
             }
-            hoursField.error = null
             retentionValueField.error = null
 
-            val interval = value ?: AutoBackup.settings(requireContext()).intervalHours
+            // Read back by position, not by parsing the label: the two lists are 1:1
+            // (Dropdowns publishes every row, so nothing shifts them), and a label is
+            // for the operator to read, not for this to take a number out of. An
+            // unrecognised field - which only happens if it has not been filled in
+            // yet - keeps whatever is stored rather than inventing an interval.
+            val shown = hours.text?.toString()
+            val interval = AutoBackup.INTERVAL_CHOICES.firstOrNull {
+                AutoBackup.intervalLabel(it) == shown
+            } ?: AutoBackup.settings(requireContext()).intervalHours
             val keepUnit = AutoBackup.RetentionUnit.entries
                 .firstOrNull { it.label == retentionUnit.text?.toString() }
                 ?: AutoBackup.settings(requireContext()).retentionUnit
@@ -579,13 +579,14 @@ class AboutAppFragment : Fragment(), TitledScreen {
             CloudBackup.save(requireContext(), cloudOn, cloudProvider, cloudPath)
             showCloudBackupState(view)
 
-            hours.setText(interval.toString())
+            hours.setText(AutoBackup.intervalLabel(interval), false)
             retentionValue.setText(keepValue.toString())
             retentionUnit.setText(keepUnit.label, false)
             // Apply the window straight away, so a shortened period clears the backups
             // it just excluded rather than waiting for the next backup to do it.
             val removed = AutoBackup.pruneOldBackups(requireContext())
             showAutoBackupState(view)
+            if (!announce) return
             DialogUtils.showSuccess(
                 context = requireContext(),
                 title = "Saved",
@@ -596,17 +597,25 @@ class AboutAppFragment : Fragment(), TitledScreen {
                         } else {
                             "A backup will be taken every " +
                                 (if (interval == 1) "hour" else "$interval hours") +
-                                ", while the app is open, into Downloads/POSbackup."
+                                ", while the app is open, into Downloads/backup."
                         }
                     )
-                    append(
-                        "\n\nBackups are kept for $keepValue ${keepUnit.label.lowercase()}, " +
-                            "and never more than the ${AutoBackup.MAX_FOLDERS} most recent " +
-                            "day(s) either way; older ones are cleared away."
-                    )
+                    // The retention setting is only mentioned where it can be SEEN -
+                    // same rule as the cloud line below, and llRetentionSection is
+                    // hidden. The 3-file ceiling is the rule that actually decides
+                    // what stays, so that is what is said either way.
+                    append("\n\nOnly the ${AutoBackup.MAX_BACKUPS} most recent backups are kept")
+                    if (view.findViewById<View>(R.id.llRetentionSection).isVisible) {
+                        append(", and none for longer than $keepValue ${keepUnit.label.lowercase()}")
+                    }
+                    append("; older ones are cleared away as each new backup is taken.")
                     if (removed > 0) append(" $removed old backup(s) removed just now.")
-                    // Said here rather than left to be discovered when a backup is due.
-                    if (cloudOn) {
+                    // NOT SAID WHILE THE CLOUD SECTION IS HIDDEN - see llCloudSection
+                    // in the layout. A shop that cannot see the setting must not be
+                    // told about it by the confirmation for a different one. The value
+                    // is still read and still stored, so unhiding the section brings
+                    // this line back with it.
+                    if (cloudOn && view.findViewById<View>(R.id.llCloudSection).isVisible) {
                         append("\n\nCloud backup is on for ${cloudProvider.label}")
                         append(if (cloudPath.isBlank()) ", but no folder is set." else "/${cloudPath.trim().trim('/')}.")
                         append(" ${CloudBackup.NOT_WIRED}")
@@ -614,6 +623,68 @@ class AboutAppFragment : Fragment(), TitledScreen {
                 }
             )
         }
+
+        // NO SAVE BUTTON - the controls store themselves.
+        //
+        // The button is hidden (see llSaveAutoBackupRow), so something has to write
+        // what the operator changes or the switch above would toggle and do nothing.
+        // The same SettingsAutoSave the settings screens use: a switch saves on the
+        // spot, a typed number saves once the typing settles, so a half-entered "1"
+        // on the way to "12" is not stored as an hour.
+        //
+        // Silently, without the dialog the button raised - a confirmation on every
+        // keystroke is worse than no confirmation at all.
+        // THE SWITCH IS NOT PASSED TO SettingsAutoSave. It already has a listener of
+        // its own - the one that opens and closes the interval row - and onChange
+        // replaces whatever is there, which is exactly what had happened: turning
+        // automatic backup on saved the setting and left the interval dropdown
+        // hidden, so the operator could not reach the control the switch exists to
+        // reveal until they left the screen and came back. It saves from inside the
+        // listener it already has instead, which is what SettingsAutoSave's own
+        // documentation asks of a control in this position.
+        toggle.setOnCheckedChangeListener { _, isChecked ->
+            intervalRow.visibility = if (isChecked) View.VISIBLE else View.GONE
+            persistAutoBackup(announce = false)
+        }
+        // The dropdown saves on the row being picked - see SettingsAutoSave.onChange,
+        // which knows an AutoCompleteTextView is chosen from rather than typed in.
+        com.example.synergic_pos_offline.utils.SettingsAutoSave.onChange(
+            { persistAutoBackup(announce = false) }, hours
+        )
+    }
+
+
+    /**
+     * How long transactions are kept before they are rolled over.
+     *
+     * Saved the moment a period is picked, like everything else on this card - see
+     * the note on the Save button in [bindAutoBackup]. NOTHING IS DELETED HERE: the
+     * choice only changes where the cutoff falls at the next login, which is the one
+     * place the deleting happens. See [TransactionRollOver].
+     *
+     * The list is filled through Dropdowns rather than with app:simpleItems in the
+     * layout, which was tried first: Material fills simpleItems with a FILTERING
+     * adapter, so with "1 year" already in the field the menu opened one row tall
+     * and 1.5 years could not be picked at all.
+     */
+    private fun bindRollOverDesign(view: View) {
+        val years = view.findViewById<com.google.android.material.textfield.MaterialAutoCompleteTextView>(
+            R.id.actRollOverYears
+        )
+        val periods = TransactionRollOver.CHOICES.map { it.label }
+        com.example.synergic_pos_offline.utils.Dropdowns.fill(years, periods)
+        years.setText(TransactionRollOver.window(requireContext()).label, false)
+
+        // Read back by matching the label, the same way the backup interval is: the
+        // label is the operator's, the Window is the app's, and one names exactly one
+        // of the other. A field showing something unrecognised - which cannot happen
+        // through the dropdown - keeps what is stored rather than inventing a period.
+        com.example.synergic_pos_offline.utils.SettingsAutoSave.onChange({
+            val chosen = TransactionRollOver.CHOICES
+                .firstOrNull { it.label == years.text?.toString() }
+                ?: return@onChange
+            TransactionRollOver.save(requireContext(), chosen)
+        }, years)
     }
 
     // ---- Cloud backup ----------------------------------------------------------
@@ -694,23 +765,13 @@ class AboutAppFragment : Fragment(), TitledScreen {
             CloudBackup.lastSyncDescription(requireContext())
     }
 
-    /** Why [typed] was refused, in the words the operator needs to fix it. */
-    private fun hoursProblem(typed: String): String = when {
-        typed.isEmpty() -> "Enter how many hours"
-        typed.toIntOrNull() == 0 -> "Must be at least ${AutoBackup.MIN_INTERVAL_HOURS} hour"
-        (typed.toIntOrNull() ?: 0) > AutoBackup.MAX_INTERVAL_HOURS ->
-            "At most ${AutoBackup.MAX_INTERVAL_HOURS} hours (a week)"
-        else -> "Whole hours only"
-    }
-
     private fun showAutoBackupState(view: View) {
         val settings = AutoBackup.settings(requireContext())
         view.findViewById<TextView>(R.id.tvAutoBackupState).text = if (!settings.enabled) {
             "Off - backups are only taken when you press Backup"
         } else {
-            val every = if (settings.intervalHours == 1) "every hour"
-            else "every ${settings.intervalHours} hours"
-            "On - $every, while the app is open, kept ${settings.retentionLabel.lowercase()}. " +
+            "On - every ${AutoBackup.intervalLabel(settings.intervalHours)}, while the app is " +
+                "open, keeping the ${AutoBackup.MAX_BACKUPS} most recent. " +
                 "Last: ${AutoBackup.lastRunDescription(requireContext())}"
         }
     }
@@ -802,11 +863,15 @@ class AboutAppFragment : Fragment(), TitledScreen {
      */
     private fun confirmEraseBills() {
         val preview = BillErase.preview(requireContext())
-        if (preview.bills == 0) {
+        // CANCELLED BILLS COUNT AS SOMETHING TO ERASE. This asked preview.bills alone
+        // - the live books - so a till whose bills had every one been cancelled was
+        // told it had none, and the archive they had been moved to stayed on the
+        // device and in every backup with no way on this screen to clear it.
+        if (!preview.hasAnything) {
             DialogUtils.showSuccess(
                 context = requireContext(),
                 title = "No bills to erase",
-                message = "There are no bills on this device."
+                message = "There are no bills on this device, cancelled ones included."
             )
             return
         }
@@ -830,8 +895,17 @@ class AboutAppFragment : Fragment(), TitledScreen {
             title = "Erase all bills?",
             message = "This throws away all ${preview.bills} bill(s) on this device, along " +
                 "with their items, the payments taken against them, their print records " +
-                "and their kitchen orders. It cannot be undone." +
-                "\n\nA backup is taken first, into Downloads/POSbackup - everything but " +
+                "and their kitchen orders." +
+                // Named separately because they are counted separately: a cancelled
+                // bill has already left the books, so the figure above does not
+                // include it, and an operator reading "3 bills" would otherwise have
+                // no idea thirty more were about to go.
+                (if (preview.cancelled > 0)
+                    " The ${preview.cancelled} cancelled bill(s) still archived on this " +
+                        "device go with them."
+                else "") +
+                " It cannot be undone." +
+                "\n\nA backup is taken first, into Downloads/backup - everything but " +
                 "this device's users and store registration, so restoring it later would " +
                 "not disturb who can sign in." +
                 counter +
@@ -860,8 +934,11 @@ class AboutAppFragment : Fragment(), TitledScreen {
             DialogUtils.showSuccess(
                 context = requireContext(),
                 title = "Bills erased",
-                message = "${outcome.bills} bill(s) erased. The next bill will be " +
-                    "numbered ${outcome.nextNumber}." +
+                message = "${outcome.bills} bill(s) erased" +
+                    (if (outcome.cancelled > 0)
+                        ", and ${outcome.cancelled} cancelled bill(s) cleared from the archive"
+                    else "") +
+                    ". The next bill will be numbered ${outcome.nextNumber}." +
                     // Said only when there was a floor to clear, so a grocery till is
                     // not told about tables it does not have.
                     floorNote(outcome) +
@@ -1071,6 +1148,13 @@ class AboutAppFragment : Fragment(), TitledScreen {
                 "deleted with it. This cannot be undone." +
                 "\n\nA backup is taken first, into Downloads/POSbackup, so what is about " +
                 "to be erased can be brought back by restoring that file." +
+            title = "Restore default settings?",
+            message = "Every setting goes back to how the app came - General, Bill, Tax " +
+                "and App settings, the print template, the automatic backup and the " +
+                "theme colour. This cannot be undone." +
+                "\n\nA backup is taken first, into Downloads/backup - everything but " +
+                "this device's users and store registration, so restoring it later would " +
+                "not disturb who can sign in." +
                 modeNote +
                 "\n\n• The printers are forgotten. Every named printer is removed and " +
                 "the connections go back to WIFI for bills and LAN for KOT, with no " +
@@ -1155,12 +1239,9 @@ class AboutAppFragment : Fragment(), TitledScreen {
         view.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(
             R.id.swAutoBackup
         ).isChecked = settings.enabled
-        view.findViewById<com.google.android.material.textfield.TextInputEditText>(
-            R.id.etAutoBackupHours
-        ).setText(settings.intervalHours.toString())
-        view.findViewById<com.google.android.material.textfield.TextInputLayout>(
-            R.id.tilAutoBackupHours
-        ).error = null
+        view.findViewById<com.google.android.material.textfield.MaterialAutoCompleteTextView>(
+            R.id.actAutoBackupHours
+        ).setText(AutoBackup.intervalLabel(settings.intervalHours), false)
         view.findViewById<View>(R.id.llAutoBackupInterval).visibility =
             if (settings.enabled) View.VISIBLE else View.GONE
         showAutoBackupState(view)

@@ -46,19 +46,19 @@ class VoidBillReportFragment : PeriodReportFragment<VoidBillReportDao.Report>() 
         buildList {
             add("Void Bills" to report.billCount.toString())
             add("Total Amount" to money(report.totalAmount))
-            // Each tax its own line rather than one blended figure - a GST return
-            // is filed against SGST and CGST separately, and IGST/VAT earn their
-            // place only where a voided bill actually carried one.
+            // Each tax its own line rather than one blended figure - a GST return is
+            // filed against SGST and CGST separately.
             add("Total SGST" to money(report.totalSgst))
             add("Total CGST" to money(report.totalCgst))
             if (report.hasIgst) add("Total IGST" to money(report.totalIgst))
-            if (report.hasVat) add("Total VAT" to money(report.totalVat))
-            // Shown only where a voided bill actually carried one - a shop that
-            // never charges Service or an Extra Charge should not read a zero row
-            // saying so.
-            if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
-            if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
-            if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
+            // VAT and the charges ALWAYS, zero or not. They were shown only where a
+            // voided bill actually carried one, which left the summary a different
+            // shape from one period to the next - and a reader who cannot see the row
+            // cannot tell "no VAT was voided" from "this report does not total VAT".
+            add("Total VAT" to money(report.totalVat))
+            add("Service Charge" to money(report.totalServiceCharge))
+            add("Extra Charges" to money(report.totalOtherCharges))
+            add("Parcel Charge" to money(report.totalParcelCharge))
         }
 
     /** The one figure the report is read for: what came out of the day's takings. */
@@ -87,10 +87,11 @@ class VoidBillReportFragment : PeriodReportFragment<VoidBillReportDao.Report>() 
                 add("SGST :" to money(report.totalSgst))
                 add("CGST :" to money(report.totalCgst))
                 if (report.hasIgst) add("IGST :" to money(report.totalIgst))
-                if (report.hasVat) add("VAT :" to money(report.totalVat))
-                if (report.totalServiceCharge > 0.005) add("SERVICE CHG :" to money(report.totalServiceCharge))
-                if (report.totalOtherCharges > 0.005) add("EXTRA CHGS :" to money(report.totalOtherCharges))
-                if (report.totalParcelCharge > 0.005) add("PARCEL CHG :" to money(report.totalParcelCharge))
+                // The same lines the screen shows, on the same terms - see [summaryOf].
+                add("VAT :" to money(report.totalVat))
+                add("SERVICE CHG :" to money(report.totalServiceCharge))
+                add("EXTRA CHGS :" to money(report.totalOtherCharges))
+                add("PARCEL CHG :" to money(report.totalParcelCharge))
                 // The one line the slip has always closed on, set across the whole
                 // width rather than repeated per column.
                 add("TOTAL :" to money(report.grandTotal))

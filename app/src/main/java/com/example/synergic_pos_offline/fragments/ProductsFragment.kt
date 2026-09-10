@@ -970,22 +970,17 @@ class ProductsFragment : DataTableFragment() {
         showImage(bytes)
     }
 
-    /** Scales the longest edge down to 800px and encodes as JPEG to keep the BLOB small. */
-    private fun compress(source: Bitmap): ByteArray {
-        val max = 800
-        val scale = minOf(1f, max.toFloat() / maxOf(source.width, source.height))
-        val bitmap = if (scale < 1f) {
-            Bitmap.createScaledBitmap(
-                source, (source.width * scale).toInt(), (source.height * scale).toInt(), true
-            )
-        } else {
-            source
-        }
-        return ByteArrayOutputStream().use { out ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
-            out.toByteArray()
-        }
-    }
+    /**
+     * Scales the longest edge down and encodes as JPEG, to keep the BLOB small.
+     *
+     * The sizing lives in [ProductImages] rather than here, because the folder
+     * import writes the same column - see ProductImageImporter. A picture put on a
+     * product one at a time from this screen and one that arrived with a hundred
+     * others must come out the same size, and two copies of these numbers would
+     * drift the first time either was tuned.
+     */
+    private fun compress(source: Bitmap): ByteArray =
+        com.example.synergic_pos_offline.utils.ProductImages.compress(source)
 
     private fun showImage(bytes: ByteArray) {
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return

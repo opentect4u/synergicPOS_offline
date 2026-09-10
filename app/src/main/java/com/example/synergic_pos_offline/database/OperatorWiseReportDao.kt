@@ -42,7 +42,9 @@ class OperatorWiseReportDao(context: Context) {
         val userName: String,
         val billCount: Int,
         /** What those bills came to - their net, as each was totalled when it was saved. */
-        val totalAmount: Double
+        val totalAmount: Double,
+        /** The VAT those bills charged. Zero on a GST-only shop. */
+        val vat: Double = 0.0
     ) {
         /**
          * True for the one line that stands for bills whose operator cannot be
@@ -65,6 +67,8 @@ class OperatorWiseReportDao(context: Context) {
         val operatorCount: Int get() = lines.size
         val totalBills: Int get() = lines.sumOf { it.billCount }
         val totalAmount: Double get() = BillRounding.toPaise(lines.sumOf { it.totalAmount })
+        /** The VAT the period's bills charged, across every operator. */
+        val totalVat: Double get() = BillRounding.toPaise(lines.sumOf { it.vat })
 
         /**
          * Whether the period holds bills that name no operator this till still knows.
@@ -102,7 +106,8 @@ class OperatorWiseReportDao(context: Context) {
         // carried a time would sort outside the range on its final day.
         val sql = """
             SELECT u.id, u.user_id, u.user_name,
-                   COUNT(*), COALESCE(SUM(b.net_amount), 0)
+                   COUNT(*), COALESCE(SUM(b.net_amount), 0),
+                   COALESCE(SUM(b.tot_vat_amount), 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
             LEFT JOIN ${DatabaseHelper.Tables.MD_USERS} u ON u.id = $operator
             WHERE substr(b.bill_date, 1, 10) BETWEEN ? AND ?
@@ -132,7 +137,8 @@ class OperatorWiseReportDao(context: Context) {
                             if (serial == null) "Operator not recorded" else "Unknown user"
                         },
                         billCount = c.getInt(3),
-                        totalAmount = BillRounding.toPaise(c.getDouble(4))
+                        totalAmount = BillRounding.toPaise(c.getDouble(4)),
+                        vat = BillRounding.toPaise(c.getDouble(5))
                     )
                 )
             }

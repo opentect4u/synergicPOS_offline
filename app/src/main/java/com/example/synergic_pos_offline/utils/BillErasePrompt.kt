@@ -64,7 +64,11 @@ object BillErasePrompt {
     ) {
         val context = fragment.context ?: return
         val preview = BillErase.preview(context)
-        if (preview.bills == 0) {
+        // ASKED ON CANCELLED BILLS TOO. This read preview.bills alone, which is the
+        // live books only - so a till whose bills had all been cancelled counted as
+        // having nothing to lose, skipped the warning, skipped the password and the
+        // backup, and erased the archive without a word.
+        if (!preview.hasAnything) {
             onErased()
             return
         }
@@ -104,11 +108,14 @@ object BillErasePrompt {
                 "bills - so the next bill carries on from the highest of them rather " +
                 "than starting again from your Start No."
         }
+        val cancelled = if (preview.cancelled > 0) {
+            " The ${preview.cancelled} cancelled bill(s) still archived on this till go with them."
+        } else ""
         return "$reason, so the ${preview.bills} bill(s) already on this till can no " +
             "longer be reported or reprinted correctly. They will be thrown away, along " +
             "with their items, the payments taken against them, their print records and " +
-            "their kitchen orders. It cannot be undone." +
-            "\n\nA backup is taken first, into Downloads/POSbackup - everything but this " +
+            "their kitchen orders." + cancelled + " It cannot be undone." +
+            "\n\nA backup is taken first, into Downloads/backup - everything but this " +
             "device's users and store registration, so restoring it later would not " +
             "disturb who can sign in." +
             counter +
@@ -252,8 +259,11 @@ object BillErasePrompt {
                 DialogUtils.showSuccess(
                     context = context,
                     title = "Bills erased",
-                    message = "${outcome.bills} bill(s) erased. The next bill will be " +
-                        "numbered ${outcome.nextNumber}." + floorNote(outcome) +
+                    message = "${outcome.bills} bill(s) erased" +
+                        (if (outcome.cancelled > 0) ", and ${outcome.cancelled} cancelled bill(s) " +
+                            "cleared from the archive" else "") +
+                        ". The next bill will be numbered ${outcome.nextNumber}." +
+                        floorNote(outcome) +
                         "\n\nThe till as it was is saved to $backup. It leaves out this " +
                         "device's users and store registration, so restoring it brings " +
                         "the bills back without changing who can sign in."

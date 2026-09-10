@@ -111,7 +111,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="Takes a backup on its own every so often while the app is open, into Downloads/POSbackup, so the shop is not relying on somebody remembering to."
+                    android:text="Takes a backup on its own every so often while the app is open, into Downloads/backup, so the shop is not relying on somebody remembering to."
                     android:textSize="12sp"
                     android:textColor="@color/text_secondary" />
 
@@ -171,29 +171,42 @@
                         android:textSize="14sp"
                         android:textColor="@color/text_main" />
 
+                    <!-- A DROPDOWN, not a box to type hours into. The list is
+                         AutoBackup.INTERVAL_CHOICES; inputType="none" so the keyboard
+                         never opens and the only way to change it is to pick one. -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilAutoBackupHours"
-                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                        android:layout_width="120dp"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="140dp"
                         android:layout_height="wrap_content"
                         app:boxCornerRadiusTopStart="12dp"
                         app:boxCornerRadiusTopEnd="12dp"
                         app:boxCornerRadiusBottomStart="12dp"
-                        app:boxCornerRadiusBottomEnd="12dp"
-                        app:suffixText="hrs">
+                        app:boxCornerRadiusBottomEnd="12dp">
 
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/etAutoBackupHours"
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/actAutoBackupHours"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:gravity="center"
-                            android:inputType="number"
-                            android:digits="0123456789"
-                            android:maxLength="3"
+                            android:inputType="none"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
+                <!-- KEEP BACKUPS FOR, HIDDEN.
+                     Wrapped and set gone rather than deleted, the same way the cloud
+                     section below is - see llCloudSection. The retention itself still
+                     applies: AutoBackup keeps clearing older backups to whatever value
+                     is stored, and the fields inside are still bound and still saved
+                     (see AboutAppFragment.bindAutoBackup). Only the operator's way of
+                     changing it is out of sight. -->
+                <LinearLayout
+                    android:id="@+id/llRetentionSection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
                 <!-- How long those backups are kept. Applies to manual backups too, so
                      the folder holds one rolling window however a backup was taken. -->
                 <LinearLayout
@@ -268,7 +281,24 @@
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
+                </LinearLayout>
 
+                <!-- CLOUD BACKUP, HIDDEN.
+                     The whole feature - the switch, the service, the folder and the
+                     account - is wrapped in this one container and set gone, rather
+                     than deleted: nothing about it is finished being decided, and a
+                     block that is only hidden comes back by flipping one attribute
+                     instead of being written again from the git history.
+                     Everything inside still inflates and is still bound in code
+                     (see AboutAppFragment.bindCloudBackup), so the Save button below
+                     goes on storing whatever it is set to - it is simply not shown
+                     or reachable. -->
+                <LinearLayout
+                    android:id="@+id/llCloudSection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
@@ -474,18 +504,21 @@
                         android:textSize="12sp"
                         android:textColor="@color/text_secondary" />
                 </LinearLayout>
+                </LinearLayout>
 
                 <!-- Nothing above is stored until this is pressed, and the line under
                      the switch says what actually is stored - so a half-changed
                      setting cannot be mistaken for a saved one. Right-aligned and
                      sized to its label like every other action on this screen. -->
                 <LinearLayout
+                    android:id="@+id/llSaveAutoBackupRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="end|center_vertical"
                     android:baselineAligned="false"
-                    android:layout_marginTop="16dp">
+                    android:layout_marginTop="16dp"
+                    android:visibility="gone">
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnSaveAutoBackup"
@@ -789,6 +822,81 @@
                         android:insetTop="0dp"
                         android:insetBottom="0dp"
                         app:cornerRadius="12dp" />
+                </LinearLayout>
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- TRANSACTION ROLL OVER.
+             ITS OWN CARD, not a section inside Restore Defaults above: Reset acts the
+             moment it is pressed, this is a standing setting the till carries, and a
+             control that only stores a choice does not belong under a heading that
+             warns about throwing settings away.
+
+             DESIGN ONLY at this point. The dropdown is filled, and starts on 1 year,
+             so the card can be looked at and judged - but NOTHING IS STORED when it
+             is changed and nothing reads it. What "roll over" actually does when the
+             period is reached is still to be decided; when it is, this field starts
+             saving the way the backup interval above it does.
+
+             THE LABEL IS THE OPERATOR OWN WORDING, kept exactly as it was given -
+             "BACK UP" as two words, "TRANSCATION" as spelled. It was asked for that
+             way after being shown a tidied-up version, so it is not a slip to fix.
+
+             The list is filled in code, not with app:simpleItems here, because
+             simpleItems narrows the menu to whatever is already in the field: with
+             "1 year" showing, it opened one row tall and 1.5 years could not be
+             reached. See AboutAppFragment.bindRollOverDesign and Dropdowns. -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:id="@+id/llRollOverSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:id="@+id/tvRollOverLabel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="MAXIMUM BACK UP SIZE  years BEFORE TRANSCATION ROLL OVER"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_secondary" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="end|center_vertical"
+                    android:baselineAligned="false"
+                    android:layout_marginTop="14dp">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilRollOverYears"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="140dp"
+                        android:layout_height="wrap_content"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/actRollOverYears"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center"
+                            android:inputType="none"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

@@ -65,19 +65,22 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
             add("Taxable Amount" to money(report.totalAmount))
             add("SGST Amount" to money(report.totalSgst))
             add("CGST Amount" to money(report.totalCgst))
-            // Only where the period holds them, so a shop that charges neither is not
-            // reading two lines of zeroes - and one that does has them counted.
             if (report.hasIgst) add("IGST Amount" to money(report.totalIgst))
-            if (report.hasVat) add("VAT Amount" to money(report.totalVat))
-            if (report.totalDiscount > 0.005) add("Discount Amount" to money(report.totalDiscount))
-            if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
-            if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
-            if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
-            // Last, always - the final adjustment before the total below it, not a
-            // figure left dangling after it.
-            if (kotlin.math.abs(report.totalRoundOff) > 0.005) {
-                add("Round Off Amount" to money(report.totalRoundOff))
-            }
+            add("VAT Amount" to money(report.totalVat))
+            // ALWAYS SHOWN, zero or not. These used to appear only
+            // where the period actually carried one, on the reasoning that a shop which
+            // never charges an Extra Charge should not read a row of zeroes saying so.
+            // What that produced instead was a summary whose shape changed with the
+            // period: a reader who knew the report had a Discount line found it absent
+            // and could not tell "nothing was discounted" from "this report does not
+            // total discounts", which is the worse of the two doubts to leave.
+            add("Discount Amount" to money(report.totalDiscount))
+            add("Service Charge" to money(report.totalServiceCharge))
+            add("Extra Charges" to money(report.totalOtherCharges))
+            add("Parcel Charge" to money(report.totalParcelCharge))
+            // Last - the final adjustment before the total below it, not a figure left
+            // dangling after it.
+            add("Round Off Amount" to money(report.totalRoundOff))
         }
 
     /**
@@ -128,16 +131,17 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
                 add("SGST Amount" to money(report.totalSgst))
                 add("CGST Amount" to money(report.totalCgst))
                 if (report.hasIgst) add("IGST Amount" to money(report.totalIgst))
-                if (report.hasVat) add("VAT Amount" to money(report.totalVat))
-                if (report.totalDiscount > 0.005) add("Discount Amount" to money(report.totalDiscount))
-                if (report.totalServiceCharge > 0.005) add("Service Charge" to money(report.totalServiceCharge))
-                if (report.totalOtherCharges > 0.005) add("Extra Charges" to money(report.totalOtherCharges))
-                if (report.totalParcelCharge > 0.005) add("Parcel Charge" to money(report.totalParcelCharge))
+                add("VAT Amount" to money(report.totalVat))
+                // The same lines the screen shows, in the same order and on the same
+                // terms - always, zero or not. A slip that omitted what the screen
+                // above it listed would be read as the two disagreeing.
+                add("Discount Amount" to money(report.totalDiscount))
+                add("Service Charge" to money(report.totalServiceCharge))
+                add("Extra Charges" to money(report.totalOtherCharges))
+                add("Parcel Charge" to money(report.totalParcelCharge))
                 // Last before the total, not after it - the final adjustment the
                 // total itself already includes, not a figure left dangling below it.
-                if (kotlin.math.abs(report.totalRoundOff) > 0.005) {
-                    add("Round Off Amount" to money(report.totalRoundOff))
-                }
+                add("Round Off Amount" to money(report.totalRoundOff))
                 add("Total Amount" to money(report.totalNetAmount))
             }.map { (label, value) -> label.uppercase().padEnd(16) + " :" to value },
             emptyNote = "Nothing was sold in this period."

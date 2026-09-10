@@ -69,6 +69,80 @@
                     app:icon="@drawable/ic_upload"
                     app:iconTint="@color/white"
                     app:cornerRadius="12dp" />
+
+                <!-- PRODUCT IMAGES.
+                     UI ONLY at this point - the button opens nothing and the path is
+                     not read by anything. See BulkUploadProductFragment, which does
+                     not bind either of them.
+
+                     Divided off from the two buttons above because it is a separate
+                     errand: those two are the round trip of one spreadsheet, this is
+                     the pictures that go with the products in it. Outlined rather than
+                     filled, so Upload Excel stays the one primary action on the card -
+                     a screen with two solid buttons on it has no primary action.
+
+                     The path sits UNDER its own button rather than beside it: it holds
+                     a folder path, which is long, and a field sharing the row would
+                     have ellipsised away the end - which is the half that identifies
+                     the folder. -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="18dp"
+                    android:background="#EEEEEE" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:text="PRODUCT IMAGES"
+                    android:textSize="12sp"
+                    android:letterSpacing="0.08"
+                    android:textStyle="bold"
+                    android:textColor="@color/primary_blue" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary"
+                    android:lineSpacingExtra="3dp"
+                    android:text="Pick the images to go with the products, or type where they are kept." />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnBulkUploadImage"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="14dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minHeight="0dp"
+                    android:text="Upload Image"
+                    app:icon="@drawable/ic_image"
+                    app:cornerRadius="12dp" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/tilImagePath"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:hint="Image file path"
+                    app:boxCornerRadiusTopStart="12dp"
+                    app:boxCornerRadiusTopEnd="12dp"
+                    app:boxCornerRadiusBottomStart="12dp"
+                    app:boxCornerRadiusBottomEnd="12dp">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etImagePath"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textUri"
+                        android:maxLines="1"
+                        android:textSize="14sp" />
+                </com.google.android.material.textfield.TextInputLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
