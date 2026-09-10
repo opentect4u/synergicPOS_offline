@@ -50,9 +50,31 @@ class SearchSuggestions(
     private val anchor: View,
     /** Theme accent, for the matched run inside a name and for the price. */
     private val accent: Int,
+    /**
+     * What a typed query is allowed to match against - see [Mode]. Barcode
+     * matches regardless of this, in every mode: a scan is not something the
+     * operator chose a mode for, and [update]'s own exact-scan check never
+     * consults it either.
+     */
+    private val mode: Mode = Mode.NAME_AND_CODES,
     /** A row was tapped: add this product to the order. */
     private val onPick: (Item) -> Unit
 ) {
+
+    /**
+     * Which of a product's own text a typed query may match against, for the
+     * ranked dropdown [rank] builds.
+     *
+     * One combined box - the restaurant's, and the grocery's before it split
+     * into two - wants [NAME_AND_CODES]: typing a name or an id/SKU both find
+     * something. A box that only ever searches one of the two - the grocery's
+     * own Product ID and Name boxes - wants the matching single-purpose mode,
+     * so a number typed into the ID box cannot surface a product purely because
+     * that number happens to appear in its NAME ("19" into a "...19kg" product),
+     * and a word typed into the Name box cannot surface one purely because it
+     * happens to appear in its id.
+     */
+    enum class Mode { NAME_AND_CODES, NAME_ONLY, CODES_ONLY }
 
     /**
      * One suggestion. Deliberately flat strings rather than either screen's own
@@ -205,14 +227,29 @@ class SearchSuggestions(
      */
     private fun rank(item: Item, q: String): Int? {
         val name = item.name.lowercase()
+        val byName = mode != Mode.CODES_ONLY
+        val byCodes = mode != Mode.NAME_ONLY
+        // The barcode alone, checked whichever mode this is - see the note on
+        // [mode] itself. [item.codes] bundles the SKU in with it, so this stays
+        // apart from the [byCodes] clauses below rather than inside them: a
+        // NAME_ONLY box drops those clauses entirely (they would let its SKU
+        // back in), and still needs its barcode to work.
+        val barcode = item.barcode.takeIf { it.isNotBlank() }
         return when {
-            item.codes.any { it.equals(q, ignoreCase = true) } -> 0
-            name == q -> 1
-            name.startsWith(q) -> 2
-            name.split(' ', '-', '/').any { it.startsWith(q) } -> 3
-            name.contains(q) -> 4
-            item.codes.any { it.contains(q, ignoreCase = true) } -> 5
-            item.meta.contains(q, ignoreCase = true) -> 6
+            byCodes && item.codes.any { it.equals(q, ignoreCase = true) } -> 0
+            barcode != null && barcode.equals(q, ignoreCase = true) -> 0
+            byName && name == q -> 1
+            byName && name.startsWith(q) -> 2
+            byName && name.split(' ', '-', '/').any { it.startsWith(q) } -> 3
+            byName && name.contains(q) -> 4
+            byCodes && item.codes.any { it.contains(q, ignoreCase = true) } -> 5
+            barcode != null && barcode.contains(q, ignoreCase = true) -> 5
+            // NAME_AND_CODES only, not just byName: meta is a context line that
+            // itself carries an id ("Dairy  ·  #19") for the one combined box that
+            // is allowed to match on either - letting it through under byName
+            // alone would hand a NAME_ONLY box back the very id match it exists
+            // to keep out.
+            mode == Mode.NAME_AND_CODES && item.meta.contains(q, ignoreCase = true) -> 6
             else -> null
         }
     }

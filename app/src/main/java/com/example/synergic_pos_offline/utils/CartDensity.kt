@@ -34,8 +34,11 @@ object CartDensity {
     private const val GAP_MIN = 2f
     private const val STEP_MAX = 28f
     private const val STEP_MIN = 22f
-    private const val DEL_MAX = 32f
-    private const val DEL_MIN = 24f
+    // Raised from 32/24: a mistap here is the whole line gone, reaching for it
+    // with a thumb and finding the line above or below it instead - worth more
+    // room than the row budget below used to spend on it.
+    private const val DEL_MAX = 38f
+    private const val DEL_MIN = 28f
     private const val NAME_MAX = 15f
     private const val NAME_MIN = 13f
     private const val RATE_MAX = 12f

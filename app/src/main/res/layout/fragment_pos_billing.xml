@@ -262,14 +262,39 @@
                     android:gravity="center_vertical">
 
                     <TextView
-                        android:layout_width="0dp"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
                         android:text="CURRENT SALE"
                         android:textSize="11sp"
                         android:textStyle="bold"
                         android:letterSpacing="0.12"
                         android:textColor="@color/primary_blue" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnClearCart"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="2dp"
+                        android:text="Clear"
+                        android:textSize="11sp"
+                        app:icon="@drawable/ic_delete"
+                        app:iconSize="13dp"
+                        app:iconPadding="3dp"
+                        app:cornerRadius="8dp" />
+
+                    <!-- Takes the space between Clear and the invoice number, so the
+                         number stays pinned to the row's right edge. -->
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        android:layout_weight="1" />
 
                     <TextView
                         android:id="@+id/tvOrderNo"

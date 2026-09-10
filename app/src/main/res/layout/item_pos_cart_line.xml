@@ -13,14 +13,16 @@
       -4dp each     includeFontPadding on both lines of text, which is invisible
                     leading the font asks for and this row cannot afford
 
-  The stepper is the one exception, and deliberately spends back some of that room: it
-  went 30dp -> 28dp in the pass above, then back up to 34dp - a counter's + and - are
-  tapped far more than anything else on the row, and a mistouch between them is a
-  wrong quantity on the bill, not a cosmetic slip. Ten rows is the target, not a limit
-  enforced at the stepper's expense.
+  The stepper and the delete button are the exceptions, and deliberately spend back
+  some of that room: they went 30dp -> 28dp in the pass above, then back up to 34dp
+  each - a counter's + and - are tapped far more than anything else on the row, and a
+  mistouch there is a wrong quantity on the bill rather than a cosmetic slip; a mistap
+  on delete is the whole line gone, reaching for it with a thumb and finding the line
+  total or the stepper instead. Ten rows is the target, not a limit enforced at either's
+  expense.
 
-  Nothing else was taken out to get there: the name, the unit price, the line total
-  and the delete are all still on it, at the same sizes.
+  Nothing else was taken out to get there: the name, the unit price and the line total
+  are all still on it, at the same sizes.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -124,11 +126,14 @@
                 android:textStyle="bold"
                 android:textColor="@color/text_main" />
 
+            <!-- Delete - sized with the stepper, not squeezed to fit the row: a
+                 mistap here is a wrong finger reaching for it and landing on the
+                 line total or the stepper beside it instead. -->
             <ImageButton
                 android:id="@+id/btnRemoveLine"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:layout_marginStart="2dp"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:layout_marginStart="4dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_delete"
                 app:tint="@color/menu_delete_icon"

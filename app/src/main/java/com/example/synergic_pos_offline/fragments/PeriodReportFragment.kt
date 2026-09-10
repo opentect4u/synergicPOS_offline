@@ -11,6 +11,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.NumberPicker
 import android.widget.TextView
@@ -248,6 +249,45 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         // after the theme pass, which tints every button icon with the accent.
         btnPdf.iconTint = null
         btnExcel.iconTint = null
+
+        // Both the chevron and the row it sits in open/close the summary - a
+        // target the width of the card is easier to hit than the 28dp button
+        // alone, and the two can never disagree since they call the one function.
+        val toggleSummary = View.OnClickListener { setSummaryExpanded(!summaryExpanded) }
+        view.findViewById<View>(R.id.llPeriodSummaryHeader).setOnClickListener(toggleSummary)
+        view.findViewById<ImageButton>(R.id.btnTogglePeriodSummary).setOnClickListener(toggleSummary)
+        setSummaryExpanded(expanded = false, animate = false)
+    }
+
+    /** Whether the summary card is unfolded to its itemised lines, not just the
+     *  total. Folded by default - see [setSummaryExpanded]. */
+    private var summaryExpanded = false
+
+    /**
+     * Folds the summary card down to its Total line, or unfolds it to the full
+     * breakdown [summaryOf] provides. The same fold the sale screen's own billing
+     * summary uses, down to which chevron means which state - a report is read
+     * for its Total far more often than for the lines that add up to it, so that
+     * is what stays on screen without a tap, and the breakdown is a tap away
+     * rather than pushing the table down every time a report is generated.
+     */
+    private fun setSummaryExpanded(expanded: Boolean, animate: Boolean = true) {
+        summaryExpanded = expanded
+        val detail = root.findViewById<View>(R.id.llPeriodSummary)
+        if (animate) {
+            android.transition.TransitionManager.beginDelayedTransition(
+                detail.parent as ViewGroup,
+                android.transition.AutoTransition().apply { duration = 160 }
+            )
+        }
+        detail.visibility = if (expanded) View.VISIBLE else View.GONE
+        root.findViewById<ImageButton>(R.id.btnTogglePeriodSummary)
+            .setImageResource(if (expanded) R.drawable.ic_expand_more else R.drawable.ic_expand_less)
+        // The header's own total shows only while the detail is folded shut - open,
+        // the same figure is already the last line of the detail below it, and
+        // showing it twice would read as two totals to reconcile rather than one.
+        root.findViewById<TextView>(R.id.tvPeriodSummaryTotal).visibility =
+            if (expanded) View.GONE else View.VISIBLE
     }
 
     /**
@@ -374,6 +414,11 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         summaryOf(r).forEach { (label, value) -> summary.addView(summaryRow(label, value)) }
         val (totalLabel, totalValue) = totalOf(r)
         summary.addView(summaryRow(totalLabel, totalValue, emphasised = true))
+        root.findViewById<TextView>(R.id.tvPeriodSummaryTotal).text = totalValue
+        // Folded shut for every report freshly generated, whatever it was left at
+        // for the last one - a report just asked for is read for its Total first,
+        // not for whatever the previous report's breakdown happened to be open to.
+        setSummaryExpanded(expanded = false, animate = false)
     }
 
     private fun showEmpty(title: String, hint: String) {
@@ -501,12 +546,19 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         }
     }
 
-    /** A "Label ................ value" line of the summary card. */
+    /** A "Label ................ value" line of the summary card. Skipped - not
+     *  just blanked, GONE, so it takes no space either - when the figure is zero:
+     *  a summary read at a glance should not make an operator scan past a run of
+     *  "SGST Amount 0.00" lines to find the ones that actually moved. The final,
+     *  emphasised Total always shows, zero or not - it is the one line the fold's
+     *  own header repeats, and a summary card with a total nowhere on it reads as
+     *  broken rather than as a period with nothing in it. */
     private fun summaryRow(label: String, value: String, emphasised: Boolean = false): View =
         LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(3), 0, dp(3))
+            if (!emphasised && isZeroAmount(value)) visibility = View.GONE
             addView(TextView(context).apply {
                 layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
                 text = label
@@ -674,6 +726,11 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
     /** A quantity trimmed of a needless ".00" - "3" not "3.00", but "2.50" kept. */
     protected fun quantity(value: Double): String =
         if (value % 1.0 == 0.0) value.toInt().toString() else String.format(Locale.US, "%.2f", value)
+
+    /** Whether a formatted summary figure reads as zero, whatever it is formatted
+     *  as - a plain count ("0"), money ("0.00"), or a trimmed quantity. */
+    private fun isZeroAmount(value: String): Boolean =
+        value.replace(Regex("[^0-9.\\-]"), "").toDoubleOrNull()?.let { kotlin.math.abs(it) < 0.005 } ?: false
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
