@@ -280,12 +280,18 @@
                         android:textStyle="bold"
                         android:textColor="@color/text_main" />
 
-                    <!-- Takes the space between the bill no. and Clear, so Clear
-                         stays pinned to the row's right edge. -->
-                    <View
+                    <!-- Takes the space between the bill no. and Clear, so the
+                         product/item count sits centred between the two. -->
+                    <TextView
+                        android:id="@+id/tvItemCount"
                         android:layout_width="0dp"
-                        android:layout_height="0dp"
-                        android:layout_weight="1" />
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="0 products, 0 counts"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_secondary" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnClearCart"
@@ -305,17 +311,6 @@
                         app:iconPadding="3dp"
                         app:cornerRadius="8dp" />
                 </LinearLayout>
-
-                <!-- Total Item Count -->
-                <TextView
-                    android:id="@+id/tvItemCount"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center"
-                    android:text="0 products, 0 counts"
-                    android:textSize="12sp"
-                    android:textColor="@color/text_secondary"
-                    android:layout_marginTop="2dp" />
 
                 <LinearLayout
                     android:id="@+id/llCustomerInfo"

@@ -3397,6 +3397,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         )
         llCats.adapter = catAdapter
 
+        // Seeded once here, at the screen's own setup - not from inside [rebuildTabs],
+        // which runs again on every catalogue reload - from whatever this shop last
+        // dragged and saved. See [CategoryOrder.restore]'s own note on why.
+        com.example.synergic_pos_offline.utils.CategoryOrder.restore(ctx)
+
         // Hold a tab to pick it up and drag it along the strip. Wired once, here -
         // not per rebuild - because the RecyclerView outlives the tabs in it.
         // "All" moves with the rest - it was held at position 0 while it could not be
@@ -3409,8 +3414,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             },
             onDropped = {
                 // The whole strip, "All" among them - dragged like any other tab, so
-                // remembered like any other tab.
-                com.example.synergic_pos_offline.utils.CategoryOrder.remember(catNames)
+                // remembered like any other tab - and saved, so it survives a
+                // logout too, not only this session.
+                com.example.synergic_pos_offline.utils.CategoryOrder.persist(ctx, catNames)
             }
         )
 
@@ -3677,10 +3683,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             order.completed -> { toast("Table already billed — cannot add items"); return }
         }
         if (directAddToCart) {
-            val before = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
             addToCart(picked, 1.0, picked.price)
-            val after = currentOrder()?.items?.sumOf { it.qty } ?: 0.0
-            if (after > before) toast(itemsAddedMessage(after))
             onAdded()
         } else {
             showProductEntry(picked) { onAdded() }
@@ -4817,13 +4820,6 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         view?.findViewById<android.widget.ScrollView>(R.id.svOrderItems)?.let { scroller ->
             scroller.post { scroller.scrollTo(0, 0) }
         }
-    }
-
-    /** "N item(s) added" for the running Direct-Add-to-Cart toast; [total] is the
-     *  order's total quantity, shown whole when it has no fraction. */
-    private fun itemsAddedMessage(total: Double): String {
-        val display = if (total % 1.0 == 0.0) total.toInt().toString() else total.toString()
-        return "$display ${if (total == 1.0) "item" else "items"} added"
     }
 
     /**

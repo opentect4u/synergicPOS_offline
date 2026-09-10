@@ -1,9 +1,11 @@
 package com.example.synergic_pos_offline.utils
 
+import android.content.Context
 import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
 
 /**
  * Rearranging the sale screen's category tabs by holding one and dragging it.
@@ -34,14 +36,22 @@ import androidx.recyclerview.widget.RecyclerView
  * [lift] and [settle] on the tab in hand, the same tap on the phone as it comes away,
  * and the same order remembered afterwards.
  *
- * ## THE ORDER IS NOT SAVED YET
+ * ## Two ways the order is kept
  *
- * [remembered] holds it for as long as the app is running - so it survives leaving the
- * sale screen and coming back, and survives the catalogue being re-read underneath it,
- * which is what makes the gesture worth having at all. It does NOT survive the app
- * being closed: there is no column on md_category to put it in yet. That is the next
- * step, and this object is where it plugs in - [ordered] and [remember] are the only
- * two places the order is read and written.
+ * [remember] only ever touches [remembered] - the in-memory list - and is the one
+ * [ordered] itself reads, deliberately kept free of any database or Context so the
+ * unit tests can drive it directly. It is enough on its own to survive leaving the
+ * sale screen and coming back, and the catalogue being re-read underneath it, which
+ * is what makes the gesture worth having at all inside one session.
+ *
+ * [persist] and [restore] are the pair that make it survive further than that - a
+ * logout, or the app being closed. [persist] calls [remember] and then writes the
+ * same list to [GeneralSettingsDao.saveCategoryOrder]; [restore] reads it back with
+ * [GeneralSettingsDao.loadCategoryOrder] and seeds [remembered] with it. Each screen
+ * calls [restore] once, when its tabs are first built after login, and [persist] -
+ * never [remember] directly - from its own drag-drop handler, so a drag is written
+ * down the moment it happens rather than waiting for some later save the sale screen
+ * has no reason to otherwise make.
  */
 object CategoryOrder {
 
@@ -74,10 +84,43 @@ object CategoryOrder {
      * Records the order the tabs now stand in - the WHOLE strip, "All" included,
      * since it is dragged like any other tab and has to be able to come back to
      * wherever it was put.
+     *
+     * In-memory only, and deliberately: this is what [ordered] itself reads, and
+     * keeping it free of a database or a Context is what lets the unit tests drive
+     * it directly. A caller that wants the drag to survive a logout calls [persist]
+     * instead, which does this and then saves it.
      */
     fun remember(names: List<String>) {
         remembered.clear()
         remembered.addAll(names)
+    }
+
+    /**
+     * [remember]s the order, and writes it down so it is still there the next time
+     * this shop logs in. Call this - not [remember] - from [attach]'s `onDropped`,
+     * the one moment a drag is actually finished.
+     */
+    fun persist(context: Context, names: List<String>) {
+        remember(names)
+        GeneralSettingsDao(context).saveCategoryOrder(names)
+    }
+
+    /**
+     * Seeds [remembered] with whatever this shop last dragged, read back off
+     * [GeneralSettingsDao.loadCategoryOrder] - OVERWRITING whatever [remembered]
+     * already held.
+     *
+     * The overwrite is deliberate, not merely tolerated: [CategoryOrder] is one
+     * object shared for as long as the app process lives, and on a device more than
+     * one shop signs into, a second login must not go on reading the first shop's
+     * drag out of memory just because something was there already. Call this once,
+     * at login (or wherever a sale screen first builds its tabs after one) - never
+     * from inside a plain catalogue-reload rebuild, which would otherwise undo a
+     * drag made seconds ago by racing [persist]'s own write back with a read of it.
+     */
+    fun restore(context: Context) {
+        remembered.clear()
+        remembered.addAll(GeneralSettingsDao(context).loadCategoryOrder())
     }
 
     // ---- What a tab in hand looks like ---------------------------------------

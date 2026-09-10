@@ -1148,13 +1148,6 @@ class AboutAppFragment : Fragment(), TitledScreen {
                 "deleted with it. This cannot be undone." +
                 "\n\nA backup is taken first, into Downloads/POSbackup, so what is about " +
                 "to be erased can be brought back by restoring that file." +
-            title = "Restore default settings?",
-            message = "Every setting goes back to how the app came - General, Bill, Tax " +
-                "and App settings, the print template, the automatic backup and the " +
-                "theme colour. This cannot be undone." +
-                "\n\nA backup is taken first, into Downloads/backup - everything but " +
-                "this device's users and store registration, so restoring it later would " +
-                "not disturb who can sign in." +
                 modeNote +
                 "\n\n• The printers are forgotten. Every named printer is removed and " +
                 "the connections go back to WIFI for bills and LAN for KOT, with no " +

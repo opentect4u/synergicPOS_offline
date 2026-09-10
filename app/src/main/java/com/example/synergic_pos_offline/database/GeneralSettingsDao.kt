@@ -3,6 +3,7 @@ package com.example.synergic_pos_offline.database
 import android.content.ContentValues
 import android.content.Context
 import com.example.synergic_pos_offline.utils.SessionManager
+import org.json.JSONArray
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -258,6 +259,39 @@ class GeneralSettingsDao(context: Context) {
         )
     }
 
+    /**
+     * The order the shop last dragged the sale screen's category tabs into - see
+     * `CategoryOrder`, which is where this is actually read and written from.
+     *
+     * Kept out of [GeneralSettings] for the same reason [loadPrintLanguage] is:
+     * this has no toggle of its own on the General Settings screen, and folding it
+     * into that block would mean a save of an unrelated field on that screen
+     * quietly rewriting - or wiping - whatever order was last dragged, along with
+     * making every other reader of [GeneralSettings] carry a field that means
+     * nothing to them.
+     *
+     * Stored as a JSON array of names rather than a delimited string: a category
+     * name is shop-entered text and can hold any character a delimiter might have
+     * picked, "All" included, which is not a real row anywhere else this could be
+     * matched against by id.
+     */
+    fun loadCategoryOrder(): List<String> {
+        val raw = readAll()[KEY_CATEGORY_ORDER]?.takeIf { it.isNotBlank() } ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(raw)
+            (0 until array.length()).map { array.getString(it) }
+        }.getOrDefault(emptyList())
+    }
+
+    /** Stores the dragged order and republishes the settings cache. */
+    fun saveCategoryOrder(names: List<String>) {
+        put(KEY_CATEGORY_ORDER, JSONArray(names).toString())
+        helper.regroupAppSettingsByType()
+        com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(
+            appContext, "Category order save (type G)"
+        )
+    }
+
     // ---- Low-level key/value access ----------------------------------------
 
     private fun readAll(): Map<String, String> {
@@ -344,6 +378,9 @@ class GeneralSettingsDao(context: Context) {
         /** Shared with `PrintLanguage`, which reads it out of the login cache. */
         const val KEY_PRINT_LANGUAGE =
             com.example.synergic_pos_offline.utils.PrintLanguage.SETTING_KEY
+        /** Shared with `CategoryOrder`, which reads/writes it via [loadCategoryOrder]
+         *  and [saveCategoryOrder]. */
+        private const val KEY_CATEGORY_ORDER = "Category Order"
         const val KEY_ACCESS_MASTER = "Access Master"
         const val KEY_ACCESS_SETTINGS = "Access Settings"
         const val KEY_ACCESS_REPORTS = "Access Reports"
