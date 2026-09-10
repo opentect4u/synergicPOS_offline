@@ -35,6 +35,8 @@ object CartMath {
         val cgstRate: Double = 0.0,
         val sgstRate: Double = 0.0,
         val vatRate: Double = 0.0,
+        /** The product's IGST rate - the inter-state shape of GST, never set alongside cgstRate/sgstRate. */
+        val igstRate: Double = 0.0,
         /** The product's own pre-configured discount, for item-wise mode. */
         val discValue: Double = 0.0,
         /** "A" for a flat amount, anything else for a percentage; null for none. */
@@ -87,6 +89,9 @@ object CartMath {
         val cgst: Double,
         val sgst: Double,
         val vat: Double,
+        /** The IGST actually charged on the bill - the inter-state shape of GST,
+         *  never charged alongside CGST/SGST on the same line. */
+        val igst: Double = 0.0,
         /** The taxed goods with every discount off: what is owed for what was sold. */
         val goods: Double,
         /** The section's flat service charge, where the caller applies one. */
@@ -94,7 +99,7 @@ object CartMath {
         /** The shop's own extra charges - see ChargeDao. */
         val charges: List<ChargeDao.Applied>
     ) {
-        val tax: Double get() = cgst + sgst + vat
+        val tax: Double get() = cgst + sgst + vat + igst
         val chargesTotal: Double get() = BillRounding.toPaise(charges.sumOf { it.amount })
 
         /**
@@ -116,7 +121,7 @@ object CartMath {
      * whether tax is on at all. Matches [BillPricing]'s own `combinedRate`.
      */
     fun rateOf(line: Line, cfg: Config): Double =
-        if (cfg.taxEnabled) line.cgstRate + line.sgstRate + line.vatRate else 0.0
+        if (cfg.taxEnabled) line.cgstRate + line.sgstRate + line.vatRate + line.igstRate else 0.0
 
     /**
      * The discount for one line, expressed against its raw pre-tax base - the shape
@@ -191,7 +196,8 @@ object CartMath {
             discountAmount = lineDiscount(line, cfg, subtotal, billDiscount),
             taxEnabled = cfg.taxEnabled,
             inclusive = cfg.inclusive,
-            discountPreTax = cfg.discountPreTax
+            discountPreTax = cfg.discountPreTax,
+            igstRate = line.igstRate
         )
 
     /** Sum of the listed line amounts. */
@@ -228,7 +234,7 @@ object CartMath {
         val sub = subtotal(lines)
         return lines.sumOf { l ->
             val p = priceLine(l, cfg, sub, 0.0)
-            p.taxable + p.cgst + p.sgst + p.vat
+            p.taxable + p.cgst + p.sgst + p.vat + p.igst
         }
     }
 
@@ -273,6 +279,7 @@ object CartMath {
         val cgst = priced.sumOf { it.cgst }
         val sgst = priced.sumOf { it.sgst }
         val vat = priced.sumOf { it.vat }
+        val igst = priced.sumOf { it.igst }
         // What the customer was actually discounted, against whichever price
         // Discount Position says the product's own configured discount is a share
         // of (see [GstCalculator.priceItem]'s own note): the rate itself
@@ -334,6 +341,7 @@ object CartMath {
             cgst = BillRounding.toPaise(cgst),
             sgst = BillRounding.toPaise(sgst),
             vat = BillRounding.toPaise(vat),
+            igst = BillRounding.toPaise(igst),
             goods = BillRounding.toPaise(goods),
             service = BillRounding.toPaise(service),
             charges = charges

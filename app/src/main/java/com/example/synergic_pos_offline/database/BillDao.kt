@@ -49,6 +49,12 @@ class BillDao(context: Context) {
          * a GST till came to be charged no VAT at all.
          */
         val vatRate: Double = 0.0,
+        /**
+         * The product's IGST rate, off the master - the inter-state shape of GST,
+         * charged instead of CGST+SGST rather than alongside it (see
+         * [com.example.synergic_pos_offline.utils.GstCalculator.regimeOf]).
+         */
+        val igstRate: Double = 0.0,
         /** This line's share of the bill discount; tax is charged on the remainder. */
         val discountAmount: Double = 0.0
     )
@@ -217,10 +223,12 @@ class BillDao(context: Context) {
                     discountAmount = item.discountAmount,
                     taxEnabled = taxEnabled,
                     inclusive = inclusive,
-                    discountPreTax = discountPreTax
+                    discountPreTax = discountPreTax,
+                    igstRate = item.igstRate
                 )
                 val cgstAmt = priced.cgst
                 val sgstAmt = priced.sgst
+                val igstAmt = priced.igst
                 val vatAmt = priced.vat
                 val itemTotal = priced.itemTotal
                 val itemValues = ContentValues().apply {
@@ -247,9 +255,11 @@ class BillDao(context: Context) {
                     put("cgst_rate", item.cgstRate)
                     put("sgst_rate", item.sgstRate)
                     put("vat_rate", item.vatRate)
+                    put("igst_rate", item.igstRate)
                     put("cgst_amount", cgstAmt)
                     put("sgst_amount", sgstAmt)
                     put("vat_amount", vatAmt)
+                    put("igst_amount", igstAmt)
                     put("item_total", itemTotal)
                     put("created_by", user)
                 }

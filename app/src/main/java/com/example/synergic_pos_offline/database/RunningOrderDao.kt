@@ -59,7 +59,9 @@ class RunningOrderDao(context: Context) {
          */
         val discValue: Double = 0.0,
         /** "A" for a flat amount, otherwise a percentage. Null when the line has none. */
-        val discType: String? = null
+        val discType: String? = null,
+        /** The product's IGST rate - the inter-state shape of GST, never set alongside cgstRate/sgstRate. */
+        val igstRate: Double = 0.0
     ) {
         /** Quantity newly added, not yet sent to the kitchen. */
         val pending: Double get() = (qty - kotQty).coerceAtLeast(0.0)
@@ -242,6 +244,7 @@ class RunningOrderDao(context: Context) {
                         put("cgst_rate", src.cgstRate)
                         put("sgst_rate", src.sgstRate)
                         put("vat_rate", src.vatRate)
+                        put("igst_rate", src.igstRate)
                         // The line's own discount travels with it. Left behind, a
                         // merged line arrived on the other table priced at full while
                         // the same line on the table it came from had been discounted -
@@ -391,7 +394,7 @@ class RunningOrderDao(context: Context) {
     fun addItem(
         orderId: Long, productId: Long, name: String, qty: Double, rate: Double,
         cgstRate: Double = 0.0, sgstRate: Double = 0.0, vatRate: Double = 0.0,
-        discValue: Double = 0.0, discType: String? = null
+        discValue: Double = 0.0, discType: String? = null, igstRate: Double = 0.0
     ): Long {
         val db = helper.writableDatabase
         val lineId = db.query(
@@ -415,6 +418,7 @@ class RunningOrderDao(context: Context) {
                     put("cgst_rate", cgstRate)
                     put("sgst_rate", sgstRate)
                     put("vat_rate", vatRate)
+                    put("igst_rate", igstRate)
                     put("discount", discValue)
                     if (discType.isNullOrBlank()) putNull("discount_type") else put("discount_type", discType)
                     put("kot_printed", 0)
@@ -433,7 +437,7 @@ class RunningOrderDao(context: Context) {
         helper.readableDatabase.query(
             items, arrayOf(
                 "id", "product_id", "product_name", "quantity", "rate", "kot_qty",
-                "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type"
+                "cgst_rate", "sgst_rate", "vat_rate", "discount", "discount_type", "igst_rate"
             ),
             "running_order_id = ?", arrayOf(orderId.toString()), null, null, "id ASC"
         ).use { c ->
@@ -450,7 +454,8 @@ class RunningOrderDao(context: Context) {
                         sgstRate = c.getDouble(7),
                         vatRate = c.getDouble(8),
                         discValue = if (c.isNull(9)) 0.0 else c.getDouble(9),
-                        discType = c.getString(10)?.takeIf { it.isNotBlank() }
+                        discType = c.getString(10)?.takeIf { it.isNotBlank() },
+                        igstRate = c.getDouble(11)
                     )
                 )
             }

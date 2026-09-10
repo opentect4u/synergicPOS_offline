@@ -69,6 +69,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
     private lateinit var tvPreview: TextView
     private lateinit var actCustomerDetails: MaterialAutoCompleteTextView
     private lateinit var swCustomerAddress: SwitchMaterial
+    private lateinit var swUserDetails: SwitchMaterial
     private lateinit var actTotalFontSize: MaterialAutoCompleteTextView
     private lateinit var swUpiQr: SwitchMaterial
     private lateinit var llUpiFields: View
@@ -126,6 +127,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         tvTokenPreview = view.findViewById(R.id.tvTokenNoPreview)
         actCustomerDetails = view.findViewById(R.id.actCustomerDetails)
         swCustomerAddress = view.findViewById(R.id.swCustomerAddress)
+        swUserDetails = view.findViewById(R.id.swUserDetails)
         actTotalFontSize = view.findViewById(R.id.actTotalFontSize)
         swUpiQr = view.findViewById(R.id.swUpiQr)
         llUpiFields = view.findViewById(R.id.llUpiFields)
@@ -234,7 +236,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         SettingsAutoSave.onChange(
             ::autoSave,
             swRoundOff, swAmountWords, swHsn, swProductSerial, swBillTime,
-            swTwoCopy, swCouponSplit, swCustomerAddress,
+            swTwoCopy, swCouponSplit, swCustomerAddress, swUserDetails,
             rgReset, actCustomerDetails, actTotalFontSize
         )
         SettingsAutoSave.onTyped(
@@ -306,6 +308,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         )
         actCustomerDetails.setText(s.customerDetails.label, false)
         swCustomerAddress.isChecked = s.customerAddressPrinting
+        swUserDetails.isChecked = s.showUserDetails
         actTotalFontSize.setText(s.totalAmountFontSize.label, false)
         swUpiQr.isChecked = s.upiQrEnabled
         // Always shown - see the switch listener above.
@@ -350,6 +353,7 @@ class BillSettingsFragment : Fragment(), TitledScreen {
         timeOnBill = swBillTime.isChecked,
         customerDetails = CustomerDetails.fromStored(actCustomerDetails.text?.toString()) ?: CustomerDetails.ONLY_MOBILE,
         customerAddressPrinting = swCustomerAddress.isChecked,
+        showUserDetails = swUserDetails.isChecked,
         totalAmountFontSize = FontSize.fromStored(actTotalFontSize.text?.toString()) ?: FontSize.REGULAR,
         billFormat = currentFormat,
         upiQrEnabled = swUpiQr.isChecked,

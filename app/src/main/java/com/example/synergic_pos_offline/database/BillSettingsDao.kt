@@ -146,6 +146,21 @@ class BillSettingsDao(context: Context) {
          */
         val customerDetails: CustomerDetails = CustomerDetails.MOBILE_NAME,
         val customerAddressPrinting: Boolean = false,
+        /**
+         * Whether the shop's own details - name, address, phone and GSTIN - print at
+         * the head of the bill, on the grocery slip and the restaurant one alike (one
+         * renderer draws both - see [com.example.synergic_pos_offline.utils.BillReceiptRenderer]).
+         *
+         * Defaults ON, which is what every till did before this was a choice: a shop
+         * that upgrades keeps printing the bill it printed yesterday, and only a shop
+         * that turns it off sees a change. Read live rather than frozen onto each bill
+         * at sale time (contrast [hsnCode]/[timeOnBill], which are) - the shop's own
+         * identity is not something a bill's own arithmetic depends on, and unlike
+         * those fields the registration details themselves are already read fresh on
+         * every reprint rather than stored per bill, so this decides only whether to
+         * show them, the same way.
+         */
+        val showUserDetails: Boolean = true,
         val totalAmountFontSize: FontSize = FontSize.REGULAR,
         /**
          * The layout a bill prints in, until a till chooses otherwise.
@@ -222,6 +237,7 @@ class BillSettingsDao(context: Context) {
             timeOnBill = map[KEY_TIME_ON_BILL]?.toBool() ?: d.timeOnBill,
             customerDetails = CustomerDetails.fromStored(map[KEY_CUSTOMER_DETAILS]) ?: d.customerDetails,
             customerAddressPrinting = map[KEY_CUSTOMER_ADDRESS_PRINTING]?.toBool() ?: d.customerAddressPrinting,
+            showUserDetails = map[KEY_SHOW_USER_DETAILS]?.toBool() ?: d.showUserDetails,
             totalAmountFontSize = FontSize.fromStored(map[KEY_TOTAL_FONT_SIZE]) ?: d.totalAmountFontSize,
             billFormat = BillFormat.fromStored(map[KEY_BILL_FORMAT]) ?: d.billFormat,
             upiQrEnabled = map[KEY_UPI_QR_ENABLED]?.toBool() ?: d.upiQrEnabled,
@@ -251,6 +267,7 @@ class BillSettingsDao(context: Context) {
         put(KEY_TIME_ON_BILL, if (s.timeOnBill) "1" else "0")
         put(KEY_CUSTOMER_DETAILS, s.customerDetails.code.toString())
         put(KEY_CUSTOMER_ADDRESS_PRINTING, if (s.customerAddressPrinting) "1" else "0")
+        put(KEY_SHOW_USER_DETAILS, if (s.showUserDetails) "1" else "0")
         put(KEY_TOTAL_FONT_SIZE, s.totalAmountFontSize.code)
         put(KEY_BILL_FORMAT, s.billFormat.code)
         put(KEY_UPI_QR_ENABLED, if (s.upiQrEnabled) "1" else "0")
@@ -441,6 +458,7 @@ class BillSettingsDao(context: Context) {
         private const val KEY_TIME_ON_BILL = "Time On Bill"
         private const val KEY_CUSTOMER_DETAILS = "Customer Details"
         private const val KEY_CUSTOMER_ADDRESS_PRINTING = "Customer Address Printing"
+        private const val KEY_SHOW_USER_DETAILS = "User Details"
         private const val KEY_TOTAL_FONT_SIZE = "Total Amount Font Size"
         private const val KEY_BILL_FORMAT = "Bill Format"
         private const val KEY_UPI_QR_ENABLED = "Bill Upi Qr Enabled"

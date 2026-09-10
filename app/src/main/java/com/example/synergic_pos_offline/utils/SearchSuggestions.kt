@@ -383,11 +383,12 @@ class SearchSuggestions(
 
     companion object {
         /**
-         * One letter is not a search - on any real catalogue it matches most of it,
-         * and a panel of eight arbitrary rows opening on the first keystroke is in
-         * the way rather than ahead of the operator.
+         * The dropdown opens from the very first character typed - a single digit in
+         * the Product ID box, or a single letter in the Name box, already narrows the
+         * eight rows to something useful, and the operator should not have to type a
+         * second character before seeing anything happen at all.
          */
-        const val MIN_QUERY = 2
+        const val MIN_QUERY = 1
 
         /**
          * Eight rows. Enough that the item being reached for is nearly always among

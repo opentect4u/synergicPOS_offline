@@ -65,7 +65,7 @@ class RestoreDefaultsTest {
                 saleReturn = true,
                 returnMode = GeneralSettingsDao.ReturnMode.ITEM_WISE,
                 saleReturnDays = 7,
-                lastBillStatus = true,
+                lastBillStatus = false,
                 quantityStatus = true,
                 itemRate = GeneralSettingsDao.ItemRate.MULTIPLE,
                 customerInfo = false,
@@ -106,7 +106,7 @@ class RestoreDefaultsTest {
         AppSettingsDao(ctx).save(
             AppSettingsDao.AppSettings(
                 manualRate = true, cashReception = true, paymentMode = true,
-                otherCharges = true, directAddToCart = true, biometricLogin = true, shift = true,
+                otherCharges = true, directAddToCart = false, biometricLogin = true, shift = true,
                 couponMode = true,
                 kot = true, tableMerge = true, tableShift = true, tableSplit = true
             )

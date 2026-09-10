@@ -19,11 +19,13 @@ class BillPricingVatTest {
         sgst: Double = 0.0,
         vat: Double = 0.0,
         taxEnabled: Boolean = true,
-        inclusive: Boolean = false
+        inclusive: Boolean = false,
+        igst: Double = 0.0
     ) = BillPricing.price(
         rate = rate, quantity = 1.0,
         cgstRate = cgst, sgstRate = sgst, vatRate = vat,
-        discountAmount = 0.0, taxEnabled = taxEnabled, inclusive = inclusive, discountPreTax = true
+        discountAmount = 0.0, taxEnabled = taxEnabled, inclusive = inclusive, discountPreTax = true,
+        igstRate = igst
     )
 
     @Test
@@ -41,6 +43,28 @@ class BillPricingVatTest {
         assertEquals(2.5, line.sgst, delta)
         assertEquals(0.0, line.vat, delta)
         assertEquals(105.0, line.itemTotal, delta)
+    }
+
+    /**
+     * IGST - the inter-state shape of GST - is charged instead of CGST/SGST, never
+     * alongside it, the same way a VAT-rated item is charged VAT instead of GST.
+     */
+    @Test
+    fun `an IGST-rated item is charged IGST`() {
+        val line = price(rate = 100.0, igst = 18.0)
+        assertEquals(18.0, line.igst, delta)
+        assertEquals(0.0, line.cgst, delta)
+        assertEquals(0.0, line.sgst, delta)
+        assertEquals(0.0, line.vat, delta)
+        assertEquals(118.0, line.itemTotal, delta)
+    }
+
+    @Test
+    fun `an inclusive IGST price is stripped at its own rate`() {
+        val line = price(rate = 118.0, igst = 18.0, inclusive = true)
+        assertEquals(100.0, line.taxable, delta)
+        assertEquals(18.0, line.igst, delta)
+        assertEquals(118.0, line.itemTotal, delta)
     }
 
     @Test

@@ -24,10 +24,13 @@ object GstCalculator {
     enum class TaxRegime { NONE, GST, VAT }
 
     /** Classifies a product/line by whichever of its own rates is set - GST if it
-     *  carries CGST/SGST, VAT if it carries VAT, NONE if it carries neither. A
-     *  product is never expected to carry both. */
-    fun regimeOf(cgstRate: Double, sgstRate: Double, vatRate: Double): TaxRegime = when {
-        cgstRate + sgstRate > 0.0 -> TaxRegime.GST
+     *  carries CGST/SGST (intra-state) or IGST (inter-state) - the two are
+     *  mutually exclusive ways of charging the same GST, never both on one
+     *  product - VAT if it carries VAT, NONE if it carries neither. A product is
+     *  never expected to carry both GST (of either shape) and VAT. [igstRate]
+     *  defaults to zero so existing CGST/SGST/VAT-only callers are unaffected. */
+    fun regimeOf(cgstRate: Double, sgstRate: Double, vatRate: Double, igstRate: Double = 0.0): TaxRegime = when {
+        cgstRate + sgstRate + igstRate > 0.0 -> TaxRegime.GST
         vatRate > 0.0 -> TaxRegime.VAT
         else -> TaxRegime.NONE
     }

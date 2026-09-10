@@ -30,7 +30,7 @@ class AppSettingsDao(context: Context) {
          */
         val parcelCharge: Boolean = false,
         /** Tap an item to add it straight to the cart (skip the quantity popup). */
-        val directAddToCart: Boolean = false,
+        val directAddToCart: Boolean = true,
         /**
          * Offer the fingerprint reader on the login screen.
          *
@@ -65,7 +65,7 @@ class AppSettingsDao(context: Context) {
             paymentMode = m[KEY_PAYMENT_MODE]?.toBool() ?: false,
             otherCharges = m[KEY_OTHER_CHARGES]?.toBool() ?: false,
             parcelCharge = m[KEY_PARCEL_CHARGE]?.toBool() ?: false,
-            directAddToCart = m[KEY_DIRECT_ADD_TO_CART]?.toBool() ?: false,
+            directAddToCart = m[KEY_DIRECT_ADD_TO_CART]?.toBool() ?: true,
             biometricLogin = m[KEY_BIOMETRIC_LOGIN]?.toBool() ?: false,
             shift = m[KEY_SHIFT]?.toBool() ?: false,
             couponMode = m[KEY_COUPON_MODE]?.toBool() ?: false,

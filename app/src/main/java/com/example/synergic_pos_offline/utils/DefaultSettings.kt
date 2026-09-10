@@ -42,19 +42,23 @@ object DefaultSettings {
     // ---- General Settings (md_app_settings, type 'G') -------------------------
 
     /**
-     * Grocery, with nothing optional turned on.
+     * Grocery, with every optional flag off except Last Bill Status.
      *
      * Mode is the one that reaches furthest: Grocery is what the till goes back to,
      * so the restaurant menus, KOT and table screens fold away with it. Customer Info
      * is off with the rest - a credit sale still asks for the customer whatever this
      * says, because it has to be collected from somebody.
+     *
+     * Last Bill Status is ON: the billing screen's header names the last bill and
+     * offers it straight back up for a reprint, which is a thing an operator reaches
+     * for often enough that a fresh till should not have to be told to turn it on.
      */
     val GENERAL = GeneralSettingsDao.GeneralSettings(
         mode = GeneralSettingsDao.Mode.GROCERY,
         saleReturn = false,
         returnMode = GeneralSettingsDao.ReturnMode.BILL_WISE,
         saleReturnDays = 0,
-        lastBillStatus = false,
+        lastBillStatus = true,
         quantityStatus = false,
         itemRate = GeneralSettingsDao.ItemRate.SINGLE,
         productSort = GeneralSettingsDao.ProductSort.SERIAL_ASC,
@@ -101,7 +105,8 @@ object DefaultSettings {
         customerDetails = BillSettingsDao.CustomerDetails.MOBILE_NAME,
         customerAddressPrinting = false,
         totalAmountFontSize = BillSettingsDao.FontSize.REGULAR,
-        billFormat = BillSettingsDao.BillFormat.CLASSIC
+        billFormat = BillSettingsDao.BillFormat.CLASSIC,
+        showUserDetails = true
     )
 
     /** The width the Print Template preview is drawn at - 3 inch. */
@@ -130,11 +135,16 @@ object DefaultSettings {
     // ---- App Settings (md_app_settings, type 'A') -----------------------------
 
     /**
-     * Every optional behaviour off - the shortest path through a sale.
+     * Every optional behaviour off except Direct Add to Cart - the shortest path
+     * through a sale.
      *
      * The restaurant half is off too. It is only visible in Restaurant mode, and
      * a restore has just put the till back to Grocery; when the mode is switched
      * back, General Settings turns the restaurant toggles on again itself.
+     *
+     * Direct Add to Cart is ON: a tap on a tile goes straight into the cart at its
+     * own rate rather than stopping at the quantity popup first, which is the
+     * faster of the two and the one a shortest-path default should be.
      */
     val APP = AppSettingsDao.AppSettings(
         manualRate = false,
@@ -142,7 +152,7 @@ object DefaultSettings {
         paymentMode = false,
         otherCharges = false,
         parcelCharge = false,
-        directAddToCart = false,
+        directAddToCart = true,
         biometricLogin = false,
         shift = false,
         couponMode = false,
