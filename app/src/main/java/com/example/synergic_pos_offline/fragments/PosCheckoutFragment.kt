@@ -315,6 +315,22 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             }
         }
         clockRunnable.run()
+
+        // WITH NO MODE PICKER, THIS SCREEN HAS NOTHING LEFT TO ASK.
+        //
+        // "Payment Mode" off already forces Cash and takes Credit/Card/Online down
+        // to the one tile above - so what is left here is Cash's own fields, and
+        // those just filled themselves in: fillCashWithTotal (run inside the
+        // refreshTotals above) has already put the full total in Cash tendered.
+        // Every field Complete would read is already at the value tapping it
+        // would have used, so waiting for that tap is asking the operator to
+        // confirm a screen that never changed. Settlement therefore completes the
+        // sale the moment it is reached - a tap on the cart screen's own
+        // Checkout/Settlement prints the bill without this screen ever needing to
+        // be looked at.
+        if (!appSettings.paymentMode) {
+            view.post { complete() }
+        }
     }
 
     override fun onDestroyView() {
