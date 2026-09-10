@@ -1281,7 +1281,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // past this point is for a person typing - a scan never reaches any of it.
         // The watcher above is passed through so ScanState can clear the field
         // WITHOUT running it - see the note on [ScanState.clearFieldQuietly].
-        attachScanner(field, watcher, onQueryChanged, other)
+        attachScanner(field, watcher, onQueryChanged, box, other)
         // The keyboard's Search key, and the Enter a hardware scanner sends after a
         // barcode: the query is finished either way, so the keyboard goes and the
         // shelf - filtered to what was asked for - is left uncovered.
@@ -1349,7 +1349,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private inner class ScanState(
         private val field: TextInputEditText,
         private val watcher: TextWatcher,
-        private val onQueryChanged: (String) -> Unit
+        private val onQueryChanged: (String) -> Unit,
+        /** The dropdown this field's own watcher feeds - see [clearFieldQuietly]. */
+        private val box: SearchSuggestions
     ) {
         private val scanBuffer = StringBuilder()
         private var lastKeyTime = 0L
@@ -1424,12 +1426,22 @@ class PosBillingFragment : Fragment(), TitledScreen {
          * own, cheaply, so the screen's own query state still ends up "" - the
          * watcher is skipped only for the expensive parts it would otherwise do
          * on the way there.
+         *
+         * [box] is dismissed here too, not just skipped: the burst's FIRST
+         * character always lands before a scan is recognised as one (see
+         * [onKeyDown]'s own note), and that one keystroke already reached the
+         * watcher and queued [SearchSuggestions.update]'s own delayed open. Left
+         * alone it fires anyway a sixth of a second later, against a field that
+         * has since gone back to empty and an item already on the bill - a
+         * dropdown popping up out of nowhere after every scan. Dismissing
+         * cancels that queued open along with anything already on screen.
          */
         private fun clearFieldQuietly() {
             field.removeTextChangedListener(watcher)
             field.setText("")
             field.addTextChangedListener(watcher)
             onQueryChanged("")
+            box.dismiss()
         }
 
         /** Resolves a scan that stopped without an Enter, shortly after the keys stop. */
@@ -1445,6 +1457,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
         etSearch: TextInputEditText,
         watcher: TextWatcher,
         onQueryChanged: (String) -> Unit,
+        /** The dropdown this field's watcher feeds - see [ScanState.clearFieldQuietly]. */
+        box: SearchSuggestions,
         /** The other search box - see [wireSearchField]. */
         other: TextInputEditText? = null
     ) {
@@ -1484,7 +1498,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             }
         }
 
-        val state = ScanState(etSearch, watcher, onQueryChanged)
+        val state = ScanState(etSearch, watcher, onQueryChanged, box)
         etSearch.setOnKeyListener { _, keyCode, event ->
             if (event.action != android.view.KeyEvent.ACTION_DOWN) return@setOnKeyListener false
             state.onKeyDown(keyCode, event)

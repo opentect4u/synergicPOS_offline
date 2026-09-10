@@ -17,6 +17,7 @@ import android.widget.NumberPicker
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -307,11 +308,18 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         til.visibility = View.VISIBLE
         til.hint = hint
 
-        filterChoice = filterOptions.first()
         val dropdown = view.findViewById<MaterialAutoCompleteTextView>(R.id.actPeriodFilter)
         dropdown.setAdapter(
             ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, filterOptions)
         )
+        // A searchable box starts EMPTY, not defaulted to whichever item happens to
+        // sort first - a box that already reads a product name looks like a choice
+        // was already made, and Generate would quietly run that report before the
+        // operator typed anything. [load] already treats no match as "nothing
+        // chosen" (see its own note), which an empty box now actually reaches. A
+        // plain pick-from-list filter keeps defaulting to its first option, which
+        // is usually a deliberate "All" placed there for exactly that reason.
+        filterChoice = if (filterSearchable) "" else filterOptions.first()
         dropdown.setText(filterChoice, false)
 
         if (filterSearchable) {
@@ -325,6 +333,15 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
             // the box first: they are usually switching to another operator, not
             // correcting a typo in this one.
             dropdown.setOnClickListener { dropdown.showDropDown() }
+            // A typed search deserves a one-tap way out of it - the built-in X that
+            // shows once there is something to clear, in place of the plain dropdown
+            // arrow a non-searchable filter keeps.
+            til.endIconMode = TextInputLayout.END_ICON_CLEAR_TEXT
+            // Clearing the box - by the X or by hand - empties the choice rather
+            // than quietly falling back to whichever item sorts first; see [load].
+            dropdown.doAfterTextChanged { text ->
+                if (text.isNullOrBlank()) filterChoice = ""
+            }
         }
 
         dropdown.setOnItemClickListener { _, _, position, _ ->
