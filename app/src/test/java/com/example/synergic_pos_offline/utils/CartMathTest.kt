@@ -102,6 +102,28 @@ class CartMathTest {
         assertEquals(325.0, totals.total, delta)
     }
 
+    /**
+     * IGST - the inter-state shape of GST - is charged instead of CGST/SGST on the
+     * line that carries it, never alongside it, the same way a VAT-rated line sits
+     * beside a GST-rated one above.
+     */
+    @Test
+    fun `a cart mixing a CGST-SGST line and an IGST line taxes each at its own rate`() {
+        // 100 intra-state at 5% (2.5+2.5), 200 inter-state at 18% IGST.
+        val lines = listOf(
+            CartMath.Line(qty = 1.0, rate = 100.0, cgstRate = 2.5, sgstRate = 2.5),
+            CartMath.Line(qty = 1.0, rate = 200.0, igstRate = 18.0)
+        )
+        // Line 1: 100 * 5% = 5.00 (2.50 CGST + 2.50 SGST). Line 2: 200 * 18% = 36.00 IGST.
+        val totals = CartMath.totals(lines, cfg(), GstCalculator.DiscountMode.PERCENT, 0.0)
+        assertEquals(2.5, totals.cgst, delta)
+        assertEquals(2.5, totals.sgst, delta)
+        assertEquals(0.0, totals.vat, delta)
+        assertEquals(36.0, totals.igst, delta)
+        assertEquals(41.0, totals.tax, delta)
+        assertEquals(341.0, totals.total, delta)
+    }
+
     @Test
     fun `the same mixed cart charges nothing with tax switched off`() {
         val lines = listOf(

@@ -240,6 +240,9 @@ class DatabaseHelper private constructor(context: Context) :
         // lost its rate the moment it went on a table - and the bill printed from
         // that order could not charge a tax it no longer knew about.
         addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "vat_rate", "REAL DEFAULT 0")
+        // IGST - the inter-state shape of GST, never set alongside cgst_rate/sgst_rate -
+        // captured the same way and for the same reason as the other rates above.
+        addColumnIfMissing(db, Tables.TD_RUNNING_ORDER_ITEMS, "igst_rate", "REAL DEFAULT 0")
         // The product own discount, snapshotted when the line was added - Tax
         // Settings item-wise discount. Held on the line rather than looked up at
         // billing time so a table open across a price change is billed at what it was
@@ -1963,6 +1966,7 @@ class DatabaseHelper private constructor(context: Context) :
                 cgst_rate REAL DEFAULT 0,
                 sgst_rate REAL DEFAULT 0,
                 vat_rate REAL DEFAULT 0,
+                igst_rate REAL DEFAULT 0,
                 kot_printed INTEGER NOT NULL DEFAULT 0,
                 kot_qty REAL NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now','localtime')),

@@ -91,6 +91,22 @@ class GstCalculatorTest {
         assertEquals(944.0, taxable + cgst + sgst, delta)
     }
 
+    /**
+     * IGST - the inter-state shape of GST - classifies as GST the same way CGST/SGST
+     * does, so a purely inter-state product (no CGST/SGST on it at all) still reads
+     * as GST rather than falling through to NONE.
+     */
+    @Test
+    fun `regimeOf classifies a pure-IGST product as GST`() {
+        assertEquals(GstCalculator.TaxRegime.GST, GstCalculator.regimeOf(0.0, 0.0, 0.0, igstRate = 18.0))
+        // Still NONE when nothing at all is set, IGST included.
+        assertEquals(GstCalculator.TaxRegime.NONE, GstCalculator.regimeOf(0.0, 0.0, 0.0, igstRate = 0.0))
+        // Unaffected when a caller passes no IGST at all - the default keeps every
+        // existing CGST/SGST/VAT-only call site reading exactly as it did.
+        assertEquals(GstCalculator.TaxRegime.GST, GstCalculator.regimeOf(9.0, 9.0, 0.0))
+        assertEquals(GstCalculator.TaxRegime.VAT, GstCalculator.regimeOf(0.0, 0.0, 12.5))
+    }
+
     /** A mixed cart must not be flattened to one blended rate. */
     @Test
     fun `sums a cart whose products carry different rates`() {

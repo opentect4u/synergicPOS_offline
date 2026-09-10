@@ -68,7 +68,9 @@ object CheckoutSession {
         /** The rate's own pre-configured discount (Tax Settings' item-wise discount).
          *  [itemDiscType] is "P"/"A" (percent/amount) or null when none is configured. */
         val itemDiscValue: Double = 0.0,
-        val itemDiscType: String? = null
+        val itemDiscType: String? = null,
+        /** The product's IGST rate - the inter-state shape of GST, never set alongside cgstRate/sgstRate. */
+        val igstRate: Double = 0.0
     )
     data class HeldBill(
         /** The bill number the sale was carrying when it was parked - what the
@@ -368,7 +370,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                 """
                 SELECT p.id, p.product_name, p.bar_code, p.hsn_code,
                        c.category_name, r.rate, r.cgst_rate, r.sgst_rate, r.vat_rate,
-                       r.discount, r.discount_type,
+                       r.discount, r.discount_type, r.igst_rate,
                        -- The unit as it prints: its short name, or the first three
                        -- characters of its name where the shop left the short one
                        -- blank - see UnitDao.shortNameOf. Blank when the rate carries
@@ -400,7 +402,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                             vat = if (c.isNull(8)) 0.0 else c.getDouble(8),
                             discValue = if (c.isNull(9)) 0.0 else c.getDouble(9),
                             discType = c.getString(10),
-                            unit = c.getString(11).orEmpty()
+                            igst = if (c.isNull(11)) 0.0 else c.getDouble(11),
+                            unit = c.getString(12).orEmpty()
                         )
                     )
                 }
@@ -720,14 +723,14 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         if (taxInclusive && discountPreTax) {
             return lines.sumOf { line ->
                 val gross = line.price * line.qty
-                val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate else 0.0
+                val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate + line.igstRate else 0.0
                 GstCalculator.taxableBase(gross, rate, true)
             }
         }
         val sub = subtotal()
         return lines.sumOf {
             val t = lineTax(it, sub, 0.0)
-            t.taxable + t.cgst + t.sgst + t.vat
+            t.taxable + t.cgst + t.sgst + t.vat + t.igst
         }
     }
 
@@ -760,7 +763,12 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      * the further amount still to come off to reach the line's actual sale price
      * under a post-tax, exclusive item-wise discount; zero in every other case.
      */
-    private data class LineTax(val taxable: Double, val cgst: Double, val sgst: Double, val vat: Double, val discount: Double = 0.0) {
+    private data class LineTax(
+        val taxable: Double, val cgst: Double, val sgst: Double, val vat: Double,
+        val discount: Double = 0.0,
+        /** IGST - the inter-state shape of GST, never charged alongside CGST/SGST on the same line. */
+        val igst: Double = 0.0
+    ) {
         /**
          * Every figure taken to the nearest paisa - the precision it is reported at.
          * Totals are summed from these, not from the raw fractions behind them, so
@@ -770,7 +778,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
          */
         fun toPaise() = LineTax(
             BillRounding.toPaise(taxable), BillRounding.toPaise(cgst),
-            BillRounding.toPaise(sgst), BillRounding.toPaise(vat), BillRounding.toPaise(discount)
+            BillRounding.toPaise(sgst), BillRounding.toPaise(vat), BillRounding.toPaise(discount),
+            BillRounding.toPaise(igst)
         )
     }
 
@@ -803,7 +812,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      */
     private fun lineTaxRaw(line: CheckoutSession.Line, grossSubtotal: Double, discAmt: Double): LineTax {
         val gross = line.price * line.qty
-        val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate else 0.0
+        val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate + line.igstRate else 0.0
 
         if (itemwiseDiscountActive && line.itemDiscValue > 0.0 && line.itemDiscType != null) {
             val mode = if (line.itemDiscType == "A") GstCalculator.DiscountMode.AMOUNT else GstCalculator.DiscountMode.PERCENT
@@ -814,7 +823,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                 GstCalculator.taxAmount(pricing.taxable, line.cgstRate),
                 GstCalculator.taxAmount(pricing.taxable, line.sgstRate),
                 GstCalculator.taxAmount(pricing.taxable, line.vatRate),
-                pricing.discount
+                pricing.discount,
+                GstCalculator.taxAmount(pricing.taxable, line.igstRate)
             )
         }
 
@@ -829,7 +839,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             taxable,
             GstCalculator.taxAmount(taxable, line.cgstRate),
             GstCalculator.taxAmount(taxable, line.sgstRate),
-            GstCalculator.taxAmount(taxable, line.vatRate)
+            GstCalculator.taxAmount(taxable, line.vatRate),
+            igst = GstCalculator.taxAmount(taxable, line.igstRate)
         )
     }
 
@@ -841,7 +852,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      */
     private fun taxLabelText(): String {
         if (!taxEnabled) return "TAX"
-        val regimes = lines.map { GstCalculator.regimeOf(it.cgstRate, it.sgstRate, it.vatRate) }.toSet()
+        val regimes = lines.map { GstCalculator.regimeOf(it.cgstRate, it.sgstRate, it.vatRate, it.igstRate) }.toSet()
         return when {
             regimes == setOf(GstCalculator.TaxRegime.GST) -> "GST"
             regimes == setOf(GstCalculator.TaxRegime.VAT) -> "VAT"
@@ -866,7 +877,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         if (line.itemDiscValue <= 0.0 || line.itemDiscType == null) return 0.0
         val mode = if (line.itemDiscType == "A") GstCalculator.DiscountMode.AMOUNT else GstCalculator.DiscountMode.PERCENT
         val gross = line.price * line.qty
-        val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate else 0.0
+        val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate + line.igstRate else 0.0
         val postTaxExclusive = !taxInclusive && !discountPreTax
         val base = if (postTaxExclusive) gross + GstCalculator.taxAmount(gross, rate) else gross
         return GstCalculator.discountAmount(base, mode, line.itemDiscValue)
@@ -905,7 +916,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
      */
     private fun lineDiscountForBill(line: CheckoutSession.Line): Double {
         val gross = line.price * line.qty
-        val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate else 0.0
+        val rate = if (taxEnabled) line.cgstRate + line.sgstRate + line.vatRate + line.igstRate else 0.0
         if (itemwiseDiscountActive && line.itemDiscValue > 0.0 && line.itemDiscType != null) {
             val mode = if (line.itemDiscType == "A") GstCalculator.DiscountMode.AMOUNT else GstCalculator.DiscountMode.PERCENT
             return GstCalculator.itemDiscountAgainstRawBase(gross, rate, taxInclusive, discountPreTax, mode, line.itemDiscValue)
@@ -921,17 +932,20 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     private fun cgstAmt() = lines.sumOf { lineTax(it).cgst }
     private fun sgstAmt() = lines.sumOf { lineTax(it).sgst }
     private fun vatAmt() = lines.sumOf { lineTax(it).vat }
+    /** IGST - the inter-state shape of GST, never charged alongside CGST/SGST on the same line. */
+    private fun igstAmt() = lines.sumOf { lineTax(it).igst }
     private fun taxableSum() = lines.sumOf { lineTax(it).taxable }
 
     /** The further amount still owed to lines' own item-wise discount, on top of
-     *  [taxableSum]/[cgstAmt]/[sgstAmt]/[vatAmt] - see [lineTax]. Zero unless
-     *  item-wise discount is active. */
+     *  [taxableSum]/[cgstAmt]/[sgstAmt]/[vatAmt]/[igstAmt] - see [lineTax]. Zero
+     *  unless item-wise discount is active. */
     private fun itemwiseDiscountSum() = lines.sumOf { lineTax(it).discount }
 
-    /** Tax at each product's own rate, not one blanket rate across the bill. CGST+SGST
-     *  and VAT are mutually exclusive per LINE (a product carries one or the other,
-     *  never both) - not store-wide any more - so summing all three is still safe. */
-    private fun taxAmt() = cgstAmt() + sgstAmt() + vatAmt()
+    /** Tax at each product's own rate, not one blanket rate across the bill. CGST+SGST,
+     *  IGST and VAT are mutually exclusive per LINE (a product carries one or the
+     *  other, never more than one) - not store-wide any more - so summing all four
+     *  is still safe. */
+    private fun taxAmt() = cgstAmt() + sgstAmt() + vatAmt() + igstAmt()
 
     /**
      * Taxed value of the bill, before it is rounded to whole rupees.
@@ -1159,6 +1173,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                     cgstRate = line.cgstRate,
                     sgstRate = line.sgstRate,
                     vatRate = line.vatRate,
+                    igstRate = line.igstRate,
                     discountAmount = lineDiscountForBill(line),
                     hsn = catalog.firstOrNull { it.id.toLongOrNull() == line.productId }?.hsn,
                     unit = catalog.firstOrNull { it.id.toLongOrNull() == line.productId }?.unit
@@ -1286,6 +1301,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                 cgstRate = line.cgstRate,
                 sgstRate = line.sgstRate,
                 vatRate = line.vatRate,
+                igstRate = line.igstRate,
                 discountAmount = lineDiscountForBill(line)
             )
         }
@@ -1356,6 +1372,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             cgstAmount = cgstTotal,
             sgstAmount = sgstTotal,
             vatAmount = vatAmt(),
+            igstAmount = igstAmt(),
             netAmount = grandTotal,
             // net_amount is the rounded figure the customer paid; the adjustment is
             // stored beside it so the receipt can reconcile it to the taxed value.
@@ -1429,7 +1446,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
         val subtotal = heldBill.lines.sumOf { it.price * it.qty }
         val discAmt = GstCalculator.discountAmount(subtotal, heldBill.discountMode, heldBill.discountValue)
-        val tax = heldBill.lines.map { lineTax(it, subtotal, discAmt) }.sumOf { it.cgst + it.sgst + it.vat }
+        val tax = heldBill.lines.map { lineTax(it, subtotal, discAmt) }.sumOf { it.cgst + it.sgst + it.vat + it.igst }
         val message = StringBuilder().apply {
             // Capped, because the card cannot scroll: a fifty-line bill would push
             // the buttons off the screen.
@@ -1465,7 +1482,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         val discAmt = GstCalculator.discountAmount(subtotal, held.discountMode, held.discountValue)
         val lineTaxes = held.lines.map { lineTax(it, subtotal, discAmt) }
         val taxable = lineTaxes.sumOf { it.taxable }
-        val tax = lineTaxes.sumOf { it.cgst + it.sgst + it.vat }
+        val tax = lineTaxes.sumOf { it.cgst + it.sgst + it.vat + it.igst }
         val itemwiseExtra = lineTaxes.sumOf { it.discount }
         return if (discountPreTax) {
             (taxable + tax - itemwiseExtra).coerceAtLeast(0.0)

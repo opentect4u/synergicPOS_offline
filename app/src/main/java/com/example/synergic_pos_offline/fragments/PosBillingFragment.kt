@@ -124,6 +124,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
         /** Quantity on hand, shown on the tile. Meaningless unless [stock] is not "off". */
         val stockQty: Double = 0.0,
         val hsn: String = "0000", val cgst: Double = 0.0, val sgst: Double = 0.0, val vat: Double = 0.0,
+        /** The product's IGST rate - the inter-state shape of GST, never set alongside cgst/sgst. */
+        val igst: Double = 0.0,
         val unit: String = "pcs",
         /** Whether the product's unit allows fractional quantities (unit fraction_flag). */
         val allowFraction: Boolean = false,
@@ -190,9 +192,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     private data class CartLine(val product: Product, var qty: Double)
     private fun CartLine.toSessionLine() = CheckoutSession.Line(
-        product.name, product.sku, product.price, qty,
-        product.id.toLongOrNull(), product.cgst, product.sgst, product.vat,
-        product.discValue, product.discType
+        name = product.name, sku = product.sku, price = product.price, qty = qty,
+        productId = product.id.toLongOrNull(), cgstRate = product.cgst, sgstRate = product.sgst,
+        vatRate = product.vat, itemDiscValue = product.discValue, itemDiscType = product.discType,
+        igstRate = product.igst
     )
 
     /**
@@ -207,7 +210,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val product = fromMenu?.copy(price = price) ?: Product(
             id = productId?.toString() ?: "",
             name = name, sku = sku, category = "", categoryId = 0L,
-            price = price, cgst = cgstRate, sgst = sgstRate, vat = vatRate,
+            price = price, cgst = cgstRate, sgst = sgstRate, vat = vatRate, igst = igstRate,
             discValue = itemDiscValue, discType = itemDiscType
         )
         return CartLine(product, qty)
@@ -314,7 +317,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
     /** The combined rate a line is actually taxed at - whatever the product itself
      *  carries (a product has GST rates or a VAT rate, never both). */
     private fun taxRateOf(p: Product): Double =
-        if (taxEnabled) p.cgst + p.sgst + p.vat else 0.0
+        if (taxEnabled) p.cgst + p.sgst + p.vat + p.igst else 0.0
     private var customerName: String? = null
     private var customerPhone: String? = null
     private var currentCustomerData: Map<String, Any?>? = null
@@ -995,6 +998,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 cgst = rate?.cgst ?: 0.0,
                 sgst = rate?.sgst ?: 0.0,
                 vat = rate?.vat ?: 0.0,
+                igst = rate?.igst ?: 0.0,
                 unit = unitSymbol,
                 allowFraction = allowFraction,
                 discValue = rate?.discValue ?: 0.0,
@@ -1010,7 +1014,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
      *  to read with a per-product query. */
     private data class RateRow(
         val rate: Double, val cgst: Double, val sgst: Double, val vat: Double,
-        val discValue: Double, val discType: String?, val unitId: Long?
+        val discValue: Double, val discType: String?, val unitId: Long?,
+        val igst: Double = 0.0
     )
 
     /**
@@ -1032,7 +1037,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             "md_product_rates",
             arrayOf(
                 "product_id", "rate_name", "rate", "cgst_rate", "sgst_rate",
-                "vat_rate", "discount", "discount_type", "unit_id"
+                "vat_rate", "discount", "discount_type", "unit_id", "igst_rate"
             ),
             null, null, null, null, "product_id ASC, \"default\" DESC, id ASC"
         ).use { c ->
@@ -1046,9 +1051,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 val discValue = if (c.isNull(6)) 0.0 else c.getDouble(6)
                 val discType = c.getString(7)
                 val unitId = if (c.isNull(8)) null else c.getLong(8)
+                val igst = if (c.isNull(9)) 0.0 else c.getDouble(9)
 
                 if (!defaults.containsKey(pid)) {
-                    defaults[pid] = RateRow(rate, cgst, sgst, vat, discValue, discType, unitId)
+                    defaults[pid] = RateRow(rate, cgst, sgst, vat, discValue, discType, unitId, igst)
                 }
                 if (allByProduct != null) {
                     val list = allByProduct.getOrPut(pid) { mutableListOf() }
@@ -1056,7 +1062,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
                         ProductEntryDialog.Rate(
                             name = c.getString(1)?.takeIf { it.isNotBlank() } ?: "Rate ${list.size + 1}",
                             rate = rate, cgst = cgst, sgst = sgst, vat = vat,
-                            discValue = discValue, discType = discType
+                            discValue = discValue, discType = discType, igst = igst
                         )
                     )
                 }
@@ -1640,7 +1646,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun Product.toDialogProduct() = ProductEntryDialog.Product(
         id = id, name = name, sku = sku, category = category,
         price = price, hsn = hsn, unit = unit, allowFraction = allowFraction, photo = photoCache[id],
-        cgst = cgst, sgst = sgst, vat = vat,
+        cgst = cgst, sgst = sgst, vat = vat, igst = igst,
         discValue = discValue, discType = discType, rates = rates,
         stock = stock, stockQty = stockQty
     )
@@ -2362,7 +2368,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
      */
     private fun taxLabelText(): String {
         if (!taxEnabled) return "TAX"
-        val regimes = cart.map { GstCalculator.regimeOf(it.product.cgst, it.product.sgst, it.product.vat) }.toSet()
+        val regimes = cart.map {
+            GstCalculator.regimeOf(it.product.cgst, it.product.sgst, it.product.vat, it.product.igst)
+        }.toSet()
         return when {
             regimes == setOf(GstCalculator.TaxRegime.GST) -> "GST"
             regimes == setOf(GstCalculator.TaxRegime.VAT) -> "VAT"
@@ -2488,7 +2496,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val tax = if (taxEnabled) {
             GstCalculator.taxAmount(taxable, product.cgst) +
                 GstCalculator.taxAmount(taxable, product.sgst) +
-                GstCalculator.taxAmount(taxable, product.vat)
+                GstCalculator.taxAmount(taxable, product.vat) +
+                GstCalculator.taxAmount(taxable, product.igst)
         } else 0.0
         return Triple(taxable, tax, 0.0)
     }

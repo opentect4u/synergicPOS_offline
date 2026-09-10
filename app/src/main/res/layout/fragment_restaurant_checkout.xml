@@ -206,6 +206,17 @@
                         <TextView android:id="@+id/tvSgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                     </LinearLayout>
 
+                    <!-- Only on a bill that actually carries IGST - the inter-state shape
+                         of GST, charged instead of the CGST/SGST rows above rather than
+                         alongside them. Hidden the same way rowCheckoutVat is, for the
+                         same reason: a bill that never carries it should not show a row
+                         of zeroes. -->
+                    <LinearLayout android:id="@+id/rowCheckoutIgst" style="@style/OrderSummaryRow"
+                        android:visibility="gone">
+                        <TextView style="@style/OrderSummaryLabel" android:text="IGST" />
+                        <TextView android:id="@+id/tvCheckoutIgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                    </LinearLayout>
+
                     <!-- Only on a bill that actually carries VAT, exactly as the Orders
                          panel's rowOrderVat. It was missing here entirely while the VAT
                          was still added into the total, so a VAT shop's rows did not

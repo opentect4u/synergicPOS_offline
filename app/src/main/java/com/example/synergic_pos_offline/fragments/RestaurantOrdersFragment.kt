@@ -76,7 +76,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
          */
         val discValue: Double = 0.0,
         /** "A" for a flat amount, otherwise a percentage; null when there is none. */
-        val discType: String? = null
+        val discType: String? = null,
+        /** The product's IGST rate - the inter-state shape of GST, never set alongside cgstRate/sgstRate. */
+        val igstRate: Double = 0.0
     ) {
         /** Quantity not yet sent to the kitchen. */
         val pending: Double get() = (qty - kotQty).coerceAtLeast(0.0)
@@ -302,7 +304,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             )
             // qty 0 lines are removed items awaiting a cancellation KOT — hide from the cart.
             roDao.itemsFor(ro.id).filter { it.qty > 0.0 }.forEach { ri ->
-                card.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate, ri.discValue, ri.discType))
+                card.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate, ri.discValue, ri.discType, ri.igstRate))
             }
             card.amount = "₹ ${money(payableTotal(computeBill(card).total))}"
             orders.add(card)
@@ -313,7 +315,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun reloadItems(order: OrderCard) {
         order.items.clear()
         roDao.itemsFor(order.dbId).filter { it.qty > 0.0 }.forEach { ri ->
-            order.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate, ri.discValue, ri.discType))
+            order.items.add(CartItem(ri.productId, ri.name, ri.qty, ri.rate, ri.id, ri.kotQty, ri.cgstRate, ri.sgstRate, ri.vatRate, ri.discValue, ri.discType, ri.igstRate))
         }
     }
 
@@ -324,6 +326,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val subtotal: Double, val service: Double, val cgst: Double, val sgst: Double, val total: Double,
         /** VAT, where a line carries a VAT rate - see CartMath. */
         val vat: Double = 0.0,
+        /** IGST - the inter-state shape of GST, never charged alongside CGST/SGST on the same line. */
+        val igst: Double = 0.0,
         /** What tax was charged on, once any pre-tax discount came off. */
         val taxable: Double = 0.0,
         /**
@@ -448,6 +452,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             sgst = totals.sgst,
             total = totals.total,
             vat = totals.vat,
+            igst = totals.igst,
             taxable = totals.taxable,
             // Under item-wise this is what the lines' own discounts came to, always
             // against their raw pre-tax base - matching the per-line discountAmount
@@ -486,7 +491,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /** This cart line, in the shape the calculation takes it. */
     private fun CartItem.toMathLine() = com.example.synergic_pos_offline.utils.CartMath.Line(
         qty = qty, rate = rate,
-        cgstRate = cgstRate, sgstRate = sgstRate, vatRate = vatRate,
+        cgstRate = cgstRate, sgstRate = sgstRate, vatRate = vatRate, igstRate = igstRate,
         discValue = discValue, discType = discType
     )
 
@@ -797,6 +802,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     val cgsts = order.items.map { it.cgstRate }.toDoubleArray()
                     val sgsts = order.items.map { it.sgstRate }.toDoubleArray()
                     val vats = order.items.map { it.vatRate }.toDoubleArray()
+                    val igsts = order.items.map { it.igstRate }.toDoubleArray()
                     // Off the catalogue, same as buildBillDraft() - a cart line does not
                     // carry its own HSN or unit, the product it was sold from does.
                     val hsns = ArrayList(order.items.map { line ->
@@ -825,6 +831,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 taxEnabled = taxSettings.taxEnabled, inclusive = taxInclusive,
                                 hsns = hsns, vats = vats,
                                 units = units,
+                                igsts = igsts,
                                 chargeNames = ArrayList(charges.map { it.name }),
                                 chargeAmounts = charges.map { it.amount }.toDoubleArray(),
                                 chargeTypes = ArrayList(charges.map { it.type.name }),
@@ -870,6 +877,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                                 cgst = b.cgst,
                                 sgst = b.sgst,
                                 vat = b.vat,
+                                igst = b.igst,
                                 payableTotal = payableTotal(b.total),
                                 roundOffAmount = roundOffAmount(b.total)
                             )
@@ -3141,6 +3149,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                             id = id, name = name, sku = sku, category = catName, price = rate?.rate ?: 0.0,
                             hsn = hsn, unit = unitSymbol, allowFraction = allowFraction,
                             cgst = rate?.cgst ?: 0.0, sgst = rate?.sgst ?: 0.0, vat = rate?.vat ?: 0.0,
+                            igst = rate?.igst ?: 0.0,
                             discValue = rate?.discValue ?: 0.0, discType = rate?.discType, rates = rates,
                             stock = com.example.synergic_pos_offline.utils.StockBadge.stateOf(level),
                             stockQty = level?.quantity ?: 0.0
@@ -3158,7 +3167,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      *  read with a per-product query. */
     private data class RateRow(
         val rate: Double, val cgst: Double, val sgst: Double, val vat: Double,
-        val discValue: Double, val discType: String?, val unitId: Long?
+        val discValue: Double, val discType: String?, val unitId: Long?,
+        val igst: Double = 0.0
     )
 
     /**
@@ -3180,7 +3190,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             "md_product_rates",
             arrayOf(
                 "product_id", "rate_name", "rate", "cgst_rate", "sgst_rate",
-                "vat_rate", "discount", "discount_type", "unit_id"
+                "vat_rate", "discount", "discount_type", "unit_id", "igst_rate"
             ),
             null, null, null, null, "product_id ASC, \"default\" DESC, id ASC"
         ).use { c ->
@@ -3194,9 +3204,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 val discValue = if (c.isNull(6)) 0.0 else c.getDouble(6)
                 val discType = c.getString(7)
                 val unitId = if (c.isNull(8)) null else c.getLong(8)
+                val igst = if (c.isNull(9)) 0.0 else c.getDouble(9)
 
                 if (!defaults.containsKey(pid)) {
-                    defaults[pid] = RateRow(rate, cgst, sgst, vat, discValue, discType, unitId)
+                    defaults[pid] = RateRow(rate, cgst, sgst, vat, discValue, discType, unitId, igst)
                 }
                 if (allByProduct != null) {
                     val list = allByProduct.getOrPut(pid) { mutableListOf() }
@@ -3204,7 +3215,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                         ProductEntryDialog.Rate(
                             name = c.getString(1)?.takeIf { it.isNotBlank() } ?: "Rate ${list.size + 1}",
                             rate = rate, cgst = cgst, sgst = sgst, vat = vat,
-                            discValue = discValue, discType = discType
+                            discValue = discValue, discType = discType, igst = igst
                         )
                     )
                 }
@@ -4767,7 +4778,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // master at billing time would bill a table at a discount it never had.
         roDao.addItem(
             order.dbId, p.id.toLongOrNull() ?: 0L, p.name, qty, rate,
-            p.cgst, p.sgst, p.vat, p.discValue, p.discType
+            p.cgst, p.sgst, p.vat, p.discValue, p.discType, p.igst
         )
         // ADDING AN ITEM NO LONGER TAKES THE TABLE.
         //
@@ -5481,7 +5492,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
                 name = line.name, quantity = line.qty, rate = line.rate,
                 cgstRate = line.cgstRate, sgstRate = line.sgstRate,
-                vatRate = line.vatRate,
+                vatRate = line.vatRate, igstRate = line.igstRate,
                 hsn = product?.hsn,
                 // This line's share of the discount, in the shape BillPricing takes -
                 // against the line's raw pre-tax base. Without it the slip priced every
@@ -5671,6 +5682,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                             // Saved with the line, so a reprint from Bill History
                             // charges the same VAT the original slip did.
                             vatRate = it.vatRate,
+                            igstRate = it.igstRate,
                             // The share of the discount this line carries, in the same
                             // shape td_bill_items stores it - against the line's raw
                             // pre-tax base. BillDao prices the line from this, so the
@@ -5697,6 +5709,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     discountIsPercent = b.discountIsPercent,
                     cgstAmount = b.cgst,
                     sgstAmount = b.sgst,
+                    igstAmount = b.igst,
                     netAmount = payable,
                     roundOffAmount = roundOffAmount(b.total),
                     // The shop's own extra charges (Parcel Charge among them) - not the
@@ -6062,6 +6075,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvOrderDiscountLabel).text =
             if (itemwiseDiscountActive) "Discount (item-wise)" else "Discount"
         root.findViewById<TextView>(R.id.tvOrderDiscountAmt).text = "- ₹ ${money(b.discountDisplay)}"
+        // IGST only where a line actually carries it - the inter-state shape of GST,
+        // charged instead of the CGST/SGST rows above rather than alongside them.
+        root.findViewById<View>(R.id.rowOrderIgst).visibility =
+            if (b.igst > 0.0) View.VISIBLE else View.GONE
+        root.findViewById<TextView>(R.id.tvOrderIgst).text = "₹ ${money(b.igst)}"
         // VAT only where a line actually carries it.
         root.findViewById<View>(R.id.rowOrderVat).visibility =
             if (b.vat > 0.0) View.VISIBLE else View.GONE

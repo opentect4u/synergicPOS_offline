@@ -126,7 +126,8 @@ class BillReturnFragment : Fragment(), TitledScreen {
         sgstRate = row.line.sgstRate,
         vatRate = row.line.vatRate,
         discountAmount = row.line.discountFor(row.quantity),
-        basis = basis
+        basis = basis,
+        igstRate = row.line.igstRate
     )
 
     /** The ticked lines, priced. */

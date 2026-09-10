@@ -21,6 +21,7 @@ object BillPricing {
         val taxable: Double,
         val cgst: Double,
         val sgst: Double,
+        val igst: Double,
         val vat: Double,
         val itemTotal: Double
     )
@@ -50,7 +51,13 @@ object BillPricing {
         discountAmount: Double,
         taxEnabled: Boolean,
         inclusive: Boolean,
-        @Suppress("UNUSED_PARAMETER") discountPreTax: Boolean
+        @Suppress("UNUSED_PARAMETER") discountPreTax: Boolean,
+        /**
+         * The product's IGST rate - the inter-state shape of GST, charged instead of
+         * CGST+SGST rather than alongside it (see [GstCalculator.regimeOf]). Defaults
+         * to zero so every existing CGST/SGST/VAT-only caller is unaffected.
+         */
+        igstRate: Double = 0.0
     ): Line {
         val subtotal = rate * quantity
         // Which taxes this line carries is the *line's* business, not the till's -
@@ -59,21 +66,25 @@ object BillPricing {
         // charged. NONE still means none: switching tax off is a deliberate choice
         // to charge nothing, not an invitation to read rates off the master.
         val taxed = taxEnabled
-        val combinedRate = if (taxed) cgstRate + sgstRate + vatRate else 0.0
+        // CGST+SGST and IGST are mutually exclusive per product (never both), so
+        // summing all four here is exactly picking whichever the line actually has -
+        // the same reasoning [CartMath.rateOf] already applies to CGST/SGST/VAT.
+        val combinedRate = if (taxed) cgstRate + sgstRate + vatRate + igstRate else 0.0
         // The listed price is stripped of any tax it already includes to reach the
         // base the rate works on.
         val rawBase = GstCalculator.taxableBase(subtotal, combinedRate, inclusive)
         val taxable = BillRounding.toPaise(GstCalculator.taxableValue(rawBase, discountAmount))
         val cgst = BillRounding.toPaise(if (taxed) GstCalculator.taxAmount(taxable, cgstRate) else 0.0)
         val sgst = BillRounding.toPaise(if (taxed) GstCalculator.taxAmount(taxable, sgstRate) else 0.0)
+        val igst = BillRounding.toPaise(if (taxed) GstCalculator.taxAmount(taxable, igstRate) else 0.0)
         val vat = BillRounding.toPaise(if (taxed) GstCalculator.taxAmount(taxable, vatRate) else 0.0)
-        // NOT taxable + cgst + sgst + vat: CGST and SGST are each already rounded to
-        // their own paisa apart, and their sum can land a paisa off the tax on the
-        // taxable value taken as one figure - a discrepancy this line's total must
-        // not inherit. A ₹600 inclusive MRP taxed at the combined rate ONCE and
-        // rounded once comes back to exactly ₹600.00; taxable plus CGST and SGST
-        // each already rounded to their own paisa apart landed on ₹600.01 instead.
+        // NOT taxable + cgst + sgst + igst + vat: each is already rounded to its own
+        // paisa apart, and their sum can land a paisa off the tax on the taxable
+        // value taken as one figure - a discrepancy this line's total must not
+        // inherit. A ₹600 inclusive MRP taxed at the combined rate ONCE and rounded
+        // once comes back to exactly ₹600.00; taxable plus CGST and SGST each already
+        // rounded to their own paisa apart landed on ₹600.01 instead.
         val itemTotal = BillRounding.toPaise(taxable * (1.0 + combinedRate / 100.0))
-        return Line(BillRounding.toPaise(subtotal), taxable, cgst, sgst, vat, itemTotal)
+        return Line(BillRounding.toPaise(subtotal), taxable, cgst, sgst, igst, vat, itemTotal)
     }
 }

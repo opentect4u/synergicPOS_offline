@@ -49,7 +49,9 @@ class ReturnDao(private val context: Context) {
          * [discountFor].
          */
         val discountValue: Double = 0.0,
-        val discountType: String? = null
+        val discountType: String? = null,
+        /** The product's IGST rate - the inter-state shape of GST, never set alongside cgstRate/sgstRate. */
+        val igstRate: Double = 0.0
     )
 
     /**
@@ -82,10 +84,12 @@ class ReturnDao(private val context: Context) {
         val sgst: Double,
         val vat: Double,
         /** What the customer gets back for this line, tax included. */
-        val amount: Double
+        val amount: Double,
+        val igstRate: Double = 0.0,
+        val igst: Double = 0.0
     ) {
         /** Tax charged on the returned quantity, however the regime splits it. */
-        val tax: Double get() = cgst + sgst + vat
+        val tax: Double get() = cgst + sgst + vat + igst
     }
 
     /**
@@ -115,9 +119,10 @@ class ReturnDao(private val context: Context) {
         val totalCgst: Double,
         val totalSgst: Double,
         val totalVat: Double,
-        val totalAmount: Double
+        val totalAmount: Double,
+        val totalIgst: Double = 0.0
     ) {
-        val totalTax: Double get() = totalCgst + totalSgst + totalVat
+        val totalTax: Double get() = totalCgst + totalSgst + totalVat + totalIgst
     }
 
     /** A line of an original bill, as the bill-wise screen offers it back. */
@@ -137,7 +142,8 @@ class ReturnDao(private val context: Context) {
         val discountAmount: Double,
         val cgstRate: Double,
         val sgstRate: Double,
-        val vatRate: Double
+        val vatRate: Double,
+        val igstRate: Double = 0.0
     ) {
         /** The most that can still be returned off this line. */
         val returnableQuantity: Double get() = (soldQuantity - returnedQuantity).coerceAtLeast(0.0)
@@ -172,7 +178,7 @@ class ReturnDao(private val context: Context) {
         helper.readableDatabase.rawQuery(
             """
             SELECT p.id, p.product_name, p.bar_code, p.hsn_code,
-                   r.rate, r.cgst_rate, r.sgst_rate, r.vat_rate, r.discount, r.discount_type
+                   r.rate, r.cgst_rate, r.sgst_rate, r.vat_rate, r.discount, r.discount_type, r.igst_rate
             FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
             LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r
                    ON r.id = (
@@ -200,7 +206,8 @@ class ReturnDao(private val context: Context) {
                         sgstRate = if (c.isNull(6)) 0.0 else c.getDouble(6),
                         vatRate = if (c.isNull(7)) 0.0 else c.getDouble(7),
                         discountValue = if (c.isNull(8)) 0.0 else c.getDouble(8),
-                        discountType = c.getString(9)
+                        discountType = c.getString(9),
+                        igstRate = if (c.isNull(10)) 0.0 else c.getDouble(10)
                     )
                 )
             }
@@ -224,7 +231,8 @@ class ReturnDao(private val context: Context) {
 
         // Whatever the item itself carries - GST/VAT is a fact about the product,
         // never a store-wide choice - gated by whether tax is on at all.
-        val combined = if (settings.taxEnabled) item.cgstRate + item.sgstRate + item.vatRate else 0.0
+        val combined =
+            if (settings.taxEnabled) item.cgstRate + item.sgstRate + item.vatRate + item.igstRate else 0.0
         val inclusive = settings.taxMode == TaxSettingsDao.GstMode.INCLUSIVE
         val mode = if (item.discountType == "A") GstCalculator.DiscountMode.AMOUNT
         else GstCalculator.DiscountMode.PERCENT
@@ -255,7 +263,7 @@ class ReturnDao(private val context: Context) {
                    -- return screen read 'Item'.
                    COALESCE(NULLIF(TRIM(i.product_name), ''), p.product_name, 'Item'),
                    i.quantity, i.rate, i.cgst_rate, i.sgst_rate, i.vat_rate,
-                   COALESCE(i.discount_amount, 0),
+                   COALESCE(i.discount_amount, 0), i.igst_rate,
                    COALESCE((SELECT SUM(ri.return_quantity)
                              FROM ${DatabaseHelper.Tables.TD_RETURN_ITEMS} ri
                              WHERE ri.bill_item_id = i.id), 0)
@@ -279,7 +287,8 @@ class ReturnDao(private val context: Context) {
                         sgstRate = c.getDouble(6),
                         vatRate = c.getDouble(7),
                         discountAmount = c.getDouble(8),
-                        returnedQuantity = c.getDouble(9)
+                        igstRate = c.getDouble(9),
+                        returnedQuantity = c.getDouble(10)
                     )
                 )
             }
@@ -383,7 +392,8 @@ class ReturnDao(private val context: Context) {
         sgstRate: Double,
         vatRate: Double,
         discountAmount: Double = 0.0,
-        basis: PricingBasis? = null
+        basis: PricingBasis? = null,
+        igstRate: Double = 0.0
     ): ReturnLine {
         val rules = basis ?: liveBasis()
         val priced = BillPricing.price(
@@ -398,7 +408,8 @@ class ReturnDao(private val context: Context) {
             discountAmount = discountAmount,
             taxEnabled = rules.taxEnabled,
             inclusive = rules.inclusive,
-            discountPreTax = rules.discountPreTax
+            discountPreTax = rules.discountPreTax,
+            igstRate = igstRate
         )
         return ReturnLine(
             productId = productId,
@@ -415,7 +426,9 @@ class ReturnDao(private val context: Context) {
             cgst = priced.cgst,
             sgst = priced.sgst,
             vat = priced.vat,
-            amount = priced.itemTotal
+            amount = priced.itemTotal,
+            igstRate = igstRate,
+            igst = priced.igst
         )
     }
 
@@ -514,6 +527,7 @@ class ReturnDao(private val context: Context) {
                 totalCgst = BillRounding.toPaise(kept.sumOf { it.cgst }),
                 totalSgst = BillRounding.toPaise(kept.sumOf { it.sgst }),
                 totalVat = BillRounding.toPaise(kept.sumOf { it.vat }),
+                totalIgst = BillRounding.toPaise(kept.sumOf { it.igst }),
                 totalAmount = totalAmount
             )
         } finally {
@@ -565,6 +579,8 @@ class ReturnDao(private val context: Context) {
                 ?.let { add(SummaryRow("CGST", BillRounding.toPaise(it))) }
             lines.sumOf { it.sgst }.takeIf { it > 0.005 }
                 ?.let { add(SummaryRow("SGST", BillRounding.toPaise(it))) }
+            lines.sumOf { it.igst }.takeIf { it > 0.005 }
+                ?.let { add(SummaryRow("IGST", BillRounding.toPaise(it))) }
             lines.sumOf { it.vat }.takeIf { it > 0.005 }
                 ?.let { add(SummaryRow("VAT", BillRounding.toPaise(it))) }
             add(

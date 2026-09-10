@@ -47,6 +47,8 @@ object ProductEntryDialog {
         val cgst: Double = 0.0,
         val sgst: Double = 0.0,
         val vat: Double = 0.0,
+        /** The product's IGST rate - the inter-state shape of GST, never set alongside cgst/sgst. */
+        val igst: Double = 0.0,
         /** The rate's own pre-configured discount (Tax Settings' item-wise discount).
          *  [discType] is "P"/"A" (percent/amount) or null when none is configured. */
         val discValue: Double = 0.0,
@@ -69,7 +71,9 @@ object ProductEntryDialog {
         val sgst: Double = 0.0,
         val vat: Double = 0.0,
         val discValue: Double = 0.0,
-        val discType: String? = null
+        val discType: String? = null,
+        /** The rate's IGST rate - the inter-state shape of GST, never set alongside cgst/sgst. */
+        val igst: Double = 0.0
     )
 
     /**

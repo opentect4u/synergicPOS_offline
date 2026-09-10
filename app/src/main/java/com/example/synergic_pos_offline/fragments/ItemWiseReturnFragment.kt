@@ -143,7 +143,8 @@ class ItemWiseReturnFragment : Fragment(), TitledScreen {
             cgstRate = item.cgstRate,
             sgstRate = item.sgstRate,
             vatRate = item.vatRate,
-            discountAmount = dao.discountFor(priced, qty)
+            discountAmount = dao.discountFor(priced, qty),
+            igstRate = item.igstRate
         )
     }
 
@@ -162,14 +163,27 @@ class ItemWiseReturnFragment : Fragment(), TitledScreen {
 
         val regime = taxRegime(item)
         val vatOnly = regime == GstCalculator.TaxRegime.VAT
+        // IGST stands in place of the CGST/SGST split for an inter-state item - the
+        // two shapes are never on the same item (see GstCalculator.regimeOf) - so it
+        // reuses the CGST row the same way VAT does, labelled for what it actually is.
+        val igstOnly = regime == GstCalculator.TaxRegime.GST &&
+            item.cgstRate <= 0.0 && item.sgstRate <= 0.0 && item.igstRate > 0.0
         root.findViewById<View>(R.id.rowReturnCgst).visibility =
             if (regime == GstCalculator.TaxRegime.NONE) View.GONE else View.VISIBLE
         root.findViewById<View>(R.id.rowReturnSgst).visibility =
-            if (regime == GstCalculator.TaxRegime.GST) View.VISIBLE else View.GONE
+            if (regime == GstCalculator.TaxRegime.GST && !igstOnly) View.VISIBLE else View.GONE
 
-        val cgstRate = if (vatOnly) item.vatRate else item.cgstRate
-        root.findViewById<TextView>(R.id.tvReturnCgstLabel).text =
-            (if (vatOnly) "VAT" else "CGST") + " (${rate(cgstRate)}%)"
+        val cgstRate = when {
+            vatOnly -> item.vatRate
+            igstOnly -> item.igstRate
+            else -> item.cgstRate
+        }
+        val cgstLabel = when {
+            vatOnly -> "VAT"
+            igstOnly -> "IGST"
+            else -> "CGST"
+        }
+        root.findViewById<TextView>(R.id.tvReturnCgstLabel).text = "$cgstLabel (${rate(cgstRate)}%)"
         root.findViewById<TextView>(R.id.tvReturnSgstLabel).text = "SGST (${rate(item.sgstRate)}%)"
 
         // Nothing typed yet: the rows stay, showing nothing rather than vanishing
@@ -182,7 +196,13 @@ class ItemWiseReturnFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvReturnTaxable).text =
             if (blank) "₹0.00" else money(line!!.taxable)
         root.findViewById<TextView>(R.id.tvReturnCgstAmt).text =
-            if (blank) "₹0.00" else money(if (vatOnly) line!!.vat else line!!.cgst)
+            if (blank) "₹0.00" else money(
+                when {
+                    vatOnly -> line!!.vat
+                    igstOnly -> line!!.igst
+                    else -> line!!.cgst
+                }
+            )
         root.findViewById<TextView>(R.id.tvReturnSgstAmt).text =
             if (blank) "₹0.00" else money(line!!.sgst)
         root.findViewById<TextView>(R.id.tvReturnLineAmount).text =
@@ -193,7 +213,7 @@ class ItemWiseReturnFragment : Fragment(), TitledScreen {
      *  NONE when tax is switched off store-wide. */
     private fun taxRegime(item: ReturnDao.Item): GstCalculator.TaxRegime {
         if (!TaxSettingsDao(requireContext()).load().taxEnabled) return GstCalculator.TaxRegime.NONE
-        return GstCalculator.regimeOf(item.cgstRate, item.sgstRate, item.vatRate)
+        return GstCalculator.regimeOf(item.cgstRate, item.sgstRate, item.vatRate, item.igstRate)
     }
 
     // ---- Saving ------------------------------------------------------------

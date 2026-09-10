@@ -713,6 +713,15 @@
                                 <TextView android:id="@+id/tvSgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                             </LinearLayout>
 
+                            <!-- Only on a bill that actually carries IGST - the inter-state
+                                 shape of GST, charged instead of the CGST/SGST rows above
+                                 rather than alongside them. -->
+                            <LinearLayout android:id="@+id/rowOrderIgst" style="@style/OrderSummaryRow"
+                                android:visibility="gone">
+                                <TextView style="@style/OrderSummaryLabel" android:text="IGST" />
+                                <TextView android:id="@+id/tvOrderIgst" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
+                            </LinearLayout>
+
                             <!-- Only on a bill that actually carries VAT. A GST till
                                  showing an empty VAT line invites the question of why
                                  it is there. -->

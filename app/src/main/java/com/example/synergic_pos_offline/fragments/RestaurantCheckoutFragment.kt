@@ -26,7 +26,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
     private data class Line(
         val name: String, val qty: Double, val rate: Double, val cgstRate: Double, val sgstRate: Double,
-        val hsn: String? = null, val vatRate: Double = 0.0, val unit: String? = null
+        val hsn: String? = null, val vatRate: Double = 0.0, val unit: String? = null,
+        /** The product's IGST rate - the inter-state shape of GST, never set alongside cgstRate/sgstRate. */
+        val igstRate: Double = 0.0
     )
 
     // The selected order's items, passed in from the Orders screen.
@@ -37,6 +39,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         val cgsts = arguments?.getDoubleArray(ARG_CGSTS) ?: DoubleArray(0)
         val sgsts = arguments?.getDoubleArray(ARG_SGSTS) ?: DoubleArray(0)
         val vats = arguments?.getDoubleArray(ARG_VATS)
+        val igsts = arguments?.getDoubleArray(ARG_IGSTS)
         val hsns = arguments?.getStringArrayList(ARG_HSNS)
         val units = arguments?.getStringArrayList(ARG_UNITS)
         names.mapIndexed { i, n ->
@@ -45,7 +48,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 cgsts.getOrElse(i) { 0.0 }, sgsts.getOrElse(i) { 0.0 },
                 hsns?.getOrNull(i)?.takeIf { it.isNotBlank() },
                 vats?.getOrElse(i) { 0.0 } ?: 0.0,
-                units?.getOrNull(i)?.takeIf { it.isNotBlank() }
+                units?.getOrNull(i)?.takeIf { it.isNotBlank() },
+                igsts?.getOrElse(i) { 0.0 } ?: 0.0
             )
         }
     }
@@ -197,6 +201,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     private val cgst get() = arguments?.getDouble(ARG_CGST) ?: 0.0
     private val sgst get() = arguments?.getDouble(ARG_SGST) ?: 0.0
     private val vat get() = arguments?.getDouble(ARG_VAT) ?: 0.0
+    private val igst get() = arguments?.getDouble(ARG_IGST) ?: 0.0
 
     /** The final amount due, already rounded - what Confirm Payment actually charges. */
     private val payableTotal get() = arguments?.getDouble(ARG_PAYABLE) ?: 0.0
@@ -322,7 +327,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
                     name = it.name, quantity = it.qty.toDouble(), rate = it.rate,
                     cgstRate = it.cgstRate, sgstRate = it.sgstRate, vatRate = it.vatRate, hsn = it.hsn,
-                    unit = it.unit,
+                    unit = it.unit, igstRate = it.igstRate,
                     // The share the Orders screen worked out for this line. The preview
                     // priced every line at full while showing a discounted total, so
                     // the lines on it did not add up to its own foot.
@@ -448,6 +453,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvService).text = "₹ ${money(service)}"
         root.findViewById<TextView>(R.id.tvCgst).text = "₹ ${money(cgst)}"
         root.findViewById<TextView>(R.id.tvSgst).text = "₹ ${money(sgst)}"
+        // IGST only where a line actually carries it - the inter-state shape of GST,
+        // charged instead of the CGST/SGST rows above rather than alongside them.
+        root.findViewById<View>(R.id.rowCheckoutIgst).visibility =
+            if (igst > 0.0) View.VISIBLE else View.GONE
+        root.findViewById<TextView>(R.id.tvCheckoutIgst).text = "₹ ${money(igst)}"
         // VAT only where a line actually carries it, as the Orders panel does it. The
         // figure was already in the total and on no row, so a VAT bill's rows did not
         // add up to its own foot.
@@ -523,6 +533,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_CGSTS = "cgsts"
         private const val ARG_SGSTS = "sgsts"
         private const val ARG_VATS = "vats"
+        private const val ARG_IGSTS = "igsts"
         private const val ARG_HSNS = "hsns"
         private const val ARG_UNITS = "units"
         private const val ARG_SERVICE_RATE = "service_rate"
@@ -543,6 +554,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         private const val ARG_CGST = "cgst"
         private const val ARG_SGST = "sgst"
         private const val ARG_VAT = "vat"
+        private const val ARG_IGST = "igst"
         private const val ARG_PAYABLE = "payable"
         private const val ARG_ROUND_OFF = "round_off"
 
@@ -587,6 +599,9 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             taxEnabled: Boolean, inclusive: Boolean, hsns: ArrayList<String> = arrayListOf(),
             vats: DoubleArray = DoubleArray(0),
             units: ArrayList<String> = arrayListOf(),
+            /** Per-line IGST rate - the inter-state shape of GST, never set alongside
+             *  the matching entry in [cgsts]/[sgsts]. Empty by default like [vats]. */
+            igsts: DoubleArray = DoubleArray(0),
             chargeNames: ArrayList<String> = arrayListOf(),
             chargeAmounts: DoubleArray = DoubleArray(0),
             chargeTypes: ArrayList<String> = arrayListOf(),
@@ -630,6 +645,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             cgst: Double = 0.0,
             sgst: Double = 0.0,
             vat: Double = 0.0,
+            igst: Double = 0.0,
             payableTotal: Double = 0.0,
             roundOffAmount: Double = 0.0
         ): RestaurantCheckoutFragment = RestaurantCheckoutFragment().apply {
@@ -644,6 +660,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putDoubleArray(ARG_CGSTS, cgsts)
                 putDoubleArray(ARG_SGSTS, sgsts)
                 putDoubleArray(ARG_VATS, vats)
+                putDoubleArray(ARG_IGSTS, igsts)
                 putStringArrayList(ARG_HSNS, hsns)
                 putStringArrayList(ARG_UNITS, units)
                 putDouble(ARG_SERVICE_RATE, serviceRate)
@@ -663,6 +680,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 putDouble(ARG_CGST, cgst)
                 putDouble(ARG_SGST, sgst)
                 putDouble(ARG_VAT, vat)
+                putDouble(ARG_IGST, igst)
                 putDouble(ARG_PAYABLE, payableTotal)
                 putDouble(ARG_ROUND_OFF, roundOffAmount)
             }
