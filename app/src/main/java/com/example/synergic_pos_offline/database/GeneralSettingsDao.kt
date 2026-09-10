@@ -111,7 +111,7 @@ class GeneralSettingsDao(context: Context) {
         val returnMode: ReturnMode = ReturnMode.BILL_WISE,
         /** Only meaningful under [ReturnMode.BILL_WISE] - see [ReturnMode]. */
         val saleReturnDays: Int = 0,
-        val lastBillStatus: Boolean = false,
+        val lastBillStatus: Boolean = true,
         val quantityStatus: Boolean = false,
         val itemRate: ItemRate = ItemRate.SINGLE,
         /** How the sale-page product grid is ordered - see [ProductSort]. */

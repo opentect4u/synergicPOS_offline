@@ -32,6 +32,7 @@ import com.example.synergic_pos_offline.utils.LegalDialog
 import com.example.synergic_pos_offline.utils.LegalDocuments
 import com.example.synergic_pos_offline.utils.Downloads
 import com.example.synergic_pos_offline.utils.MasterData
+import com.example.synergic_pos_offline.utils.MasterWipe
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
@@ -1045,16 +1046,12 @@ class AboutAppFragment : Fragment(), TitledScreen {
     /**
      * Says what a reset costs before it costs it.
      *
-     * The warning names the two things an operator would not otherwise expect and
-     * cannot get back by pressing the button again: the till returns to Grocery -
-     * taking the restaurant screens with it - and the printers are forgotten, which
-     * means re-pairing hardware, not re-ticking a box. Everything else on the list is
-     * a switch that can be put back in a minute.
-     *
-     * It also says what is *not* touched. A destructive-looking button on the same
-     * screen as Backup and Restore invites the reading that it wipes the shop's data,
-     * and an operator who thinks that will never press it - or will press it thinking
-     * it is a factory wipe and be surprised that their bills are still there.
+     * Restore Defaults is a full factory reset: every setting goes back to how the
+     * app came AND every product, customer, bill and every other piece of shop data
+     * is deleted with it - the till comes back the way a fresh install would. Only
+     * the store registration, the users who can sign in, and the app's own record of
+     * its database version survive, deliberately - see [MasterWipe]'s own doc for
+     * why those three and nothing else.
      */
     private fun confirmRestoreDefaults() {
         val restaurant = SettingsCache.value(requireContext(), "G", "Mode") == "R"
@@ -1066,33 +1063,44 @@ class AboutAppFragment : Fragment(), TitledScreen {
 
         DialogUtils.showConfirm(
             context = requireContext(),
-            title = "Restore default settings?",
-            message = "Every setting goes back to how the app came - General, Bill, Tax " +
-                "and App settings, the print template, the automatic backup and the " +
-                "theme colour. This cannot be undone." +
-                "\n\nA backup is taken first, into Downloads/POSbackup - everything but " +
-                "this device's users and store registration, so restoring it later would " +
-                "not disturb who can sign in." +
+            title = "Restore defaults - erase everything?",
+            message = "This is a full factory reset. EVERY setting goes back to how the " +
+                "app came - General, Bill, Tax and App settings, the print template, the " +
+                "automatic backup and the theme colour - and EVERY product, category, " +
+                "customer, bill, stock record and every other piece of shop data is " +
+                "deleted with it. This cannot be undone." +
+                "\n\nA backup is taken first, into Downloads/POSbackup, so what is about " +
+                "to be erased can be brought back by restoring that file." +
                 modeNote +
                 "\n\n• The printers are forgotten. Every named printer is removed and " +
                 "the connections go back to WIFI for bills and LAN for KOT, with no " +
                 "address saved - each printer has to be set up and paired again." +
-                "\n\nYour data is safe: products, customers, bills, stock, the store " +
-                "registration, the users and the bill's header, footer and logo are " +
-                "all left as they are.",
-            positiveText = "Restore Defaults",
+                "\n\nOnly the store registration and the users who can sign in are kept, " +
+                "so the till can still be opened afterwards to see that the reset " +
+                "happened - everything else is gone.",
+            positiveText = "Erase Everything",
             negativeText = "Cancel",
             destructive = true
         ) {
-            withPassword("restore the default settings", "Restore Defaults") {
+            withPassword("restore the defaults and erase all shop data", "Erase Everything") {
                 runRestoreDefaults()
             }
         }
     }
 
-    /** Writes the frozen defaults back, then makes the screen and the app show them. */
-    private fun runRestoreDefaults() = inBackground("Backing up, then restoring defaults…") {
+    /**
+     * Erases every product, customer, bill and other piece of shop data, then
+     * writes the frozen settings back on top, and makes the screen and the app
+     * show the result.
+     *
+     * The data goes first: [MasterWipe] and [DefaultSettings.restore] touch
+     * disjoint tables (shop data against settings), so the order between them
+     * makes no difference to what ends up on the till - it only decides which
+     * half the success message can already report by the time it opens.
+     */
+    private fun runRestoreDefaults() = inBackground("Backing up, then erasing everything…") {
         val backup = safetyBackup("restore defaults") ?: return@inBackground
+        val wipeOutcome = MasterWipe.wipe(requireContext())
         val outcome = DefaultSettings.restore(requireContext())
         onMain {
             // The theme colour is one of the things that was just reset, so the whole
@@ -1108,12 +1116,24 @@ class AboutAppFragment : Fragment(), TitledScreen {
                 else -> "\n\n${outcome.printersRemoved} printers were removed and have to " +
                     "be set up again in Settings › Printer Settings."
             }
+            // Ordinarily empty - every table converges to empty within the tables
+            // MasterWipe already knows about. Named here, one line each, only when
+            // something outside that list held one open - see [MasterWipe]'s own
+            // doc on what that means and why it is reported rather than forced.
+            val blockedNote = if (wipeOutcome.blocked.isEmpty()) "" else {
+                "\n\n${wipeOutcome.blocked.size} table(s) still carry data and could not " +
+                    "be cleared:\n" + wipeOutcome.blocked.joinToString("\n") { b ->
+                        "• ${b.table} - ${b.reason}"
+                    }
+            }
             DialogUtils.showSuccess(
                 context = requireContext(),
-                title = "Defaults restored",
-                message = "Every setting is back to how the app came.$printerNote" +
-                    "\n\nThe settings as they were are saved to $backup - restoring that " +
-                    "file puts them back. It leaves out this device's users and store " +
+                title = if (wipeOutcome.blocked.isEmpty()) "Everything erased" else "Erased, with exceptions",
+                message = "Every setting is back to how the app came, and every product, " +
+                    "customer, bill and other piece of shop data has been deleted with " +
+                    "it.$printerNote$blockedNote" +
+                    "\n\nEverything as it was is saved to $backup - restoring that file " +
+                    "brings it all back. It leaves out this device's users and store " +
                     "registration, so restoring it will not change who can sign in."
             )
         }

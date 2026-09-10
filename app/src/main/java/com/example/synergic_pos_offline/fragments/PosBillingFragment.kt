@@ -88,6 +88,13 @@ private const val SCAN_GAP_MS = 50L
 private const val SCAN_FLUSH_MS = 120L
 
 /**
+ * How long a cart row's left marker keeps blinking after it was added to or
+ * changed - long enough to catch the eye across the counter, short enough that it
+ * has settled by the time the operator has moved on to the next item.
+ */
+private const val MARKER_BLINK_MS = 2200L
+
+/**
  * Point-of-sale billing terminal, faithfully modelled on the shared design:
  * modular header, product region (search + Enter Price / Customer, category
  * tab strip, product grid, shortcut hints) and a live order ticket (customer,
@@ -321,7 +328,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private var customerName: String? = null
     private var customerPhone: String? = null
     private var currentCustomerData: Map<String, Any?>? = null
+    /** The product most recently added to, or changed in, the cart - which row
+     *  [CartAdapter] blinks its marker on. See [flashMarker]. */
     private var lastAddedId: String? = null
+    /** Ticks off a pending [flashMarker] clear against the one that scheduled it,
+     *  so an earlier add's timeout cannot clear a later add's still-live marker. */
+    private var markerClearToken = 0
+    private val markerHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val cart = mutableListOf<CartLine>()
     /**
      * Held sales live on [CheckoutSession] rather than in this fragment, so the
@@ -533,8 +546,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // it in the Name box.
         val etSearchId = view.findViewById<TextInputEditText>(R.id.etSearchId)
         val etSearchName = view.findViewById<TextInputEditText>(R.id.etSearchName)
-        suggestionsId = wireSearchField(etSearchId, SearchSuggestions.Mode.CODES_ONLY) { queryId = it }
-        suggestionsName = wireSearchField(etSearchName, SearchSuggestions.Mode.NAME_ONLY) { queryName = it }
+        suggestionsId = wireSearchField(
+            etSearchId, SearchSuggestions.Mode.CODES_ONLY, other = etSearchName
+        ) { queryId = it }
+        suggestionsName = wireSearchField(
+            etSearchName, SearchSuggestions.Mode.NAME_ONLY, other = etSearchId
+        ) { queryName = it }
         // Discount - hidden entirely when Tax Settings' Discount is on and item-wise.
         view.findViewById<View>(R.id.sectionDiscount).visibility =
             if (showDiscountBox) View.VISIBLE else View.GONE
@@ -696,12 +713,19 @@ class PosBillingFragment : Fragment(), TitledScreen {
     /**
      * Shows the last bill's id in the header when the "Last Bill Status" general
      * setting is on. Read from the local settings cache, not the DB.
+     *
+     * Falls back to the setting's own default (see [GeneralSettingsDao.GeneralSettings.lastBillStatus])
+     * only when the cache has never held a value for it at all - a till that has
+     * never had General Settings opened or saved, where the row behind the cache
+     * does not exist yet. A cache holding an explicit "0" is a shop that switched
+     * it off, and is not second-guessed here.
      */
     private fun updateLastBill() {
         val v = view ?: return
         val cell = v.findViewById<View>(R.id.cellLastBill)
         val divider = v.findViewById<View>(R.id.vLastBillDivider)
-        val on = SettingsCache.value(requireContext(), "G", "Last Bill Status") == "1"
+        val cached = SettingsCache.value(requireContext(), "G", "Last Bill Status")
+        val on = cached?.let { it == "1" } ?: GeneralSettingsDao(requireContext()).load().lastBillStatus
         if (!on) {
             cell.visibility = View.GONE
             divider.visibility = View.GONE
@@ -748,7 +772,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(
                 R.id.fragment_container,
-                BillFragment.newInstance(billNo, "", "", "", "", receiptNo)
+                // The customer already has the original - it was printed when the
+                // sale completed at checkout - so anything printed from this shortcut
+                // afterward is a second copy, the same as opening it from Bill
+                // History (see BillFragment.newInstance's own note on [duplicate]).
+                BillFragment.newInstance(billNo, "", "", "", "", receiptNo, duplicate = true)
             )
             .addToBackStack(null)
             .commit()
@@ -1200,6 +1228,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun wireSearchField(
         field: TextInputEditText,
         mode: SearchSuggestions.Mode,
+        /** The Product ID box for the Name box, or vice versa - cleared whenever
+         *  [field] takes focus, so the two can never both hold a query at once. */
+        other: TextInputEditText? = null,
         onQueryChanged: (String) -> Unit
     ): SearchSuggestions {
         val accent = ThemeManager.getThemeColor(requireContext())
@@ -1240,7 +1271,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // past this point is for a person typing - a scan never reaches any of it.
         // The watcher above is passed through so ScanState can clear the field
         // WITHOUT running it - see the note on [ScanState.clearFieldQuietly].
-        attachScanner(field, watcher, onQueryChanged)
+        attachScanner(field, watcher, onQueryChanged, other)
         // The keyboard's Search key, and the Enter a hardware scanner sends after a
         // barcode: the query is finished either way, so the keyboard goes and the
         // shelf - filtered to what was asked for - is left uncovered.
@@ -1403,7 +1434,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun attachScanner(
         etSearch: TextInputEditText,
         watcher: TextWatcher,
-        onQueryChanged: (String) -> Unit
+        onQueryChanged: (String) -> Unit,
+        /** The other search box - see [wireSearchField]. */
+        other: TextInputEditText? = null
     ) {
         // FOCUS WITHOUT THE KEYBOARD.
         //
@@ -1427,7 +1460,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // as quiet as the last. Without this, one tap to type would leave the keyboard
         // arriving on every scan for the rest of the session.
         etSearch.setOnFocusChangeListener { _, hasFocus ->
-            if (!hasFocus) { etSearch.showSoftInputOnFocus = false; dismissSuggestions() }
+            if (hasFocus) {
+                // The two boxes must never both hold a query at once - each searches
+                // its own thing, and a leftover query left sitting in the other would
+                // go on narrowing the shelf invisibly alongside whatever is now being
+                // typed here. Focusing one is a deliberate switch to it, so the other
+                // is cleared the moment that happens, not just when this one is typed
+                // into - a bare tap that never types anything still counts.
+                other?.takeIf { it.text?.isNotEmpty() == true }?.setText("")
+            } else {
+                etSearch.showSoftInputOnFocus = false
+                dismissSuggestions()
+            }
         }
 
         val state = ScanState(etSearch, watcher, onQueryChanged)
@@ -1507,14 +1551,52 @@ class PosBillingFragment : Fragment(), TitledScreen {
         return true
     }
 
+    /**
+     * Marks [productId] as the row to blink, and clears it again after
+     * [MARKER_BLINK_MS] - the marker's whole reason for existing is to draw the eye
+     * to what just happened, not to sit there permanently.
+     *
+     * [markerClearToken] is bumped on every call and captured by the scheduled
+     * clear, so a second add arriving inside the first one's window is not wiped by
+     * the first's timer - only the clear that matches the CURRENT token is allowed
+     * to act, which is by construction whichever add happened last.
+     */
+    private fun flashMarker(productId: String) {
+        lastAddedId = productId
+        val token = ++markerClearToken
+        markerHandler.postDelayed({
+            if (markerClearToken == token) {
+                lastAddedId = null
+                cartAdapter.notifyDataSetChanged()
+            }
+        }, MARKER_BLINK_MS)
+    }
+
+    /**
+     * Pulses [marker]'s opacity a few times rather than leaving it a solid block -
+     * the same kind of highlight a phone's own Settings search lands you on. Runs
+     * for [MARKER_BLINK_MS] and settles back to fully opaque; [flashMarker] is what
+     * actually hides the marker once that window is up.
+     */
+    private fun startMarkerBlink(marker: View) {
+        marker.clearAnimation()
+        marker.alpha = 1f
+        val blink = android.view.animation.AlphaAnimation(1f, 0.15f).apply {
+            duration = MARKER_BLINK_MS / 6
+            repeatMode = android.view.animation.Animation.REVERSE
+            repeatCount = 5
+        }
+        marker.startAnimation(blink)
+    }
+
     private fun addToCart(p: Product, qty: Double, rate: Double) {
         if (blockedByOutOfStock(p)) return
         if (exceedsStock(p.id, qty)) return
         val priced = if (rate == p.price) p else p.copy(price = rate)
-        
+
         // Find existing line at the SAME rate
         val existingIndex = cart.indexOfFirst { it.product.id == p.id && it.product.price == rate }
-        
+
         if (existingIndex != -1) {
             val line = cart.removeAt(existingIndex)
             line.qty += qty
@@ -1522,8 +1604,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
         } else {
             cart.add(0, CartLine(priced, qty))
         }
-        
-        lastAddedId = p.id
+
+        flashMarker(p.id)
         cartAdapter.notifyDataSetChanged()
 
         // Scroll to top to show the most recent item
@@ -1589,12 +1671,21 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // goes on as 1 and is corrected by tapping its cart line, where the quantity
         // opens for a fractional unit whatever Enter Quantity says. That is also the
         // order the work happens in: rung up first, weighed second.
-        if (!editing && SettingsCache.value(requireContext(), "A", "Direct Add to Cart") == "1") {
-            val before = cart.sumOf { it.qty }
+        //
+        // Falls back to the setting's own default (see
+        // AppSettingsDao.AppSettings.directAddToCart) only when the cache has never
+        // held a value for it - a till that has never had App Settings opened or
+        // saved. An explicit "0" in the cache is a shop that switched it off, and is
+        // not second-guessed here.
+        val directAddCached = SettingsCache.value(requireContext(), "A", "Direct Add to Cart")
+        val directAddOn = directAddCached?.let { it == "1" }
+            ?: com.example.synergic_pos_offline.database.AppSettingsDao(requireContext())
+                .load().directAddToCart
+        if (!editing && directAddOn) {
+            // No running-count toast here: Direct Add to Cart's whole point is a fast,
+            // silent tap-to-add, and a snackbar on every one of them undoes that -
+            // the cart list itself already shows what was added.
             addToCart(p, 1.0, p.price)
-            // Only announce when the tap actually added (not blocked by stock), and
-            // show the running count so rapid taps read "1 item added", "2 items…".
-            if (cart.sumOf { it.qty } > before) toast(itemsAddedMessage(cart.sumOf { it.qty }))
             return
         }
 
@@ -1658,6 +1749,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val base = cart[index].product
         val priced = if (rate == base.price) base else base.copy(price = rate)
         cart[index] = CartLine(priced, qty)
+        flashMarker(priced.id)
         cartAdapter.notifyDataSetChanged()
         updateTotals()
     }
@@ -1678,7 +1770,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val line = cart[pos]
         line.qty += delta
         if (line.qty > 0) {
-            lastAddedId = line.product.id
+            flashMarker(line.product.id)
         } else {
             // Stepped down to nothing: the line goes rather than sitting at zero.
             cart.removeAt(pos)
@@ -1726,105 +1818,39 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // }
     }
 
+    /**
+     * The counter's own Add Customer form - phone, name and address, with the phone
+     * finding the other two off the master the moment ten digits are typed. Shared
+     * with the restaurant's take-away prompt (see [CustomerPrompt]) rather than a
+     * second copy of the same find-or-create rule, so the two screens' address
+     * books cannot disagree about what counts as the same customer.
+     */
     private fun showCustomerDialog() {
-        DialogUtils.showForm(
+        com.example.synergic_pos_offline.utils.CustomerPrompt.showDetails(
             context = requireContext(),
             title = "Add Customer",
-            fields = listOf(
-                DialogUtils.FormField("Phone Number", customerPhone ?: "", inputType = "phone", maxLength = 10),
-                DialogUtils.FormField("Customer Name", "", spanColumns = 2),
-                DialogUtils.FormField("Address", "", isTextArea = true, spanColumns = 2)
-            ),
             positiveText = "Add",
-            // No Cancel button - the one button adds the customer - so the header
-            // cross is the only thing on this card that gets out of it. Raised over a
-            // sale in progress, and opened by mistake often enough to matter.
-            showNegative = false,
-            showClose = true,
-            mandatoryFields = listOf(0),
-            onSave = { values ->
-                val phone = values[0].trim()
-                val enteredName = values[1].trim()
-                val enteredAddress = values[2].trim()
-                if (phone.isNotEmpty() && phone.length == 10) {
-                    val ctx = requireContext()
-                    var customerName = "Guest"
-                    var customerData: Map<String, Any?>? = null
-
-                    try {
-                        val helper = DatabaseHelper.getInstance(ctx)
-                        val db = helper.readableDatabase
-
-                        db.query(
-                            "md_customers",
-                            arrayOf("id", "customer_name", "phone_number", "customer_address", "gstin", "dob", "dom", "credit_enabled", "credit_limit", "balance_amount"),
-                            "phone_number = ?",
-                            arrayOf(phone),
-                            null, null, null
-                        ).use { cursor ->
-                            if (cursor.moveToFirst()) {
-                                customerName = cursor.getString(1) ?: "Customer"
-                                customerData = mapOf(
-                                    "id" to cursor.getLong(0),
-                                    "name" to customerName,
-                                    "phone" to (cursor.getString(2) ?: ""),
-                                    "address" to (cursor.getString(3) ?: ""),
-                                    "gstin" to (cursor.getString(4) ?: ""),
-                                    "dob" to (cursor.getString(5) ?: ""),
-                                    "dom" to (cursor.getString(6) ?: ""),
-                                    "credit_enabled" to (cursor.getInt(7) != 0),
-                                    "credit_limit" to cursor.getDouble(8),
-                                    "balance" to cursor.getDouble(9)
-                                )
-
-                                // Attach the found customer to the sale directly, no
-                                // intermediate confirmation card.
-                                setCustomer(customerName.ifEmpty { null }, phone, customerData)
-                            } else {
-                                // Customer not found - insert new customer into database
-                                try {
-                                    val values = android.content.ContentValues().apply {
-                                        put("phone_number", phone)
-                                        put("customer_name", enteredName)
-                                        put("customer_address", enteredAddress)
-                                        put("gstin", "")
-                                        put("dob", "")
-                                        put("dom", "")
-                                        put("credit_enabled", 0)
-                                        put("credit_limit", 0.0)
-                                        put("balance_amount", 0.0)
-                                        put("created_by", SessionManager.auditUser ?: "System")
-                                        put("created_at", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()))
-                                    }
-                                    val result = db.insert("md_customers", null, values)
-                                    if (result > 0) {
-                                        // Attach the newly-created customer to the sale
-                                        // directly, no intermediate confirmation card.
-                                        setCustomer(
-                                            enteredName.ifEmpty { null }, phone,
-                                            mapOf(
-                                                "id" to result, "name" to enteredName, "phone" to phone,
-                                                "address" to enteredAddress, "gstin" to "", "dob" to "", "dom" to "",
-                                                "credit_enabled" to false,
-                                                "credit_limit" to 0.0, "balance" to 0.0
-                                            )
-                                        )
-                                        toast("New customer saved against $phone")
-                                    } else {
-                                        toast("Could not create the customer")
-                                    }
-                                } catch (e: Exception) {
-                                    android.util.Log.e("PosBillingFragment", "Customer lookup failed", e)
-                                    toast("Could not create the customer")
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        setCustomer(null, phone, null)
-                    }
-                }
-            }
-        )
+            phone = customerPhone ?: ""
+        ) { customer ->
+            // Attach the found-or-created customer to the sale directly, no
+            // intermediate confirmation card - the same shape showCustomerInfoPopover
+            // and setCustomer already expect.
+            setCustomer(
+                customer.name.ifEmpty { null }, customer.phone,
+                mapOf(
+                    "id" to customer.id,
+                    "name" to customer.name,
+                    "phone" to customer.phone,
+                    "address" to customer.address,
+                    "gstin" to customer.gstin,
+                    "dob" to customer.birthday,
+                    "dom" to customer.anniversary,
+                    "credit_enabled" to customer.creditEnabled,
+                    "credit_limit" to customer.creditLimit,
+                    "balance" to customer.balance
+                )
+            )
+        }
     }
 
     private fun showCustomerInfoPopover(ctx: android.content.Context, customer: Map<String, Any?>) {
@@ -2735,11 +2761,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // with Hold and Checkout under it.
         styleTextOnly(root.findViewById(R.id.btnToggleBillingSummary), accent)
 
-        // Clear, beside the header label it sits next to - text only, the same
-        // reason the fold's handle above is: a pill here would read as a fourth
-        // action competing with Hold and Checkout rather than the header control
-        // it actually is.
-        styleTextOnly(root.findViewById(R.id.btnClearCart), accent)
+        // Clear, at the header's far end - text only, the same reason the fold's
+        // handle above is: a pill here would read as a fourth action competing with
+        // Hold and Checkout rather than the header control it actually is. In red
+        // rather than the theme accent: it is destructive - the one control in this
+        // row that throws the sale away - and the accent, used for everything else
+        // on the panel, would not tell it apart from an ordinary action.
+        styleTextOnly(
+            root.findViewById(R.id.btnClearCart),
+            ContextCompat.getColor(requireContext(), R.color.menu_delete_icon)
+        )
     }
 
     /**
@@ -2885,11 +2916,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
             holder.qty.text = qtyText(line.qty)
             holder.total.text = money(lineSalePrice(line))
             
-            // Show marker for the most recently added/updated item
+            // The marker on the row most recently added to or changed - blinking,
+            // like the highlight a phone's own Settings search lands you on, rather
+            // than sitting there solid: it is drawing the eye to what just happened,
+            // not labelling the row as permanently "the newest one". See
+            // [flashMarker], which times how long that lasts.
             if (line.product.id == lastAddedId) {
                 holder.marker.visibility = View.VISIBLE
                 holder.marker.setBackgroundColor(accent)
+                startMarkerBlink(holder.marker)
             } else {
+                holder.marker.clearAnimation()
+                holder.marker.alpha = 1f
                 holder.marker.visibility = View.INVISIBLE
             }
 

@@ -253,6 +253,7 @@ class DatabaseHelper private constructor(context: Context) :
         // COMPLETE statuses the restaurant flow sets (see [ensureKotStatusSchema]).
         ensureKotStatusSchema(db)
         ensureTableStatusSchema(db)
+        ensureCaptionSchema(db)
         // Items already sent under the old flag must not be re-sent: mark their full
         // quantity as already gone to the kitchen.
         runCatching {
@@ -500,6 +501,41 @@ class DatabaseHelper private constructor(context: Context) :
             }
             db.setForeignKeyConstraintsEnabled(true)
         }.onFailure { android.util.Log.e("DBMigrate", "Failed to rebuild table status tables", it) }
+    }
+
+    /**
+     * Brings md_captions up to carry a CANCELLED caption type, alongside BILL,
+     * DUPLICATE and CREDIT - the printed bill's own header for a cancelled sale.
+     * Since SQLite cannot widen a CHECK without rebuilding, this re-creates the
+     * table (preserving data) if it is found to be missing the new type.
+     */
+    private fun ensureCaptionSchema(db: SQLiteDatabase) {
+        val sql = tableSql(db, Tables.MD_CAPTIONS)
+        if (sql == null || sql.contains("CANCELLED")) return
+
+        runCatching {
+            db.setForeignKeyConstraintsEnabled(false)
+            db.beginTransaction()
+            try {
+                db.execSQL("ALTER TABLE ${Tables.MD_CAPTIONS} RENAME TO md_captions_old")
+                db.execSQL(SQL_CREATE_MD_CAPTIONS)
+                db.execSQL(
+                    """
+                    INSERT INTO ${Tables.MD_CAPTIONS}
+                        (id, store_id, caption_number, caption_text, font_size, is_bold, is_enabled,
+                         caption_type, created_at, modified_at, created_by, modified_by)
+                    SELECT id, store_id, caption_number, caption_text, font_size, is_bold, is_enabled,
+                           caption_type, created_at, modified_at, created_by, modified_by
+                    FROM md_captions_old
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE md_captions_old")
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            db.setForeignKeyConstraintsEnabled(true)
+        }.onFailure { android.util.Log.e("DBMigrate", "Failed to rebuild md_captions", it) }
     }
 
     /** The stored CREATE statement for [table], or null if it doesn't exist. */
@@ -1755,7 +1791,7 @@ class DatabaseHelper private constructor(context: Context) :
                 font_size TEXT CHECK(font_size IN ('SMALL','MEDIUM','BIG','EXTRA_LARGE')),
                 is_bold INTEGER NOT NULL DEFAULT 0,
                 is_enabled INTEGER NOT NULL DEFAULT 1,
-                caption_type TEXT CHECK(caption_type IN ('BILL','DUPLICATE','CREDIT')),
+                caption_type TEXT CHECK(caption_type IN ('BILL','DUPLICATE','CREDIT','CANCELLED')),
                 created_at TEXT DEFAULT (datetime('now','localtime')),
                 modified_at TEXT,
                 created_by TEXT,

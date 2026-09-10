@@ -81,6 +81,7 @@ class SettingsFragment : Fragment() {
             e("Time on Bill", "Bill Settings", bill),
             e("Customer Address Printing", "Bill Settings", bill),
             e("Customer Details", "Bill Settings", bill),
+            e("User Details", "Bill Settings", bill, match = "Shop name, address, phone, GSTIN on bill"),
             e("UPI QR", "Bill Settings", bill, match = "UPI QR on bill"),
             e("UPI ID", "Bill Settings", bill),
             e("QR Code", "Bill Settings", bill, match = "UPI QR on bill"),

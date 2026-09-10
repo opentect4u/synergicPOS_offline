@@ -264,18 +264,34 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="CURRENT SALE"
+                        android:text="CURRENT BILL"
                         android:textSize="11sp"
                         android:textStyle="bold"
                         android:letterSpacing="0.12"
                         android:textColor="@color/primary_blue" />
+
+                    <TextView
+                        android:id="@+id/tvOrderNo"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:text="INV-000001"
+                        android:textSize="18sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_main" />
+
+                    <!-- Takes the space between the bill no. and Clear, so Clear
+                         stays pinned to the row's right edge. -->
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        android:layout_weight="1" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnClearCart"
                         style="@style/Widget.MaterialComponents.Button.TextButton"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="6dp"
                         android:insetTop="0dp"
                         android:insetBottom="0dp"
                         android:minWidth="0dp"
@@ -288,29 +304,14 @@
                         app:iconSize="13dp"
                         app:iconPadding="3dp"
                         app:cornerRadius="8dp" />
-
-                    <!-- Takes the space between Clear and the invoice number, so the
-                         number stays pinned to the row's right edge. -->
-                    <View
-                        android:layout_width="0dp"
-                        android:layout_height="0dp"
-                        android:layout_weight="1" />
-
-                    <TextView
-                        android:id="@+id/tvOrderNo"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="INV-000001"
-                        android:textSize="18sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_main" />
                 </LinearLayout>
 
                 <!-- Total Item Count -->
                 <TextView
                     android:id="@+id/tvItemCount"
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:gravity="center"
                     android:text="0 products, 0 counts"
                     android:textSize="12sp"
                     android:textColor="@color/text_secondary"

@@ -27,13 +27,16 @@ class CaptionDao(context: Context) {
      * Which slips a caption prints on.
      *
      * BILL is every bill; CREDIT adds to one billed on account; DUPLICATE adds to
-     * a copy of a bill already issued. They stack - a credit bill reprinted from
-     * Bill history carries all three.
+     * a copy of a bill already issued; CANCELLED adds to a bill that was cancelled
+     * (flagged CANCELLED, or deleted into Bill History's archive) after it was
+     * raised. They stack - a credit bill reprinted from Bill history carries all
+     * four where they apply.
      */
     enum class Type(val stored: String, val label: String) {
         BILL("BILL", "Bill"),
         DUPLICATE("DUPLICATE", "Duplicate"),
-        CREDIT("CREDIT", "Credit");
+        CREDIT("CREDIT", "Credit"),
+        CANCELLED("CANCELLED", "Cancelled");
 
         companion object {
             fun fromStored(v: String?): Type = values().firstOrNull { it.stored == v } ?: BILL

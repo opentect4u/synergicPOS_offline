@@ -347,8 +347,15 @@ class ProductsFragment : DataTableFragment() {
                 refreshRows()
                 toast("Deleted ${ids.size} product(s)")
             } else {
-                // A product still referenced by bills/stock can't be removed.
-                toast("Could not delete: product is used in existing records")
+                // A product still referenced by bills/stock can't be removed - name
+                // what is holding it rather than leaving the operator to guess.
+                val reason = com.example.synergic_pos_offline.utils.MasterEngagement.explain(
+                    requireContext(), DatabaseHelper.Tables.MD_PRODUCTS, ids
+                )
+                toast(
+                    if (reason != null) "Could not delete: $reason"
+                    else "Could not delete: product is used in existing records"
+                )
             }
         }
     }

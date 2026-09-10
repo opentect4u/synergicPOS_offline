@@ -720,9 +720,19 @@ class BillReceiptRenderer(context: Context) {
         try {
             val db = DatabaseHelper.getInstance(ctx).readableDatabase
 
-            // Store identity and tax registration, printed at the head of the bill.
-            // Its store_id also scopes the header/footer lines, so a header set up for
-            // one store does not print alongside another store's on the same slip.
+            // Store identity and tax registration, printed at the head of the bill -
+            // grocery and restaurant alike, one renderer drawing both. Gated by Bill
+            // Settings' own User Details switch: off, the shop's name, address, phone
+            // and GSTIN are left off the slip entirely, everywhere this head block is
+            // drawn (a live sale, a draft preview, or a reprint). Read live rather than
+            // frozen onto the bill at sale time - the registration row itself is
+            // already read fresh here on every reprint, never stored per bill, so
+            // whether to show it follows the same rule.
+            //
+            // store_id is still read and scopes the header/footer lines below
+            // regardless of this switch - which store a shop with more than one is
+            // billing from is not part of what User Details decides.
+            val showUserDetails = runCatching { BillSettingsDao(ctx).load().showUserDetails }.getOrDefault(true)
             var headerStoreId: Long? = null
             db.query(
                 DatabaseHelper.Tables.MD_REGISTRATION,
@@ -730,13 +740,20 @@ class BillReceiptRenderer(context: Context) {
                 null, null, null, null, "store_id ASC", "1"
             ).use { c ->
                 if (c.moveToFirst()) {
-                    val name = c.getString(0)
-                    if (!name.isNullOrBlank()) {
-                        view.findViewById<TextView>(R.id.tvStoreName).text = name.uppercase()
+                    if (showUserDetails) {
+                        val name = c.getString(0)
+                        if (!name.isNullOrBlank()) {
+                            view.findViewById<TextView>(R.id.tvStoreName).text = name.uppercase()
+                        }
+                        setIfPresent(view, R.id.tvStoreAddress, c.getString(1))
+                        setIfPresent(view, R.id.tvStorePhone, c.getString(2)?.let { "Ph: $it" })
+                        setIfPresent(view, R.id.tvStoreGstin, c.getString(3)?.let { "GSTIN: $it" })
+                    } else {
+                        view.findViewById<TextView>(R.id.tvStoreName).visibility = View.GONE
+                        view.findViewById<TextView>(R.id.tvStoreAddress).visibility = View.GONE
+                        view.findViewById<TextView>(R.id.tvStorePhone).visibility = View.GONE
+                        view.findViewById<TextView>(R.id.tvStoreGstin).visibility = View.GONE
                     }
-                    setIfPresent(view, R.id.tvStoreAddress, c.getString(1))
-                    setIfPresent(view, R.id.tvStorePhone, c.getString(2)?.let { "Ph: $it" })
-                    setIfPresent(view, R.id.tvStoreGstin, c.getString(3)?.let { "GSTIN: $it" })
                     if (!c.isNull(4)) headerStoreId = c.getLong(4)
                 }
             }
@@ -786,6 +803,20 @@ class BillReceiptRenderer(context: Context) {
             var tableLine: String? = null
             /** The order type this bill was actually billed under - see the reprint read below. */
             var storedOrderType: String? = null
+            /**
+             * Whether this bill is a cancelled one, read straight off the bill's own
+             * row rather than passed in by whoever asked for the print - the same way
+             * [BillDao.Bill.cancelled] reads it for Bill History's own Cancelled filter,
+             * so the two can never disagree about which bills that word covers.
+             *
+             * True either way a bill ends up cancelled: `bill_status` flagged
+             * CANCELLED on the row where it still lives, or the row moved out of
+             * `td_bills` into the archive a delete files it under (see
+             * [billsTableFor]) - a deleted bill is still opened and printed from
+             * Bill History's Cancelled list. Always false for a draft, which is a
+             * sale not yet saved and so cannot yet be either.
+             */
+            var cancelled = false
             if (draft != null) {
                 billNumber = draft.billNumber
                 dateTime = draft.dateTime
@@ -853,9 +884,15 @@ class BillReceiptRenderer(context: Context) {
             // missing one must still print its bills. The table line and order type
             // are what is lost then, not the bill.
             if (draft == null) runCatching {
+                val billsTable = billsTableFor(db, receiptNo)
+                // A row still in td_bills can itself be flagged CANCELLED (a void kept
+                // on the books rather than deleted); a row no longer there at all has
+                // been moved to the archive by a delete - either way is cancelled, the
+                // same OR [BillDao.Bill.cancelled] itself reads.
+                cancelled = billsTable == DatabaseHelper.Tables.TD_BILLS_DELETE
                 db.rawQuery(
-                    "SELECT table_number, table_section, order_type " +
-                        "FROM ${billsTableFor(db, receiptNo)} WHERE receipt_no = ?",
+                    "SELECT table_number, table_section, order_type, bill_status " +
+                        "FROM $billsTable WHERE receipt_no = ?",
                     arrayOf(receiptNo.toString())
                 ).use { c ->
                     if (c.moveToFirst()) {
@@ -866,6 +903,7 @@ class BillReceiptRenderer(context: Context) {
                         // against - normalised here so a saved bill's Parcel Charge
                         // (Applicability.TAKEAWAY) survives being viewed or reprinted.
                         storedOrderType = normalizeOrderType(c.getString(2))
+                        if (c.getString(3)?.equals("CANCELLED", ignoreCase = true) == true) cancelled = true
                     }
                 }
             }
@@ -979,7 +1017,7 @@ class BillReceiptRenderer(context: Context) {
             // Captions head the slip, and which ones apply is only known now that
             // the bill's type has been read. They stack: a credit bill reprinted
             // from Bill history carries all three sets.
-            renderCaptions(view, creditSale = creditSale, duplicate = duplicate)
+            renderCaptions(view, creditSale = creditSale, duplicate = duplicate, cancelled = cancelled)
 
             // Printed whatever Customer Details says. It used to travel as the
             // customer's NAME, which meant a till set to print only the mobile - or no
@@ -2322,44 +2360,66 @@ class BillReceiptRenderer(context: Context) {
      *
      * BILL and DUPLICATE are alternatives, not layers: a slip is either an original
      * or a copy of one, so a duplicate is captioned DUPLICATE *instead of* BILL.
-     * CREDIT is a separate question - how the sale was settled - so it joins
-     * whichever of the two applies.
+     * CREDIT and CANCELLED are separate questions - how the sale was settled, and
+     * whether it still stands - so each joins whichever of the two applies.
      *
      * A till with no captions set up prints none and the block takes no height,
-     * which is what keeps this out of the way of anyone who does not use it.
+     * which is what keeps this out of the way of anyone who does not use it - a
+     * cancelled or duplicate slip is the one exception, forced regardless, see below.
      */
-    private fun renderCaptions(view: View, creditSale: Boolean, duplicate: Boolean) {
+    private fun renderCaptions(view: View, creditSale: Boolean, duplicate: Boolean, cancelled: Boolean = false) {
         val container = view.findViewById<LinearLayout>(R.id.llBillCaptions) ?: return
         container.removeAllViews()
 
         val types = buildList {
             add(if (duplicate) CaptionDao.Type.DUPLICATE else CaptionDao.Type.BILL)
             if (creditSale) add(CaptionDao.Type.CREDIT)
+            if (cancelled) add(CaptionDao.Type.CANCELLED)
         }
         val captions = runCatching { CaptionDao(ctx).enabledFor(types) }.getOrDefault(emptyList())
 
         val density = ctx.resources.displayMetrics.density
 
-        // A DUPLICATE always says so, whether or not the shop has set up captions.
-        //
-        // The rest of this block is decoration a till opts into - a slogan, a returns
-        // policy - and a till with none prints none. Being a duplicate is not that: it
-        // is the whole difference between the copy the customer was handed and the copy
-        // the shop kept, and on a return it is what tells the two apart. The captions
-        // master was EMPTY on every till that had never opened that screen, so a
-        // two-copy pair came out as two identical originals no matter what the setting
-        // said - which is what this line fixes. Setting a DUPLICATE caption replaces
-        // it, so the wording is still the shop's to choose.
-        if (duplicate && captions.none { it.type == CaptionDao.Type.DUPLICATE }) {
+        /**
+         * Adds a bold, till-wide fallback caption - the same look [caption] rows
+         * below get from a bold configured one - used only when nothing the shop
+         * configured already says as much.
+         */
+        fun forceCaption(text: String) {
             container.addView(TextView(ctx).apply {
-                text = t("DUPLICATE BILL")
+                this.text = t(text)
                 gravity = Gravity.CENTER
                 textSize = PrintType.TITLE_SP
                 setTypeface(billTypeface, Typeface.BOLD)
                 setTextColor(0xFF111111.toInt())
                 setPadding(0, (2 * density).toInt(), 0, 0)
             })
-        } else if (captions.isEmpty()) return
+        }
+
+        // A DUPLICATE, or a CANCELLED bill, always says so, whether or not the shop
+        // has set up captions for it.
+        //
+        // The rest of this block is decoration a till opts into - a slogan, a returns
+        // policy - and a till with none prints none. Being a duplicate, or a bill
+        // that no longer stands, is not that: it is the whole difference between the
+        // copy the customer was handed and the copy the shop kept, or between a sale
+        // and one that was taken back - and on a return, or a customer disputing what
+        // they were charged, it is what tells the two apart. The captions master was
+        // EMPTY on every till that had never opened that screen, so a two-copy pair
+        // came out as two identical originals, and a cancelled bill's reprint as an
+        // ordinary one, no matter what the setting said - which is what these two
+        // lines fix. Setting the matching caption replaces either, so the wording is
+        // still the shop's to choose.
+        var forced = false
+        if (duplicate && captions.none { it.type == CaptionDao.Type.DUPLICATE }) {
+            forceCaption("DUPLICATE BILL")
+            forced = true
+        }
+        if (cancelled && captions.none { it.type == CaptionDao.Type.CANCELLED }) {
+            forceCaption("CANCELLED BILL")
+            forced = true
+        }
+        if (!forced && captions.isEmpty()) return
 
         captions.forEach { caption ->
             container.addView(TextView(ctx).apply {

@@ -470,6 +470,19 @@
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swCustomerAddress" style="@style/BillSettingSwitch" />
                 </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- User Details -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="User Details" />
+                        <TextView style="@style/BillSettingSub"
+                            android:text="Print the shop's name, address, phone and GSTIN at the top of the bill" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swUserDetails" style="@style/BillSettingSwitch" />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
