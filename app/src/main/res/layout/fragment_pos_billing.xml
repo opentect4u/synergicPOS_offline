@@ -316,22 +316,6 @@
                     android:textColor="@color/text_secondary"
                     android:layout_marginTop="2dp" />
 
-                <!-- Customer -->
-                <com.google.android.material.button.MaterialButton
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:minHeight="0dp"
-                    android:id="@+id/btnAddCustomer"
-                    style="@style/Widget.MaterialComponents.Button.TextButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:paddingHorizontal="12dp"
-                    android:paddingVertical="8dp"
-                    android:text="+ Add loyalty customer"
-                    android:textSize="13sp"
-                    app:rippleColor="@android:color/transparent" />
-
                 <LinearLayout
                     android:id="@+id/llCustomerInfo"
                     android:layout_width="match_parent"

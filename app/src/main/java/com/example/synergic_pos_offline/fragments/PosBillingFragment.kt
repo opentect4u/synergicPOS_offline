@@ -360,7 +360,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private lateinit var tvCashierName: TextView
     private lateinit var btnHeld: MaterialButton
     private lateinit var btnCharge: MaterialButton
-    private lateinit var btnAddCustomer: MaterialButton
     private lateinit var llCustomerInfo: View
     private lateinit var tvCustName: TextView
     private lateinit var tvCustSub: TextView
@@ -420,7 +419,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvCashierName = view.findViewById(R.id.tvCashierName)
         btnHeld = view.findViewById(R.id.btnHeld)
         btnCharge = view.findViewById(R.id.btnCharge)
-        btnAddCustomer = view.findViewById(R.id.btnAddCustomer)
         llCustomerInfo = view.findViewById(R.id.llCustomerInfo)
         tvCustName = view.findViewById(R.id.tvCustName)
         tvCustSub = view.findViewById(R.id.tvCustSub)
@@ -575,7 +573,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         btnCalculator.setOnClickListener { showCalculatorDialog() }
         btnCustomer.setOnClickListener { showCustomerDialog() }
-        btnAddCustomer.setOnClickListener { showCustomerDialog() }
         // The button stays where it is, always - see the note above capturesCustomer's
         // old declaration.
         // btnCustomer.visibility = if (capturesCustomer) View.VISIBLE else View.GONE
@@ -1700,25 +1697,21 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // No longer gated on capturesCustomer - see the note above its old
         // declaration.
         // if (!capturesCustomer) {
-        //     btnAddCustomer.visibility = View.GONE
         //     llCustomerInfo.visibility = View.GONE
         //     currentCustomerData = null
         //     return
         // }
         // CUSTOMER INFO STAYS HIDDEN, WHETHER OR NOT ONE IS ATTACHED - commented out
-        // below rather than removed. The Add Customer button is offered no matter
-        // what; a customer attached to the sale is carried through to checkout the
-        // same as it always was (see onCheckout), it is just not shown back on a
-        // card here any more. Whether one is on the sale stays this screen's own
-        // quiet business - optional to add, and never displayed either way.
-        btnAddCustomer.visibility = View.VISIBLE
+        // below rather than removed. A customer attached to the sale is carried
+        // through to checkout the same as it always was (see onCheckout), it is just
+        // not shown back on a card here any more. Whether one is on the sale stays
+        // this screen's own quiet business - optional to add, and never displayed
+        // either way.
         llCustomerInfo.visibility = View.GONE
         // if (name == null && phone == null) {
-        //     btnAddCustomer.visibility = View.VISIBLE
         //     llCustomerInfo.visibility = View.GONE
         //     currentCustomerData = null
         // } else {
-        //     btnAddCustomer.visibility = View.GONE
         //     llCustomerInfo.visibility = View.VISIBLE
         //     tvCustName.text = name ?: "Customer"
         //     tvCustSub.text = phone ?: "No phone"
@@ -1732,7 +1725,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
             context = requireContext(),
             title = "Add Customer",
             fields = listOf(
-                DialogUtils.FormField("Phone Number", customerPhone ?: "", inputType = "phone", maxLength = 10)
+                DialogUtils.FormField("Phone Number", customerPhone ?: "", inputType = "phone", maxLength = 10),
+                DialogUtils.FormField("Customer Name", "", spanColumns = 2),
+                DialogUtils.FormField("Address", "", isTextArea = true, spanColumns = 2)
             ),
             positiveText = "Add",
             // No Cancel button - the one button adds the customer - so the header
@@ -1743,6 +1738,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
             mandatoryFields = listOf(0),
             onSave = { values ->
                 val phone = values[0].trim()
+                val enteredName = values[1].trim()
+                val enteredAddress = values[2].trim()
                 if (phone.isNotEmpty() && phone.length == 10) {
                     val ctx = requireContext()
                     var customerName = "Guest"
@@ -1782,8 +1779,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
                                 try {
                                     val values = android.content.ContentValues().apply {
                                         put("phone_number", phone)
-                                        put("customer_name", "")
-                                        put("customer_address", "")
+                                        put("customer_name", enteredName)
+                                        put("customer_address", enteredAddress)
                                         put("gstin", "")
                                         put("dob", "")
                                         put("dom", "")
@@ -1798,10 +1795,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
                                         // Attach the newly-created customer to the sale
                                         // directly, no intermediate confirmation card.
                                         setCustomer(
-                                            null, phone,
+                                            enteredName.ifEmpty { null }, phone,
                                             mapOf(
-                                                "id" to result, "name" to "", "phone" to phone,
-                                                "address" to "", "gstin" to "", "dob" to "", "dom" to "",
+                                                "id" to result, "name" to enteredName, "phone" to phone,
+                                                "address" to enteredAddress, "gstin" to "", "dob" to "", "dom" to "",
                                                 "credit_enabled" to false,
                                                 "credit_limit" to 0.0, "balance" to 0.0
                                             )
@@ -2712,10 +2709,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
             .mapNotNull { root.findViewById<MaterialButton>(it) }
             .plus(btnHeld)
             .forEach { styleOutlined(it, accent) }
-
-        // "+ Add loyalty customer" is a borderless text button.
-        btnAddCustomer.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-        btnAddCustomer.setTextColor(accent)
 
         // Checkout: the one filled button on the panel, and the only one that should be.
         btnCharge.backgroundTintList = ColorStateList.valueOf(accent)
