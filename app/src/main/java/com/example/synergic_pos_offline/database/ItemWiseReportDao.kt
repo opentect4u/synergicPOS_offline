@@ -268,10 +268,17 @@ class ItemWiseReportDao(context: Context) {
                     vat = BillRounding.toPaise(sum.vat)
                 )
             }
+        // THE SAME GRAIN THE LINES WERE READ AT, passed on to both. These two totals
+        // are read by their own queries rather than off the lines above - a charge and
+        // a whole-bill discount belong to a bill, not to any one item on it - and each
+        // of them used to compare a bill's DATE against whatever bounds it was handed.
+        // With a date range that agreed with the lines; with the Time Wise report's
+        // `2026-09-09 00:00` it matched NO bill, so the charges and the discount came
+        // back zero and the two reports stated different totals for one period.
         return Report(
             fromDate, toDate, lines,
-            TaxReportDao.billCharges(helper.readableDatabase, fromDate, toDate, store),
-            exclusiveDiscount(fromDate, toDate, store)
+            TaxReportDao.billCharges(helper.readableDatabase, fromDate, toDate, store, grain = grain),
+            exclusiveDiscount(fromDate, toDate, store, grain)
         )
     }
 
@@ -281,14 +288,23 @@ class ItemWiseReportDao(context: Context) {
      * discount is already worked into every line's own [Line.amount], so a
      * bill-level figure here would be counted a second time.
      */
-    private fun exclusiveDiscount(fromDate: String, toDate: String, store: Long?): Double {
+    private fun exclusiveDiscount(
+        fromDate: String,
+        toDate: String,
+        store: Long?,
+        // Cut to the SAME length the range was asked at - see the note on
+        // TaxReportDao.billCharges. A 10-character cut against a minute's bounds
+        // matches nothing rather than matching loosely.
+        grain: CalendarGrain
+    ): Double {
         val storeClause = if (store != null) "AND store_id = ?" else ""
         val args = mutableListOf(fromDate, toDate).apply { if (store != null) add(store.toString()) }
         helper.readableDatabase.rawQuery(
             """
             SELECT COALESCE(SUM(tot_discount_amount), 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS}
-            WHERE substr(COALESCE(NULLIF(TRIM(bill_date_time), ''), bill_date || ' 00:00'), 1, 10) BETWEEN ? AND ?
+            WHERE substr(COALESCE(NULLIF(TRIM(bill_date_time), ''), bill_date || ' 00:00'),
+                         1, ${grain.storedLength}) BETWEEN ? AND ?
               AND COALESCE(is_voided, 0) = 0
               AND COALESCE(bill_status, 'COMPLETED') <> 'CANCELLED'
               AND COALESCE(is_mrp_billing, 0) = 0

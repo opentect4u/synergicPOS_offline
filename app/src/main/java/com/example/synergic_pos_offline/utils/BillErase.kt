@@ -57,8 +57,20 @@ object BillErase {
     data class Preview(
         val bills: Int,
         val saleReturns: Int,
-        val creditRecoveries: Int
+        val creditRecoveries: Int,
+        /**
+         * Bills already cancelled - they live in td_bills_delete, not td_bills.
+         *
+         * Counted separately because they are counted separately everywhere else on
+         * the till: a cancelled bill is not in the books, so [bills] does not include
+         * it. It still goes when the books are thrown away, and the warning has to
+         * say so or an operator reading "3 bills" loses thirty they did not know
+         * were still there.
+         */
+        val cancelled: Int = 0
     ) {
+        /** Whether there is anything at all to erase, cancelled bills included. */
+        val hasAnything: Boolean get() = bills > 0 || cancelled > 0
         /** Whether anything is left that shares the bill counter and so holds it up. */
         val sharesCounter: Boolean get() = saleReturns > 0 || creditRecoveries > 0
     }
@@ -72,6 +84,8 @@ object BillErase {
      */
     data class Outcome(
         val bills: Int,
+        /** Cancelled bills cleared out of the archive - see [Preview.cancelled]. */
+        val cancelled: Int = 0,
         val nextNumber: String,
         val openTables: Int = 0,
         val tablesFreed: Int = 0
@@ -88,7 +102,8 @@ object BillErase {
         return Preview(
             bills = count(DatabaseHelper.Tables.TD_BILLS),
             saleReturns = count(DatabaseHelper.Tables.TD_SALE_RETURNS),
-            creditRecoveries = count(DatabaseHelper.Tables.TD_ADVANCE_PAYMENTS)
+            creditRecoveries = count(DatabaseHelper.Tables.TD_ADVANCE_PAYMENTS),
+            cancelled = count(DatabaseHelper.Tables.TD_BILLS_DELETE)
         )
     }
 
@@ -110,13 +125,20 @@ object BillErase {
      * Blocking, and the caller is expected to have taken a backup first - see
      * [AutoBackup.backupBefore].
      */
-    fun erase(context: Context): Outcome {
-        val bills = preview(context).bills
+    fun erase(context: Context, resetTaxSettings: Boolean = true): Outcome {
+        val before = preview(context)
+        val bills = before.bills
         BillSettingsDao(context).clearAllBills()
         val floor = clearFloor(context)
-        TaxSettingsDao(context).resetToFreshTillDefault()
+        // NOT ON EVERY ROUTE. Erasing the books is a fresh start for the books, and
+        // a fresh till trades on the default tax mode - but the product upload also
+        // erases them (see ProductBulkImporter) and has no business deciding how the
+        // shop is taxed. A sheet of corrected prices that silently moved the till
+        // from Exclusive to MRP would be found out at the till, one wrong bill later.
+        if (resetTaxSettings) TaxSettingsDao(context).resetToFreshTillDefault()
         return Outcome(
             bills = bills,
+            cancelled = before.cancelled,
             nextNumber = BillDao(context).nextBillNumber(),
             openTables = floor.first,
             tablesFreed = floor.second
@@ -150,7 +172,7 @@ object BillErase {
      * them off: the rows are deleted parent-first and the order between the two tables
      * is not worth arranging for a wipe.
      */
-    private fun clearFloor(context: Context): Pair<Int, Int> {
+    fun clearFloor(context: Context): Pair<Int, Int> {
         val db = DatabaseHelper.getInstance(context).writableDatabase
         fun count(sql: String): Int = runCatching {
             db.rawQuery(sql, null).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }

@@ -242,4 +242,60 @@ class TransactionRollOverTest {
         }
         return days
     }
+
+    // ---- One day, for watching the whole cycle in an afternoon --------------------
+
+    /**
+     * At one day the cutoff is yesterday, so today is all that survives.
+     *
+     * The same arithmetic as a year, with a number small enough to prove by hand:
+     * subtract one day from today and everything on or before it goes.
+     */
+    @Test
+    fun oneDayKeepsTodayAndNothingElse() {
+        val day = TransactionRollOver.Window.ONE_DAY
+        assertEquals(1, day.days)
+        assertEquals("2027-06-30", TransactionRollOver.cutoff(day, on("2027-07-01")))
+        assertEquals("2027-07-01", TransactionRollOver.cutoff(day, on("2027-07-02")))
+
+        // Today can never be the cutoff, whatever the window - subtracting a whole
+        // day from today cannot land on today. That is what keeps the roll-over off
+        // the day the till is trading in.
+        assertEquals(
+            "the cutoff must be before today",
+            true, TransactionRollOver.cutoff(day) < day(Date())
+        )
+    }
+
+    /** And it actually deletes on that boundary: yesterday goes, today stays. */
+    @Test
+    fun oneDayDeletesYesterdayAndLeavesToday() {
+        TransactionRollOver.save(ctx, TransactionRollOver.Window.ONE_DAY)
+
+        val today = plantBill(day(Date()))
+        val yesterday = plantBill(daysAgo(1))
+        val lastWeek = plantBill(daysAgo(7))
+
+        val outcome = TransactionRollOver.runOnLogin(ctx)
+        assertTrue("the roll-over should not have failed: ${outcome.error}", outcome.error == null)
+
+        assertTrue("today's bill must stay", exists(today))
+        assertFalse("yesterday's bill should be gone", exists(yesterday))
+        assertFalse("and anything older", exists(lastWeek))
+    }
+
+    /** The window is stored and read back like the other two. */
+    @Test
+    fun oneDayIsOfferedAndRemembered() {
+        assertTrue(
+            "one day should be on the list the About screen offers",
+            TransactionRollOver.Window.ONE_DAY in TransactionRollOver.CHOICES
+        )
+        TransactionRollOver.save(ctx, TransactionRollOver.Window.ONE_DAY)
+        assertEquals(TransactionRollOver.Window.ONE_DAY, TransactionRollOver.window(ctx))
+        assertEquals(
+            TransactionRollOver.Window.ONE_DAY,
+            TransactionRollOver.Window.fromStored("1 day")
+        )
+    }
 }

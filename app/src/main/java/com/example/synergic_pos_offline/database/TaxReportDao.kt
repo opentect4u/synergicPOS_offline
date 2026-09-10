@@ -2,6 +2,7 @@ package com.example.synergic_pos_offline.database
 
 import android.content.Context
 import com.example.synergic_pos_offline.utils.BillRounding
+import com.example.synergic_pos_offline.utils.CalendarGrain
 import com.example.synergic_pos_offline.utils.SessionManager
 
 /**
@@ -238,13 +239,24 @@ class TaxReportDao(context: Context) {
          *
          * [customerId] narrows to one customer's bills, for a report scoped to one
          * - null reads every bill in the period, matching this report's own use.
+         *
+         * [grain] MUST MATCH THE PRECISION OF [fromDate] AND [toDate], and is the
+         * whole reason this parameter exists. The bill's moment is cut to the grain's
+         * own length before it is compared, and a mismatch does not merely blur the
+         * range - it empties it. This was fixed to 10 characters, a date, while the
+         * Time Wise Item Report asked for `2026-09-09 00:00` to `2026-09-09 23:59`:
+         * the cut left `2026-09-09`, and a string that is a PREFIX of another sorts
+         * BEFORE it, so `'2026-09-09' >= '2026-09-09 00:00'` is false and the BETWEEN
+         * matched no bill at all. Every charge came back zero, silently, and the same
+         * period read one way on the Item Wise Report and another on the Time Wise.
          */
         fun billCharges(
             db: android.database.sqlite.SQLiteDatabase,
             fromDate: String,
             toDate: String,
             store: Long?,
-            customerId: Long? = null
+            customerId: Long? = null,
+            grain: CalendarGrain = CalendarGrain.DAY
         ): BillCharges {
             val storeClause = if (store != null) "AND store_id = ?" else ""
             val customerClause = if (customerId != null) "AND customer_id = ?" else ""
@@ -260,7 +272,7 @@ class TaxReportDao(context: Context) {
                 FROM ${DatabaseHelper.Tables.TD_BILLS}
                 WHERE substr(
                           COALESCE(NULLIF(TRIM(bill_date_time), ''), bill_date || ' 00:00'),
-                          1, 10
+                          1, ${grain.storedLength}
                       ) BETWEEN ? AND ?
                   AND COALESCE(is_voided, 0) = 0
                   AND COALESCE(bill_status, 'COMPLETED') <> 'CANCELLED'

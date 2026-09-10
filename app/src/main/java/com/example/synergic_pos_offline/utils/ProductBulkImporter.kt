@@ -83,7 +83,7 @@ object ProductBulkImporter {
         val replaced: Int = 0,
         /**
          * Bills thrown away because the products they were rung up against have been
-         * replaced by this upload - see [deleteBillsFor]. Active and cancelled alike.
+         * erased by this upload - see [clearEveryBill]. Active and cancelled alike.
          */
         val billsDeleted: Int = 0,
         val languageApplied: String = PrintLanguage.Language.ENGLISH.englishName,
@@ -219,29 +219,32 @@ object ProductBulkImporter {
         val toAdd: Int,
         val toUpdateNames: List<String> = emptyList(),
         /**
-         * How many bills the update would take with it - see [deleteBillsFor].
+         * How many bills the upload would take with it - EVERY bill on the till.
          *
          * Counted BEFORE the upload runs, so the confirmation can name the number
          * rather than the operator meeting it in the summary afterwards.
+         *
+         * This used to count only the bills naming a product the sheet replaced. It
+         * counts the lot now, live and cancelled, because that is what the upload
+         * does - see the note on [clearEveryBill].
          */
         val billsToDelete: Int = 0
     )
 
 
     /**
-     * How many bills name one of [productIds] - what [deleteBillsFor] would take.
+     * Every bill on the till, cancelled ones included - what the upload will take.
      *
      * Read on its own so the confirmation can state the number BEFORE the upload
-     * runs. Counted the same way the deletion selects, so the figure the operator
-     * agrees to is the figure that goes.
+     * runs, and counted from the same two tables the erase empties, so the figure
+     * the operator agrees to is the figure that goes.
      */
-    private fun countBillsFor(db: SQLiteDatabase, productIds: Set<Long>): Int {
-        if (productIds.isEmpty()) return 0
-        return db.rawQuery(
-            "SELECT COUNT(DISTINCT bill_id) FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} " +
-                "WHERE bill_id IS NOT NULL AND product_id IN (${productIds.joinToString(",")})",
-            null
-        ).use { c -> c.moveToFirst(); c.getInt(0) }
+    private fun countEveryBill(db: SQLiteDatabase): Int {
+        fun count(table: String): Int = runCatching {
+            db.rawQuery("SELECT COUNT(*) FROM $table", null)
+                .use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+        }.getOrDefault(0)
+        return count(DatabaseHelper.Tables.TD_BILLS) + count(DatabaseHelper.Tables.TD_BILLS_DELETE)
     }
     /** What an Append (see [Mode.APPEND]) would do to THIS till, before it runs. */
     fun mergeCounts(context: Context, rows: List<Map<String, String>>): MergeCounts {
@@ -264,7 +267,7 @@ object ProductBulkImporter {
         }
         return MergeCounts(
             validRows, toUpdate, validRows - toUpdate, toUpdateNames,
-            billsToDelete = countBillsFor(db, updatedIds)
+            billsToDelete = countEveryBill(db)
         )
     }
 
@@ -423,7 +426,7 @@ object ProductBulkImporter {
         var removed = 0
         var replaced = 0
         // Every product the sheet took over an existing id for. Collected as the rows go
-        // in and acted on once at the end - see [deleteBillsFor].
+        // in and acted on once at the end.
         val replacedIds = LinkedHashSet<Long>()
         var billsDeleted = 0
 
@@ -616,15 +619,21 @@ object ProductBulkImporter {
             }
             // THE BOOKS OF EVERY PRODUCT THE SHEET TOOK OVER.
             //
-            // A common id does not add a product, it REPLACES one: the row that was
-            // there is now a different product wearing the same id. Every bill that
-            // named that id is therefore a bill for goods this till can no longer
-            // describe - it would report and reprint under the new product's name,
-            // price and tax, none of which were what was sold.
+            // EVERY BILL, not only the ones naming a replaced product.
             //
-            // So those bills go, active and cancelled alike, inside the same
-            // transaction as the import that caused them to go. See [deleteBillsFor].
-            billsDeleted = deleteBillsFor(db, replacedIds)
+            // A bulk upload redraws the catalogue the books were written against. It
+            // used to take just the bills naming an id the sheet replaced, on the
+            // reasoning that those were the only ones the till could no longer
+            // describe - but a sheet also moves prices, tax rates, units and
+            // categories on products it does not replace, and every report over the
+            // old bills reads them through the catalogue as it is NOW. What was left
+            // was a set of books that only looked intact.
+            //
+            // So the upload clears them the way Erase Bills does, cancelled ones
+            // included - see [clearEveryBill]. The count is named in the
+            // confirmation before the operator agrees to it, and a backup is taken
+            // first by the caller.
+            billsDeleted = clearEveryBill(db)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -709,85 +718,87 @@ object ProductBulkImporter {
 
 
     /**
-     * Throws away every bill rung up against one of [productIds] - active and
-     * cancelled alike - and returns how many went.
+     * Throws away every bill on the till - the same thing Erase Bills does.
      *
-     * ## Why a replaced product takes its bills with it
+     * ## Why an upload takes ALL of them
      *
-     * A common id does not add a product beside the old one, it REPLACES it: the row
-     * under that id is now a different product, with a different name, price and tax
-     * rate. Every bill that named the id is a bill for goods the till can no longer
-     * describe. Left alone it would reprint and report under the NEW product's
-     * details, quietly restating what a customer was actually sold - which is worse
-     * than the bill not being there, because it looks like a record.
+     * A bulk upload redraws the catalogue the books were written against, and every
+     * report on this till reads its bills THROUGH that catalogue as it stands now.
      *
-     * Cancelled bills go too. A cancelled bill is still a record of the same sale, and
-     * a record that can no longer be read correctly is not one worth keeping.
+     * It used to take only the bills naming an id the sheet replaced, which sounds
+     * narrower and safer and is neither: a sheet moves prices, tax rates, units and
+     * categories on products it does not replace, so the bills left behind reported
+     * under figures that were not what was sold. What survived was a set of books
+     * that only LOOKED intact - worse than no books, because it reads like a record.
      *
-     * ## What goes with each bill
+     * Cancelled bills go with them, out of td_bills_delete, for the same reason they
+     * go in Erase Bills: a cancelled bill is still a record of a sale, and one that
+     * can no longer be read correctly is not worth keeping.
      *
-     * Everything that is PART of the bill, children before parents: its returns, its
-     * print record, its payments, its kitchen order, its ledger entry and its lines.
-     * Foreign keys are enforced, so anything missed here does not orphan a row - it
-     * fails the delete and rolls the whole upload back.
+     * ## What is NOT touched
      *
-     * A sale RETURN against such a bill goes with it. The return is a document about
-     * this bill, and a credit note whose original no longer exists points at nothing.
+     * **What customers owe.** `md_customers.balance_amount` is a figure on the
+     * customer, not a sum over the ledger, so clearing the ledger's rows takes the
+     * history of a debt and leaves the debt.
      *
-     * Stock movements are NOT touched. They record what physically left the shelf,
-     * which happened whatever the catalogue now says, and they name the product rather
-     * than the bill - so they stay readable and stay true.
+     * **Stock movements.** They record what physically left the shelf, which happened
+     * whatever the catalogue now says, and they name the product rather than the
+     * bill - so they stay readable and stay true.
      *
-     * Runs inside the caller's transaction: these deletions and the import that caused
-     * them land together or not at all.
+     * **Products, customers and every setting**, this upload's own changes aside. In
+     * particular the shop's Tax Settings, which Erase Bills resets and this must not:
+     * see the `resetTaxSettings` flag on BillErase.erase.
+     *
+     * Runs inside the caller's transaction: these deletions and the import that
+     * caused them land together or not at all.
+     *
+     * @return how many bills there were to erase, live and cancelled together
      */
-    private fun deleteBillsFor(db: SQLiteDatabase, productIds: Set<Long>): Int {
-        if (productIds.isEmpty()) return 0
+    private fun clearEveryBill(db: SQLiteDatabase): Int {
+        val t = DatabaseHelper.Tables
 
-        // WHICH BILLS, decided once and held.
+        fun count(table: String): Int = runCatching {
+            db.rawQuery("SELECT COUNT(*) FROM $table", null)
+                .use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+        }.getOrDefault(0)
+
+        // COUNTED FIRST. Every table below is about to be emptied, so anything read
+        // afterwards would report nothing went.
+        val erased = count(t.TD_BILLS) + count(t.TD_BILLS_DELETE)
+        if (erased == 0) return 0
+
+        // CHILDREN BEFORE PARENTS, all the way down, with foreign keys left enforced.
         //
-        // Read into a list rather than left as a subquery over td_bill_items, because
-        // the deletions below empty that very table: a subquery would still be true
-        // for the first delete and false by the third, taking the lines out and
-        // leaving the bills they belonged to standing.
-        val doomedIds = mutableListOf<Long>()
-        db.rawQuery(
-            "SELECT DISTINCT bill_id FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} " +
-                "WHERE bill_id IS NOT NULL AND product_id IN (${productIds.joinToString(",")})",
-            null
-        ).use { c -> while (c.moveToNext()) doomedIds.add(c.getLong(0)) }
-        if (doomedIds.isEmpty()) return 0
-        val bills = doomedIds.joinToString(",")
-
-        // CHILDREN BEFORE PARENTS, all the way down. Foreign keys are enforced, so a
-        // table missed here does not orphan a row - it fails the delete and rolls the
-        // whole upload back with it.
+        // Six tables carry a key onto td_bills, so the order is not a tidiness
+        // preference - a table missed here does not orphan a row, it fails the
+        // statement and rolls the whole upload back with it.
         //
-        // The return chain first: a return LINE points at a bill line, and the return
-        // it belongs to points at the bill.
+        // The RETURN and LEDGER rows go too, which is the one place this parts
+        // company with BillSettingsDao.clearAllBills. That leaves them standing, and
+        // on a till that has ever taken a sale return it therefore cannot delete the
+        // bills at all - the key refuses it. Nothing is written off by taking them:
+        // what a customer owes is `md_customers.balance_amount`, a figure on the
+        // customer, not a sum over the ledger, so the debt survives its history.
         db.execSQL(
-            "DELETE FROM ${DatabaseHelper.Tables.TD_RETURN_ITEMS} WHERE bill_item_id IN " +
-                "(SELECT id FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} WHERE bill_id IN ($bills))"
+            "DELETE FROM ${t.TD_RETURN_ITEMS} WHERE return_id IN " +
+                "(SELECT id FROM ${t.TD_SALE_RETURNS})"
         )
-        db.execSQL(
-            "DELETE FROM ${DatabaseHelper.Tables.TD_RETURN_ITEMS} WHERE return_id IN " +
-                "(SELECT id FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} WHERE original_bill_id IN ($bills))"
-        )
-        db.execSQL(
-            "DELETE FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} WHERE original_bill_id IN ($bills)"
-        )
+        db.execSQL("DELETE FROM ${t.TD_RETURN_ITEMS}")
+        db.execSQL("DELETE FROM ${t.TD_SALE_RETURNS}")
+        db.execSQL("DELETE FROM ${t.TD_CUSTOMER_LEDGER}")
+        db.execSQL("DELETE FROM ${t.TD_BILL_PRINTS}")
+        db.execSQL("DELETE FROM ${t.TD_PAYMENTS}")
+        db.execSQL("DELETE FROM ${t.TD_KOT_ITEMS}")
+        db.execSQL("DELETE FROM ${t.TD_KOT}")
+        db.execSQL("DELETE FROM ${t.TD_BILL_ITEMS}")
+        db.execSQL("DELETE FROM ${t.TD_BILLS}")
 
-        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_PRINTS} WHERE bill_id IN ($bills)")
-        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_PAYMENTS} WHERE bill_id IN ($bills)")
-        db.execSQL(
-            "DELETE FROM ${DatabaseHelper.Tables.TD_KOT_ITEMS} WHERE kot_id IN " +
-                "(SELECT id FROM ${DatabaseHelper.Tables.TD_KOT} WHERE bill_id IN ($bills))"
-        )
-        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_KOT} WHERE bill_id IN ($bills)")
-        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_CUSTOMER_LEDGER} WHERE bill_id IN ($bills)")
-        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} WHERE bill_id IN ($bills)")
-        db.execSQL("DELETE FROM ${DatabaseHelper.Tables.TD_BILLS} WHERE receipt_no IN ($bills)")
-        return doomedIds.size
+        // The cancelled bills, in their own pair of tables. Neither carries a foreign
+        // key - a cancelled bill's row has already left td_bills - so they can go
+        // last without anything above them having to know.
+        db.execSQL("DELETE FROM ${t.TD_BILL_ITEMS_DELETE}")
+        db.execSQL("DELETE FROM ${t.TD_BILLS_DELETE}")
+        return erased
     }
     /**
      * [raw] as the sheet wrote it on the row that decided it, matched to

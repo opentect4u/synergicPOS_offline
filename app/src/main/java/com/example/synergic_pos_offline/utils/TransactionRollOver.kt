@@ -73,8 +73,23 @@ object TransactionRollOver {
      * 1.5 years is 365 + 183. The half year is rounded UP rather than down, because
      * the two directions are not equally wrong: keeping a day too long costs a few
      * rows on disk, deleting a day too early costs the shop a day of its books.
+     *
+     * ## [ONE_DAY] is for proving the thing works
+     *
+     * A year is a long time to wait to find out whether a roll-over rolls. At one day
+     * the whole cycle can be watched in an afternoon: sell something, come back
+     * tomorrow, log in, and yesterday is gone - the same code, the same cutoff
+     * arithmetic, the same backup-first rule, only with a number small enough to see.
+     *
+     * It is a REAL setting, not a debug flag, and it is offered in the same dropdown
+     * as the other two with nothing to mark it out. A till left on it keeps today and
+     * nothing else: every login deletes the day before, backing it up first like any
+     * other roll-over. That is the point of it - but it means a shop that picks it by
+     * mistake is one login away from holding a single day of books.
      */
     enum class Window(val label: String, val days: Int) {
+        /** Keeps today only - see the class note. Everything before today goes. */
+        ONE_DAY("1 day", 1),
         ONE_YEAR("1 year", 365),
         EIGHTEEN_MONTHS("1.5 years", 548);
 
@@ -111,6 +126,10 @@ object TransactionRollOver {
      * today. The day before, the cutoff was 30-06-2026 and 01-07-2026 was still
      * safe - which is the window moving on by exactly one day, once a day.
      *
+     * The same arithmetic at one day lands on yesterday, so today is all that is
+     * kept - see [Window.ONE_DAY]. Today itself can never be the cutoff: subtracting
+     * a whole day from today cannot reach it.
+     *
      * Formatted `yyyy-MM-dd` to match how every transaction date is stored, so the
      * comparison is a plain string one and no date parsing is needed in SQL.
      */
@@ -139,8 +158,13 @@ object TransactionRollOver {
      *
      * BLOCKING, and it reads and writes every transaction table - so it belongs on a
      * worker thread. LoginFragment runs it in the background once the operator has
-     * already been let in, because nothing it deletes is anything the till is about
-     * to show: the newest row it can touch is a year old.
+     * already been let in: the newest row it can touch is dated before today, and no
+     * landing screen opens on a day that has already closed.
+     *
+     * That margin is a year wide on [Window.ONE_YEAR] and one day wide on
+     * [Window.ONE_DAY], which is the narrowest this gets - and still a day, because
+     * the cutoff is a DATE. Nothing dated today is ever in reach, whatever the
+     * window.
      *
      * Never throws. A roll-over that fails is a till that keeps its old transactions
      * for another day, which is a great deal better than a till that will not let

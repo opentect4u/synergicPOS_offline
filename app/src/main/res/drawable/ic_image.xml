@@ -1,0 +1,17 @@
+<!--
+  A picture, for the Upload Image action on the bulk upload screen.
+
+  No android:tint here, unlike ic_upload: that one is only ever drawn on the filled
+  button and can afford to fix itself white, while this sits on an outlined button
+  whose colour is the theme accent. The tint is set at the call site instead
+  (app:iconTint), so one icon serves whatever colour the shop's theme is.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M21,19V5c0,-1.1 -0.9,-2 -2,-2H5c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h14c1.1,0 2,-0.9 2,-2zM8.5,13.5l2.5,3.01L14.5,12l4.5,6H5l3.5,-4.5z" />
+</vector>
