@@ -43,11 +43,16 @@ object ProductBulkImporter {
          * A row is COMMON where its [ProductCsvTemplate.PRODUCT_ID_COLUMN] names a
          * product this till already has - the shape a sheet takes when it was
          * downloaded from the Products screen's own export, edited, and brought
-         * back. That product's own row is UPDATED in place - its fields and its
-         * rates become the sheet's - rather than stepping around the taken id into
-         * a duplicate, which is what asking for this mode used to do. Its id, and
-         * every bill, return or stock record that names it, are untouched: nothing
-         * is deleted to make room for it.
+         * back. THE WHOLE ROW becomes the sheet's, not the columns the sheet
+         * happens to fill: its fields, its rates, its picture, its regional names
+         * and its stock. A common id does not edit a product, it replaces what that
+         * id MEANS - so anything the previous product left in a column this sheet
+         * does not carry would otherwise be attached to a product it was never
+         * about, and the picture and the stock count are the two that show.
+         *
+         * The id itself is kept, which is the point of matching on it: the row is
+         * reused rather than stepped around into a duplicate, which is what asking
+         * for this mode used to do.
          *
          * A row naming no id, or an id this till has never used, is UNCOMMON and is
          * simply added - the sheet's new products, alongside whatever is already
@@ -490,6 +495,24 @@ object ProductBulkImporter {
                     put("hsn_code", cell(r, "hsn_number", "hsn_code"))
                     put("bar_code", cell(r, "bar_code", "barcode"))
                     if (categoryId != null) put("category_id", categoryId) else putNull("category_id")
+                    // THE WHOLE ROW, not the columns the sheet happens to fill.
+                    //
+                    // A common id REPLACES what that id means - the row becomes a
+                    // different product - so anything the previous one left behind in
+                    // a column this sheet does not carry is now attached to a product
+                    // it was never about. The photograph is the one that shows: upload
+                    // "Paneer Chilly" over the id that used to be "Paneer Tikka" and
+                    // the till went on printing and displaying Paneer Tikka's picture
+                    // beside the new name, on screen and in the product grid, with
+                    // nothing anywhere to say why.
+                    //
+                    // Cleared rather than left, because a blank is honest and a
+                    // stale value is not. The sheet has no column for any of these,
+                    // so there is nothing to put back in their place.
+                    putNull("product_image")
+                    putNull("sku")
+                    putNull("brand")
+                    put("stock_alert_qty", 0)
                 }
 
                 val productId: Long
@@ -508,6 +531,25 @@ object ProductBulkImporter {
                     // note on what a product row itself is protected by.
                     db.delete(
                         DatabaseHelper.Tables.MD_PRODUCT_RATES,
+                        "product_id = ?", arrayOf(existingId.toString())
+                    )
+                    // THE OLD PRODUCT'S STOCK GOES WITH ITS NAME.
+                    //
+                    // Fifty Paneer Tikka on the shelf are not fifty Paneer Chilly. The
+                    // count and the movements behind it belong to the product that
+                    // held this id, and leaving them made the new product open with a
+                    // quantity nobody had ever counted and a history it had no part
+                    // in - which the stock report then showed as fact.
+                    //
+                    // Movements before batches: td_stock_transactions keys onto both
+                    // the product and its batch, so clearing the batches first is
+                    // refused by the constraint.
+                    db.delete(
+                        DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS,
+                        "product_id = ?", arrayOf(existingId.toString())
+                    )
+                    db.delete(
+                        DatabaseHelper.Tables.MD_BATCH_STOCK,
                         "product_id = ?", arrayOf(existingId.toString())
                     )
                     productId = existingId
@@ -597,20 +639,36 @@ object ProductBulkImporter {
                 // as the Add Product form's own opening stock is, and on the same
                 // transaction the product itself went in on.
                 //
-                // NEW PRODUCTS ONLY. A row that replaced a common product already
-                // has whatever stock its own sales and adjustments left it at - re-
-                // booking the sheet's STOCK column on every re-upload would credit
-                // it that quantity again each time, on top of what is already there.
-                if (isNewProduct) {
-                    stockDao?.let { dao ->
-                        openingStockOf(r)?.let { dao.recordOpening(db, productId, it, storeId, outletId) }
-                    }
+                // EVERY ROW THE SHEET OPENS A COUNT FOR, replaced or new.
+                //
+                // This was new products only, to stop a re-upload crediting the same
+                // opening quantity again on top of what a product's own trading had
+                // left it at. That reasoning held while an upload EDITED a product;
+                // it does not now that a common id replaces one - the stock this
+                // product would have been credited on top of has just been cleared
+                // with the product that owned it, so the sheet's figure is the only
+                // count there is, and withholding it would leave the new product at
+                // zero however many the shop typed in.
+                stockDao?.let { dao ->
+                    openingStockOf(r)?.let { dao.recordOpening(db, productId, it, storeId, outletId) }
                 }
                 // The shop's own name for this product, in the language the sheet
                 // named - through the same DAO the Add/Edit form writes through, so a
                 // bulk-uploaded name and a typed one are the same row in the same
                 // table. A blank cell writes nothing and the product falls back to the
                 // machine translation, exactly as it did before this column existed.
+                // THE OLD PRODUCT'S REGIONAL NAMES GO WITH ITS PICTURE, and for the
+                // same reason: they name a product this id is no longer for. Every
+                // language, not just the one the sheet wrote in - a till carrying
+                // Hindi and Tamil names would otherwise keep the Tamil one describing
+                // the product that used to be here.
+                //
+                // Dropped before the new one is written, so a sheet whose cell is
+                // blank leaves the product with no regional name at all rather than
+                // with the previous product's.
+                if (existingId != null) {
+                    runCatching { ProductNameDao(context).deleteFor(listOf(productId.toString())) }
+                }
                 if (nameDao != null && namesLanguage != null) {
                     regionalNameOf(r)
                         ?.let { nameDao.save(productId.toInt(), namesLanguage.code, it) }
@@ -744,6 +802,10 @@ object ProductBulkImporter {
      * **Stock movements.** They record what physically left the shelf, which happened
      * whatever the catalogue now says, and they name the product rather than the
      * bill - so they stay readable and stay true.
+     *
+     * The one exception is a product the sheet REPLACES: its movements go with it,
+     * because they are the previous product's trading and this id is not that
+     * product any more. That happens where the row is written, not here.
      *
      * **Products, customers and every setting**, this upload's own changes aside. In
      * particular the shop's Tax Settings, which Erase Bills resets and this must not:

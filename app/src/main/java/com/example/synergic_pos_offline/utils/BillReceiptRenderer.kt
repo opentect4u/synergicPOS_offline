@@ -185,6 +185,20 @@ private const val NAME_COLUMN_MIN_CHARS = 6f
 private const val CLASSIC_NAME_MAX_CHARS = 11
 
 /**
+ * How many lines an item name may take once it has a line of its own.
+ *
+ * A name too wide for the roll used to be cut off at the edge with an ellipsis, which
+ * on a 58mm roll takes the end off most real product names - and the end is usually
+ * the half that distinguishes one from another: "AASHIRVAAD PREMIUM REGULAR 500KG"
+ * and "AASHIRVAAD PREMIUM REGULAR 1KG" cut to the same string.
+ *
+ * So it wraps instead, and this is the stop on how far. Three lines is enough for any
+ * name a shop types and short of what a name pasted in from a supplier's spreadsheet
+ * could do to the length of a receipt.
+ */
+private const val ITEM_NAME_MAX_LINES = 3
+
+/**
  * The same on a 2-inch roll, where there is less line to share.
  *
  * Set against the room rather than scaled from the number above it. A 58mm roll gives
@@ -2035,7 +2049,14 @@ class BillReceiptRenderer(context: Context) {
                 val subtotal = BillRounding.toPaise(if (c.isNull(3)) rate * qty else c.getDouble(3))
                 raws.add(
                     RawLine(
-                        name = c.getString(5)?.takeIf { it.isNotBlank() } ?: "Item",
+                        // Named by its id where there is no name to be had - the line
+                        // stored none and the product has since left the master. A bare
+                        // "ITEM" is indistinguishable from every other nameless line on
+                        // the slip; "ITEM #33" is at least something to look up. The
+                        // reports have always done this - see ItemWiseReportDao.
+                        name = c.getString(5)?.takeIf { it.isNotBlank() }
+                            ?: c.getLong(0).takeIf { !c.isNull(0) && it > 0 }?.let { "Item #$it" }
+                            ?: "Item",
                         qty = qty,
                         rate = rate,
                         subtotal = subtotal,
@@ -3037,7 +3058,22 @@ class BillReceiptRenderer(context: Context) {
             orientation = LinearLayout.VERTICAL
             setPadding(0, gap, 0, gap)
 
-            addView(fullWidthLine(heading, sizeSp))
+            // THE NAME WRAPS, it is not cut. [fullWidthLine] keeps to one line and
+            // ellipsizes, which is right for a rule and for a label but wrong for the
+            // one piece of text on the slip a customer checks against what they were
+            // handed. A name wider than the roll came out as "AASHIRVAAD PREMIUM
+            // REGU..." - and on a 2-inch roll that is most real product names, so the
+            // longer the name the less of it printed.
+            //
+            // Capped at [ITEM_NAME_MAX_LINES] rather than left unbounded: a line of
+            // paper is cheap next to an item nobody can identify, but a name pasted
+            // in from a supplier's sheet should still not run down the whole receipt.
+            addView(
+                fullWidthLine(heading, sizeSp).apply {
+                    maxLines = ITEM_NAME_MAX_LINES
+                    ellipsize = null
+                }
+            )
 
             // HSN and figures on the same line if HSN exists
             addView(
