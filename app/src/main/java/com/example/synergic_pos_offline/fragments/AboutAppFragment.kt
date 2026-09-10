@@ -1343,7 +1343,11 @@ class AboutAppFragment : Fragment(), TitledScreen {
             positiveText = "Restore",
             negativeText = "Cancel",
             destructive = true
-        ) { runRestore(uri, taken, keepsIdentity) }
+        ) {
+            withPassword("restore this backup", "Restore") {
+                runRestore(uri, taken, keepsIdentity)
+            }
+        }
     }
 
     /** Streams the file into the database, off the main thread. */

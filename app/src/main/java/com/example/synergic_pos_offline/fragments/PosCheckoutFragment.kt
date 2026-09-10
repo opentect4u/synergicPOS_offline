@@ -182,12 +182,18 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     private lateinit var appSettings: AppSettingsDao.AppSettings
 
     /**
-     * Whether to ask for a tendered amount and show change for a cash sale. Off
-     * whenever "Cash Reception" itself is off, and also whenever "Payment Mode" is
-     * off - with no mode picker there is nothing to switch away from cash, so the
-     * simplest checkout just takes the exact amount.
+     * Whether to ask for a tendered amount and show change for a cash sale - its
+     * own setting, "Cash Reception", read on its own.
+     *
+     * NOT anded with "Payment Mode". That question is a different one - whether
+     * Credit/Card/Online show up beside Cash at all - and a till that answers it No
+     * still takes cash, which is exactly the checkout Cash Reception's own
+     * description ("Enable cash reception on the billing screen") promises
+     * regardless of how many other tiles are on the screen. Anding the two meant
+     * turning Payment Mode off silently took Cash Reception's own switch with it,
+     * with nothing on the Payment Mode row to say so.
      */
-    private fun cashReceptionEnabled() = appSettings.paymentMode && appSettings.cashReception
+    private fun cashReceptionEnabled() = appSettings.cashReception
 
     /**
      * Whether a sale captures the customer at all - General Settings' "Customer

@@ -277,13 +277,16 @@ class SearchSuggestions(
             popup = it
         }
         p.width = anchor.width.coerceAtLeast(dp(240))
-        // Tall enough for the rows there are, capped so the list can never take the
-        // screen it is meant to be a shortcut across.
+        // Tall enough for the rows there are, capped (by ListPopupWindow itself,
+        // against the space actually free below/above the anchor) so the list can
+        // never take the screen it is meant to be a shortcut across. With MAX_ROWS
+        // raised past a glance-sized handful, that cap is now something a real
+        // search hits - which is what the scrollbar below is for.
         p.height = ListPopupWindow.WRAP_CONTENT
         if (!p.isShowing) p.show()
         p.listView?.apply {
             divider = null
-            isVerticalScrollBarEnabled = false
+            isVerticalScrollBarEnabled = true
         }
     }
 
@@ -391,11 +394,14 @@ class SearchSuggestions(
         const val MIN_QUERY = 1
 
         /**
-         * Eight rows. Enough that the item being reached for is nearly always among
-         * them; few enough that the list is taken in at a glance rather than scrolled,
-         * which is the whole reason it is faster than the grid behind it.
+         * Thirty rows - a generous ceiling rather than a working number: the panel
+         * itself only ever shows a screenful ([show] caps its height to the space
+         * available), so anything past that is reached by scrolling rather than by
+         * raising this further. A shelf where many products share a word ("milk",
+         * "500ml") needs more than a glance-sized handful to actually find the one
+         * meant, which a hard cap of eight never let the operator scroll past to.
          */
-        const val MAX_ROWS = 8
+        const val MAX_ROWS = 30
 
         /**
          * The shortest barcode that may put a product in the cart on its own.
