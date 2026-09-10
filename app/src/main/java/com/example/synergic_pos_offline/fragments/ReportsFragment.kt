@@ -161,6 +161,9 @@ class ReportsFragment : Fragment() {
          * still reachable, just no longer where anyone looks for it.
          */
         fun isVisible(context: Context, title: String): Boolean = when {
+            // Commented out rather than removed: the screen, its DAO and its menu
+            // wiring are all still there, this is the one switch to bring it back.
+            title == "Profit & Loss Report" -> false
             title == STOCK_REPORT || title == LOW_STOCK_REPORT ->
                 GeneralSettingsDao.isStockEnabled(context)
             title == SHIFT_WISE_REPORT ->
