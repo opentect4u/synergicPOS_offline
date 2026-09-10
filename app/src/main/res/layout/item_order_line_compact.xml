@@ -105,10 +105,12 @@
             android:textSize="11sp"
             android:textColor="@color/text_secondary" />
 
+        <!-- Width/height here are just the inflated default - CartDensity.apply
+             resizes both to the panel's own available height on every bind. -->
         <ImageButton
             android:id="@+id/btnRemoveLine"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
             android:layout_marginStart="4dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@drawable/ic_delete"

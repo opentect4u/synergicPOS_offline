@@ -237,11 +237,14 @@ class KotCancelReportFragment : Fragment(), TitledScreen {
             }
         }
 
+    /** Skipped - GONE - when the figure is zero, so it takes no space either;
+     *  the final, emphasised Total always shows regardless. */
     private fun summaryRow(label: String, value: String, emphasised: Boolean = false): View =
         LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(3), 0, dp(3))
+            if (!emphasised && isZeroAmount(value)) visibility = View.GONE
             addView(TextView(context).apply {
                 layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
                 text = label
@@ -288,6 +291,10 @@ class KotCancelReportFragment : Fragment(), TitledScreen {
     }.getOrDefault(value)
 
     private fun qtyFmt(value: Double): String = String.format(Locale.US, "%.2f", value)
+
+    /** Whether a formatted summary figure reads as zero. */
+    private fun isZeroAmount(value: String): Boolean =
+        value.replace(Regex("[^0-9.\\-]"), "").toDoubleOrNull()?.let { kotlin.math.abs(it) < 0.005 } ?: false
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
     private fun toast(message: String) = Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
 

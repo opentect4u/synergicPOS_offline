@@ -546,12 +546,19 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         }
     }
 
-    /** A "Label ................ value" line of the summary card. */
+    /** A "Label ................ value" line of the summary card. Skipped - not
+     *  just blanked, GONE, so it takes no space either - when the figure is zero:
+     *  a summary read at a glance should not make an operator scan past a run of
+     *  "SGST Amount 0.00" lines to find the ones that actually moved. The final,
+     *  emphasised Total always shows, zero or not - it is the one line the fold's
+     *  own header repeats, and a summary card with a total nowhere on it reads as
+     *  broken rather than as a period with nothing in it. */
     private fun summaryRow(label: String, value: String, emphasised: Boolean = false): View =
         LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(3), 0, dp(3))
+            if (!emphasised && isZeroAmount(value)) visibility = View.GONE
             addView(TextView(context).apply {
                 layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
                 text = label
@@ -719,6 +726,11 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
     /** A quantity trimmed of a needless ".00" - "3" not "3.00", but "2.50" kept. */
     protected fun quantity(value: Double): String =
         if (value % 1.0 == 0.0) value.toInt().toString() else String.format(Locale.US, "%.2f", value)
+
+    /** Whether a formatted summary figure reads as zero, whatever it is formatted
+     *  as - a plain count ("0"), money ("0.00"), or a trimmed quantity. */
+    private fun isZeroAmount(value: String): Boolean =
+        value.replace(Regex("[^0-9.\\-]"), "").toDoubleOrNull()?.let { kotlin.math.abs(it) < 0.005 } ?: false
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 

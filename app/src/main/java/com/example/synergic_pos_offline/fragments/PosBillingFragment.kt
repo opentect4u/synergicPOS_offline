@@ -49,6 +49,7 @@ import com.google.android.material.textfield.TextInputEditText
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import kotlin.math.min
 import com.example.synergic_pos_offline.utils.Quantity
@@ -248,8 +249,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * off the main thread. See [loadProductsAsync]. One thread, so a second load
      * queues behind a first still running rather than the two racing the
      * database or [menu] itself.
+     *
+     * Scoped to the view, not the fragment - [onDestroyView] shuts it down, but
+     * the same fragment instance can get a new view afterwards (back stack pop,
+     * detach/reattach) and run [onViewCreated] again. A `val` shut down once and
+     * never replaced left that second view calling [loadProductsAsync] against a
+     * terminated executor, which rejected the task and crashed the screen; see
+     * the fresh instance handed out in [onViewCreated].
      */
-    private val catalogExecutor = Executors.newSingleThreadExecutor()
+    private var catalogExecutor = Executors.newSingleThreadExecutor()
 
     /**
      * Bumped on every [loadProductsAsync] call. A result that comes back for a
@@ -391,6 +399,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        // A fresh executor for this view - see [catalogExecutor]. The one from a
+        // previous view on this same fragment instance, if any, was already shut
+        // down in onDestroyView and cannot take more work.
+        catalogExecutor = Executors.newSingleThreadExecutor()
         val ctx = requireContext()
         val accent = ThemeManager.getThemeColor(ctx)
         val density = resources.displayMetrics.density
@@ -513,11 +525,15 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // narrowing the shelf together for as long as either holds text - see
         // [applyFilter]. Barcode matches in EITHER box, typed or scanned - a scan is
         // not something the operator chose a box for, it is the gun naming a product,
-        // and it has to work wherever it lands.
+        // and it has to work wherever it lands. The dropdown each box drops down is
+        // held to the exact same rule - see [SearchSuggestions.Mode] - so a number
+        // that happens to appear in a product's NAME cannot surface it in the ID
+        // box, and a word that happens to appear in a product's id cannot surface
+        // it in the Name box.
         val etSearchId = view.findViewById<TextInputEditText>(R.id.etSearchId)
         val etSearchName = view.findViewById<TextInputEditText>(R.id.etSearchName)
-        suggestionsId = wireSearchField(etSearchId) { queryId = it }
-        suggestionsName = wireSearchField(etSearchName) { queryName = it }
+        suggestionsId = wireSearchField(etSearchId, SearchSuggestions.Mode.CODES_ONLY) { queryId = it }
+        suggestionsName = wireSearchField(etSearchName, SearchSuggestions.Mode.NAME_ONLY) { queryName = it }
         // Discount - hidden entirely when Tax Settings' Discount is on and item-wise.
         view.findViewById<View>(R.id.sectionDiscount).visibility =
             if (showDiscountBox) View.VISIBLE else View.GONE
@@ -567,6 +583,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
         btnHeld.setOnClickListener { showHeldDialog() }
         btnHold.setOnClickListener { onHold() }
         btnCharge.setOnClickListener { onCheckout() }
+        view.findViewById<MaterialButton>(R.id.btnClearCart).setOnClickListener { onClearCart() }
 
         // Re-apply the current customer rather than clearing it: the view is recreated
         // when checkout pops back, and the sale must survive that unless the operator
@@ -890,6 +907,20 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val (defaultRates, ratesByProduct) = loadRateMaps(db, multipleRates)
         val unitCache = loadUnitCache(db)
 
+        // Category name is a lookup done once per product below - by id, not by
+        // scanning [categoryItems] per row. A shop with a real number of
+        // categories was turning this into products × categories comparisons.
+        val categoryById = categoryItems.associateBy { it.id }
+
+        // The cursor is read in one single-threaded pass - a Cursor is not safe to
+        // share across threads - and every row's own photo bytes are kept raw
+        // rather than decoded here. See the parallel decode step below for why.
+        data class RawRow(
+            val idLong: Long, val productId: String, val productName: String,
+            val barcode: String, val hsn: String, val categoryId: Long,
+            val imageBytes: ByteArray?
+        )
+        val rawRows = mutableListOf<RawRow>()
         db.query(
             "md_products",
             arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id",
@@ -899,59 +930,81 @@ class PosBillingFragment : Fragment(), TitledScreen {
             null, null, productSort.orderBy
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                val idLong = cursor.getLong(0)
-                val productId = idLong.toString()
-                val productName = cursor.getString(1) ?: ""
-                val barcode = cursor.getString(2) ?: ""
-                val hsn = cursor.getString(3) ?: "0000"
-                val categoryId = cursor.getLong(4)
-
-                // Decoded once here rather than on every bind: the grid rebinds on
-                // each filter keystroke, and decoding a JPEG per tile would stutter.
-                if (!cursor.isNull(5)) {
-                    cursor.getBlob(5)
-                        ?.takeIf { it.isNotEmpty() }
-                        ?.let { ImageUtils.decodeThumb(it, PHOTO_PX) }
-                        ?.let { photoCache[productId] = it }
-                }
-
-                // Get the category name
-                val categoryName = categoryItems.find { it.id == categoryId }?.name ?: ""
-
-                val rate = defaultRates[idLong]
-                val (unitSymbol, allowFraction) = unitCache[rate?.unitId] ?: ("" to false)
-                // In Multiple mode, every rate for the popup's dropdown.
-                val rates = if (multipleRates) ratesByProduct[idLong].orEmpty() else emptyList()
-
-                val level = if (stockOn) levels[idLong] else null
-                val stockState = StockBadge.stateOf(level)
-
-                // Create product with database values
-                val product = Product(
-                    id = productId,
-                    name = productName,
-                    // The SKU is the product's own id - md_products.sku holds the
-                    // same value, set by a trigger - so every product has one,
-                    // whether or not it was ever given a barcode.
-                    sku = productId,
-                    barcode = barcode,
-                    category = categoryName,
-                    categoryId = categoryId,
-                    price = rate?.rate ?: 0.0,
-                    stock = stockState,
-                    stockQty = level?.quantity ?: 0.0,
-                    hsn = hsn,
-                    cgst = rate?.cgst ?: 0.0,
-                    sgst = rate?.sgst ?: 0.0,
-                    vat = rate?.vat ?: 0.0,
-                    unit = unitSymbol,
-                    allowFraction = allowFraction,
-                    discValue = rate?.discValue ?: 0.0,
-                    discType = rate?.discType,
-                    rates = rates
+                rawRows.add(
+                    RawRow(
+                        idLong = cursor.getLong(0),
+                        productId = cursor.getLong(0).toString(),
+                        productName = cursor.getString(1) ?: "",
+                        barcode = cursor.getString(2) ?: "",
+                        hsn = cursor.getString(3) ?: "0000",
+                        categoryId = cursor.getLong(4),
+                        imageBytes = if (cursor.isNull(5)) null else cursor.getBlob(5)?.takeIf { it.isNotEmpty() }
+                    )
                 )
-                menu.add(product)
             }
+        }
+
+        // Every photo decoded across a small pool of threads rather than one at a
+        // time on this single background thread. decodeThumb is pure CPU (two
+        // BitmapFactory passes per photo, bounds then sampled decode) with nothing
+        // in it that touches the database or this fragment, so it is safe to run
+        // spread across cores - a couple of thousand photos serialised onto one
+        // core was most of what "opening the sale page" was still waiting on even
+        // after the read itself moved off the main thread. Bounded rather than one
+        // thread per photo: a two-thousand-photo catalogue should not start two
+        // thousand threads to decode it.
+        val toDecode = rawRows.filter { it.imageBytes != null }
+        if (toDecode.isNotEmpty()) {
+            val decodePool = Executors.newFixedThreadPool(
+                minOf(4, maxOf(2, Runtime.getRuntime().availableProcessors()))
+            )
+            try {
+                decodePool.invokeAll(toDecode.map { row ->
+                    Callable { ImageUtils.decodeThumb(row.imageBytes!!, PHOTO_PX)?.let { row.productId to it } }
+                }).forEach { future ->
+                    future.get()?.let { (id, bitmap) -> photoCache[id] = bitmap }
+                }
+            } finally {
+                decodePool.shutdown()
+            }
+        }
+
+        for (row in rawRows) {
+            val categoryName = categoryById[row.categoryId]?.name ?: ""
+
+            val rate = defaultRates[row.idLong]
+            val (unitSymbol, allowFraction) = unitCache[rate?.unitId] ?: ("" to false)
+            // In Multiple mode, every rate for the popup's dropdown.
+            val rates = if (multipleRates) ratesByProduct[row.idLong].orEmpty() else emptyList()
+
+            val level = if (stockOn) levels[row.idLong] else null
+            val stockState = StockBadge.stateOf(level)
+
+            // Create product with database values
+            val product = Product(
+                id = row.productId,
+                name = row.productName,
+                // The SKU is the product's own id - md_products.sku holds the
+                // same value, set by a trigger - so every product has one,
+                // whether or not it was ever given a barcode.
+                sku = row.productId,
+                barcode = row.barcode,
+                category = categoryName,
+                categoryId = row.categoryId,
+                price = rate?.rate ?: 0.0,
+                stock = stockState,
+                stockQty = level?.quantity ?: 0.0,
+                hsn = row.hsn,
+                cgst = rate?.cgst ?: 0.0,
+                sgst = rate?.sgst ?: 0.0,
+                vat = rate?.vat ?: 0.0,
+                unit = unitSymbol,
+                allowFraction = allowFraction,
+                discValue = rate?.discValue ?: 0.0,
+                discType = rate?.discType,
+                rates = rates
+            )
+            menu.add(product)
         }
         return CatalogueResult(menu, photoCache, regionalNames, stockOn)
     }
@@ -1143,10 +1196,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
      */
     private fun wireSearchField(
         field: TextInputEditText,
+        mode: SearchSuggestions.Mode,
         onQueryChanged: (String) -> Unit
     ): SearchSuggestions {
         val accent = ThemeManager.getThemeColor(requireContext())
-        val box = SearchSuggestions(requireContext(), field, accent) { picked ->
+        val box = SearchSuggestions(requireContext(), field, accent, mode) { picked ->
             // Picking a suggestion does exactly what tapping its tile does: through
             // showProductDialog, which is where App Settings' Direct Add to Cart is
             // read. On, the item goes straight into the cart at its default rate and
@@ -1474,22 +1528,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         updateTotals()
 
-        // That item is dealt with, so the grid goes back to showing everything: the
-        // next one is searched for from scratch, and a search left in the box would
-        // otherwise have to be cleared by hand before it could be. Only on a
-        // completed add - a cancelled dialog leaves the operator's search alone.
-        //
-        // SKIPPED WHEN IT WOULD BE A NO-OP. Already "All" with both boxes empty is
-        // already the state resetBrowsing sets - and getting there is not free: it
-        // re-feeds the whole catalogue to [productPager], which rewinds the grid to
-        // its first page and rebinds it, photos included, then queues the overscan
-        // pages behind it. Fine on a small category's own list, and exactly why
-        // adding felt slow specifically under "All" and fine under one category -
-        // every tap paid to rebuild a grid that was already showing precisely what
-        // it was about to be told to show again.
-        if (activeCategory != "All" || queryId.isNotEmpty() || queryName.isNotEmpty()) {
-            resetBrowsing()
-        }
+        // THE SHELF STAYS EXACTLY WHERE IT WAS - category, search text and scroll
+        // position all included. This used to go back to "All" with both search
+        // boxes cleared after every add, on the reasoning that the next item is
+        // searched for from scratch; in practice that meant the shelf jumped out
+        // from under whatever the operator was looking at - a category they were
+        // working through, or a search list they were about to add a second match
+        // from - the moment they added anything. Nothing here resets any of that
+        // any more; a search or a category is left up until the operator changes
+        // it themselves. See [resetBrowsing] itself for the one place that reset
+        // is still wanted: the next customer's sale, via [startNewSale].
     }
 
     /** "N item(s) added" for the running Direct-Add-to-Cart toast; [total] is the
@@ -2235,6 +2283,29 @@ class PosBillingFragment : Fragment(), TitledScreen {
         updateTotals()
     }
 
+    /**
+     * The header's own Clear button - empties the cart being built, same as
+     * [clearSale] (discount, coupon and any attached customer go with it, so the
+     * next item added starts clean rather than carrying them over). Unlike
+     * [startNewSale] this does not re-read the catalogue or reset the search/
+     * category the operator is browsing under - a mis-added cart is what this is
+     * for clearing, not the shelf they were looking at when they added it.
+     *
+     * Asks first, and only when there is something to lose: a cart already empty
+     * has nothing a confirmation would be protecting.
+     */
+    private fun onClearCart() {
+        if (cart.isEmpty()) return
+        DialogUtils.showConfirm(
+            context = requireContext(),
+            title = "Clear this sale?",
+            message = "This removes every item from the cart. It cannot be undone.",
+            positiveText = "Clear",
+            destructive = true,
+            onConfirm = { clearSale() }
+        )
+    }
+
     // ---- Totals ------------------------------------------------------------
 
     private fun subtotal(): Double = cart.sumOf { it.product.price * it.qty }
@@ -2661,6 +2732,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // which is what makes it read as a handle rather than a third button competing
         // with Hold and Checkout under it.
         styleTextOnly(root.findViewById(R.id.btnToggleBillingSummary), accent)
+
+        // Clear, beside the header label it sits next to - text only, the same
+        // reason the fold's handle above is: a pill here would read as a fourth
+        // action competing with Hold and Checkout rather than the header control
+        // it actually is.
+        styleTextOnly(root.findViewById(R.id.btnClearCart), accent)
     }
 
     /**

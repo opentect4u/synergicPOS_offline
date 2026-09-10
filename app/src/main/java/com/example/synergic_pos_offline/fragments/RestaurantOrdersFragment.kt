@@ -1,5 +1,6 @@
 package com.example.synergic_pos_offline.fragments
 
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -25,6 +26,23 @@ import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.example.synergic_pos_offline.utils.Quantity
+import java.util.concurrent.Executors
+
+/**
+ * The longest gap between two keys that still counts as one barcode - see
+ * [RestaurantOrdersFragment.ScanState]. Same value the grocery sale screen's own
+ * search box uses: a gun in HID mode puts characters out 5-20ms apart, a fast
+ * typist manages about 80ms at a sprint, and 50ms sits in the gap between the
+ * two with room on both sides.
+ */
+private const val SCAN_GAP_MS = 50L
+
+/**
+ * How long after the last key a scan is resolved when no Enter arrives - see
+ * [RestaurantOrdersFragment.ScanState]. Comfortably longer than the gap between
+ * a gun's own characters, so it never fires mid-code.
+ */
+private const val SCAN_FLUSH_MS = 120L
 
 /**
  * Restaurant "Sale" screen — an Orders workspace (order list + live order detail
@@ -161,6 +179,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * database has quantities to step up before that dialog has ever been opened.
      */
     private var allProducts: List<GridProduct> = emptyList()
+
+    /**
+     * Reads the catalogue off the main thread on first opening this screen - see
+     * [loadProductsFromDbAsync]. Scoped to the view, not the fragment: a fresh one
+     * is handed out in [onViewCreated], since the one from a previous view on this
+     * same fragment instance was already shut down in [onDestroyView] and cannot
+     * take more work - see grocery's own [PosBillingFragment.catalogExecutor] for
+     * the crash that pattern otherwise causes.
+     */
+    private var productCatalogExecutor = Executors.newSingleThreadExecutor()
+
+    /** Bumped on every [loadProductsFromDbAsync] call - a result for a generation
+     *  other than the current one is a stale load a newer one has overtaken. */
+    private var productCatalogGeneration = 0
+
     private val tableDao by lazy { com.example.synergic_pos_offline.database.TableDao(requireContext()) }
     private val subTableDao by lazy { com.example.synergic_pos_offline.database.SubTableDao(requireContext()) }
     private var suppressNoteWatcher = false   // guards programmatic note-field updates
@@ -548,12 +581,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        // A fresh executor for this view - see [productCatalogExecutor]. The one
+        // from a previous view on this same fragment instance, if any, was already
+        // shut down in onDestroyView and cannot take more work.
+        productCatalogExecutor = Executors.newSingleThreadExecutor()
         val accent = ThemeManager.getThemeColor(requireContext())
 
-        // Read up front, not only when Add Item opens: an order restored from the
-        // database can have its quantities stepped up before that dialog is ever
-        // used, and the stock ceiling has to be in place by then.
-        loadProductsFromDb()
+        // Read off the main thread - see [loadProductsFromDbAsync]. Nothing below
+        // this call reads [allProducts]: the floor plan and the order list are
+        // built from [orders] alone, and every place that DOES read the catalogue
+        // (Add Item, a barcode scan, stepping up a restored line's quantity
+        // against its stock ceiling) is behind a tap that comes well after this
+        // screen has already drawn, not before it.
+        loadProductsFromDbAsync()
 
         loadRunningOrders()          // restore open tables from the database
         // A split left finished-with by an earlier session is given back here, before
@@ -888,6 +928,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // would float over whatever replaces this screen.
         suggestions?.release()
         suggestions = null
+        // A load already queued or running has nothing left to apply its result
+        // to; shutdownNow() drops what is queued and interrupts what is running
+        // rather than leaving it to finish into a torn-down screen.
+        productCatalogExecutor.shutdownNow()
         super.onDestroyView()
     }
 
@@ -1761,8 +1805,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     }
                     addView(
                         TextView(context).apply {
+                            // The section too, for a dine-in row - a table's own
+                            // number repeats across sections (every room has its own
+                            // "1"), and this panel is read at a glance rather than
+                            // tapped open to find out which "1" a figure belongs to.
                             text = if (order.counter) order.id.replace("TA-", "Token #")
-                            else tableDisplayName(order)
+                            else tableDisplayName(order).let {
+                                if (order.section.isBlank()) it else "$it (${order.section})"
+                            }
                             textSize = 16f
                             setTypeface(typeface, android.graphics.Typeface.BOLD)
                             maxLines = 1
@@ -2968,29 +3018,84 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val image: ByteArray? = null
     )
 
+    /** What reading the catalogue off the main thread comes back with - see
+     *  [buildProductsFromDb] and [loadProductsFromDbAsync]. */
+    private data class ProductCatalogueResult(
+        val products: List<GridProduct>,
+        val stockTrackingOn: Boolean,
+        val regionalNames: Map<String, String>
+    )
+
     /** Loads the current store's products (rate + tax split + category + food/spice), for the grid. */
     private fun loadProductsFromDb(): List<GridProduct> {
-        val db = com.example.synergic_pos_offline.database.DatabaseHelper.getInstance(requireContext()).readableDatabase
+        val r = buildProductsFromDb(requireContext())
+        allProducts = r.products
+        stockTrackingOn = r.stockTrackingOn
+        regionalNames = r.regionalNames
+        return r.products
+    }
+
+    /**
+     * Reads the catalogue OFF the main thread, then applies the result back on it -
+     * used only for the first read, when this screen opens; see [onViewCreated].
+     *
+     * The other call sites of [loadProductsFromDb] run after a specific action has
+     * already moved stock or a rate (a settled sale, an edited quantity) and read
+     * again right where they are - they stay synchronous, on a database access
+     * cheap enough not to be the "opening the sale page" a shop actually feels.
+     * Opening the screen itself, on a catalogue of any real size, was: a dish grid
+     * with a photo behind most tiles, read with the same synchronous query this
+     * function still runs - just no longer on the thread the floor plan and every
+     * button on this screen are waiting on to draw.
+     */
+    private fun loadProductsFromDbAsync(onLoaded: () -> Unit = {}) {
+        val ctx = requireContext()
+        val generation = ++productCatalogGeneration
+        productCatalogExecutor.execute {
+            val result = runCatching { buildProductsFromDb(ctx) }
+                .onFailure { android.util.Log.e("RestaurantOrdersFragment", "Catalogue read failed", it) }
+                .getOrNull()
+            view?.post {
+                // Dropped rather than applied: either this screen is gone, or a
+                // newer load has already started and this one's result is exactly
+                // what that one is about to overwrite anyway.
+                if (!isAdded || generation != productCatalogGeneration) return@post
+                if (result != null) {
+                    allProducts = result.products
+                    stockTrackingOn = result.stockTrackingOn
+                    regionalNames = result.regionalNames
+                }
+                onLoaded()
+            }
+        }
+    }
+
+    /**
+     * The actual catalogue read - everything [loadProductsFromDbAsync] runs off
+     * the main thread. Touches [ctx] and the database only; nothing here reads or
+     * writes a fragment field, which is what makes it safe to run on another
+     * thread at all - see [PosBillingFragment.buildCatalogue], the grocery sale
+     * screen's own version of the same split.
+     */
+    private fun buildProductsFromDb(ctx: Context): ProductCatalogueResult {
+        val db = com.example.synergic_pos_offline.database.DatabaseHelper.getInstance(ctx).readableDatabase
         // One query for the whole catalogue's regional names, same as the Products
         // master's own table and the grocery sale screen - see [RegionalName.map].
-        regionalNames = com.example.synergic_pos_offline.utils.RegionalName.map(requireContext())
+        val regionalNames = com.example.synergic_pos_offline.utils.RegionalName.map(ctx)
         val store = currentStoreId(db)
-        val cats = com.example.synergic_pos_offline.database.CategoryDao(requireContext())
+        val cats = com.example.synergic_pos_offline.database.CategoryDao(ctx)
             .getAll().associate { it.id to it.name }
-        val multipleRates = SettingsCache.value(requireContext(), "G", "Item Rate") == "M"
+        val multipleRates = SettingsCache.value(ctx, "G", "Item Rate") == "M"
 
         // Read once for the whole grid, and only while stock is tracked - with the
         // flag off this screen never asks the stock tables anything, exactly as the
         // grocery sale screen does not.
-        stockTrackingOn = com.example.synergic_pos_offline.database.GeneralSettingsDao
-            .isStockEnabled(requireContext())
-        val levels = if (stockTrackingOn) {
-            com.example.synergic_pos_offline.database.StockDao(requireContext())
-                .levels(store?.toInt() ?: 0)
+        val stockOn = com.example.synergic_pos_offline.database.GeneralSettingsDao.isStockEnabled(ctx)
+        val levels = if (stockOn) {
+            com.example.synergic_pos_offline.database.StockDao(ctx).levels(store?.toInt() ?: 0)
         } else emptyMap()
 
-        val productSort = com.example.synergic_pos_offline.database.GeneralSettingsDao
-            .productSort(requireContext())
+        val productSort = com.example.synergic_pos_offline.database.GeneralSettingsDao.productSort(ctx)
 
         // Every product's rate and every unit, read once each rather than a rate
         // query and a unit query PER PRODUCT - see [loadRateMaps] and
@@ -3029,7 +3134,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 val rate = defaultRates[idLong]
                 val (unitSymbol, allowFraction) = unitCache[rate?.unitId] ?: ("" to false)
                 val rates = if (multipleRates) ratesByProduct[idLong].orEmpty() else emptyList()
-                val level = if (stockTrackingOn) levels[idLong] else null
+                val level = if (stockOn) levels[idLong] else null
                 out.add(
                     GridProduct(
                         ProductEntryDialog.Product(
@@ -3046,8 +3151,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 )
             }
         }
-        allProducts = out
-        return out
+        return ProductCatalogueResult(out, stockOn, regionalNames)
     }
 
     /** One product's default rate row - the fields [loadProductsFromDb] used to
@@ -3214,6 +3318,26 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // slower there than in one course.
         fun clearSearchIfAny() { if (!etSearch.text.isNullOrEmpty()) etSearch.setText("") }
 
+        // Resolves a scanned code to one dish and puts it on the order - the same
+        // Direct Add to Cart rule and quantity popup a tapped tile goes through,
+        // via [onProductPicked]. Barcode first, then SKU, each matching EXACTLY
+        // ONE dish - two sharing a code is a data problem, and guessing between
+        // them would put the wrong one on the order without saying so. Used by
+        // [ScanState] below. Returns whether it found one.
+        fun resolveScannedCode(code: String): Boolean {
+            val q = com.example.synergic_pos_offline.utils.SearchSuggestions.normalizeCode(code)
+            if (q.isEmpty()) return false
+            val hit = allProducts.singleOrNull {
+                it.barcode.isNotBlank() &&
+                    com.example.synergic_pos_offline.utils.SearchSuggestions.normalizeCode(it.barcode) == q
+            } ?: allProducts.singleOrNull {
+                it.product.sku.isNotBlank() &&
+                    com.example.synergic_pos_offline.utils.SearchSuggestions.normalizeCode(it.product.sku) == q
+            } ?: return false
+            onProductPicked(hit.product) { clearSearchIfAny() }
+            return true
+        }
+
         val adapter = ProductAdapter(accent) { picked -> onProductPicked(picked) { clearSearchIfAny() } }
         // Seven to a row AT LEAST, and more wherever the width allows - the same rule
         // as the grocery sale screen's shelf, so the menu shows as much of itself as it
@@ -3333,7 +3457,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 etSearch.post { onProductPicked(gp.product) { clearSearchIfAny() } }
             }
         }
-        etSearch.addTextChangedListener {
+        // Named, not a bare trailing lambda, so the gun's own key handling below
+        // can detach it around the buffer-management clears it does internally -
+        // see [ScanState.clearFieldQuietly].
+        val watcher = etSearch.addTextChangedListener {
             query = it?.toString().orEmpty()
             refreshProducts?.invoke()
             // Suggested from the WHOLE menu, not the open category: someone who types
@@ -3359,6 +3486,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         etSearch.setOnFocusChangeListener { _, hasFocus ->
             if (!hasFocus) { etSearch.showSoftInputOnFocus = false; suggestions?.dismiss() }
         }
+        // The gun, read before the field - see [ScanState]. Left alone, its
+        // thirteen digits would land in the box one at a time, refiltering the
+        // whole menu on every one of them; this reads them at the key-event level
+        // instead, the same way the grocery sale screen's own search box does.
+        val scanState = ScanState(etSearch, watcher, { q -> query = q }, ::resolveScannedCode)
+        etSearch.setOnKeyListener { _, keyCode, event ->
+            if (event.action != android.view.KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            scanState.onKeyDown(keyCode, event)
+        }
         // The keyboard's Search key, and the Enter a hardware scanner sends after a
         // barcode: the query is finished either way, so the keyboard goes and the menu
         // - filtered to what was asked for - is left uncovered.
@@ -3373,6 +3509,120 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         loadProductsFromDb()   // fills allProducts
         rebuildTabs()
         refreshProducts?.invoke()
+    }
+
+    /** Shared clock for the search box's flush timer - see [ScanState]. */
+    private val scanIdle = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * Reads the gun straight off the key stream, so its digits never land in the
+     * search box one at a time - the same mechanism the grocery sale screen's own
+     * search box uses (see PosBillingFragment.ScanState), ported here because this
+     * screen had none of it: every character of a scan was reaching the box's text
+     * watcher untouched, refiltering the whole menu and rebuilding the suggestion
+     * ranking once per digit - worse than the grocery screen ever was, since
+     * nothing here was swallowing the burst at all. [onKeyDown] returns true for
+     * the events it consumes.
+     *
+     * A gun in HID mode puts characters out 5-20ms apart; a person typing manages
+     * nowhere near that. The first key of a burst is always let through, since at
+     * that point it reads the same as someone typing - only a follow-on faster
+     * than a hand switches this on and takes that first character back out.
+     */
+    private inner class ScanState(
+        private val field: com.google.android.material.textfield.TextInputEditText,
+        private val watcher: android.text.TextWatcher,
+        private val onQueryChanged: (String) -> Unit,
+        /** Resolves a finished scan to a product and puts it on the order, the
+         *  same way [addScannedCode] does for the grocery sale screen - built
+         *  locally in [setupProductSection] so it can reuse that scope's own
+         *  [onProductPicked]/`clearSearchIfAny` rather than this class reaching
+         *  back into it. Returns whether it found one. */
+        private val resolveCode: (String) -> Boolean
+    ) {
+        private val scanBuffer = StringBuilder()
+        private var lastKeyTime = 0L
+        private var scanning = false
+        private var scanFlush: Runnable? = null
+
+        fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+            if (keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+            ) {
+                // The gun's terminator. Only ours to act on if we were mid-scan;
+                // otherwise it is the operator pressing Enter and belongs to the
+                // editor-action handler.
+                return finishScan()
+            }
+
+            val ch = event.unicodeChar
+            if (ch == 0) return false
+
+            val gap = event.eventTime - lastKeyTime
+            lastKeyTime = event.eventTime
+            scheduleScanFlush()
+
+            if (gap <= SCAN_GAP_MS && scanBuffer.isNotEmpty()) {
+                // Too fast for a hand: this is a gun, and the burst started one
+                // character ago - take that one back out of the field.
+                if (!scanning) { scanning = true; clearFieldQuietly() }
+                scanBuffer.append(ch.toChar())
+                return true
+            }
+
+            // First key of a burst, or a human pace: keep it, show it, and wait to
+            // see what follows.
+            scanBuffer.setLength(0)
+            scanBuffer.append(ch.toChar())
+            scanning = false
+            return false
+        }
+
+        /**
+         * Resolves whatever the gun has spelled out. Returns whether it handled it.
+         *
+         * Guns that send no terminator are covered by [scheduleScanFlush], which
+         * calls this once the keys stop; the buffer is cleared either way, so a
+         * code cannot be resolved twice or bleed into the next scan.
+         */
+        fun finishScan(): Boolean {
+            scanFlush?.let { scanIdle.removeCallbacks(it) }
+            val code = scanBuffer.toString()
+            scanBuffer.setLength(0)
+            val wasScanning = scanning
+            scanning = false
+            if (!wasScanning || code.length < com.example.synergic_pos_offline.utils.SearchSuggestions.SCAN_MIN) return false
+            clearFieldQuietly()
+            // Not found is worth saying out loud: the code was swallowed, so a
+            // silent failure would leave the operator with a beep, an unchanged
+            // order and no idea which of the two happened.
+            if (!resolveCode(code)) toast("No product with code $code")
+            return true
+        }
+
+        /**
+         * Empties the field without running the box's own text watcher - the gun
+         * is managing its own buffer here, not asking to see a different menu, so
+         * the refilter and the suggestion re-rank that watcher normally does for a
+         * cleared box would be pure waste run for every character of every scan.
+         * [onQueryChanged] still runs on its own, cheaply, so the screen's own
+         * query state still ends up "" - the watcher is skipped only for the
+         * expensive parts it would otherwise do on the way there.
+         */
+        private fun clearFieldQuietly() {
+            field.removeTextChangedListener(watcher)
+            field.setText("")
+            field.addTextChangedListener(watcher)
+            onQueryChanged("")
+        }
+
+        /** Resolves a scan that stopped without an Enter, shortly after the keys stop. */
+        private fun scheduleScanFlush() {
+            scanFlush?.let { scanIdle.removeCallbacks(it) }
+            val flush = Runnable { if (scanning) finishScan() }
+            scanFlush = flush
+            scanIdle.postDelayed(flush, SCAN_FLUSH_MS)
+        }
     }
 
     /**

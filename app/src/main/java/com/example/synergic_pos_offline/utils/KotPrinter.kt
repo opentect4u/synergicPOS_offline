@@ -86,7 +86,11 @@ object KotPrinter {
         val paint: Paint,
         val center: Boolean = false,
         val mid: String? = null,
-        val right: String? = null
+        val right: String? = null,
+        /** How far [right] sits in from the paper's own right edge, overriding
+         *  the ticket's usual [padX] - see the QUANTITY column's own note. Null
+         *  keeps the usual margin, which is every [right] but the quantity's. */
+        val rightInset: Float? = null
     )
 
     /**
@@ -182,6 +186,12 @@ object KotPrinter {
         // header row moves with it: ITEM starts further right, QUANTITY ends
         // further left, since both are drawn padX in from their own edge below.
         val padX = width * 0.065f
+        // The QUANTITY column sits further in from the right edge than padX alone
+        // puts it - pulled further LEFT so the figure the kitchen counts by reads
+        // as sitting IN the ticket rather than jammed against the tear edge. Only
+        // the quantity column moves; the header's own date/time line, the rules
+        // and the note still run out to the ordinary padX margin.
+        val padRight = padX + width * 0.05f
         val padTop = width * 0.04f
         // Feed margin before the cut, plus a fixed 10dp under it.
         //
@@ -234,7 +244,7 @@ object KotPrinter {
 
         // The column heads, so the figures down the right have something naming them.
         ruleBefore += lines.size
-        lines += Line(t("ITEM"), sub, right = t("QUANTITY"))
+        lines += Line(t("ITEM"), sub, right = t("QUANTITY"), rightInset = padRight)
 
         /**
          * One dish: what, and how many - the name down the left and the quantity in its
@@ -258,10 +268,10 @@ object KotPrinter {
             ) + gap * 2
             val wrapped = wrapToWidth(
                 RegionalName.forPrint(regionalNames, productLanguage, name),
-                item, width - padX * 2 - qtyCol
+                item, width - padX - padRight - qtyCol
             )
             return wrapped.mapIndexed { i, part ->
-                Line(part, item, right = if (i == 0) qtyText else null)
+                Line(part, item, right = if (i == 0) qtyText else null, rightInset = padRight)
             }
         }
 
@@ -303,7 +313,10 @@ object KotPrinter {
                         canvas?.drawText(it, width / 2f, y, line.paint.apply { textAlign = Paint.Align.CENTER })
                     }
                     line.right?.let {
-                        canvas?.drawText(it, width - padX, y, line.paint.apply { textAlign = Paint.Align.RIGHT })
+                        canvas?.drawText(
+                            it, width - (line.rightInset ?: padX), y,
+                            line.paint.apply { textAlign = Paint.Align.RIGHT }
+                        )
                     }
                 }
                 y += line.paint.descent() + gap

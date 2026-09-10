@@ -535,7 +535,12 @@ class PeriodReportRenderer(context: Context) {
             // last line no different from the first. "TOTAL AMOUNT :" already says
             // which one it is, and a column of figures has to stay an even column to
             // be read down at a glance.
-            content.summary.forEach { (label, value) ->
+            //
+            // A line that came to zero is left off the paper rather than printed as
+            // "SGST AMOUNT : 0.00" - the same figure an operator would not bother
+            // writing on a hand-totalled slip. content.total, below, always prints:
+            // it is the one line the receipt is read for, zero period or not.
+            content.summary.filterNot { (_, value) -> isZeroAmount(value) }.forEach { (label, value) ->
                 summary.addView(amountRow(label, value, bold = false))
             }
             content.total?.let { (label, value) ->
@@ -750,6 +755,10 @@ class PeriodReportRenderer(context: Context) {
             setPadding(0, 0, 0, ROW_GAP_PX())
         }
     }
+
+    /** Whether a formatted summary figure reads as zero. */
+    private fun isZeroAmount(value: String): Boolean =
+        value.replace(Regex("[^0-9.\\-]"), "").toDoubleOrNull()?.let { kotlin.math.abs(it) < 0.005 } ?: false
 
     /** A "LABEL              value" summary line. */
     private fun amountRow(
