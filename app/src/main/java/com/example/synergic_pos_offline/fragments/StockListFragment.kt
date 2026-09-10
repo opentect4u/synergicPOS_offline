@@ -24,6 +24,7 @@ import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.StockBulkImporter
 import com.example.synergic_pos_offline.utils.StockCsvTemplate
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.Xlsx
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
@@ -89,9 +90,9 @@ class StockListFragment : DataTableFragment() {
      * Reads a filled-in sheet back. Registered as a field because a launcher has to
      * exist before the fragment is STARTED.
      */
-    private val uploadCsv: ActivityResultLauncher<String> =
+    private val uploadSheet: ActivityResultLauncher<String> =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-            uri?.let { onCsvPicked(it) }
+            uri?.let { onSheetPicked(it) }
         }
 
     // Both actions belong to receiving stock; writing it off is entered by hand, one
@@ -102,9 +103,15 @@ class StockListFragment : DataTableFragment() {
 
     override fun onDownloadTemplate() {
         try {
+            // AN EXCEL WORKBOOK, not a CSV - the same move the product template
+            // made, and for the same reason: the sheet is filled in on a computer,
+            // and a CSV opened there is a file of guesses. Written from the same rows
+            // the CSV is built from, so the two describe one template.
             val savedTo = Downloads.save(
-                requireContext(), StockCsvTemplate.FILE_NAME,
-                StockCsvTemplate.content(requireContext())
+                requireContext(),
+                StockCsvTemplate.EXCEL_FILE_NAME,
+                Xlsx.write(StockCsvTemplate.rows(requireContext()), "Stock In"),
+                Xlsx.MIME
             )
             toast("Stock In template saved to $savedTo")
         } catch (e: Exception) {
@@ -112,7 +119,7 @@ class StockListFragment : DataTableFragment() {
         }
     }
 
-    override fun onBulkPage() = uploadCsv.launch("*/*")
+    override fun onBulkPage() = uploadSheet.launch("*/*")
 
     /**
      * Reads the picked sheet, says what it will do, and books it in once confirmed.
@@ -123,17 +130,65 @@ class StockListFragment : DataTableFragment() {
      * that could not be read are all on the dialog, so the decision is made knowing
      * what the file actually held.
      */
-    private fun onCsvPicked(uri: android.net.Uri) {
+    /**
+     * A workbook's rows, keyed by its heading row - the shape [CsvUtils.parse]
+     * returns, so everything downstream reads one sheet the same way whichever file
+     * it arrived in.
+     *
+     * Headings are lower-cased and trimmed exactly as the CSV reader does, because
+     * the importer looks its columns up by name and a heading Excel handed back as
+     * "Product_Name " must still be `product_name`.
+     */
+    private fun fromWorkbook(input: java.io.InputStream): List<Map<String, String>> {
+        val rows = Xlsx.read(input)
+        if (rows.isEmpty()) return emptyList()
+        val headings = rows.first().map { it.trim().lowercase() }
+        return rows.drop(1)
+            // A workbook keeps trailing blank rows that were only ever formatted or
+            // scrolled through. They are not stock lines and must not be counted as
+            // rows that could not be read.
+            .filter { cells -> cells.any { it.isNotBlank() } }
+            .map { cells ->
+                headings.mapIndexed { i, key -> key to cells.getOrNull(i)?.trim().orEmpty() }.toMap()
+            }
+    }
+
+    private fun onSheetPicked(uri: android.net.Uri) {
         val ctx = requireContext()
-        val text = runCatching {
-            ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-        }.getOrNull()
-        if (text.isNullOrBlank()) {
-            toast("Could not read that file")
+        // THE FILE SAYS WHICH IT IS, not its name.
+        //
+        // A ZIP starts with the two bytes "PK" and nothing that is CSV does, so the
+        // first bytes are read and the answer taken from them rather than from an
+        // extension that may be ".XLSX", may have been dropped by a phone, or may not
+        // exist at all - the picker hands over a content:// URI, which need not carry
+        // a file name.
+        //
+        // CSV is still read, deliberately. The template downloads as a workbook now,
+        // but a shop with a sheet it has been keeping for months should not have to
+        // convert a file this is perfectly able to read.
+        var workbook = false
+        val rows = runCatching {
+            ctx.contentResolver.openInputStream(uri)?.use { ins ->
+                // Buffered so the sniffed bytes can be put back for whichever reader
+                // takes over - a content stream cannot be reopened from the start.
+                val stream = ins.buffered()
+                val head = ByteArray(2)
+                stream.mark(4)
+                val read = stream.read(head)
+                stream.reset()
+                workbook = read == 2 && Xlsx.looksLikeXlsx(head)
+                if (workbook) fromWorkbook(stream)
+                else CsvUtils.parse(stream.bufferedReader().readText())
+            } ?: emptyList()
+        }.getOrDefault(emptyList())
+
+        if (rows.isEmpty()) {
+            toast(
+                if (workbook) "That workbook has no rows under its headings"
+                else "Could not read that file - is it the sheet you filled in?"
+            )
             return
         }
-
-        val rows = runCatching { CsvUtils.parse(text) }.getOrDefault(emptyList())
         val preview = StockBulkImporter.preview(ctx, rows)
         if (preview.received == 0) {
             DialogUtils.showSuccess(
