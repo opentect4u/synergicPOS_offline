@@ -139,17 +139,18 @@ class AboutAppLayoutTest {
     }
 
     /**
-     * The roll-over card shows its two periods, and starts on the first.
+     * The roll-over card offers every period, and starts on the stored one.
      *
-     * DESIGN ONLY - AboutAppFragment.bindRollOverDesign fills the dropdown and sets
-     * the starting value, and stores nothing. What is checked here is that the card
+     * AboutAppFragment.bindRollOverDesign fills the dropdown from
+     * TransactionRollOver.CHOICES and saves what is picked. What is checked here is
+     * that the card
      * can actually be operated: a dropdown that opens showing only the value already
      * in it is a broken design, and this one was exactly that until the list stopped
      * coming from app:simpleItems, whose adapter filters. See Dropdowns. Counted
      * AFTER a value is set, which is when it went wrong.
      */
     @Test
-    fun theRollOverDropdownOffersBothPeriods() {
+    fun theRollOverDropdownOffersEveryPeriod() {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         val view: View = inflateAbout()
         val years = view.findViewById<com.google.android.material.textfield.MaterialAutoCompleteTextView>(
@@ -161,8 +162,8 @@ class AboutAppLayoutTest {
             .CHOICES.map { it.label }
 
         assertEquals(
-            "the card should offer exactly one year and one and a half",
-            listOf("1 year", "1.5 years"), offered
+            "the card should offer one day, one year and one and a half",
+            listOf("1 day", "1 year", "1.5 years"), offered
         )
 
         // The heading, WORD FOR WORD as the operator asked for it - "BACK UP" as two
@@ -178,12 +179,16 @@ class AboutAppLayoutTest {
         val done = java.util.concurrent.CountDownLatch(1)
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             com.example.synergic_pos_offline.utils.Dropdowns.fill(years, offered)
-            years.setText(offered.first(), false)
+            years.setText(
+                com.example.synergic_pos_offline.utils.TransactionRollOver.DEFAULT.label, false
+            )
             (years.adapter as android.widget.Filterable).filter
                 .filter(years.text.toString()) { done.countDown() }
         }
         assertEquals(
-            "it should start on 1 year", offered.first(), years.text.toString()
+            "it should start on whatever is stored, which defaults to a year",
+            com.example.synergic_pos_offline.utils.TransactionRollOver.DEFAULT.label,
+            years.text.toString()
         )
         assertTrue(
             "the period should be chosen, not typed - inputType was " + years.inputType,
@@ -195,7 +200,7 @@ class AboutAppLayoutTest {
             done.await(5, java.util.concurrent.TimeUnit.SECONDS)
         )
         assertEquals(
-            "the menu should offer both periods even with one already chosen",
+            "the menu should offer every period even with one already chosen",
             offered.size, years.adapter.count
         )
     }

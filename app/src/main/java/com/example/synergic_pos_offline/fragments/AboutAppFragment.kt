@@ -862,11 +862,15 @@ class AboutAppFragment : Fragment(), TitledScreen {
      */
     private fun confirmEraseBills() {
         val preview = BillErase.preview(requireContext())
-        if (preview.bills == 0) {
+        // CANCELLED BILLS COUNT AS SOMETHING TO ERASE. This asked preview.bills alone
+        // - the live books - so a till whose bills had every one been cancelled was
+        // told it had none, and the archive they had been moved to stayed on the
+        // device and in every backup with no way on this screen to clear it.
+        if (!preview.hasAnything) {
             DialogUtils.showSuccess(
                 context = requireContext(),
                 title = "No bills to erase",
-                message = "There are no bills on this device."
+                message = "There are no bills on this device, cancelled ones included."
             )
             return
         }
@@ -890,7 +894,16 @@ class AboutAppFragment : Fragment(), TitledScreen {
             title = "Erase all bills?",
             message = "This throws away all ${preview.bills} bill(s) on this device, along " +
                 "with their items, the payments taken against them, their print records " +
-                "and their kitchen orders. It cannot be undone." +
+                "and their kitchen orders." +
+                // Named separately because they are counted separately: a cancelled
+                // bill has already left the books, so the figure above does not
+                // include it, and an operator reading "3 bills" would otherwise have
+                // no idea thirty more were about to go.
+                (if (preview.cancelled > 0)
+                    " The ${preview.cancelled} cancelled bill(s) still archived on this " +
+                        "device go with them."
+                else "") +
+                " It cannot be undone." +
                 "\n\nA backup is taken first, into Downloads/backup - everything but " +
                 "this device's users and store registration, so restoring it later would " +
                 "not disturb who can sign in." +
@@ -920,8 +933,11 @@ class AboutAppFragment : Fragment(), TitledScreen {
             DialogUtils.showSuccess(
                 context = requireContext(),
                 title = "Bills erased",
-                message = "${outcome.bills} bill(s) erased. The next bill will be " +
-                    "numbered ${outcome.nextNumber}." +
+                message = "${outcome.bills} bill(s) erased" +
+                    (if (outcome.cancelled > 0)
+                        ", and ${outcome.cancelled} cancelled bill(s) cleared from the archive"
+                    else "") +
+                    ". The next bill will be numbered ${outcome.nextNumber}." +
                     // Said only when there was a floor to clear, so a grocery till is
                     // not told about tables it does not have.
                     floorNote(outcome) +
