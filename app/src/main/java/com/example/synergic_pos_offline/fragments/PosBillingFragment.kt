@@ -2278,6 +2278,44 @@ class PosBillingFragment : Fragment(), TitledScreen {
         CheckoutSession.customerPhone = customerPhone
         CheckoutSession.customerId = currentCustomerData?.get("id") as? Long
         // heldOrders needs no copying: both screens read the one list on the session.
+
+        // WITH NO MODE PICKER, CHECKOUT HAS NOTHING LEFT TO SHOW.
+        //
+        // PosCheckoutFragment already completes the sale itself the instant it
+        // loads when Payment Mode is off (see its own onViewCreated) - there is no
+        // field left for the operator to fill in or confirm. Sending it through
+        // the cart screen's own fragment_container still swapped this screen out
+        // from under the operator for the length of that load, which is the
+        // "redirects for a few seconds" a screen with nothing to ask should not
+        // have caused at all.
+        //
+        // So it runs in instantCheckoutContainer instead - a zero-size container
+        // that exists for exactly this (see activity_main.xml's own note) - which
+        // keeps every line of PosCheckoutFragment's own billing arithmetic doing
+        // the work rather than a second copy of it here, while nothing it does
+        // ever reaches the screen. onInstantComplete is this fragment's own way
+        // back in once the sale is saved and printing has started, since a
+        // fragment that never left the cart screen's container has no onResume
+        // here to reset the cart on.
+        val paymentModeOn = com.example.synergic_pos_offline.database.AppSettingsDao(requireContext())
+            .load().paymentMode
+        if (!paymentModeOn) {
+            val checkout = PosCheckoutFragment().apply {
+                instant = true
+                // Guarded on THIS screen's isAdded, qualified - unqualified inside
+                // this apply block resolves to the checkout fragment's own
+                // isAdded, which complete() has just set false by the time this
+                // runs (it removes itself the line before invoking this), so the
+                // guard silently blocked startNewSale() on every single instant
+                // sale rather than only the rare one it was meant for.
+                onInstantComplete = { if (this@PosBillingFragment.isAdded) startNewSale() }
+            }
+            requireActivity().supportFragmentManager.beginTransaction()
+                .add(R.id.instantCheckoutContainer, checkout)
+                .commit()
+            return
+        }
+
         requireActivity().supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_container, PosCheckoutFragment())
             .addToBackStack(null)
@@ -2700,6 +2738,25 @@ class PosBillingFragment : Fragment(), TitledScreen {
                     (if (roundOff > 0) "+ " else "- ") + money(kotlin.math.abs(roundOff))
                 View.VISIBLE
             } else View.GONE
+
+        // A row per charge that actually applies to this cart - the shop's Extra
+        // Charges and its Parcel Charge, each under its own name, exactly as the
+        // restaurant order panel lists them (see its own llOrderCharges). Without
+        // this the two charges were real - ChargeDao.amountsOn folded them into
+        // computeTotal() below - but silent: a total that moved for a reason
+        // nothing on the screen named.
+        view?.findViewById<LinearLayout>(R.id.llBillingCharges)?.let { llCharges ->
+            llCharges.removeAllViews()
+            extraCharges().forEach { applied ->
+                val row = layoutInflater.inflate(R.layout.item_order_summary_line, llCharges, false)
+                row.findViewById<TextView>(R.id.tvSummaryLabel).text =
+                    if (applied.type == com.example.synergic_pos_offline.database.ChargeDao.Type.PERCENTAGE)
+                        "${applied.name} (${qtyText(applied.value)}%)"
+                    else applied.name
+                row.findViewById<TextView>(R.id.tvSummaryValue).text = money(applied.amount)
+                llCharges.addView(row)
+            }
+        }
 
         tvTotal.text = money(computeTotal())
         // The same figure on the fold's handle, for while the fold is shut.

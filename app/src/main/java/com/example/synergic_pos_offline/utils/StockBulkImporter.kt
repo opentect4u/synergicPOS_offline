@@ -15,6 +15,20 @@ import com.example.synergic_pos_offline.database.StockDao
  * It goes in through [StockDao.receive], the same call the Stock In modal uses, so
  * a bulk delivery lands in md_batch_stock and the stock history the same way a
  * hand-entered one does. Nothing here writes stock itself.
+ *
+ * ## A row is matched by id, never by name
+ *
+ * A name is not what a product IS - two products can share one (a shop selling
+ * "Basmati Rice" in two pack sizes types the same words twice), and one product's
+ * name changes the moment somebody corrects a typo in the master. Matching on it
+ * meant a sheet could credit the wrong product silently, or stop matching one that
+ * had done nothing but get renamed since the sheet was downloaded. The id is the
+ * product - assigned once, never retyped - so it is the one thing on the sheet a
+ * row can be trusted to still mean what it said.
+ *
+ * That makes the id column REQUIRED: a sheet with no id column at all is refused
+ * before a single row is read (see [Result.missingIdColumn]), rather than quietly
+ * falling back to matching by name, which is the mismatch this exists to rule out.
  */
 object StockBulkImporter {
 
@@ -22,7 +36,12 @@ object StockBulkImporter {
     private val QUANTITY_COLUMNS =
         listOf(StockCsvTemplate.STOCK_COLUMN, "quantity", "qty", "stock_qty", "received")
 
-    /** The headings a sheet may give the item's name under. */
+    /** The headings a sheet may give the item's id under - what a row is actually
+     *  matched by. See the class doc. */
+    private val ID_COLUMNS = listOf(StockCsvTemplate.ID_COLUMN, "id", "productid")
+
+    /** The headings a sheet may give the item's name under - carried for the error
+     *  messages only; never what a row is matched by. */
     private val NAME_COLUMNS = listOf(StockCsvTemplate.NAME_COLUMN, "item_name", "name", "item")
 
     /**
@@ -37,9 +56,12 @@ object StockBulkImporter {
         val totalQuantity: Double,
         val blank: Int,
         val unknown: List<String>,
-        val invalid: List<String>
+        val invalid: List<String>,
+        /** The sheet had no id column at all - see the class doc. Every other field
+         *  is zero/empty when this is true; nothing was read. */
+        val missingIdColumn: Boolean = false
     ) {
-        val hasProblems: Boolean get() = unknown.isNotEmpty() || invalid.isNotEmpty()
+        val hasProblems: Boolean get() = unknown.isNotEmpty() || invalid.isNotEmpty() || missingIdColumn
     }
 
     /**
@@ -96,7 +118,16 @@ object StockBulkImporter {
         items: List<StockDao.StockItem>,
         rows: List<Map<String, String>>
     ): Pair<Result, List<StockDao.Movement>> {
-        val byName = items.associateBy { it.name.trim().lowercase() }
+        // THE ID COLUMN HAS TO BE THERE AT ALL, before a single row is read - see
+        // the class doc. Every row CsvUtils hands back carries every header column
+        // as a key (blank cells included), so checking one row for the key is
+        // checking the sheet's own header, not that row's own cell.
+        val hasIdColumn = rows.firstOrNull()?.keys?.let { keys -> ID_COLUMNS.any { it in keys } } ?: true
+        if (!hasIdColumn) {
+            return Result(0, 0.0, 0, emptyList(), emptyList(), missingIdColumn = true) to emptyList()
+        }
+
+        val byId = items.associateBy { it.productId }
 
         val movements = mutableListOf<StockDao.Movement>()
         val unknown = mutableListOf<String>()
@@ -105,17 +136,30 @@ object StockBulkImporter {
         var total = 0.0
 
         rows.forEach { row ->
-            val name = NAME_COLUMNS.firstNotNullOfOrNull { row[it]?.trim()?.takeIf(String::isNotBlank) }
-            if (name == null) { blank++; return@forEach }
-
+            val idCell = ID_COLUMNS.firstNotNullOfOrNull { row[it]?.trim()?.takeIf(String::isNotBlank) }
             val cell = QUANTITY_COLUMNS.firstNotNullOfOrNull { row[it]?.trim()?.takeIf(String::isNotBlank) }
-            // A name with no quantity beside it is a line the operator did not fill
-            // in - most of the sheet, on a delivery of a dozen items out of hundreds.
-            // It is skipped quietly rather than reported as a problem.
+            // Untouched entirely - most of the sheet, on a delivery of a dozen items
+            // out of hundreds. Skipped quietly rather than reported as a problem.
+            if (idCell == null && cell == null) { blank++; return@forEach }
+
+            // What names the row in a problem message - the id typed, if there is
+            // nothing better, since a row worth flagging has to be findable in the
+            // sheet even when it named no product.
+            val name = NAME_COLUMNS.firstNotNullOfOrNull { row[it]?.trim()?.takeIf(String::isNotBlank) }
+                ?: idCell.orEmpty()
+
+            // A quantity with no id beside it is a row the operator filled in
+            // wrong, not one they left alone - reported rather than skipped,
+            // because unlike a truly blank row this one plainly meant to book
+            // something in.
+            if (idCell == null) { invalid.add(name.ifBlank { "(row with no id)" }); return@forEach }
             if (cell == null) { blank++; return@forEach }
 
-            val product = byName[name.lowercase()]
-            if (product == null) { unknown.add(name); return@forEach }
+            val id = idCell.toIntOrNull()
+            if (id == null) { invalid.add("$name (bad id: $idCell)"); return@forEach }
+
+            val product = byId[id]
+            if (product == null) { unknown.add(name.ifBlank { idCell }); return@forEach }
 
             val quantity = cell.toDoubleOrNull()
             if (quantity == null || quantity <= 0.0) { invalid.add("$name ($cell)"); return@forEach }

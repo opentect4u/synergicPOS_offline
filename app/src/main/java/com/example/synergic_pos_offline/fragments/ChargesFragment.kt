@@ -27,11 +27,12 @@ import com.google.android.material.button.MaterialButton
  * Charge (see [ChargeDao]), told apart only by [ChargeDao.Kind]. Its name is fixed
  * rather than typed - see [showChargeForm].
  *
- * Its audience is ticked from the same three modes an Extra Charge uses. It used to be
- * barred from "Both" so that it could never reach a grocery bill; that option is gone,
- * and the rule it was standing in for now lives where it cannot be edited around - see
- * [ChargeDao.amountsOn], which keeps a parcel charge off a grocery sale whatever it is
- * ticked for.
+ * Its audience is ticked from the same three modes an Extra Charge uses - in
+ * restaurant, where Dine In/Takeaway/QSR is a real question. Grocery does not ask it:
+ * see [ChargeDao.amountsOn], which applies every enabled charge (Parcel included) to
+ * a grocery sale regardless of those ticks, and [showChargeForm], which leaves the
+ * "Applies to" boxes off the form entirely on a grocery till rather than showing
+ * three ticks that would have decided nothing.
  *
  * The tab itself only shows when App Settings' "Parcel Charge" toggle is on - see
  * [buildHeaderExtra]. That toggle decides nothing about whether an already-defined
@@ -197,44 +198,66 @@ class ChargesFragment : DataTableFragment() {
         val forValue =
             if (existing == null) "" else modesOf(current?.applicability).joinToString(",")
 
-        // Field order: Name, Value, Enabled, Type, For
-        val fields = listOf(
-            DialogUtils.FormField(
-                label = "Charge Name",
-                value = if (isParcel) PARCEL_CHARGE_NAME else current?.name.orEmpty(),
-                locked = isParcel
-            ),
-            DialogUtils.FormField(
-                label = "Value",
-                value = current?.let { trimPct(it.value) }.orEmpty(),
-                inputType = "decimal"
-            ),
-            // TYPE THEN ENABLED, in that order, so the switch sits to the RIGHT of
-            // Percentage rather than to its left. The two questions in this row are of
-            // different kinds - what the number means, and whether the charge is in use
-            // at all - and the reading order is the order they are decided in: set the
-            // charge up, then turn it on.
-            DialogUtils.FormField(
-                label = "Type",
-                value = if (currentType == ChargeDao.Type.PERCENTAGE) "Percentage" else "Amount",
-                fieldType = "dropdown",
-                options = listOf("Percentage", "Amount")
-            ),
-            DialogUtils.FormField(
-                label = "Enabled",
-                value = if (current?.enabled != false) "Yes" else "No",
-                fieldType = "toggle"
-            ),
-            DialogUtils.FormField(
-                label = "Applies to",
-                value = forValue,
-                fieldType = "checkboxes",
-                options = forOptions,
-                // The whole width: three boxes side by side do not fit a half-width
-                // column, and an option pushed off the edge is one nobody can tick.
-                spanColumns = 2
+        // Dine In/Takeaway/QSR is a restaurant question - see ChargeDao.amountsOn,
+        // which no longer asks it of a grocery sale at all. A grocery till was still
+        // shown the three boxes anyway, ticking them decided nothing it could see,
+        // and "why doesn't this work" was the result. Restaurant is unchanged: the
+        // boxes still choose which order types the charge is for.
+        val isGrocery = com.example.synergic_pos_offline.utils.SettingsCache.value(
+            requireContext(), "G", "Mode"
+        ) != "R"
+
+        // Field order: Name, Value, Enabled, Type, [For - restaurant only]
+        val fields = buildList {
+            add(
+                DialogUtils.FormField(
+                    label = "Charge Name",
+                    value = if (isParcel) PARCEL_CHARGE_NAME else current?.name.orEmpty(),
+                    locked = isParcel
+                )
             )
-        )
+            add(
+                DialogUtils.FormField(
+                    label = "Value",
+                    value = current?.let { trimPct(it.value) }.orEmpty(),
+                    inputType = "decimal"
+                )
+            )
+            // TYPE THEN ENABLED, in that order, so the switch sits to the RIGHT of
+            // Percentage rather than to its left. The two questions in this row are
+            // of different kinds - what the number means, and whether the charge is
+            // in use at all - and the reading order is the order they are decided
+            // in: set the charge up, then turn it on.
+            add(
+                DialogUtils.FormField(
+                    label = "Type",
+                    value = if (currentType == ChargeDao.Type.PERCENTAGE) "Percentage" else "Amount",
+                    fieldType = "dropdown",
+                    options = listOf("Percentage", "Amount")
+                )
+            )
+            add(
+                DialogUtils.FormField(
+                    label = "Enabled",
+                    value = if (current?.enabled != false) "Yes" else "No",
+                    fieldType = "toggle"
+                )
+            )
+            if (!isGrocery) {
+                add(
+                    DialogUtils.FormField(
+                        label = "Applies to",
+                        value = forValue,
+                        fieldType = "checkboxes",
+                        options = forOptions,
+                        // The whole width: three boxes side by side do not fit a
+                        // half-width column, and an option pushed off the edge is
+                        // one nobody can tick.
+                        spanColumns = 2
+                    )
+                )
+            }
+        }
 
         DialogUtils.showForm(
             context = requireContext(),
@@ -262,10 +285,20 @@ class ChargesFragment : DataTableFragment() {
                 if (typeStr.startsWith("A")) ChargeDao.Type.AMOUNT else ChargeDao.Type.PERCENTAGE
             }
 
-            // The ticked boxes, comma-joined by the form - see FormField's "checkboxes".
-            val modes = values.getOrNull(4).orEmpty()
-                .split(",").map { it.trim() }.filter { it.isNotEmpty() }
-            val applicability = applicabilityOf(modes)
+            // The ticked boxes, comma-joined by the form - see FormField's
+            // "checkboxes". Not asked at all in grocery (the field is left off the
+            // form above), where a grocery sale would not have looked at it anyway -
+            // so this leaves whatever was already stored untouched rather than
+            // reading a field that is not there as "nothing ticked", which would
+            // quietly clear a restaurant's own configuration the moment the same
+            // charge was edited from a grocery till.
+            val applicability = if (isGrocery) {
+                current?.applicability ?: ChargeDao.Applicability.ALL
+            } else {
+                val modes = values.getOrNull(4).orEmpty()
+                    .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                applicabilityOf(modes)
+            }
 
             when {
                 name.isEmpty() -> { toast("Charge name is required"); return@showForm }

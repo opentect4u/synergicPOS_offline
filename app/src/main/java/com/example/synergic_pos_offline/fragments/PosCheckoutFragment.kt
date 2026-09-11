@@ -171,6 +171,22 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     private var editMode = true
     private var method = Method.CASH
 
+    /**
+     * Run for its logic alone, in [MainActivity]'s off-screen
+     * `instantCheckoutContainer` rather than the cart screen's own container - see
+     * that layout's own note. Set by [PosBillingFragment.onCheckout] before the
+     * transaction that adds this fragment, never afterwards: [complete] reads it
+     * to decide how to leave (see [onInstantComplete]) once the sale it triggered
+     * itself is done, since there is no cart-screen back-stack entry to pop back
+     * to here the way a normally opened checkout leaves.
+     */
+    var instant: Boolean = false
+
+    /** Runs once [complete] has saved and started printing the bill, in [instant]
+     *  mode only - [PosBillingFragment]'s own way to reset the cart, since this
+     *  fragment never being on screen means it never returns to `onResume` there. */
+    var onInstantComplete: (() -> Unit)? = null
+
     /** Whether the operator has typed in Cash tendered - see [fillCashWithTotal]. */
     private var cashEdited = false
 
@@ -315,6 +331,22 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             }
         }
         clockRunnable.run()
+
+        // WITH NO MODE PICKER, THIS SCREEN HAS NOTHING LEFT TO ASK.
+        //
+        // "Payment Mode" off already forces Cash and takes Credit/Card/Online down
+        // to the one tile above - so what is left here is Cash's own fields, and
+        // those just filled themselves in: fillCashWithTotal (run inside the
+        // refreshTotals above) has already put the full total in Cash tendered.
+        // Every field Complete would read is already at the value tapping it
+        // would have used, so waiting for that tap is asking the operator to
+        // confirm a screen that never changed. Settlement therefore completes the
+        // sale the moment it is reached - a tap on the cart screen's own
+        // Checkout/Settlement prints the bill without this screen ever needing to
+        // be looked at.
+        if (!appSettings.paymentMode) {
+            view.post { complete() }
+        }
     }
 
     override fun onDestroyView() {
@@ -328,9 +360,19 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // MainActivity re-themes the whole window in onFragmentResumed (which fires
         // after onResume), overriding the payment-tile selection styling. Defer a
         // re-apply so the selected/unselected tile styles win.
+        //
+        // Guarded: in instant mode (see [instant]) complete() can already have
+        // removed this fragment by the time a posted Runnable actually runs - it
+        // is queued the moment this screen is reached, same as complete()'s own
+        // deferred call, and either can end up running first. Posting from a
+        // fragment already torn down crashed on requireContext() inside
+        // applyTileStyles, on a screen with no tiles left visible to restyle
+        // anyway.
         root.post {
-            applyTileStyles()
-            updateHeldButton()
+            if (isAdded) {
+                applyTileStyles()
+                updateHeldButton()
+            }
         }
     }
 
@@ -1079,6 +1121,24 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             View.VISIBLE
         } else View.GONE
 
+        // A row per charge that actually applies to this sale - the shop's Extra
+        // Charges and its Parcel Charge, each under its own name, same as the cart
+        // screen's own llBillingCharges. Without this the two charges were real -
+        // extraChargesTotal() is already folded into total() below - but silent:
+        // a figure the operator was never shown a reason for.
+        id<LinearLayout>(R.id.llCheckoutCharges).let { llCharges ->
+            llCharges.removeAllViews()
+            extraCharges().forEach { applied ->
+                val row = layoutInflater.inflate(R.layout.item_order_summary_line, llCharges, false)
+                row.findViewById<TextView>(R.id.tvSummaryLabel).text =
+                    if (applied.type == com.example.synergic_pos_offline.database.ChargeDao.Type.PERCENTAGE)
+                        "${applied.name} (${qtyText(applied.value)}%)"
+                    else applied.name
+                row.findViewById<TextView>(R.id.tvSummaryValue).text = money(applied.amount)
+                llCharges.addView(row)
+            }
+        }
+
         id<TextView>(R.id.tvLeftTotal).text = money(total())
         id<TextView>(R.id.tvAmountDue).text = money(total())
 
@@ -1244,7 +1304,18 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // No completion popup: just confirm with a toast and drop straight back to the
         // sale screen, which starts a fresh sale on resume (startFreshSale, set above).
         toast("Bill No: ${result.billNumber} — payment complete")
-        requireActivity().supportFragmentManager.popBackStack()
+        if (instant) {
+            // Never on the cart screen's own back stack - it went into
+            // instantCheckoutContainer instead (see that layout's own note) - so
+            // there is nothing here for popBackStack to pop. Removed outright, and
+            // the cart screen resets itself once told, rather than on a resume
+            // that was never going to fire for a fragment it never navigated away
+            // from.
+            parentFragmentManager.beginTransaction().remove(this).commitNowAllowingStateLoss()
+            onInstantComplete?.invoke()
+        } else {
+            requireActivity().supportFragmentManager.popBackStack()
+        }
     }
 
     // ---- Printing ----------------------------------------------------------

@@ -1328,12 +1328,15 @@ class BillReceiptRenderer(context: Context) {
             // it knew BOTH, TAKEAWAY and DINE_IN, so a charge ticked for QSR was
             // dropped off a slip the screen had already charged for.
             //
-            // A grocery slip passes no order type and keeps whatever applies anywhere,
-            // matching amountsOn.
+            // A grocery slip passes no order type and keeps every charge it was
+            // computed with - the Dine In/Takeaway/QSR ticks are a restaurant
+            // question a grocery sale never asks (see amountsOn's own note), so
+            // this second opinion cannot use them either, on pain of silently
+            // dropping the same charge the screen just charged for.
             val chargeMode = ChargeDao.Mode.of(orderType)
             val keepIndices = rawChargeLines.indices.filter { i ->
-                val a = ChargeDao.Applicability.parse(rawChargeApplicabilities.getOrNull(i))
-                if (chargeMode == null) !a.none else a.applies(chargeMode)
+                if (chargeMode == null) true
+                else ChargeDao.Applicability.parse(rawChargeApplicabilities.getOrNull(i)).applies(chargeMode)
             }
             val recomputed = keepIndices.map { rawChargeLines[it] }
             val recomputedTypes = keepIndices.map { rawChargeTypes.getOrNull(it) ?: "PERCENTAGE" }

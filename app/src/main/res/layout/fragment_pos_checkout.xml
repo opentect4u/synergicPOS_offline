@@ -318,6 +318,16 @@
                         <TextView android:id="@+id/tvRoundOff" android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:text="₹0.00" android:fontFamily="monospace" android:textSize="13sp" android:textColor="@color/text_main" />
                     </LinearLayout>
+
+                    <!-- A row per charge that actually applies - the shop's Extra
+                         Charges and its Parcel Charge, each under its own name. Built
+                         in code, same as the cart screen's llBillingCharges: how many
+                         there are is not known until ChargeDao says so. -->
+                    <LinearLayout
+                        android:id="@+id/llCheckoutCharges"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
                 </LinearLayout>
 
                 <LinearLayout
