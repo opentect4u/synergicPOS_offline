@@ -23,7 +23,7 @@ import com.example.synergic_pos_offline.database.StockDao
  */
 object StockCsvTemplate {
 
-    /** What the downloaded file is called. */
+    /** What the downloaded file is called, as a CSV. */
     const val FILE_NAME = "stock_in_template.csv"
 
     /** The item's own id, exactly as the till holds it - what a row is matched by.
@@ -32,6 +32,19 @@ object StockCsvTemplate {
 
     /** The item's name, exactly as the till holds it. Not to be edited; carried for
      *  readability only - matching goes by [ID_COLUMN], not this. */
+    /**
+     * What the download actually hands over now - a WORKBOOK.
+     *
+     * The sheet is filled in on a computer, and a CSV opened there is a file of
+     * guesses: the app decides which delimiter was meant and what to do with an item
+     * named "Rice, Basmati". A workbook has cells, so a name stays a name and a
+     * quantity stays a number. The product template moved for the same reason.
+     *
+     * CSV is still READ on the way back in - see StockListFragment.
+     */
+    const val EXCEL_FILE_NAME = "stock_in_template.xlsx"
+
+    /** The item's name, exactly as the till holds it. Not to be edited. */
     const val NAME_COLUMN = "product_name"
 
     /** The quantity being received, added to whatever the item already holds. */
@@ -51,10 +64,12 @@ object StockCsvTemplate {
      * so a sheet where only the delivered lines are filled in is the normal case
      * rather than an incomplete one.
      */
-    fun content(context: Context): String {
+    fun rows(context: Context): List<List<String>> {
         val items = runCatching {
             StockDao(context).items(SessionManager.currentUser?.storeId ?: 0)
         }.getOrDefault(emptyList())
+        return listOf(header) + items.map { listOf(it.name.orEmpty(), "") }
+    }
 
         val out = StringBuilder()
         out.append(header.joinToString(",")).append('\n')
@@ -63,6 +78,18 @@ object StockCsvTemplate {
                 .append(field(it.name)).append(",\n")
         }
         return out.toString()
+    /**
+     * The same sheet as a CSV.
+     *
+     * Built from [rows] rather than beside it, so the workbook and the CSV cannot
+     * come to describe two different templates - whichever the operator fills in is
+     * read back by one importer.
+     */
+    fun content(context: Context): String = buildString {
+        rows(context).forEach { cells ->
+            append(cells.joinToString(",") { field(it) })
+            append('\n')
+        }
     }
 
     /**
