@@ -289,11 +289,26 @@ class BillDao(context: Context) {
             //    whatever was handed over against it at the counter.
             val balance = balanceDueFor(bill)
             val customerId = bill.customerId ?: bill.payment.custId
-            if (balance > 0.001 && customerId != null && paymentId != -1L) {
+            // A CREDIT sale is on the account whatever was handed over against it.
+            //
+            // The gate used to be the shortfall alone, which silently dropped the two
+            // cases where a customer pays their account down: settling the bill
+            // exactly, and paying MORE than it to clear what they already owed. A
+            // customer with 1,000 outstanding who bought 960 of goods and gave 5,000
+            // left the counter with the till still showing 1,000 against them - the
+            // sale, the payment and the 3,040 they were now in credit for were all
+            // recorded nowhere. Any other mode still reaches the ledger only when it
+            // left something owing: a cash sale is settled at the counter, and money
+            // over the bill there is change, not a payment on account.
+            val onAccount = bill.billType == "CREDIT" || bill.payment.mode == "CREDIT"
+            if ((balance > 0.001 || onAccount) && customerId != null && paymentId != -1L) {
                 recordBalanceDue(
                     db, customerId, receiptNo, paymentId,
                     billed = bill.netAmount,
-                    paidNow = bill.payment.amountPaid.coerceIn(0.0, bill.netAmount),
+                    // NOT capped at the bill. What the customer hands over on account
+                    // is theirs to decide, and capping it here is what threw the
+                    // excess away.
+                    paidNow = bill.payment.amountPaid.coerceAtLeast(0.0),
                     nowDateTime = nowDateTime, user = user
                 )
             }
@@ -362,6 +377,15 @@ class BillDao(context: Context) {
      * a movement - netting it away before writing it down is what makes an account
      * impossible to reconcile against the bills behind it.
      *
+     * ## Paying more than the bill
+     *
+     * [paidNow] may exceed [billed], and the account is expected to go NEGATIVE when
+     * it exceeds the whole debt. A customer owing 1,000 who buys 960 of goods and
+     * hands over 5,000 is settling the old balance too: the account moves 1,000 ->
+     * 1,960 -> -3,040, and the customer is 3,040 in credit against their next visit.
+     * Nothing here clamps at zero, because a balance that cannot go below zero is a
+     * balance that quietly keeps money the shop owes back.
+     *
      * ## The balance column
      *
      * Each line carries the account balance as it stood immediately after it, so the
@@ -386,7 +410,10 @@ class BillDao(context: Context) {
         paymentId: Long,
         /** The whole bill - what the goods came to. */
         billed: Double,
-        /** What the customer handed over at the counter, zero where they paid nothing. */
+        /**
+         * What the customer handed over at the counter, zero where they paid nothing
+         * and more than [billed] where they are also paying down an older balance.
+         */
         paidNow: Double,
         nowDateTime: String,
         user: String?
@@ -405,7 +432,12 @@ class BillDao(context: Context) {
         // The debt as it stands after the goods, and again after the money.
         val afterSale = BillRounding.toPaise(previous + billed)
         val running = BillRounding.toPaise(afterSale - paidNow)
-        val owedByThisSale = BillRounding.toPaise(billed - paidNow)
+        // Floored at zero before it is taken off the limit: a bill paid in full - or
+        // over, to bring an older balance down - puts nothing on the account, so it
+        // must neither eat the customer's limit nor hand them more of one than the
+        // shop granted. There is no record of the limit as originally set, so a limit
+        // grown by a repayment could never be brought back.
+        val owedByThisSale = BillRounding.toPaise(billed - paidNow).coerceAtLeast(0.0)
         val remainingLimit = BillRounding.toPaise((previousLimit - owedByThisSale).coerceAtLeast(0.0))
 
         fun line(type: String, amount: Double, balanceAfter: Double) = db.insert(

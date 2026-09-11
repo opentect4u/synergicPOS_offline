@@ -24,6 +24,7 @@ import com.example.synergic_pos_offline.database.BillSettingsDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.CustomerDao
 import com.example.synergic_pos_offline.database.TaxSettingsDao
+import com.example.synergic_pos_offline.utils.CreditCustomerForm
 import com.example.synergic_pos_offline.utils.CustomerCardDialog
 import com.example.synergic_pos_offline.utils.BillPrinter
 import com.example.synergic_pos_offline.utils.BillReceiptRenderer
@@ -1245,8 +1246,13 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         val paidNow = if (method == Method.CREDIT) {
             id<TextInputEditText>(R.id.etCredit).text?.toString()?.toDoubleOrNull() ?: 0.0
         } else 0.0
+        // Not floored at zero: a customer can hand over more than the bill to bring an
+        // older balance down, and the figure then goes negative because they are in
+        // credit. Flooring it here priced the slip as though the extra had never been
+        // taken - on a 960 bill against 1,000 already owed, 5,000 handed over printed
+        // a PREVI BALANCE of -5,040 and left the account still showing the 1,000.
         val outstanding = onFile?.takeIf { method == Method.CREDIT }?.let { customer ->
-            BillRounding.toPaise(customer.balance + (total() - paidNow).coerceAtLeast(0.0))
+            BillRounding.toPaise(customer.balance + total() - paidNow)
         }
         return BillReceiptRenderer.Draft(
             billNumber = BillDao(requireContext()).nextBillNumber(),
@@ -1674,12 +1680,13 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // The same fields the customer master keeps, in the same order, so a credit
         // sale can capture the whole record rather than the four details the bill
         // itself needs and leave the rest to be filled in later.
-        val etPhone = editText(field("Phone Number", 0, 0, 2, creditCustomerPhone)).apply {
+        val tilPhone = field("Phone Number", 0, 0, 2, creditCustomerPhone)
+        val etPhone = editText(tilPhone).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             filters = arrayOf(android.text.InputFilter.LengthFilter(10))
         }
-        val etName = editText(field("Customer Name", 1, 0, 2, creditCustomerName))
-            .apply { InputLimits.cap(this, InputLimits.TEXT) }
+        val tilName = field("Customer Name", 1, 0, 2, creditCustomerName)
+        val etName = editText(tilName).apply { InputLimits.cap(this, InputLimits.TEXT) }
         val etAddress = editText(field("Address", 2, 0, 2, creditCustomerAddress)).apply {
             minLines = 3
             maxLines = 5
@@ -1813,32 +1820,52 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         ThemeManager.applyTheme(grid)
         ThemeManager.styleDialogButtons(btnPositive, btnNegative)
 
+        /**
+         * Refuses the save on the field that caused it, and says why there.
+         *
+         * A toast was the form's only complaint, and a toast raised over a dialog is
+         * gone - or never seen at all - long before it is read: a form that refused
+         * to save was indistinguishable from a Save button that did nothing. The
+         * reason now sits under the offending field until it is answered.
+         */
+        fun refuse(til: TextInputLayout, why: String) {
+            til.isErrorEnabled = true
+            til.error = why
+            editText(til).requestFocus()
+            toast(why)
+        }
+
+        // And it clears the moment the operator answers it, so a message already
+        // dealt with cannot sit there contradicting a form that would now save.
+        listOf(tilPhone, tilName, tilLimit, tilBalance).forEach { til ->
+            editText(til).addTextChangedListener(watcher { til.error = null })
+        }
+
         btnPositive.setOnClickListener {
             val phone = etPhone.text?.toString()?.trim().orEmpty()
-            if (phone.length != 10 || !phone.all { it.isDigit() }) {
-                toast("Phone number must be exactly 10 digits")
-                return@setOnClickListener
-            }
             val name = etName.text?.toString()?.trim().orEmpty()
-            if (name.isBlank()) {
-                toast("Customer name is required for a credit bill")
-                return@setOnClickListener
-            }
-
             val credit = swCredit.isChecked
             val limit = editText(tilLimit).text?.toString()?.toDoubleOrNull() ?: 0.0
-            // A balance already run up is not settled by switching credit off, so it
-            // is carried over rather than zeroed - as in the master.
-            val balance = if (credit) {
-                editText(tilBalance).text?.toString()?.toDoubleOrNull() ?: 0.0
-            } else {
-                onFile?.balance ?: 0.0
-            }
-            // The limit is what the customer is allowed to owe, so it cannot be set
-            // below what they already do - that would put them over their limit the
-            // moment it was saved.
-            if (credit && limit < balance - 0.005) {
-                toast("Credit limit cannot be less than the outstanding ${money(balance)}")
+
+            // The record this phone number actually belongs to, looked up now rather
+            // than when the dialog opened - see CreditCustomerForm.balanceToSave for
+            // why the one captured at open is the wrong record to read a balance off.
+            val existing = runCatching { customerDao.findByPhone(phone) }.getOrNull()
+            val balance = CreditCustomerForm.balanceToSave(
+                creditEnabled = credit,
+                typed = editText(tilBalance).text?.toString()?.toDoubleOrNull() ?: 0.0,
+                onFile = existing?.balance
+            )
+
+            CreditCustomerForm.refusal(phone, name, credit, limit, balance, ::money)?.let {
+                refuse(
+                    when (it.field) {
+                        CreditCustomerForm.Field.PHONE -> tilPhone
+                        CreditCustomerForm.Field.NAME -> tilName
+                        CreditCustomerForm.Field.LIMIT -> tilLimit
+                    },
+                    it.message
+                )
                 return@setOnClickListener
             }
 
@@ -1849,7 +1876,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
             saveCreditCustomer(
                 CustomerDao.Customer(
-                    id = onFile?.id ?: 0L,
+                    id = existing?.id ?: 0L,
                     name = name,
                     address = creditCustomerAddress,
                     phone = phone,
