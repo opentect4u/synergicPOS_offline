@@ -145,6 +145,18 @@ class ReportsFragment : Fragment() {
          * The tiles would open screens that could only be empty, and an empty report
          * reads as a broken one.
          */
+        /**
+         * Reports taken off the menu, whatever the till is set up for.
+         *
+         * Not a setting and not mode-dependent - a shop is not meant to find these,
+         * so they are named here rather than behind a switch an operator could turn
+         * on. Everything behind them still builds: see [isVisible].
+         */
+        private val HIDDEN = setOf(
+            "Profit & Loss Report",
+            "Payment & Receipt"
+        )
+
         private val RESTAURANT_ONLY = setOf(
             "KOT Cancel Report",
             "UDF-Wise Report",
@@ -161,9 +173,11 @@ class ReportsFragment : Fragment() {
          * still reachable, just no longer where anyone looks for it.
          */
         fun isVisible(context: Context, title: String): Boolean = when {
-            // Commented out rather than removed: the screen, its DAO and its menu
-            // wiring are all still there, this is the one switch to bring it back.
-            title == "Profit & Loss Report" -> false
+            // HIDDEN, not removed: each of these keeps its screen, its DAO and its
+            // menu wiring, and this list is the one switch that brings it back. A
+            // report deleted outright takes its query with it, and the query is the
+            // part that took the work.
+            title in HIDDEN -> false
             title == STOCK_REPORT || title == LOW_STOCK_REPORT ->
                 GeneralSettingsDao.isStockEnabled(context)
             title == SHIFT_WISE_REPORT ->

@@ -2718,8 +2718,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // across two lines at different rates (Multiple item-rate mode) is still
         // one product on the bill, just counted twice if this went by line instead.
         val productCount = cart.map { it.product.id }.distinct().size
-        tvItemCount.text = "$productCount product${if (productCount != 1) "s" else ""}, " +
-            "${qtyText(totalQty)} count${if (totalQty != 1.0) "s" else ""}"
+        // UPPER CASE, to match the labels either side of it on this bar - SUBTOTAL,
+        // DISCOUNT, TAX and TOTAL are all set that way, and this line sat among them
+        // in sentence case looking like a stray note rather than one of the figures.
+        tvItemCount.text = ("$productCount product${if (productCount != 1) "s" else ""}, " +
+            "${qtyText(totalQty)} count${if (totalQty != 1.0) "s" else ""}").uppercase()
 
         tvSubtotal.text = money(subtotal())
         // Item-wise discount has no single whole-bill figure to show here - each

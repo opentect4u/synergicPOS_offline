@@ -357,6 +357,17 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                 val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
                     ?.text?.toString()?.toDoubleOrNull() ?: 0.0
                 (tendered - payableTotal).coerceAtLeast(0.0)
+            },
+            // What is actually being paid against the bill - the tendered amount, but
+            // never more than the bill itself, since the excess is change and not a
+            // payment. This till prints its slip FROM the draft, so a credit bill that
+            // did not carry it printed "CASH RECEIVED 0.00" whatever had been taken,
+            // and PREVI BALANCE - worked back from that figure - was wrong by the same
+            // amount.
+            amountPaid = run {
+                val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
+                    ?.text?.toString()?.toDoubleOrNull() ?: 0.0
+                tendered.coerceIn(0.0, payableTotal)
             }
         )
         val paperDots = com.example.synergic_pos_offline.database.OperatingPrinterDao(ctx).getAll()

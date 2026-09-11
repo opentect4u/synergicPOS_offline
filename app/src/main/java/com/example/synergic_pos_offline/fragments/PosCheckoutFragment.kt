@@ -281,7 +281,6 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
         // Accent bars
         id<View>(R.id.barLeftTotal).setBackgroundColor(accent)
-        id<View>(R.id.barAmountDue).setBackgroundColor(accent)
 
         // Mode toggle
         id<MaterialButton>(R.id.btnModeEdit).setOnClickListener {
@@ -1140,7 +1139,6 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         }
 
         id<TextView>(R.id.tvLeftTotal).text = money(total())
-        id<TextView>(R.id.tvAmountDue).text = money(total())
 
         // Update item count
         val itemCount = lines.sumOf { it.qty }
@@ -1233,8 +1231,13 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // [BillDao.recordBalanceDue] will write, so the preview and the printed
         // slip quote one figure. Only a customer on the master has an account to
         // add it to, and only a credit sale adds anything to it.
+        // What the customer is handing over now, on a credit sale that takes part of
+        // it at the counter. Read once and used twice - the outstanding figure below
+        // nets it off, and the slip's own CASH RECEIVED line states it.
+        val paidNow = if (method == Method.CREDIT) {
+            id<TextInputEditText>(R.id.etCredit).text?.toString()?.toDoubleOrNull() ?: 0.0
+        } else 0.0
         val outstanding = onFile?.takeIf { method == Method.CREDIT }?.let { customer ->
-            val paidNow = id<TextInputEditText>(R.id.etCredit).text?.toString()?.toDoubleOrNull() ?: 0.0
             BillRounding.toPaise(customer.balance + (total() - paidNow).coerceAtLeast(0.0))
         }
         return BillReceiptRenderer.Draft(
@@ -1248,6 +1251,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                 address = address.ifEmpty { null },
                 outstanding = outstanding
             ),
+            amountPaid = paidNow,
             items = lines.map { line ->
                 BillReceiptRenderer.Draft.Item(
                     name = line.name,
@@ -1430,11 +1434,21 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             else -> grandTotal to 0.0
         }
 
-        // Resolve customer: credit dialog details take precedence, else the sale's
-        // customer. With capture off, a non-credit sale has none at all - the fields
-        // stay empty and customer_id below resolves to null.
-        val custName = if (customerApplies()) creditCustomerName.ifEmpty { CheckoutSession.customerName ?: "" } else ""
-        val custPhone = if (customerApplies()) creditCustomerPhone.ifEmpty { CheckoutSession.customerPhone ?: "" } else ""
+        // Resolve customer: credit dialog details take precedence, else the one the
+        // sale actually attached.
+        //
+        // A CUSTOMER THE OPERATOR CHOSE IS A FACT ABOUT THE SALE, whatever "Customer
+        // Info" says. This used to drop both fields whenever that setting was off,
+        // which is not what the setting means: it governs whether this SCREEN asks
+        // for customer details, not whether one already picked on the sale screen is
+        // thrown away. The Sale screen keeps its Add Customer button either way, so a
+        // grocery till with the setting off let the counter attach a customer, showed
+        // that name in the bill preview - which reads CheckoutSession directly and
+        // never consulted the setting - and then wrote the bill with no customer at
+        // all. Neither the slip handed over nor any reprint of it carried the name,
+        // and nothing on screen said why.
+        val custName = creditCustomerName.ifEmpty { CheckoutSession.customerName ?: "" }
+        val custPhone = creditCustomerPhone.ifEmpty { CheckoutSession.customerPhone ?: "" }
         // Resolve against the phone actually printed on the bill so an edited number
         // cannot attach the sale to the previously selected customer. The id captured
         // when the customer was picked in billing is the fallback, which also covers

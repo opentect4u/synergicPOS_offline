@@ -94,20 +94,35 @@
 
                 <View style="@style/BillSettingDivider" />
 
-                <!-- Other Charges -->
-                <LinearLayout style="@style/BillSettingRow">
-                    <LinearLayout style="@style/BillSettingText">
-                        <TextView style="@style/BillSettingTitle" android:text="Other Charges" />
-                        <TextView style="@style/BillSettingSub" android:text="Define Other Charges in Master Settings" />
-<!--                        <TextView style="@style/BillSettingSub"-->
-<!--                            android:text="(Define Other Charges in Master Settings)"-->
-<!--                            android:textStyle="italic" />-->
-                    </LinearLayout>
-                    <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/swOtherCharges" style="@style/BillSettingSwitch" />
-                </LinearLayout>
+                <!-- OTHER CHARGES, HIDDEN.
+                     Wrapped and set gone rather than deleted. The setting itself still
+                     applies: the switch inside is still found, still filled from the
+                     stored value and still saved with the rest (see
+                     AppSettingsFragment), so whatever this shop had it set to stays in
+                     force and nothing downstream changes behaviour. Only the
+                     operator's way of changing it is out of sight, and unhiding it is
+                     one attribute rather than writing the row again from git history.
 
-                <View style="@style/BillSettingDivider" />
+                     Its trailing divider goes with it, or the list would show two
+                     rules with nothing between them. -->
+                <LinearLayout
+                    android:id="@+id/llOtherChargesSetting"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <LinearLayout style="@style/BillSettingRow">
+                        <LinearLayout style="@style/BillSettingText">
+                            <TextView style="@style/BillSettingTitle" android:text="Other Charges" />
+                            <TextView style="@style/BillSettingSub" android:text="Define Other Charges in Master Settings" />
+                        </LinearLayout>
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/swOtherCharges" style="@style/BillSettingSwitch" />
+                    </LinearLayout>
+
+                    <View style="@style/BillSettingDivider" />
+                </LinearLayout>
 
                 <!-- Parcel Charge -->
                 <LinearLayout style="@style/BillSettingRow">

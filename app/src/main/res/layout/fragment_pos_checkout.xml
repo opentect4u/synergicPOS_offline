@@ -370,22 +370,13 @@
                     android:text="FINAL STEP" android:textSize="10sp" android:letterSpacing="0.14" android:textColor="@color/primary_blue" />
             </LinearLayout>
 
-            <!-- Amount due -->
-            <LinearLayout
-                android:id="@+id/barAmountDue"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:background="@color/primary_blue"
-                android:paddingHorizontal="18dp"
-                android:paddingVertical="16dp">
-
-                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                    android:text="AMOUNT DUE" android:textStyle="bold" android:textSize="14sp" android:letterSpacing="0.1" android:textColor="@color/white" />
-                <TextView android:id="@+id/tvAmountDue" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="₹0.00" android:textStyle="bold" android:textSize="34sp" android:textColor="@color/white" />
-            </LinearLayout>
+            <!-- AMOUNT DUE REMOVED.
+                 The figure is already on this screen twice over - the TOTAL bar under
+                 the bill on the left, and the Complete Checkout button at the foot of
+                 this very panel, which carries it in its own label. A third copy in
+                 34sp took the top of the payment panel and pushed the thing the
+                 operator actually came here to do - choosing the mode - further down.
+                 The totals on the left are unchanged; only this restatement is gone. -->
 
             <!-- Payment Mode Buttons, hidden entirely when the "Payment Mode" app setting is off -->
             <LinearLayout
@@ -543,21 +534,25 @@
                         </LinearLayout>
                     </LinearLayout>
 
-                    <!-- ONLINE - UPI ID -->
+                    <!-- ONLINE - THE SCAN-TO-PAY CODE, and nothing else.
+                         The same as the restaurant till shows: the customer said they
+                         are paying by phone, so the screen turns round and they scan.
+
+                         There used to be a "UPI ID (optional)" box above it. It was
+                         read by NOTHING - the id it carried is BillSettingsFragment's,
+                         and the only code that ever looks it up is that screen - so
+                         whatever the counter typed into it went nowhere, while the code
+                         beneath was built from the UPI ID in Bill Settings all along.
+                         A field that silently discards what is typed into it is worse
+                         than no field, and it is asking the counter for the shop's own
+                         payment address on every single online sale.
+
+                         The section still exists so the method buttons have something
+                         to show and hide - see setMethod - and CheckoutUpiQr gates on
+                         Online again inside it. -->
                     <LinearLayout android:id="@+id/sectionOnline"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:orientation="vertical" android:layout_marginTop="16dp" android:visibility="gone">
-                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="UPI ID (optional)" android:textSize="12sp" android:textColor="@color/text_secondary" />
-                        <com.google.android.material.textfield.TextInputLayout
-                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                            android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp"
-                            app:boxCornerRadiusTopStart="12dp" app:boxCornerRadiusTopEnd="12dp"
-                            app:boxCornerRadiusBottomStart="12dp" app:boxCornerRadiusBottomEnd="12dp">
-                            <com.google.android.material.textfield.TextInputEditText android:id="@+id/etUpiId"
-                                android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:hint="example@upi" android:inputType="text" android:maxLines="1" />
-                        </com.google.android.material.textfield.TextInputLayout>
 
                         <include layout="@layout/view_checkout_upi_qr" />
                     </LinearLayout>

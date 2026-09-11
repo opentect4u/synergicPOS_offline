@@ -285,11 +285,17 @@ class BillDao(context: Context) {
             }
             val paymentId = db.insert(DatabaseHelper.Tables.TD_PAYMENTS, null, paymentValues)
 
-            // 4) Anything still owed goes on the customer's ledger for recovery.
+            // 4) The sale goes on the customer's ledger - what was supplied, and
+            //    whatever was handed over against it at the counter.
             val balance = balanceDueFor(bill)
             val customerId = bill.customerId ?: bill.payment.custId
             if (balance > 0.001 && customerId != null && paymentId != -1L) {
-                recordBalanceDue(db, customerId, receiptNo, paymentId, balance, nowDateTime, user)
+                recordBalanceDue(
+                    db, customerId, receiptNo, paymentId,
+                    billed = bill.netAmount,
+                    paidNow = bill.payment.amountPaid.coerceIn(0.0, bill.netAmount),
+                    nowDateTime = nowDateTime, user = user
+                )
             }
 
             // 5) Stock. Inside the bill's own transaction, so a sale and the stock it
@@ -339,15 +345,36 @@ class BillDao(context: Context) {
     }
 
     /**
-     * Books an outstanding bill against the customer so it can be recovered later:
-     * a DEBIT line on their ledger carrying the running balance, and the same total
-     * on their master record.
+     * Books a credit sale onto the customer's account - BOTH movements it made.
      *
-     * The credit limit comes down by what was just put on the account, so it always
-     * reads as the credit the customer has left rather than the figure they started
-     * with. It floors at zero: a sale larger than the remaining limit exhausts it
-     * rather than turning it negative, and the full debt is still carried by the
-     * balance either way.
+     * ## Two lines, not one
+     *
+     * A DEBIT for [billed], the whole value of the goods supplied, and - where the
+     * customer handed something over at the counter - a CREDIT for [paidNow]. The
+     * account lands on exactly the same figure it always did, `previous + billed -
+     * paidNow`; what changes is that the ledger now SHOWS how it got there.
+     *
+     * It used to write a single DEBIT for the shortfall alone. The balance was right
+     * and the report was unreadable: a 1,000 sale settled with 400 in cash appeared
+     * as a 600 "Credit sale", so the ledger disagreed with the bill the customer was
+     * holding, the 400 they had paid appeared nowhere at all, and the totals at the
+     * foot counted neither. A ledger is a record of movements, and a payment taken is
+     * a movement - netting it away before writing it down is what makes an account
+     * impossible to reconcile against the bills behind it.
+     *
+     * ## The balance column
+     *
+     * Each line carries the account balance as it stood immediately after it, so the
+     * pair reads in order: the debt rises by the full sale, then falls by what was
+     * paid. (The ledger REPORT walks its own running balance from the opening figure
+     * rather than trusting this column - see CustomerLedgerDao - but the column is
+     * what a later reader of the raw table sees.)
+     *
+     * The credit limit comes down by what was actually put on the account - the
+     * shortfall, not the sale - so a bill paid in full at the counter does not eat a
+     * customer's limit. It floors at zero: a sale larger than the remaining limit
+     * exhausts it rather than turning it negative, and the full debt is still carried
+     * by the balance either way.
      *
      * Skipped when the sale has no customer - there would be nobody to chase, and
      * the balance is still recorded on the payment row either way.
@@ -357,7 +384,10 @@ class BillDao(context: Context) {
         customerId: Long,
         receiptNo: Long,
         paymentId: Long,
-        balance: Double,
+        /** The whole bill - what the goods came to. */
+        billed: Double,
+        /** What the customer handed over at the counter, zero where they paid nothing. */
+        paidNow: Double,
         nowDateTime: String,
         user: String?
     ) {
@@ -372,22 +402,31 @@ class BillDao(context: Context) {
                 previousLimit = if (c.isNull(1)) 0.0 else c.getDouble(1)
             }
         }
-        val running = BillRounding.toPaise(previous + balance)
-        val remainingLimit = BillRounding.toPaise((previousLimit - balance).coerceAtLeast(0.0))
+        // The debt as it stands after the goods, and again after the money.
+        val afterSale = BillRounding.toPaise(previous + billed)
+        val running = BillRounding.toPaise(afterSale - paidNow)
+        val owedByThisSale = BillRounding.toPaise(billed - paidNow)
+        val remainingLimit = BillRounding.toPaise((previousLimit - owedByThisSale).coerceAtLeast(0.0))
 
-        db.insert(
+        fun line(type: String, amount: Double, balanceAfter: Double) = db.insert(
             DatabaseHelper.Tables.TD_CUSTOMER_LEDGER, null,
             ContentValues().apply {
                 put("customer_id", customerId)
                 put("bill_id", receiptNo)
                 put("payment_id", paymentId)
-                put("transaction_type", "DEBIT")
-                put("amount", balance)
-                put("balance", running)
+                put("transaction_type", type)
+                put("amount", amount)
+                put("balance", balanceAfter)
                 put("transaction_date", nowDateTime)
                 put("created_by", user)
             }
         )
+
+        line("DEBIT", billed, afterSale)
+        // Only where something was actually taken. A zero line would read as a
+        // payment of nothing on every credit sale the customer never paid against.
+        if (paidNow > 0.001) line("CREDIT", paidNow, running)
+
         db.update(
             DatabaseHelper.Tables.MD_CUSTOMERS,
             ContentValues().apply {

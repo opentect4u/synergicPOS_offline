@@ -89,10 +89,15 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         // operator changing them and write straight back over what was just read.
         SettingsAutoSave.onChange(
             ::onSave,
-            swManualRate, swCashReception, swPaymentMode, swOtherCharges, swParcelCharge,
+            swManualRate, swOtherCharges, swParcelCharge,
             swDirectAddToCart, /* swBiometricLogin, */ swShift,
             /* swCouponMode, */ swKot, swTableMerge, swTableShift, swTableSplit
         )
+        // NOT IN THE LIST ABOVE. These two carry a listener of their own - see
+        // [bindExclusive] - and SettingsAutoSave.onChange replaces whatever listener a
+        // switch already has, so passing them here would silently undo the pairing.
+        // They save from inside their own listener instead.
+        bindExclusive()
 
         // Theme accent for switches, header and button.
         ThemeManager.applyTheme(view)
@@ -101,10 +106,50 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         )
     }
 
+    /**
+     * Cash Reception and Payment Mode are one choice, not two switches.
+     *
+     * Cash Reception collects the money on the BILLING screen; Payment Mode asks how
+     * the sale is being settled at CHECKOUT. Both on is a till that takes the cash up
+     * front and then asks which way it was paid, so turning either on turns the other
+     * off - which is what the pair had to be operated as anyway, from memory, with
+     * nothing on screen to say so.
+     *
+     * ## The guard
+     *
+     * Clearing the other switch fires ITS listener, which would clear this one
+     * straight back and land both off - so the flag holds that second pass off, and
+     * the save runs once from whichever switch the operator actually touched.
+     */
+    private var syncingExclusive = false
+
+    private fun bindExclusive() {
+        fun pair(touched: com.google.android.material.switchmaterial.SwitchMaterial,
+                 other: com.google.android.material.switchmaterial.SwitchMaterial) {
+            touched.setOnCheckedChangeListener { _, isChecked ->
+                if (syncingExclusive) return@setOnCheckedChangeListener
+                if (isChecked && other.isChecked) {
+                    syncingExclusive = true
+                    other.isChecked = false
+                    syncingExclusive = false
+                }
+                onSave()
+            }
+        }
+        pair(swCashReception, swPaymentMode)
+        pair(swPaymentMode, swCashReception)
+    }
+
     private fun bind(s: AppSettingsDao.AppSettings) {
         swManualRate.isChecked = s.manualRate
         swCashReception.isChecked = s.cashReception
-        swPaymentMode.isChecked = s.paymentMode
+        // A till stored with BOTH on - every one of them, until the two became a
+        // pair - is settled here rather than left showing a combination the screen
+        // will not let anybody set. Cash Reception wins: it is the one that changes
+        // how the billing screen itself behaves, so it is the harder of the two to
+        // have turned on by accident. Written back on the next flip like any other
+        // change; nothing is saved merely for opening the screen.
+        swPaymentMode.isChecked = s.paymentMode && !s.cashReception
         swOtherCharges.isChecked = s.otherCharges
         swParcelCharge.isChecked = s.parcelCharge
         swDirectAddToCart.isChecked = s.directAddToCart

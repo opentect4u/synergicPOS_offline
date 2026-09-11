@@ -667,7 +667,18 @@ class BillReceiptRenderer(context: Context) {
         /** Order type for filtering charges: "DINE_IN", "TAKEAWAY" or "QSR"; null for grocery */
         val orderType: String? = null,
         /** Cash returned when the customer tenders more than the payable — printed only when > 0. */
-        val returnAmount: Double = 0.0
+        val returnAmount: Double = 0.0,
+        /**
+         * What the customer handed over against this bill, where they paid part of it.
+         *
+         * Only a PREVIEW needs to be told: a saved bill has it on its payment row and
+         * the renderer reads it from there. Without it a drafted CREDIT bill printed
+         * "CASH RECEIVED 0.00" however much had just been taken, and PREVI BALANCE -
+         * which is worked back FROM that figure - came out wrong by exactly the amount
+         * paid. The restaurant till prints its bill from a draft, so that was the slip
+         * the customer was handed.
+         */
+        val amountPaid: Double = 0.0
     ) {
         /** As captured on the sale; each field printed only where the settings ask. */
         data class Customer(
@@ -939,7 +950,7 @@ class BillReceiptRenderer(context: Context) {
 
             // What was actually collected at the till on this bill - 0 on a full credit
             // sale, the part-payment on a partial one. Drives the CASH RECEIVED line.
-            var cashReceived = 0.0
+            var cashReceived = draft?.amountPaid ?: 0.0
             if (draft == null) db.rawQuery(
                 "SELECT COALESCE(SUM(amount_paid), 0) FROM ${DatabaseHelper.Tables.TD_PAYMENTS} WHERE bill_id = ?",
                 arrayOf(receiptNo.toString())

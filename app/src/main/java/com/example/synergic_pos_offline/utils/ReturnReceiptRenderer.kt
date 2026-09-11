@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillHeaderFooterDao
+import com.example.synergic_pos_offline.database.BillSettingsDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.database.LogoDao
 import com.example.synergic_pos_offline.database.ReturnDao
@@ -87,10 +88,48 @@ class ReturnReceiptRenderer(context: Context) {
         if (card.measuredHeight <= 0) return null
         card.layout(0, 0, card.measuredWidth, card.measuredHeight)
 
-        ReceiptPrinter.capture(card)
+        withFeed(ReceiptPrinter.capture(card) ?: return null)
     }.getOrElse {
         android.util.Log.e(TAG, "Could not render return ${result.returnNumber}", it)
         null
+    }
+
+    /**
+     * [src] with [EXTRA_FEED_LINES] blank lines of paper fed under it.
+     *
+     * The same two lines a kitchen ticket gets, for the same reason - see
+     * [KotPrinter.EXTRA_FEED_LINES]. On most counter printers the last line stops
+     * under the print HEAD rather than past the tear bar, so a slip torn straight
+     * after printing takes the bottom of itself with it: on a return that is the
+     * "Returned by" line, and on a narrow roll the total above it.
+     *
+     * ## Why two LINES rather than a number of dots
+     *
+     * Print sizes here are absolute - 13sp is the same height of character on 58mm as
+     * on 80mm (see PrintType) - so a line is the one unit that means the same length
+     * of paper on every roll. Measured off a paint at the slip's own body size, so the
+     * feed matches the document rather than being a figure picked in dots.
+     *
+     * The card is captured at the device's density and scaled to the head afterwards,
+     * and text inside it is set in sp rather than scaled with the card - so the two
+     * scalings cancel and this lands as two body lines on the paper, whatever the roll
+     * and whatever the screen.
+     */
+    private fun withFeed(src: Bitmap): Bitmap {
+        val paint = android.graphics.Paint().apply {
+            textSize = PrintType.BODY_SP * ctx.resources.displayMetrics.density
+        }
+        val feed = (EXTRA_FEED_LINES * (paint.descent() - paint.ascent())).toInt()
+        if (feed <= 0) return src
+        val out = Bitmap.createBitmap(src.width, src.height + feed, Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(out).apply {
+            // White, not transparent: the printer reads dark pixels as burn, and an
+            // unpainted bitmap is not guaranteed to be either.
+            drawColor(android.graphics.Color.WHITE)
+            drawBitmap(src, 0f, 0f, null)
+        }
+        src.recycle()
+        return out
     }
 
     /** Fills an already-inflated [R.layout.receipt_return] in place. */
@@ -146,6 +185,7 @@ class ReturnReceiptRenderer(context: Context) {
                 view, R.id.tvReturnAgainstBill,
                 result.originalBillNumber?.let { "${t("AGAINST BILL")}: $it" }
             )
+            renderCustomer(db, view, result.id)
 
             // Headings, sized - and on a 2-inch roll shortened - like the bill's.
             listOf(
@@ -192,7 +232,8 @@ class ReturnReceiptRenderer(context: Context) {
             if (narrow) {
                 listOf(
                     R.id.tvReturnDate, R.id.tvReturnTime, R.id.tvReturnNo,
-                    R.id.tvReturnAgainstBill, R.id.tvReturnAmountWords, R.id.tvReturnCreatedBy
+                    R.id.tvReturnAgainstBill, R.id.tvReturnCustName, R.id.tvReturnCustMobile,
+                    R.id.tvReturnCustGstin, R.id.tvReturnAmountWords, R.id.tvReturnCreatedBy
                 ).forEach { view.findViewById<TextView>(it)?.textSize = bodySp }
             }
         } catch (e: Exception) {
@@ -340,6 +381,75 @@ class ReturnReceiptRenderer(context: Context) {
         }
     }
 
+    /**
+     * Who the money went back to, printed the way the BILL prints it.
+     *
+     * ## Read from the sale, not from the return
+     *
+     * A return row records what came back, not who brought it - so the customer is
+     * followed through the original bill: its `customer_id` for somebody on the
+     * master, and the payment row's own `cust_name`/`cust_phone`/`cust_gstin` for a
+     * walk-in typed at the counter. The same two places [BillReceiptRenderer] reads,
+     * so the return and the sale it came off name the same person.
+     *
+     * An ITEM-WISE return has no bill behind it - it is taken on the item alone - so
+     * there is nobody to name and all three lines stay hidden. That is a fact about
+     * the return, not a fault: nothing was captured to print.
+     *
+     * ## The setting decides which lines
+     *
+     * "Customer Details" in Bill Settings, exactly as on the bill. A shop printing
+     * only the mobile on its sales gets only the mobile on its returns; one printing
+     * nothing gets nothing. A line is still only shown where the sale actually
+     * captured that detail - the setting chooses what to print, never what to invent.
+     */
+    private fun renderCustomer(db: SQLiteDatabase, view: View, returnId: Long) {
+        var name: String? = null
+        var phone: String? = null
+        var gstin: String? = null
+
+        runCatching {
+            db.rawQuery(
+                """
+                SELECT COALESCE(NULLIF(TRIM(c.customer_name), ''), NULLIF(TRIM(p.cust_name), '')),
+                       COALESCE(NULLIF(TRIM(c.phone_number), ''), NULLIF(TRIM(p.cust_phone), '')),
+                       COALESCE(NULLIF(TRIM(c.gstin), ''), NULLIF(TRIM(p.cust_gstin), ''))
+                FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} r
+                LEFT JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = r.original_bill_id
+                LEFT JOIN ${DatabaseHelper.Tables.MD_CUSTOMERS} c ON c.id = b.customer_id
+                LEFT JOIN ${DatabaseHelper.Tables.TD_PAYMENTS} p ON p.bill_id = b.receipt_no
+                WHERE r.id = ?
+                ORDER BY p.id ASC
+                LIMIT 1
+                """.trimIndent(),
+                arrayOf(returnId.toString())
+            ).use { c ->
+                if (c.moveToFirst()) {
+                    name = c.getString(0)?.takeIf { it.isNotBlank() }
+                    phone = c.getString(1)?.takeIf { it.isNotBlank() }
+                    gstin = c.getString(2)?.takeIf { it.isNotBlank() }
+                }
+            }
+        }
+
+        val details = runCatching { BillSettingsDao(ctx).load().customerDetails }.getOrNull()
+        val showMobile = details == BillSettingsDao.CustomerDetails.ONLY_MOBILE ||
+            details == BillSettingsDao.CustomerDetails.MOBILE_NAME ||
+            details == BillSettingsDao.CustomerDetails.MOBILE_NAME_GSTIN
+        val showName = details == BillSettingsDao.CustomerDetails.MOBILE_NAME ||
+            details == BillSettingsDao.CustomerDetails.MOBILE_NAME_GSTIN ||
+            details == BillSettingsDao.CustomerDetails.ONLY_NAME
+        val showGstin = details == BillSettingsDao.CustomerDetails.MOBILE_NAME_GSTIN ||
+            details == BillSettingsDao.CustomerDetails.ONLY_GSTIN
+
+        setIfPresent(view, R.id.tvReturnCustName,
+            if (showName) name?.let { "${t("NAME")}: ${it.uppercase()}" } else null)
+        setIfPresent(view, R.id.tvReturnCustMobile,
+            if (showMobile) phone?.let { "${t("MOBILE")}: $it" } else null)
+        setIfPresent(view, R.id.tvReturnCustGstin,
+            if (showGstin) gstin?.let { "${t("GSTIN")}: $it" } else null)
+    }
+
     private fun setIfPresent(root: View, id: Int, value: String?) {
         val tv = root.findViewById<TextView>(id)
         if (value.isNullOrBlank()) {
@@ -366,5 +476,8 @@ class ReturnReceiptRenderer(context: Context) {
 
     private companion object {
         const val TAG = "ReturnReceiptRenderer"
+
+        /** Blank lines fed after a return slip - see [withFeed]. */
+        const val EXTRA_FEED_LINES = 2
     }
 }

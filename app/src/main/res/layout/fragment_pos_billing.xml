@@ -288,11 +288,18 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:gravity="center"
-                        android:text="0 products, 0 counts"
+                        android:text="0 PRODUCTS, 0 COUNTS"
                         android:textSize="15sp"
                         android:textStyle="bold"
                         android:textColor="@color/primary_blue" />
 
+                    <!-- Sized to be HIT, not just read. It was 11sp with 2dp of
+                         vertical padding and minHeight/minWidth pinned to zero, which
+                         left a target well under the 48dp a finger needs - on the one
+                         control here that throws the whole cart away, so a miss costs
+                         either a re-scan or an accidental clear. Now it reads beside
+                         the count rather than under it, and covers a full row's
+                         height. -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnClearCart"
                         style="@style/Widget.MaterialComponents.Button.TextButton"
@@ -301,15 +308,15 @@
                         android:insetTop="0dp"
                         android:insetBottom="0dp"
                         android:minWidth="0dp"
-                        android:minHeight="0dp"
-                        android:paddingHorizontal="8dp"
-                        android:paddingVertical="2dp"
+                        android:minHeight="44dp"
+                        android:paddingHorizontal="16dp"
+                        android:paddingVertical="8dp"
                         android:text="Clear"
-                        android:textSize="11sp"
+                        android:textSize="15sp"
                         app:icon="@drawable/ic_delete"
-                        app:iconSize="13dp"
-                        app:iconPadding="3dp"
-                        app:cornerRadius="8dp" />
+                        app:iconSize="20dp"
+                        app:iconPadding="6dp"
+                        app:cornerRadius="10dp" />
                 </LinearLayout>
 
                 <LinearLayout

@@ -18,13 +18,13 @@ import com.example.synergic_pos_offline.utils.ThemeManager
 import org.json.JSONObject
 
 /**
- * DashboardHomeFragment: Renders a WebView-based dashboard using Chart.js.
+ * Dashboard fragment using a WebView to display Chart.js visualizations.
  */
 class DashboardHomeFragment : Fragment() {
 
-    private var webView: WebView? = null
-    private var swipeLayout: SwipeRefreshLayout? = null
-    private var isPageLoaded: Boolean = false
+    var webView: WebView? = null
+    var swipeLayout: SwipeRefreshLayout? = null
+    var pageLoaded: Boolean = false
 
     companion object {
         private const val ASSET_BASE = "file:///android_asset/dashboard/"
@@ -56,8 +56,8 @@ class DashboardHomeFragment : Fragment() {
         w.addJavascriptInterface(Bridge(), "POS")
         
         w.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, url: String?) {
-                isPageLoaded = true
+            override fun onPageFinished(v: WebView?, url: String?) {
+                pageLoaded = true
                 refresh()
             }
 
@@ -83,7 +83,7 @@ class DashboardHomeFragment : Fragment() {
     }
 
     fun refresh() {
-        if (!isAdded || !isPageLoaded) return
+        if (!isAdded || !pageLoaded) return
         val w = webView ?: return
         
         val context = requireContext().applicationContext
@@ -122,7 +122,7 @@ class DashboardHomeFragment : Fragment() {
         }
         
         if (fragment != null) {
-            requireActivity().supportFragmentManager.beginTransaction()
+            parentFragmentManager.beginTransaction()
                 .replace(R.id.fragment_container, fragment)
                 .addToBackStack(null)
                 .commit()

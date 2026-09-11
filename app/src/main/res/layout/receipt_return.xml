@@ -152,6 +152,40 @@
                     android:textColor="#222222"
                     android:visibility="gone" />
 
+                <!-- WHO THE MONEY WENT BACK TO.
+                     The same three lines the bill carries, under the same "Customer
+                     Details" setting, so a return and the sale it came off read alike.
+                     Each stays hidden unless the sale actually captured that detail -
+                     the setting chooses what to print, never what to invent - and all
+                     three are absent on an item-wise return, which has no bill behind
+                     it to know a customer from. -->
+                <TextView
+                    android:id="@+id/tvReturnCustName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvReturnCustMobile"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvReturnCustGstin"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="#222222"
+                    android:visibility="gone" />
+
                 <TextView style="@style/BillDashLine" />
 
                 <!-- Column headings, sized by the renderer to suit the paper -->
