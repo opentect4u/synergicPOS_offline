@@ -135,6 +135,18 @@ class StockListFragment : DataTableFragment() {
 
         val rows = runCatching { CsvUtils.parse(text) }.getOrDefault(emptyList())
         val preview = StockBulkImporter.preview(ctx, rows)
+        if (preview.missingIdColumn) {
+            DialogUtils.showSuccess(
+                context = ctx,
+                title = "No id column",
+                message = "This sheet has no \"${StockCsvTemplate.ID_COLUMN}\" column, which is " +
+                    "what a row is matched against - a name alone is not enough, since two " +
+                    "products can share one. Download the template fresh; it already carries " +
+                    "every item's id.",
+                iconRes = android.R.drawable.ic_dialog_alert
+            )
+            return
+        }
         if (preview.received == 0) {
             DialogUtils.showSuccess(
                 context = ctx,

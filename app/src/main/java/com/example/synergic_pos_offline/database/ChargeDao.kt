@@ -136,8 +136,11 @@ class ChargeDao(context: Context) {
      * charge either way: a name, a value, a type, a switch, an audience.
      *
      * [PARCEL] is a shop's single Parcel Charge - see [ChargesFragment] for where its
-     * name is fixed rather than typed, and why it can only ever be a [TAKEAWAY] or
-     * [DINE_IN] audience, never [BOTH]: it never reaches a grocery bill.
+     * name is fixed rather than typed, and why its own audience ticks can only ever
+     * be Takeaway or Dine In, never every mode at once. Grocery ignores those ticks
+     * entirely - see [amountsOn] - so a Parcel Charge left enabled reaches a grocery
+     * bill exactly as an Extra Charge does; only a restaurant order type still asks
+     * which of Dine In/Takeaway/QSR it was meant for.
      */
     enum class Kind {
         EXTRA, PARCEL
@@ -228,27 +231,26 @@ class ChargeDao(context: Context) {
      * [orderType] filters by [Applicability]: pass "DINE_IN", "TAKEAWAY" or "QSR" for a
      * restaurant order, so a charge comes back only on the modes it was ticked for.
      *
-     * ## Grocery passes null, and asks a different question
+     * ## Grocery passes null, and asks no question at all
      *
-     * A grocery sale is not one of the three modes, so it cannot be filtered as though
-     * it were. It gets the charges ticked for EVERY mode - which is exactly what the
-     * old `BOTH` meant, and what `BOTH` still parses to, so a grocery bill carries the
-     * same charges after this change as before it.
+     * Dine In / Takeaway / QSR is a restaurant question - a grocery sale is none of
+     * the three, so ticking any of them on a grocery till decided nothing an operator
+     * could see or reason about. It used to still gate on [Applicability.all] (every
+     * box ticked) and drop PARCEL outright, which meant a charge enabled for exactly
+     * this purpose sat silent on every grocery bill unless the redundant boxes
+     * happened to all be ticked - the one setting that mattered, ENABLED, was not
+     * enough on its own. A grocery sale now asks only that: every enabled charge
+     * applies, kind and ticks aside: see [ChargesFragment] for why the boxes stay in
+     * the settings screen regardless - a restaurant still means them.
      *
-     * Not "applies anywhere", which was the first thing tried here and is wrong: a
-     * charge ticked for Dine In alone would then have appeared on grocery bills, which
-     * is money taken by mistake from the till that never asked for it.
-     *
-     * A PARCEL charge never reaches a grocery bill whatever it is ticked for. It is a
-     * restaurant charge by definition - the screen that defines it barred the old
-     * "Both" for exactly this reason - so the rule belongs here, where it holds however
-     * the master is edited, rather than in what the form allows.
+     * Restaurant is unchanged: [orderType] still filters by [Applicability] exactly
+     * as before, PARCEL included.
      */
     fun amountsOn(itemsTotal: Double, orderType: String? = null): List<Applied> {
         if (itemsTotal <= 0.0) return emptyList()
         val mode = Mode.of(orderType)
         return enabled().filter {
-            if (mode == null) it.kind == Kind.EXTRA && it.applicability.all
+            if (mode == null) true
             else it.applicability.applies(mode)
         }.map {
             val amount = when (it.type) {

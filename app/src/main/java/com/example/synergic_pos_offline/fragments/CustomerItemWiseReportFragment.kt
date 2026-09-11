@@ -13,6 +13,7 @@ import android.widget.ArrayAdapter
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.CustomerItemWiseReportDao
@@ -25,6 +26,7 @@ import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -67,11 +69,32 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
         btnPrint = view.findViewById(R.id.btnPrintReport)
 
         customers = dao.customers()
-        val labels = customers.map { c -> if (c.phone.isNotBlank()) "${c.name} - ${c.phone}" else c.name }
-        actCustomer.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(requireContext(), labels))
-        actCustomer.setOnItemClickListener { _, _, position, _ ->
-            selectedCustomerId = customers.getOrNull(position)?.id
+        val labelOf = { c: CustomerItemWiseReportDao.Customer ->
+            if (c.phone.isNotBlank()) "${c.name} - ${c.phone}" else c.name
         }
+        val labels = customers.map(labelOf)
+        // A plain, FILTERING ArrayAdapter, not Dropdowns.adapter's pick-one one -
+        // this field is typed at, the same reason Item Bill/Opr Bill Report's own
+        // filter is (see PeriodReportFragment.setUpFilter): a till's address book
+        // is no shorter than its product master, and scrolling one to find a name
+        // already known is slower than typing it.
+        actCustomer.setAdapter(ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, labels))
+        actCustomer.threshold = 1
+        actCustomer.setOnItemClickListener { parent, _, position, _ ->
+            // The adapter's own item at this position, not customers[position] -
+            // filtering narrows which rows show, so position only ever indexes
+            // what the (possibly filtered) list is currently showing. See
+            // Dropdowns.kt's own note on exactly this mistake.
+            val label = parent.getItemAtPosition(position) as? String
+            selectedCustomerId = customers.firstOrNull { labelOf(it) == label }?.id
+        }
+        // Clearing the box - by the X below or by hand - drops the choice rather
+        // than leaving a picked customer selected under an empty field.
+        actCustomer.doAfterTextChanged { text ->
+            if (text.isNullOrBlank()) selectedCustomerId = null
+        }
+        view.findViewById<TextInputLayout>(R.id.tilCustomer).endIconMode =
+            TextInputLayout.END_ICON_CLEAR_TEXT
 
         val today = Calendar.getInstance().time
         etFrom.setText(iso(today))

@@ -550,6 +550,16 @@
                         <TextView style="@style/OrderSummaryLabel" android:text="Round off" />
                         <TextView android:id="@+id/tvBillingRoundOff" style="@style/OrderSummaryValue" android:text="₹ 0.00" />
                     </LinearLayout>
+
+                    <!-- A row per charge that actually applies - the shop's Extra
+                         Charges and its Parcel Charge, each under its own name. Built
+                         in code, same as the restaurant panel's llOrderCharges: how
+                         many there are is not known until ChargeDao says so. -->
+                    <LinearLayout
+                        android:id="@+id/llBillingCharges"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
                 </LinearLayout>
 
                 <!-- The Total closes the breakdown it is the sum of. A plain row, not

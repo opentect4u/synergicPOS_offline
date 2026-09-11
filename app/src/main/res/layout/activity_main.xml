@@ -134,6 +134,19 @@
             android:layout_height="0dp"
             android:layout_weight="1" />
 
+        <!-- Off-screen home for a fragment run purely for its logic - the grocery
+             till's instant checkout (Payment Mode off) builds and prints a bill
+             through PosCheckoutFragment itself rather than a second copy of its
+             arithmetic, but the operator tapped Checkout on the cart screen and
+             should see the cart screen the whole time: zero size, so nothing ever
+             renders here, and a real attached container all the same, so the
+             fragment goes through its ordinary lifecycle rather than a special
+             containerless case. See PosBillingFragment.onCheckout. -->
+        <FrameLayout
+            android:id="@+id/instantCheckoutContainer"
+            android:layout_width="0dp"
+            android:layout_height="0dp" />
+
     </LinearLayout>
 
     <!-- Shared sidebar drawer -->

@@ -4,32 +4,40 @@ import android.content.Context
 import com.example.synergic_pos_offline.database.StockDao
 
 /**
- * The Stock In upload sheet: the till's own item names, and a column to write the
- * quantity received against each.
+ * The Stock In upload sheet: the till's own item ids and names, and a column to
+ * write the quantity received against each.
  *
  * Deliberately not the item master template. That sheet describes products - rates,
  * tax, units - and its `stock` column is an *opening* figure, the count a brand new
- * product starts life at. This one describes a delivery: the names are already
- * settled, nothing about them is being edited, and the number written against each
- * is added to what is on the shelf. Handing over the master sheet for a delivery
- * would invite an operator to edit a price while booking in stock.
+ * product starts life at. This one describes a delivery: nothing about the item is
+ * being edited, and the number written against each is added to what is on the
+ * shelf. Handing over the master sheet for a delivery would invite an operator to
+ * edit a price while booking in stock.
  *
- * The names are written out for the operator rather than left blank because they
- * are the half of the sheet that has to match exactly - [StockBulkImporter] finds a
- * product by its name, and a name typed from memory is a row that will not import.
+ * The id is what [StockBulkImporter] actually matches a row against - see its own
+ * note on why. It is REQUIRED: a sheet with no id column at all is refused outright
+ * rather than read against names, which is what invited the mismatch this column
+ * exists to rule out. The name still rides along beside it, filled in and not to be
+ * edited, so a row on the sheet still reads like the product it is without being
+ * what the import actually goes by.
  */
 object StockCsvTemplate {
 
     /** What the downloaded file is called. */
     const val FILE_NAME = "stock_in_template.csv"
 
-    /** The item's name, exactly as the till holds it. Not to be edited. */
+    /** The item's own id, exactly as the till holds it - what a row is matched by.
+     *  See [StockBulkImporter]. */
+    const val ID_COLUMN = "product_id"
+
+    /** The item's name, exactly as the till holds it. Not to be edited; carried for
+     *  readability only - matching goes by [ID_COLUMN], not this. */
     const val NAME_COLUMN = "product_name"
 
     /** The quantity being received, added to whatever the item already holds. */
     const val STOCK_COLUMN = "stock"
 
-    val header = listOf(NAME_COLUMN, STOCK_COLUMN)
+    val header = listOf(ID_COLUMN, NAME_COLUMN, STOCK_COLUMN)
 
     /**
      * The sheet to hand the operator: every item the till knows, one per line, with
@@ -50,7 +58,10 @@ object StockCsvTemplate {
 
         val out = StringBuilder()
         out.append(header.joinToString(",")).append('\n')
-        items.forEach { out.append(field(it.name)).append(",\n") }
+        items.forEach {
+            out.append(field(it.productId.toString())).append(',')
+                .append(field(it.name)).append(",\n")
+        }
         return out.toString()
     }
 

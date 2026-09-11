@@ -29,8 +29,12 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <!-- Customer picker -->
+                <!-- Customer picker - typed at, not scrolled: a till's address book
+                     is exactly the length a product master is, and this field is
+                     now searchable the same way Item Bill/Opr Bill Report's own
+                     filter is. See CustomerItemWiseReportFragment.onViewCreated. -->
                 <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/tilCustomer"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -44,7 +48,7 @@
                         android:id="@+id/actCustomer"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:inputType="none"
+                        android:inputType="text"
                         android:maxLines="1" />
                 </com.google.android.material.textfield.TextInputLayout>
 

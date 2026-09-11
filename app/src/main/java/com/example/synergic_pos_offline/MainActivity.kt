@@ -145,6 +145,14 @@ class MainActivity : AppCompatActivity() {
         supportFragmentManager.registerFragmentLifecycleCallbacks(
             object : FragmentManager.FragmentLifecycleCallbacks() {
                 override fun onFragmentResumed(fm: FragmentManager, f: Fragment) {
+                    // Not every resumed fragment is the page on screen: one runs
+                    // off in instantCheckoutContainer purely for its own logic (see
+                    // that layout's own note, and PosBillingFragment.onCheckout) and
+                    // is never meant to be looked at. Without this check it still
+                    // reached RESUMED like any other fragment and took the header's
+                    // title and theme with it - and left them there, since removing
+                    // it again resumes nothing for this callback to fire on.
+                    if (f is PosCheckoutFragment && f.instant) return
                     if (f is LoginFragment || f is RegistrationFragment) {
                         headerBar.visibility = View.GONE
                         drawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
