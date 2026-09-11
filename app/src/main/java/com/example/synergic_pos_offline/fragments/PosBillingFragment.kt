@@ -2145,8 +2145,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
     private fun onHold() {
         if (cart.isEmpty()) { toast("Cart is empty"); return }
         // Appended, never replaced: any number of sales can sit on hold at once, and
-        // each is picked back up by the bill number it is labelled with.
-        val label = CheckoutSession.holdLabel(tvOrderNo.text?.toString().orEmpty())
+        // each is picked back up by the hold number it is labelled with - see
+        // CheckoutSession.holdLabel for why that is not a bill number.
+        val label = CheckoutSession.holdLabel()
         heldOrders.add(
             CheckoutSession.HeldBill(
                 label, cart.map { it.toSessionLine() }, discountMode, discountValue, couponApplied,

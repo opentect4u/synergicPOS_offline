@@ -108,19 +108,27 @@ object CheckoutSession {
     var restoredBill: HeldBill? = null
 
     /**
-     * The label a bill held right now should carry.
+     * The label a bill held right now should carry - "Hold 1", "Hold 2", and so on.
      *
-     * [billNo] is the number the sale would have taken had it been charged. Held
-     * bills are never saved, so the counter does not move and a second hold reports
-     * the same number as the first - the suffix is what keeps two rows of the picker
-     * from reading identically.
+     * ## Holds are numbered, not bills
+     *
+     * It used to be "Bill <the number this sale would have taken>". Held bills are
+     * never saved, so the counter does not move while they sit there - every hold in
+     * a row reported the SAME bill number, and the picker read "Bill 1", "Bill 1 (2)",
+     * "Bill 1 (3)". Three rows named after one number that none of them will end up
+     * carrying: the first to be picked back up and charged takes it, and the others
+     * get whatever comes next.
+     *
+     * So the label counts the holds themselves. It says nothing about what the sale
+     * will be numbered, because at this point nothing can.
+     *
+     * The lowest free number is taken rather than the next one up, so a counter
+     * working through its holds keeps reusing 1, 2, 3 instead of climbing all day.
      */
-    fun holdLabel(billNo: String): String {
-        val base = if (billNo.isBlank()) "Bill" else "Bill $billNo"
-        if (heldOrders.none { it.label == base }) return base
-        var n = 2
-        while (heldOrders.any { it.label == "$base ($n)" }) n++
-        return "$base ($n)"
+    fun holdLabel(): String {
+        var n = 1
+        while (heldOrders.any { it.label == "Hold $n" }) n++
+        return "Hold $n"
     }
 
     /**
@@ -1504,7 +1512,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         val custData = CheckoutSession.customerId?.let {
             mapOf<String, Any?>("id" to it, "name" to CheckoutSession.customerName, "phone" to CheckoutSession.customerPhone)
         }
-        val label = CheckoutSession.holdLabel(id<TextView>(R.id.tvOrder).text?.toString().orEmpty())
+        val label = CheckoutSession.holdLabel()
         CheckoutSession.heldOrders.add(
             CheckoutSession.HeldBill(
                 label, lines.map { it.copy() },
