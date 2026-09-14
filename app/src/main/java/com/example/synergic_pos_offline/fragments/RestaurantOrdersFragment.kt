@@ -789,9 +789,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // outside that transaction, could never promise.
             val payMethod = bundle.getString(RestaurantCheckoutFragment.ARG_PAY_METHOD).orEmpty()
             val tendered = bundle.getDouble(RestaurantCheckoutFragment.ARG_TENDERED, 0.0)
+            // A part-paid settlement, if the checkout screen took one: the modes it was
+            // split across and what each took. Empty on an ordinary one-mode payment,
+            // which settles exactly as it always has.
+            val splitModes = bundle.getStringArray(RestaurantCheckoutFragment.ARG_SPLIT_MODES)
+                ?.toList().orEmpty()
+            val splitAmounts = bundle.getDoubleArray(RestaurantCheckoutFragment.ARG_SPLIT_AMOUNTS)
+                ?.toList().orEmpty()
             // Persists the bill (with the payment mode), closes & frees the table(s)
             // and refreshes the list. Nothing is printed.
-            settlePaidOrder(order, payMethod, tendered)
+            settlePaidOrder(order, payMethod, tendered, splitModes.zip(splitAmounts))
             // Grid product counts have moved after the sale.
             loadProductsFromDb()
         }
@@ -5663,13 +5670,26 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * service charge is booked as an "other charge" so the net reconciles.
      */
     private fun persistBill(
-        order: OrderCard, payMethod: String, tendered: Double = 0.0
+        order: OrderCard, payMethod: String, tendered: Double = 0.0,
+        splitParts: List<Pair<String, Double>> = emptyList()
     ): com.example.synergic_pos_offline.database.BillDao.Result? {
         val billDao = com.example.synergic_pos_offline.database.BillDao(requireContext())
         val b = computeBill(order)
 
-        val billType = when (payMethod.lowercase(java.util.Locale.US)) {
-            "card" -> "CARD"; "online" -> "ONLINE"; else -> "CASH"
+        // The parts this table was settled in, empty on an ordinary one-mode payment.
+        // Read before the bill type below, which is decided by how many there are.
+        val split = splitParts.filter { it.second > 0.001 }
+
+        // A table settled ₹100 in cash and ₹50 over UPI is a CASH SPLIT, not the plain
+        // CASH its first part would name it - see the note in
+        // PosCheckoutFragment.generateBill. One part is not a split whatever the
+        // checkout screen's switch was set to, and is booked as that part's own mode.
+        val billType = when {
+            split.size > 1 -> "CASH SPLIT"
+            split.size == 1 -> split.first().first
+            else -> when (payMethod.lowercase(java.util.Locale.US)) {
+                "card" -> "CARD"; "online" -> "ONLINE"; else -> "CASH"
+            }
         }
         // What the customer actually owes, Round Off applied the same way it is
         // everywhere else on this bill - the DB record has to agree with the slip
@@ -5677,8 +5697,22 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val payable = payableTotal(b.total)
         // Cash handed over more than the bill → book the change and record what was
         // actually tendered; otherwise the payment settles exactly the total.
-        val change = (tendered - payable).coerceAtLeast(0.0)
-        val amountPaid = if (tendered > payable) tendered else payable
+        //
+        // A SPLIT STATES ITS OWN PARTS, so the first of them is what this payment took
+        // rather than the whole bill - the others follow it into extraPayments below,
+        // a row each in td_payments. The change still hangs off the cash, which is the
+        // first part whenever there is any cash in the split at all.
+        val change = if (split.isNotEmpty()) {
+            // Against everything collected, not the cash alone: a guest who hands over
+            // ₹120 in notes on top of a ₹50 transfer against a ₹150 bill is ₹20 up, and
+            // measuring only the cash against the whole bill would miss it.
+            (split.sumOf { it.second } - payable).coerceAtLeast(0.0)
+        } else (tendered - payable).coerceAtLeast(0.0)
+        val amountPaid = when {
+            split.isNotEmpty() -> split.first().second
+            tendered > payable -> tendered
+            else -> payable
+        }
         val custId = billDao.findCustomerIdByPhone(order.phone.takeIf { it.isNotBlank() })
         val waiterId = roDao.findByTable(order.id, order.section)?.waiterId
 
@@ -5712,9 +5746,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                         )
                     },
                     payment = com.example.synergic_pos_offline.database.BillDao.Payment(
-                        mode = billType, amountPaid = amountPaid, changeAmount = change,
+                        // The split's own first mode where there is one - a table
+                        // settled part cash, part UPI is not a "CASH" payment for the
+                        // full amount, and writing it as one is what would leave the
+                        // UPI off the books entirely.
+                        mode = split.firstOrNull()?.first ?: billType,
+                        amountPaid = amountPaid, changeAmount = change,
                         custPhone = order.phone.takeIf { it.isNotBlank() }, custId = custId
                     ),
+                    // The rest of the split - a row each in td_payments, carrying the
+                    // same customer as the payment above, since it is one bill to one
+                    // table however many ways the money came in.
+                    extraPayments = split.drop(1).map { (mode, amount) ->
+                        com.example.synergic_pos_offline.database.BillDao.Payment(
+                            mode = mode, amountPaid = amount,
+                            custPhone = order.phone.takeIf { it.isNotBlank() }, custId = custId
+                        )
+                    },
                     totalPrice = b.subtotal,
                     // The bill's headline discount - the customer-facing figure (see
                     // BillBreakdown.discountDisplay), so tot_discount_amount reads the
@@ -5837,8 +5885,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * order. A KOT belongs to the moment the order is TAKEN, which is what Print KOT
      * is for.
      */
-    private fun settlePaidOrder(order: OrderCard, payMethod: String, tendered: Double = 0.0) {
-        val saved = persistBill(order, payMethod, tendered)  // save to td_bills / td_bill_items / td_payments
+    private fun settlePaidOrder(
+        order: OrderCard, payMethod: String, tendered: Double = 0.0,
+        splitParts: List<Pair<String, Double>> = emptyList()
+    ) {
+        // save to td_bills / td_bill_items / td_payments - a payment row per split part
+        val saved = persistBill(order, payMethod, tendered, splitParts)
         val mergedTables = roDao.mergedTablesOf(order.dbId)
         roDao.close(order.dbId)                          // payment done → remove from temp table
         updateTableStatus(order.id, order.section, "Available")  // table freed for the next guest
