@@ -1,0 +1,339 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+    PART PAYMENT - one bill settled across more than one mode.
+
+    A ₹150 bill where ₹100 comes out of a wallet and ₹50 arrives by UPI is one sale,
+    not two, and the counter should not have to ring it twice or round the split away.
+    The switch turns the ordinary single-mode panel into a set of amounts, one per
+    mode, and the strip underneath does the arithmetic the operator would otherwise do
+    in their head while a customer waits.
+
+    LAID OUT AS AMOUNTS, NOT AS A SECOND MODE PICKER.
+    The mode tiles above already answer "how are they paying". Asking that a second
+    time inside the split - a picker, then an amount, then another picker - makes the
+    operator navigate to enter two numbers they already know. So each mode gets a row,
+    permanently, and a row left blank simply took none of the money. Entering the split
+    IS choosing the modes.
+
+    TWO ROWS, CASH AND UPI, because that is what a part payment actually is at these
+    counters: the customer empties what notes they have and sends the rest from their
+    phone. A card is not split against - it is handed over for the whole bill or not at
+    all, and the Card tile above already settles that sale. A third row for it would be
+    a permanently empty box on every split, and one more thing to read past.
+
+    THE CASH ROW IS THE CASH TAKEN, not the cash handed over. Change is worked out
+    against it and shown in [rowSplitChange], which stays hidden on the ordinary split
+    where the customer hands over the exact part.
+
+    Shared by the grocery checkout (fragment_pos_checkout) and the dine-in checkout
+    (fragment_restaurant_checkout) so the two tills present the split identically -
+    the same reason view_checkout_upi_qr is an include rather than a copy in each.
+    Included ONCE per screen; the ids are unique within a screen, not across the app.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/llSplitPayment"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:layout_marginTop="14dp">
+
+    <!-- The switch, and what turning it on means, on one row. Off by default: most
+         sales are settled one way, and a till that opens every bill with three empty
+         amount boxes has made the common sale the awkward one. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:baselineAligned="false"
+        android:paddingVertical="6dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Split payment"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_main" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:text="Part cash, part UPI"
+                android:textSize="11.5sp"
+                android:textColor="@color/text_secondary" />
+        </LinearLayout>
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/swSplitPayment"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:minHeight="0dp" />
+    </LinearLayout>
+
+    <!-- Everything the split needs, and nothing while it is off. -->
+    <LinearLayout
+        android:id="@+id/llSplitBody"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="4dp"
+            android:background="#E4E7EB" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="AMOUNT BY MODE"
+            android:textSize="11sp"
+            android:letterSpacing="0.08"
+            android:textColor="@color/text_secondary" />
+
+        <!-- CASH.
+             First because it is the part most splits start from - the customer empties
+             what they have in notes and the rest goes on the phone.
+
+             Either row can be the one that is typed in; the other follows it. There is
+             no button to press and nothing to unlock - see SplitPayment. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:baselineAligned="false"
+            android:layout_marginTop="8dp">
+
+            <TextView
+                android:layout_width="76dp"
+                android:layout_height="wrap_content"
+                android:text="CASH"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.04"
+                android:textColor="@color/text_main" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilSplitCash"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                app:prefixText="₹ "
+                app:boxCornerRadiusTopStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusBottomEnd="12dp">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSplitCash"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="numberDecimal"
+                    android:hint="0.00"
+                    android:maxLines="1"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_main"
+                    android:textColorHint="@color/text_secondary" />
+            </com.google.android.material.textfield.TextInputLayout>
+        </LinearLayout>
+
+        <!-- UPI / ONLINE.
+             Named for both because the counter says "online" and the customer says
+             "UPI", and the scan-to-pay code this row calls up is the same one the
+             Online tile shows. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:baselineAligned="false"
+            android:layout_marginTop="6dp">
+
+            <TextView
+                android:layout_width="76dp"
+                android:layout_height="wrap_content"
+                android:text="UPI"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.04"
+                android:textColor="@color/text_main" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilSplitOnline"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                app:prefixText="₹ "
+                app:boxCornerRadiusTopStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusBottomEnd="12dp">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSplitOnline"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="numberDecimal"
+                    android:hint="0.00"
+                    android:maxLines="1"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_main"
+                    android:textColorHint="@color/text_secondary" />
+            </com.google.android.material.textfield.TextInputLayout>
+        </LinearLayout>
+
+        <!-- WHAT IS STILL OWED, the whole reason the split is safe to type into.
+             The operator is entering parts of a figure they cannot see the sum of, so
+             the running total is stated rather than left to be checked against the
+             total bar on the other side of the screen. REMAINING is the line that
+             decides whether the sale can be completed, so it carries the weight. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="12dp"
+            android:padding="14dp"
+            android:background="@drawable/pos_hint_bg">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:baselineAligned="false">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Bill total"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary" />
+
+                <TextView
+                    android:id="@+id/tvSplitBillTotal"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="₹0.00"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_main" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:baselineAligned="false"
+                android:layout_marginTop="4dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Entered"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary" />
+
+                <TextView
+                    android:id="@+id/tvSplitEntered"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="₹0.00"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_main" />
+            </LinearLayout>
+
+            <!-- Only on a split where the cash part was over-tendered: the customer
+                 handed a 500 for their 100 of cash. Hidden otherwise, rather than
+                 sitting at "₹0.00" on every split, for the same reason the bill's own
+                 round-off row is. -->
+            <LinearLayout
+                android:id="@+id/rowSplitChange"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:baselineAligned="false"
+                android:layout_marginTop="4dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Change due"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary" />
+
+                <TextView
+                    android:id="@+id/tvSplitChange"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="₹0.00"
+                    android:fontFamily="monospace"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_main" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginVertical="10dp"
+                android:background="#D8DDE1" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:baselineAligned="false">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="REMAINING"
+                    android:textSize="12sp"
+                    android:letterSpacing="0.06"
+                    android:textColor="@color/text_secondary" />
+
+                <TextView
+                    android:id="@+id/tvSplitRemaining"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="₹0.00"
+                    android:textStyle="bold"
+                    android:textSize="22sp"
+                    android:textColor="@color/text_main" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Says what the remaining figure MEANS when it is not zero, in words, under
+             the strip that states it. A number alone leaves the operator to work out
+             whether they are short or have over-collected; this says which, and the
+             Complete button is the thing that acts on it. Hidden while the split
+             balances - which is the state it should spend most of its life in. -->
+        <TextView
+            android:id="@+id/tvSplitNote"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Enter the amount taken in each mode."
+            android:textSize="12sp"
+            android:textColor="@color/text_secondary" />
+    </LinearLayout>
+</LinearLayout>

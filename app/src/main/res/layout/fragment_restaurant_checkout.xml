@@ -326,7 +326,11 @@
                             app:cornerRadius="10dp" />
                     </LinearLayout>
 
+                    <!-- Both this and the Change Due row below carry an id so the split
+                         panel can take them down: its own CASH row IS the cash being
+                         taken, and two boxes for one figure is one too many. -->
                     <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilTendered"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -345,6 +349,7 @@
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <LinearLayout
+                        android:id="@+id/rowChangeDue"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
@@ -368,6 +373,14 @@
                             android:textStyle="bold"
                             android:textColor="@color/primary_blue" />
                     </LinearLayout>
+
+                    <!-- PART PAYMENT, the same block the grocery till shows and in the
+                         same place relative to the money: directly under the tendered
+                         amount and the change worked out from it, since it is those
+                         two the split takes over from. Above the scan-to-pay code,
+                         because the UPI part of a split is entered here and scanned
+                         below - the order the counter works in. -->
+                    <include layout="@layout/view_split_payment" />
 
                     <include layout="@layout/view_checkout_upi_qr" />
                 </LinearLayout>

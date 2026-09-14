@@ -146,10 +146,16 @@ class BillWiseReportDao(context: Context) {
         val sql = """
             SELECT b.bill_number,
                    substr(b.bill_date, 1, 10),
+                   -- EVERY mode the bill was settled in, not the first one written.
+                   -- A bill split ₹100 cash / ₹50 UPI has two payment rows, and taking
+                   -- one of them reported the sale as pure CASH - the UPI half appeared
+                   -- on no line of this report at all. "CASH + ONLINE" is one column
+                   -- wide enough to be honest about it.
                    COALESCE(
-                       (SELECT p.payment_mode FROM ${DatabaseHelper.Tables.TD_PAYMENTS} p
-                         WHERE p.bill_id = b.receipt_no AND p.payment_mode IS NOT NULL
-                         ORDER BY p.id ASC LIMIT 1),
+                       (SELECT GROUP_CONCAT(mode, ' + ') FROM (
+                           SELECT p.payment_mode AS mode FROM ${DatabaseHelper.Tables.TD_PAYMENTS} p
+                            WHERE p.bill_id = b.receipt_no AND p.payment_mode IS NOT NULL
+                            ORDER BY p.id ASC)),
                        b.bill_type, ''),
                    -- WHAT THE GOODS SOLD FOR, summed from the bill's own lines.
                    --

@@ -218,6 +218,15 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
     private var fillingTendered = false
     private var payMethod = "Cash"
 
+    /**
+     * Part payment - the table's bill settled across cash and UPI at once, on the same
+     * panel and the same rules the grocery till uses. See [SplitPayment].
+     */
+    private var split: com.example.synergic_pos_offline.utils.SplitPayment? = null
+
+    /** Whether this settlement is being split at all. */
+    private fun splitActive(): Boolean = split?.isActive() == true
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
     ): View = inflater.inflate(R.layout.fragment_restaurant_checkout, container, false)
@@ -262,6 +271,13 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             tvChange.text = if (tendered != null && tendered >= total) "₹ ${money(tendered - total)}" else "—"
         }
 
+        // Part payment. Bound after populateItems, which is what sets [total] - the
+        // figure the split has to add up to.
+        split = com.example.synergic_pos_offline.utils.SplitPayment(
+            view, totalOf = { total }, onChanged = { if (isAdded) applySplitState(view) }
+        ).also { it.bind() }
+        applySplitState(view)
+
         view.findViewById<MaterialButton>(R.id.btnReceiptPreview).setOnClickListener {
             showReceiptPreview()
         }
@@ -281,10 +297,26 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                     putString(ARG_PAY_METHOD, payMethod)
                     // Cash tendered (0 when not entered) so the Orders screen can book
                     // the change and print the amount returned on the receipt.
+                    //
+                    // On a SPLIT this is the cash part alone, which is the only part
+                    // change can come out of - the rest is exact by construction. The
+                    // arrays below carry the whole picture; this stays the single
+                    // figure the existing settle path has always read.
                     putDouble(
                         ARG_TENDERED,
-                        com.example.synergic_pos_offline.utils.Amounts.parse(etTendered.text?.toString()) ?: 0.0
+                        if (splitActive()) {
+                            split?.parts()
+                                ?.firstOrNull { it.first == com.example.synergic_pos_offline.utils.SplitPayment.Part.CASH }
+                                ?.second ?: 0.0
+                        } else {
+                            com.example.synergic_pos_offline.utils.Amounts.parse(etTendered.text?.toString()) ?: 0.0
+                        }
                     )
+                    // The split itself, mode by mode. Empty on an ordinary settlement,
+                    // which is what leaves the Orders screen on its existing path.
+                    val parts = if (splitActive()) split?.parts().orEmpty() else emptyList()
+                    putStringArray(ARG_SPLIT_MODES, parts.map { it.first.mode }.toTypedArray())
+                    putDoubleArray(ARG_SPLIT_AMOUNTS, parts.map { it.second }.toDoubleArray())
                 }
             )
             parentFragmentManager.popBackStack()
@@ -495,11 +527,46 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         showUpiQr(root)
     }
 
-    /** Shows the scan-to-pay code while Online is the chosen mode. */
+    /**
+     * Shows the scan-to-pay code while Online is the chosen mode - or, on a split, for
+     * the UPI part of it.
+     *
+     * THE PART, NOT THE BILL. A guest settling ₹150 with ₹100 in notes scans for the
+     * ₹50 they still owe; a code quoting the whole bill would take the cash twice.
+     */
     private fun showUpiQr(root: View) {
-        com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(
-            root, total, online = payMethod.equals("Online", ignoreCase = true)
-        )
+        val upiPart = split?.takeIf { splitActive() }?.parts()
+            ?.firstOrNull { it.first == com.example.synergic_pos_offline.utils.SplitPayment.Part.ONLINE }
+            ?.second
+        if (upiPart != null) {
+            com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(root, upiPart, online = true)
+        } else {
+            com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(
+                root, total, online = payMethod.equals("Online", ignoreCase = true)
+            )
+        }
+    }
+
+    /**
+     * Hands the money entry to whichever of the two is in play, and holds Confirm shut
+     * until a split covers the bill.
+     *
+     * The tendered box and its change line come down while the split is on for the same
+     * reason the grocery panel's do: the split's own CASH row is the cash being taken,
+     * and leaving a second box for the same figure on screen gives the operator no way
+     * to tell which one the bill will be written from.
+     */
+    private fun applySplitState(root: View) {
+        val on = splitActive()
+        root.findViewById<View>(R.id.tilTendered)?.visibility = if (on) View.GONE else View.VISIBLE
+        root.findViewById<View>(R.id.rowChangeDue)?.visibility = if (on) View.GONE else View.VISIBLE
+
+        val ok = !on || split?.balances() == true
+        root.findViewById<MaterialButton>(R.id.btnConfirmPay)?.apply {
+            isEnabled = ok
+            alpha = if (ok) 1f else 0.45f
+        }
+        showUpiQr(root)
     }
 
     /** Reads the CURRENT theme colour fresh (never captured), so it can't go stale. */
@@ -537,6 +604,19 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         const val ARG_SECTION = "section"
         const val ARG_PAY_METHOD = "pay_method"
         const val ARG_TENDERED = "tendered"
+
+        /**
+         * A part-paid settlement, as two parallel arrays: the modes it was taken in
+         * (CASH / ONLINE / CARD) and what each one took.
+         *
+         * Empty on an ordinary single-mode settlement, which is what the Orders screen
+         * falls back to reading [ARG_PAY_METHOD] and [ARG_TENDERED] for. This screen
+         * does not write the bill itself - the Orders screen does, once the table is
+         * closed - so the split has to travel with the result rather than being applied
+         * here. See RestaurantOrdersFragment.settlePaidOrder.
+         */
+        const val ARG_SPLIT_MODES = "split_modes"
+        const val ARG_SPLIT_AMOUNTS = "split_amounts"
         private const val ARG_CUSTOMER = "customer"
         private const val ARG_NAMES = "names"
         private const val ARG_QTYS = "qtys"

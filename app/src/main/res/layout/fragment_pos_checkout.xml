@@ -411,7 +411,15 @@
                         android:insetTop="0dp" android:insetBottom="0dp" android:minHeight="0dp"
                         android:text="CREDIT" app:icon="@android:drawable/ic_menu_view" app:cornerRadius="12dp" />
                 </LinearLayout>
+                <!-- Card and Online, the second half of the 2x2 of modes.
+                     Addressed as a ROW rather than a tile each so that a till which
+                     does not take them comes down cleanly under Cash/Credit with no
+                     empty half-row left behind - which is what PaymentModeSetting
+                     .cashOnly does when App Settings' "Payment Mode" is switched off.
+                     Visible by default: a till that takes cards should show them
+                     without anyone having to edit a layout. -->
                 <LinearLayout
+                    android:id="@+id/llPayCardOnlineRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -490,6 +498,13 @@
                             <TextView android:id="@+id/tvCashExactAmount" android:layout_width="wrap_content" android:layout_height="wrap_content"
                                 android:layout_marginTop="6dp" android:text="₹0.00" android:textStyle="bold" android:textSize="22sp" android:textColor="@color/text_main" />
                         </LinearLayout>
+
+                        <!-- PART PAYMENT, under Cash because that is where the counter
+                             meets it: the customer offers what notes they have and asks
+                             to put the rest on the phone. Inside sectionCash, so it
+                             comes and goes with the Cash tile rather than hanging over
+                             a card or credit sale that cannot be split. -->
+                        <include layout="@layout/view_split_payment" />
                     </LinearLayout>
 
                     <!-- CARD/CREDIT/ONLINE terminal -->

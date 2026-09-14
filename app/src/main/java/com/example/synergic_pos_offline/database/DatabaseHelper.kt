@@ -947,6 +947,7 @@ class DatabaseHelper private constructor(context: Context) :
             // feature and is an extra charge.
             addColumnIfMissing(db, Tables.MD_CHARGES, "charge_kind", "TEXT DEFAULT 'EXTRA'")
         }
+        if (oldVersion < 21) migrateV21AllowSplitBillType(db)
         // gst_rate is dropped in onOpen via a portable table rebuild (see
         // dropProductGstRateIfPresent), which works on every SQLite version.
     }
@@ -1393,6 +1394,94 @@ class DatabaseHelper private constructor(context: Context) :
         createIndexes(db)   // the old table's indexes went with it
     }
 
+    /**
+     * v21: adds 'CASH SPLIT' to the `bill_type` CHECK on td_bills and its delete mirror.
+     *
+     * The name keeps CASH in it deliberately. A part payment at these counters always
+     * has cash in it - it is the notes in the customer's hand plus the rest from their
+     * phone - so the bill IS a cash sale, of a particular kind, and a bare "SPLIT" threw
+     * away the one word anybody scanning the column is looking for. "CASH SPLIT" says
+     * both: money came into the drawer, and it was not all of it.
+     *
+     * A bill settled ₹100 in cash and ₹50 over UPI was being stored as `bill_type =
+     * 'CASH'` - whichever part the operator had entered first - so the bills table
+     * called a part-paid sale a cash sale. The division itself has always been in
+     * td_payments, a row per mode; what was wrong is that nothing on the bill said to
+     * look there, and every reader that takes bill_type at face value was told a cash
+     * sale had happened.
+     *
+     * Both tables are done together. td_bills_delete is a mirror of td_bills and
+     * carries the same constraint, so leaving it behind would mean a split bill could
+     * be written but never deleted - the copy into the mirror would fail the CHECK.
+     *
+     * EXISTING SPLITS ARE REPAIRED, and that is a restatement rather than a guess. A
+     * bill carrying more than one payment row was settled more than one way - there is
+     * no other way for a second row to exist - so calling it CASH was already wrong on
+     * the books, and the rows themselves say so. Only bills that are NOT voided and
+     * NOT on account are touched: a VOID or CREDIT bill means something about the sale
+     * rather than about how the money came in, and neither is a split.
+     *
+     * A bill with one payment row is left exactly as it is.
+     */
+    private fun migrateV21AllowSplitBillType(db: SQLiteDatabase) {
+        // Relies on foreign keys being off for the upgrade (see [onConfigure]):
+        // td_bill_items and td_payments reference td_bills.
+        rebuildPreservingColumns(db, Tables.TD_BILLS, "td_bills_v21", SQL_CREATE_TD_BILLS_V21)
+        rebuildPreservingColumns(
+            db, Tables.TD_BILLS_DELETE, "td_bills_delete_v21", SQL_CREATE_TD_BILLS_DELETE_V21
+        )
+        createIndexes(db)   // the old tables' indexes went with them
+
+        // Run AFTER the rebuild, because until then the CHECK would refuse the word.
+        db.execSQL(
+            """
+            UPDATE ${Tables.TD_BILLS} SET bill_type = 'CASH SPLIT'
+            WHERE bill_type NOT IN ('VOID', 'CREDIT')
+              AND (SELECT COUNT(*) FROM ${Tables.TD_PAYMENTS} p
+                    WHERE p.bill_id = ${Tables.TD_BILLS}.receipt_no
+                      AND p.payment_mode IS NOT NULL) > 1
+            """.trimIndent()
+        )
+    }
+
+    /**
+     * Rebuilds [table] under [newDdl] and copies the rows across, carrying over every
+     * column the two shapes have in common.
+     *
+     * The columns are INTERSECTED at run time rather than listed in the migration,
+     * because td_bills does not have one fixed shape to list: [onOpen] tops it up with
+     * `addColumnIfMissing` for a dozen columns added over the app's life, and onOpen
+     * runs AFTER onUpgrade. So the table this migration finds on any given device has
+     * whatever subset that device's history left it with, in whatever order, and both
+     * `SELECT *` and a hard-coded column list would fail on some of them - the first on
+     * order, the second on a column that is not there yet.
+     *
+     * Anything the old table is missing is simply left at its default in the new one,
+     * and onOpen adds back anything the new shape does not yet declare.
+     */
+    private fun rebuildPreservingColumns(
+        db: SQLiteDatabase, table: String, tempName: String, newDdl: String
+    ) {
+        db.execSQL(newDdl)
+        val old = columnsOf(db, table)
+        // Ordered by the NEW table's own declaration, so the INSERT and the SELECT
+        // cannot drift apart.
+        val shared = columnsOf(db, tempName).filter { it in old }
+        if (shared.isNotEmpty()) {
+            val cols = shared.joinToString(", ")
+            db.execSQL("INSERT INTO $tempName ($cols) SELECT $cols FROM $table")
+        }
+        db.execSQL("DROP TABLE $table")
+        db.execSQL("ALTER TABLE $tempName RENAME TO $table")
+    }
+
+    /** The column names on [table], in declaration order. */
+    private fun columnsOf(db: SQLiteDatabase, table: String): List<String> =
+        db.rawQuery("PRAGMA table_info($table)", null).use { c ->
+            val nameIdx = c.getColumnIndex("name")
+            generateSequence { if (c.moveToNext()) c.getString(nameIdx) else null }.toList()
+        }
+
     private fun createIndexes(db: SQLiteDatabase) {
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_md_products_category ON md_products(category_id)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_md_products_store ON md_products(store_id)")
@@ -1507,7 +1596,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 20
+        private const val DATABASE_VERSION = 21
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of
@@ -2214,7 +2303,12 @@ class DatabaseHelper private constructor(context: Context) :
                 table_section TEXT,
                 order_type TEXT,
                 service_charge_amount REAL DEFAULT 0,
-                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','VOID')),
+                -- SPLIT: settled across more than one mode, ₹100 in notes and ₹50 over
+                -- UPI against one ₹150 bill. Naming it after whichever part happened to
+                -- be entered first said the bill was a cash sale, which it was not -
+                -- the modes and their amounts are the rows in td_payments, and this
+                -- column says to go and read them.
+                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','CASH SPLIT','VOID')),
                 settings_snapshot TEXT,
                 tot_price REAL DEFAULT 0,
                 tot_discount_amount REAL DEFAULT 0,
@@ -2295,6 +2389,114 @@ class DatabaseHelper private constructor(context: Context) :
          * and refusing the archive because a master row has since gone would leave
          * the till unable to delete the bill at all.
          */
+        /**
+         * The v21 shapes of td_bills and its delete mirror - the live schemas above
+         * with 'CASH SPLIT' in the `bill_type` CHECK, under a temporary name.
+         *
+         * Frozen copies, deliberately not built from [SQL_CREATE_TD_BILLS]: a migration
+         * has to keep describing the shape the table had at *this* version even after
+         * the live schema moves on, or replaying it on an old device would create a
+         * table from a future the rest of that upgrade does not know about.
+         *
+         * No `IF NOT EXISTS` and no indexes: the rebuild wants to fail loudly if a
+         * previous run left the temporary table behind, and
+         * [rebuildPreservingColumns]'s caller recreates the indexes afterwards.
+         */
+        private const val SQL_CREATE_TD_BILLS_V21 = """
+            CREATE TABLE td_bills_v21 (
+                receipt_no INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                bill_number TEXT,
+                bill_seq_no INTEGER,
+                bill_date TEXT,
+                bill_date_time TEXT,
+                customer_id INTEGER,
+                operator_id INTEGER,
+                waiter_id INTEGER,
+                table_number TEXT,
+                table_section TEXT,
+                order_type TEXT,
+                service_charge_amount REAL DEFAULT 0,
+                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','CASH SPLIT','VOID')),
+                settings_snapshot TEXT,
+                tot_price REAL DEFAULT 0,
+                tot_discount_amount REAL DEFAULT 0,
+                tot_discount_percentage REAL DEFAULT 0,
+                discount_flag INTEGER NOT NULL DEFAULT 0,
+                discount_type TEXT,
+                tot_cgst_amount REAL DEFAULT 0,
+                tot_sgst_amount REAL DEFAULT 0,
+                tot_igst_amount REAL DEFAULT 0,
+                tot_vat_amount REAL DEFAULT 0,
+                tot_other_charges_amount REAL DEFAULT 0,
+                parcel_charge_amount REAL DEFAULT 0,
+                tot_round_off_amount REAL DEFAULT 0,
+                net_amount REAL DEFAULT 0,
+                amount_in_words TEXT,
+                gst_flag INTEGER NOT NULL DEFAULT 0,
+                vat_flag INTEGER NOT NULL DEFAULT 0,
+                is_mrp_billing INTEGER NOT NULL DEFAULT 0,
+                is_return_bill INTEGER NOT NULL DEFAULT 0,
+                is_duplicate INTEGER NOT NULL DEFAULT 0,
+                is_voided INTEGER NOT NULL DEFAULT 0,
+                bill_status TEXT CHECK(bill_status IN ('DRAFT','COMPLETED','CANCELLED')) DEFAULT 'DRAFT',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(customer_id) REFERENCES md_customers(id),
+                FOREIGN KEY(operator_id) REFERENCES md_users(id),
+                FOREIGN KEY(waiter_id) REFERENCES md_waiters(id)
+            )
+        """
+
+        private const val SQL_CREATE_TD_BILLS_DELETE_V21 = """
+            CREATE TABLE td_bills_delete_v21 (
+                receipt_no INTEGER PRIMARY KEY,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                bill_number TEXT,
+                bill_seq_no INTEGER,
+                bill_date TEXT,
+                bill_date_time TEXT,
+                customer_id INTEGER,
+                operator_id INTEGER,
+                waiter_id INTEGER,
+                table_number TEXT,
+                table_section TEXT,
+                order_type TEXT,
+                service_charge_amount REAL DEFAULT 0,
+                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','CASH SPLIT','VOID')),
+                settings_snapshot TEXT,
+                tot_price REAL DEFAULT 0,
+                tot_discount_amount REAL DEFAULT 0,
+                tot_discount_percentage REAL DEFAULT 0,
+                discount_flag INTEGER NOT NULL DEFAULT 0,
+                discount_type TEXT,
+                tot_cgst_amount REAL DEFAULT 0,
+                tot_sgst_amount REAL DEFAULT 0,
+                tot_igst_amount REAL DEFAULT 0,
+                tot_vat_amount REAL DEFAULT 0,
+                tot_other_charges_amount REAL DEFAULT 0,
+                parcel_charge_amount REAL DEFAULT 0,
+                tot_round_off_amount REAL DEFAULT 0,
+                net_amount REAL DEFAULT 0,
+                amount_in_words TEXT,
+                gst_flag INTEGER NOT NULL DEFAULT 0,
+                vat_flag INTEGER NOT NULL DEFAULT 0,
+                is_mrp_billing INTEGER NOT NULL DEFAULT 0,
+                is_return_bill INTEGER NOT NULL DEFAULT 0,
+                is_duplicate INTEGER NOT NULL DEFAULT 0,
+                is_voided INTEGER NOT NULL DEFAULT 0,
+                bill_status TEXT CHECK(bill_status IN ('DRAFT','COMPLETED','CANCELLED')) DEFAULT 'DRAFT',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
         private const val SQL_CREATE_TD_BILLS_DELETE = """
             CREATE TABLE IF NOT EXISTS td_bills_delete (
                 receipt_no INTEGER PRIMARY KEY,
@@ -2311,7 +2513,12 @@ class DatabaseHelper private constructor(context: Context) :
                 table_section TEXT,
                 order_type TEXT,
                 service_charge_amount REAL DEFAULT 0,
-                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','VOID')),
+                -- SPLIT: settled across more than one mode, ₹100 in notes and ₹50 over
+                -- UPI against one ₹150 bill. Naming it after whichever part happened to
+                -- be entered first said the bill was a cash sale, which it was not -
+                -- the modes and their amounts are the rows in td_payments, and this
+                -- column says to go and read them.
+                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','CASH SPLIT','VOID')),
                 settings_snapshot TEXT,
                 tot_price REAL DEFAULT 0,
                 tot_discount_amount REAL DEFAULT 0,

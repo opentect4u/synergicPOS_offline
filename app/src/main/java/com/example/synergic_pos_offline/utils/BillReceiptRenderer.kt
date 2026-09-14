@@ -635,6 +635,19 @@ class BillReceiptRenderer(context: Context) {
         val netAmount: Double,
         val paymentModes: List<String>,
         /**
+         * What each of [paymentModes] took, positionally.
+         *
+         * Only a SPLIT has anything to say here - ₹150 settled as ₹100 cash and ₹50
+         * over UPI prints the two figures beside their modes, because "CASH" and "UPI"
+         * on their own tell the customer nothing about which half was which. A
+         * single-mode bill leaves this empty and prints the mode alone: the amount is
+         * the bill total, already on the slip twice over.
+         *
+         * Shorter than [paymentModes], or empty, simply means no figure is known for
+         * the modes it does not reach.
+         */
+        val paymentAmounts: List<Double> = emptyList(),
+        /**
          * The table this bill was served on, ready to print - "5 (AC)", or a
          * take-away token. Null on a grocery bill, which has no table, and the line
          * is left off entirely.
@@ -1569,7 +1582,12 @@ class BillReceiptRenderer(context: Context) {
                 view.findViewById<TextView>(R.id.tvAmountWords).visibility = View.GONE
             }
 
-            val modes = draft?.paymentModes ?: paymentModes(db, receiptNo, billType)
+            // Mode and amount together. A draft carries its own pair of lists (the
+            // amounts only where it was a split); a saved bill is read back off its
+            // payment rows, which is where the split lives once it is booked.
+            val modes = draft?.let { d ->
+                d.paymentModes.mapIndexed { i, m -> m to (d.paymentAmounts.getOrNull(i) ?: 0.0) }
+            } ?: paymentModes(db, receiptNo, billType)
             // Paired onto the payment row where there is one; the standalone line only
             // survives on a bill that records no payment at all.
             if (renderPayment(view, modes, narrow, cashierLine)) {
@@ -2728,20 +2746,27 @@ class BillReceiptRenderer(context: Context) {
      * a credit sale is billed now and collected later - the bill's own type stands
      * in, so the receipt never goes out with the payment silently blank.
      */
-    private fun paymentModes(db: SQLiteDatabase, receiptNo: Long, billType: String?): List<String> {
-        val modes = mutableListOf<String>()
+    private fun paymentModes(
+        db: SQLiteDatabase, receiptNo: Long, billType: String?
+    ): List<Pair<String, Double>> {
+        val modes = mutableListOf<Pair<String, Double>>()
         db.rawQuery(
             """
-            SELECT payment_mode FROM ${DatabaseHelper.Tables.TD_PAYMENTS}
+            SELECT payment_mode, COALESCE(amount_paid, 0) - COALESCE(change_amount, 0)
+            FROM ${DatabaseHelper.Tables.TD_PAYMENTS}
             WHERE bill_id = ? ORDER BY id ASC
             """.trimIndent(),
             arrayOf(receiptNo.toString())
         ).use { c ->
             while (c.moveToNext()) {
-                c.getString(0)?.takeIf { it.isNotBlank() }?.let { modes.add(it.uppercase()) }
+                // NET OF THE CHANGE, so the cash line of a split says what stayed in the
+                // drawer. A customer who hands a 500 note against their 100 of cash has
+                // paid 100; printing the 500 beside CASH would have the modes on the
+                // slip adding up to more than the bill it is on.
+                c.getString(0)?.takeIf { it.isNotBlank() }?.let { modes.add(it.uppercase() to c.getDouble(1)) }
             }
         }
-        if (modes.isEmpty()) billType?.takeIf { it.isNotBlank() }?.let { modes.add(it.uppercase()) }
+        if (modes.isEmpty()) billType?.takeIf { it.isNotBlank() }?.let { modes.add(it.uppercase() to 0.0) }
         return modes
     }
 
@@ -2763,7 +2788,7 @@ class BillReceiptRenderer(context: Context) {
      *         the standalone line that would otherwise print it twice.
      */
     private fun renderPayment(
-        view: View, modes: List<String>, narrow: Boolean = false, createdBy: String = ""
+        view: View, modes: List<Pair<String, Double>>, narrow: Boolean = false, createdBy: String = ""
     ): Boolean {
         val ll = view.findViewById<LinearLayout>(R.id.llBillPayment)
         ll.removeAllViews()
@@ -2789,7 +2814,16 @@ class BillReceiptRenderer(context: Context) {
         // there would put "paid, in cash" on a bill that nobody has paid yet.
         if (modes.isEmpty()) return false
 
-        modes.forEachIndexed { index, mode ->
+        // WHICH HALF WAS WHICH, on a bill that was settled more than one way.
+        //
+        // A split prints the figure beside each mode - "PAY MODE : CASH 100.00" then
+        // "PAY MODE : UPI 50.00" - because the modes alone leave the customer holding a
+        // ₹150 slip that names two tenders and apportions neither. On a single-mode
+        // bill the amount is the bill total, which is already on the slip under NET and
+        // again in words, so the mode prints on its own as it always has.
+        val split = modes.size > 1
+
+        modes.forEachIndexed { index, (mode, amount) ->
             val row = baseRow(narrow)
             // The cashier sits beside the FIRST mode only. A split payment is several
             // rows, and the sale was rung up once - repeating the name against each
@@ -2802,7 +2836,8 @@ class BillReceiptRenderer(context: Context) {
             // The mode itself is one of a handful of known words - CASH, CARD,
             // CREDIT - so it is translated too where it is one of them, and left as
             // it was recorded where it is not.
-            row.addView(cell("${t("PAY MODE")} : ${t(mode)}", 1f, Gravity.END))
+            val label = if (split && amount > 0.001) "${t(mode)} ${money(amount)}" else t(mode)
+            row.addView(cell("${t("PAY MODE")} : $label", 1f, Gravity.END))
             ll.addView(row)
         }
         // The change handed back (RETURN) now prints with the totals - see the summary.

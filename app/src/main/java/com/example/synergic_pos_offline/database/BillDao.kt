@@ -76,6 +76,19 @@ class BillDao(context: Context) {
         val customerId: Long?,
         val items: List<Item>,
         val payment: Payment,
+        /**
+         * The OTHER parts of a split settlement - ₹150 taken as ₹100 cash and ₹50 over
+         * UPI books the cash in [payment] and the UPI here.
+         *
+         * A row each in td_payments, which is what that table has always been shaped
+         * for: it is keyed on `bill_id` with no uniqueness on it, and
+         * BillReceiptRenderer already reads every row back and prints a PAY MODE line
+         * per payment. Nothing else had ever written a second one.
+         *
+         * Empty on an ordinary single-mode sale, which is most of them, so every
+         * existing caller is unaffected.
+         */
+        val extraPayments: List<Payment> = emptyList(),
         val totalPrice: Double,
         val discountAmount: Double,
         val discountPercentage: Double,
@@ -266,24 +279,41 @@ class BillDao(context: Context) {
                 db.insert(DatabaseHelper.Tables.TD_BILL_ITEMS, null, itemValues)
             }
 
-            // 3) Payment.
-            val paymentValues = ContentValues().apply {
-                put("store_id", storeId)
-                put("receipt_no", receiptNo)
-                put("bill_id", receiptNo)
-                put("payment_mode", bill.payment.mode)
-                put("amount_paid", bill.payment.amountPaid)
-                put("change_amount", bill.payment.changeAmount)
-                put("payment_status", paymentStatusFor(bill))
-                put("balance_amount", balanceDueFor(bill))
-                put("payment_date", nowDateTime)
-                bill.payment.custName?.let { put("cust_name", it) }
-                bill.payment.custGstin?.let { put("cust_gstin", it) }
-                bill.payment.custPhone?.let { put("cust_phone", it) }
-                bill.payment.custId?.let { put("cust_id", it) }
-                put("created_by", user)
+            // 3) Payment - a ROW PER PART, so a bill settled ₹100 cash and ₹50 UPI is
+            //    recorded as the two payments it actually was rather than as one lump
+            //    under whichever mode happened to be showing. An ordinary sale has a
+            //    single part and writes the single row it always did.
+            //
+            //    `payment_status` and `balance_amount` are facts about the BILL, not
+            //    about one part of how it was settled, so every row carries the same
+            //    pair - worked out from the parts summed (see totalPaidFor). A reader
+            //    that takes the first row it finds gets the right answer, and so does
+            //    one that walks them all.
+            val billStatus = paymentStatusFor(bill)
+            val billBalance = balanceDueFor(bill)
+            var paymentId = -1L
+            listOf(bill.payment).plus(bill.extraPayments).forEachIndexed { index, part ->
+                val paymentValues = ContentValues().apply {
+                    put("store_id", storeId)
+                    put("receipt_no", receiptNo)
+                    put("bill_id", receiptNo)
+                    put("payment_mode", part.mode)
+                    put("amount_paid", part.amountPaid)
+                    put("change_amount", part.changeAmount)
+                    put("payment_status", billStatus)
+                    put("balance_amount", billBalance)
+                    put("payment_date", nowDateTime)
+                    part.custName?.let { put("cust_name", it) }
+                    part.custGstin?.let { put("cust_gstin", it) }
+                    part.custPhone?.let { put("cust_phone", it) }
+                    part.custId?.let { put("cust_id", it) }
+                    put("created_by", user)
+                }
+                val id = db.insert(DatabaseHelper.Tables.TD_PAYMENTS, null, paymentValues)
+                // The ledger hangs off ONE payment - the sale's, not one part of it -
+                // so it is the first row that is quoted there, whatever else follows.
+                if (index == 0) paymentId = id
             }
-            val paymentId = db.insert(DatabaseHelper.Tables.TD_PAYMENTS, null, paymentValues)
 
             // 4) The sale goes on the customer's ledger - what was supplied, and
             //    whatever was handed over against it at the counter.
@@ -308,7 +338,10 @@ class BillDao(context: Context) {
                     // NOT capped at the bill. What the customer hands over on account
                     // is theirs to decide, and capping it here is what threw the
                     // excess away.
-                    paidNow = bill.payment.amountPaid.coerceAtLeast(0.0),
+                    // Every part of it, on a sale settled across modes: the ledger
+                    // records what the customer HANDED OVER, and half of it arriving by
+                    // UPI does not make it less paid.
+                    paidNow = totalPaidFor(bill).coerceAtLeast(0.0),
                     nowDateTime = nowDateTime, user = user
                 )
             }
@@ -345,8 +378,17 @@ class BillDao(context: Context) {
      * for a 31.50 bill settles it in full - and the comparison carries a small
      * tolerance because the total holds rounded paise.
      */
+    /**
+     * Everything taken against the bill, across every part of a split.
+     *
+     * The single-payment sale is the one-element case, so this reads exactly as
+     * `bill.payment.amountPaid` did before wherever nothing was split.
+     */
+    private fun totalPaidFor(bill: NewBill): Double =
+        bill.payment.amountPaid + bill.extraPayments.sumOf { it.amountPaid }
+
     private fun balanceDueFor(bill: NewBill): Double =
-        (bill.netAmount - bill.payment.amountPaid).coerceAtLeast(0.0)
+        (bill.netAmount - totalPaidFor(bill)).coerceAtLeast(0.0)
 
     /**
      * A payment is only COMPLETED once the bill is covered. A credit sale is billed
@@ -355,7 +397,7 @@ class BillDao(context: Context) {
      */
     private fun paymentStatusFor(bill: NewBill): String = when {
         balanceDueFor(bill) <= 0.001 -> "COMPLETED"
-        bill.payment.amountPaid > 0.001 -> "PARTIAL"
+        totalPaidFor(bill) > 0.001 -> "PARTIAL"
         else -> "PENDING"
     }
 
