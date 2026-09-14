@@ -181,6 +181,22 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     private var method = Method.CASH
 
     /**
+     * Part payment - the bill settled across cash and UPI (or card) at once.
+     *
+     * Lives under the Cash tile and only counts while Cash is the chosen mode: a credit
+     * sale is already part-paid by its own nature, and a card or online sale is settled
+     * to the penny by the machine. See [splitActive].
+     */
+    private val split by lazy {
+        com.example.synergic_pos_offline.utils.SplitPayment(
+            root, totalOf = { total() }, onChanged = { refreshTotals() }
+        )
+    }
+
+    /** Whether THIS sale is being split - the switch is on and Cash is the mode. */
+    private fun splitActive(): Boolean = method == Method.CASH && split.isActive()
+
+    /**
      * Run for its logic alone, in [MainActivity]'s off-screen
      * `instantCheckoutContainer` rather than the cart screen's own container - see
      * that layout's own note. Set by [PosBillingFragment.onCheckout] before the
@@ -312,6 +328,9 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
 
         // Credit inputs
         id<TextInputEditText>(R.id.etCredit).addTextChangedListener(watcher { refreshTotals() })
+
+        // Part payment. Bound before the first refreshTotals below, which reads it.
+        split.bind()
 
         // Complete
         id<MaterialButton>(R.id.btnComplete).setOnClickListener { complete() }
@@ -705,11 +724,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
     private fun setMethod(m: Method) {
         method = m
         id<View>(R.id.sectionCash).visibility = if (m == Method.CASH) View.VISIBLE else View.GONE
-        if (m == Method.CASH) {
-            val exact = !cashReceptionEnabled()
-            id<View>(R.id.cashReceptionFields).visibility = if (exact) View.GONE else View.VISIBLE
-            id<View>(R.id.sectionCashExact).visibility = if (exact) View.VISIBLE else View.GONE
-        }
+        if (m == Method.CASH) applyCashFieldVisibility()
         id<View>(R.id.sectionCredit).visibility = if (m == Method.CREDIT) View.VISIBLE else View.GONE
         id<View>(R.id.sectionTerminal).visibility =
             if (m == Method.CARD) View.VISIBLE else View.GONE
@@ -732,6 +747,27 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         }
     }
 
+
+    /**
+     * Which of the Cash panel's three money boxes is the one in play.
+     *
+     * ONE BOX FOR THE CASH, never two. The split's own CASH row is the cash being
+     * taken, so leaving "Cash tendered" up beside it puts two boxes for the same
+     * figure on one panel and no way to tell which the bill will be written from. The
+     * split takes over the moment it is switched on, and change - the customer who
+     * hands a 500 against their 100 of cash - is worked out inside its own strip.
+     *
+     * Off, it is the pair it has always been: tendered + change with Cash Reception on,
+     * the exact-amount card without it.
+     */
+    private fun applyCashFieldVisibility() {
+        val onSplit = split.isActive()
+        val exact = !cashReceptionEnabled()
+        id<View>(R.id.cashReceptionFields).visibility =
+            if (!onSplit && !exact) View.VISIBLE else View.GONE
+        id<View>(R.id.sectionCashExact).visibility =
+            if (!onSplit && exact) View.VISIBLE else View.GONE
+    }
 
     private fun applyTileStyles() {
         listOf(
@@ -1157,6 +1193,13 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         // them - needs no typing. See fillCashWithTotal.
         fillCashWithTotal()
 
+        // Part payment: the split has to add up to the bill, so a bill that moved has
+        // to be handed to it. Its auto-filled row follows the new total from here.
+        if (method == Method.CASH) {
+            applyCashFieldVisibility()
+            split.refresh()
+        }
+
         // Cash change - exact amount (no tendered/change entry) when Cash Reception is off
         val tendered = if (cashReceptionEnabled()) {
             id<TextInputEditText>(R.id.etCash).text?.toString()?.toDoubleOrNull() ?: 0.0
@@ -1170,9 +1213,11 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         val creditPaid = id<TextInputEditText>(R.id.etCredit).text?.toString()?.toDoubleOrNull() ?: 0.0
         id<TextView>(R.id.tvBalanceDue).text = money((total() - creditPaid).coerceAtLeast(0.0))
 
-        // Complete enabled?
+        // Complete enabled? A split has to cover the bill before it can be completed -
+        // the parts adding up is the whole question the panel asks - and until it does,
+        // its own strip says by how much it is short.
         val can = total() > 0 && when (method) {
-            Method.CASH -> tendered >= total() - 0.001
+            Method.CASH -> if (splitActive()) split.balances() else tendered >= total() - 0.001
             else -> true
         }
         val btn = id<MaterialButton>(R.id.btnComplete)
@@ -1180,12 +1225,41 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         btn.alpha = if (can) 1f else 0.45f
         btn.text = "Complete Checkout · ${money(total())}"
 
+        // What the bill is being settled as, named part by part on a split: "Paying by
+        // Cash + UPI" is what the operator is about to do, where the bare "Paying by
+        // Cash" the mode tile implies is only half of it.
+        id<TextView>(R.id.tvPayingBy).text = if (splitActive() && split.parts().isNotEmpty()) {
+            "Paying by " + split.parts().joinToString(" + ") { it.first.label }
+        } else {
+            "Paying by ${titleFor(method)}"
+        }
+
         // Drawn here rather than in setMethod: the code carries the amount, so it has
         // to follow the total and not just the mode that was picked.
+        //
+        // ON A SPLIT IT CARRIES THE UPI PART ALONE. The customer scanning it is paying
+        // the ₹50 of a ₹150 bill that is not coming out of their pocket in notes, and a
+        // code quoting the whole ₹150 would collect the cash part twice.
+        val upiPart = split.parts().firstOrNull {
+            it.first == com.example.synergic_pos_offline.utils.SplitPayment.Part.ONLINE
+        }?.second
+
+        // The scan-to-pay section holds that code, and on a cash sale it is closed - so
+        // a split with a UPI part has to open it, or the customer is asked to pay by
+        // phone with nothing on screen to scan. setMethod has already had its say by
+        // the time this runs (it ends by calling here), so this is the final word.
+        id<View>(R.id.sectionOnline).visibility =
+            if (method == Method.ONLINE || (splitActive() && upiPart != null)) View.VISIBLE
+            else View.GONE
+
         view?.let {
-            com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(
-                it, total(), online = method == Method.ONLINE
-            )
+            if (splitActive() && upiPart != null) {
+                com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(it, upiPart, online = true)
+            } else {
+                com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(
+                    it, total(), online = method == Method.ONLINE
+                )
+            }
         }
 
         if (!editMode) renderReceipt()
@@ -1286,11 +1360,25 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             discountPercent = discountPctForLabel(),
             roundOff = roundOffAmt(),
             netAmount = total(),
-            paymentModes = listOf(method.name),
-            returnAmount = if (method == Method.CASH && cashReceptionEnabled()) {
-                val tendered = id<TextInputEditText>(R.id.etCash).text?.toString()?.toDoubleOrNull() ?: total()
-                (tendered - total()).coerceAtLeast(0.0)
-            } else 0.0
+            // A line per part on a split, so the slip the customer takes away says
+            // CASH and UPI - which is what they paid - rather than naming one of the
+            // two and leaving the other off the only record they hold.
+            paymentModes = if (splitActive() && split.parts().isNotEmpty()) {
+                split.parts().map { it.first.mode }
+            } else listOf(method.name),
+            // What each mode took, so the preview and the slip printed from it say
+            // ₹100 against CASH and ₹50 against UPI rather than naming the two and
+            // leaving the customer to guess the division. Empty on a single-mode sale,
+            // where the amount is the bill and the slip already states it.
+            paymentAmounts = if (splitActive()) split.parts().map { it.second } else emptyList(),
+            returnAmount = when {
+                splitActive() -> split.change()
+                method == Method.CASH && cashReceptionEnabled() -> {
+                    val tendered = id<TextInputEditText>(R.id.etCash).text?.toString()?.toDoubleOrNull() ?: total()
+                    (tendered - total()).coerceAtLeast(0.0)
+                }
+                else -> 0.0
+            }
         )
     }
 
@@ -1418,13 +1506,41 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
             )
         }
 
-        val billType = when (method) {
-            Method.CASH -> "CASH"
-            Method.CREDIT -> "CREDIT"
-            Method.CARD -> "CARD"
-            Method.ONLINE -> "ONLINE"
+        // HOW MANY PAYMENTS THIS SALE ACTUALLY WAS.
+        //
+        // A split names its own parts and drops the rows that took nothing, so a ₹100
+        // cash + ₹50 UPI settlement is exactly two, and a split switched on but only
+        // ever filled one way is one. Every other sale is the single part the mode tile
+        // chose. The first part is written as the bill's own payment and the rest as
+        // BillDao.NewBill.extraPayments - a row each in td_payments either way.
+        val splitParts = if (splitActive()) split.parts() else emptyList()
+
+        // WHAT KIND OF SALE THIS WAS, for the bill's own record.
+        //
+        // A sale settled more than one way is a CASH SPLIT, not whichever part came
+        // first. Booking a ₹100-cash-₹50-UPI bill as plain CASH put an untruth in the
+        // bills table - the row said an ordinary cash sale had happened - and left the
+        // UPI visible only to a reader that knew to go looking in td_payments. The name
+        // keeps CASH because the drawer really did take money; SPLIT is what says it was
+        // not all of it, and that the division is in the payment rows.
+        //
+        // A split that ended up with only ONE part in it is not a split, and is booked
+        // as that part's own mode: everything typed into cash is a CASH sale, and
+        // everything pushed to UPI is an ONLINE one. Reading `method` here instead
+        // would have called that second case CASH - the Cash tile is what the split
+        // hangs off - and put the bill at odds with its own single payment row.
+        val billType = when {
+            splitParts.size > 1 -> "CASH SPLIT"
+            splitParts.size == 1 -> splitParts.first().first.mode
+            else -> when (method) {
+                Method.CASH -> "CASH"
+                Method.CREDIT -> "CREDIT"
+                Method.CARD -> "CARD"
+                Method.ONLINE -> "ONLINE"
+            }
         }
-        val paymentMode = when (method) {
+
+        val paymentMode = splitParts.firstOrNull()?.first?.mode ?: when (method) {
             Method.CASH -> "CASH"
             Method.CREDIT -> "CREDIT"
             Method.CARD -> "CARD"
@@ -1432,8 +1548,17 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         }
 
         val grandTotal = total()
-        val (amountPaid, change) = when (method) {
-            Method.CASH -> {
+        val (amountPaid, change) = when {
+            splitParts.isNotEmpty() -> {
+                // The change hangs off the part that can produce it. Only cash comes
+                // back across a counter - a UPI or card part is taken to the penny by
+                // the machine - and the panel lists cash first, so a split with any
+                // cash in it has that cash as its first part.
+                val first = splitParts.first()
+                val isCash = first.first == com.example.synergic_pos_offline.utils.SplitPayment.Part.CASH
+                first.second to if (isCash) split.change() else 0.0
+            }
+            method == Method.CASH -> {
                 val tendered = if (cashReceptionEnabled()) {
                     id<TextInputEditText>(R.id.etCash).text?.toString()?.toDoubleOrNull() ?: grandTotal
                 } else {
@@ -1441,7 +1566,7 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                 }
                 tendered to (tendered - grandTotal).coerceAtLeast(0.0)
             }
-            Method.CREDIT -> {
+            method == Method.CREDIT -> {
                 val paid = id<TextInputEditText>(R.id.etCredit).text?.toString()?.toDoubleOrNull() ?: 0.0
                 paid to 0.0
             }
@@ -1487,6 +1612,20 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                 custGstin = creditCustomerGstin.ifEmpty { null },
                 custId = custId
             ),
+            // The rest of a split, if this was one. They carry the same customer as the
+            // payment above: it is one sale to one person, however many ways the money
+            // came in, and a row that could not say who paid it would be the odd one
+            // out in its own bill.
+            extraPayments = splitParts.drop(1).map { (part, amount) ->
+                BillDao.Payment(
+                    mode = part.mode,
+                    amountPaid = amount,
+                    custName = custName.ifEmpty { null },
+                    custPhone = custPhone.ifEmpty { null },
+                    custGstin = creditCustomerGstin.ifEmpty { null },
+                    custId = custId
+                )
+            },
             totalPrice = subtotal(),
             discountAmount = discountAmtForReport(),
             discountPercentage = discountPctForDisplay(),
