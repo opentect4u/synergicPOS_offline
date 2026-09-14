@@ -522,9 +522,18 @@ class BillListFragment : Fragment(), TitledScreen {
             holder.btnPrint.visibility = if (showPrint) View.VISIBLE else View.GONE
             holder.btnPrint.strokeColor = tint
             holder.btnPrint.iconTint = tint
-            // A cancelled bill has nothing to reproduce, so it is not offered.
-            holder.btnPrint.isEnabled = !bill.cancelled
-            holder.btnPrint.alpha = if (bill.cancelled) 0.4f else 1f
+            // Offered on a cancelled bill too.
+            //
+            // It used to be greyed out on the reasoning that a cancelled bill has
+            // nothing to reproduce. It has: the slip is exactly what somebody asks for
+            // when a customer comes back about a sale that was voided, and the
+            // renderer already reads a cancelled bill out of the archive and captions
+            // it CANCELLED - see BillReceiptRenderer.billsTableFor and renderCaptions
+            // - so the paper says plainly that the sale no longer stands. The bill
+            // SCREEN has always let it be printed; only this list refused, which is
+            // the same one-button-two-meanings split the delete icon had.
+            holder.btnPrint.isEnabled = true
+            holder.btnPrint.alpha = 1f
             holder.btnPrint.setOnClickListener { onPrint(bill) }
 
             // CANCEL is offered only while this list is the real Bill History, and only
