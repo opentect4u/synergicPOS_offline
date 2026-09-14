@@ -4,6 +4,7 @@ import com.example.synergic_pos_offline.database.StockDao
 import com.example.synergic_pos_offline.database.WaiterDao
 import com.example.synergic_pos_offline.database.WaiterWiseReportDao
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
+import com.example.synergic_pos_offline.utils.PrintType
 
 /**
  * Waiter Wise Report - one waiter's bills over a period, or every waiter's at once.
@@ -179,7 +180,7 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
                 add("PARCEL CHG  :" to money(report.totalParcelCharge))
                 add("ROUND OFF   :" to money(report.totalRoundOff))
             },
-            total = "TOTAL  :" to money(report.totalAmount),
+            total = "TOTAL  :" to PrintType.grandTotal(money(report.totalAmount)),
             emptyNote = "No bills in this period."
         ) else PeriodReportRenderer.Content(
             title = "Waiter Wise Report",

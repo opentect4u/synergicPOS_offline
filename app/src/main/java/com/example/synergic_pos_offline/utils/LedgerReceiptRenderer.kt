@@ -189,7 +189,7 @@ class LedgerReceiptRenderer(context: Context) {
             }
 
             rows.addView(divider())
-            rows.addView(amountRow(t("TOTAL DUE"), money(ledger.closing), bold = true, valueSize = PrintType.TOTAL_SP))
+            rows.addView(amountRow(t("TOTAL DUE"), PrintType.grandTotal(money(ledger.closing)), bold = true, valueSize = PrintType.TOTAL_SP))
 
             // A negative closing balance is the customer sitting in credit, which is
             // not what "rupees owed" in words would say, so the line is left off.

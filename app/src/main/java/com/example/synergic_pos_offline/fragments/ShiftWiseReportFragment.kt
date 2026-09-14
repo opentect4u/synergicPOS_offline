@@ -3,6 +3,7 @@ package com.example.synergic_pos_offline.fragments
 import com.example.synergic_pos_offline.database.ShiftDao
 import com.example.synergic_pos_offline.database.ShiftWiseReportDao
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
+import com.example.synergic_pos_offline.utils.PrintType
 
 /**
  * Shift Wise Report - one shift's bills over a period, a line each.
@@ -160,7 +161,7 @@ class ShiftWiseReportFragment : PeriodReportFragment<ShiftWiseReportDao.Report>(
             evenColumns = true,
             alignFirstColumnEnd = true,
             summary = summaryOf(report).map { (label, value) -> label.uppercase() to value },
-            total = totalOf(report).let { (label, value) -> label.uppercase() to value },
+            total = totalOf(report).let { (label, value) -> label.uppercase() to PrintType.grandTotal(value) },
             emptyNote = "No bills for this shift."
         )
 }

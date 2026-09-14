@@ -122,6 +122,32 @@ object PrintType {
      */
     const val REPORT_BOTTOM_MARGIN_DP = 30f
 
+    // ---- Money ---------------------------------------------------------------
+
+    /** The rupee sign, U+20B9. */
+    const val RUPEE = "₹"
+
+    /**
+     * [amount] marked with the rupee sign - for the ONE figure a slip is read for.
+     *
+     * Every other figure on a slip sits in a column under a heading that already
+     * says what it is, and a symbol repeated down that column is noise that costs a
+     * character of paper per line. The payable figure is the exception: it is what
+     * the customer checks, often the only line they read, and on a roll that carries
+     * no other currency mark it is worth naming.
+     *
+     * ## The glyph is not in the bill's own font
+     *
+     * roboto_mono_regular.ttf has no U+20B9 - the cmap simply has no entry for it -
+     * so the sign comes off the platform's fallback face instead. It prints (checked
+     * on a device: `Paint.hasGlyph("₹")` is true through the bundled font), but the
+     * fallback glyph is PROPORTIONAL: about 25 units against the monospace cell's
+     * 29. That is only safe where the figure sits in its own right-aligned view, as
+     * every grand total below does, and would pull a character grid out of step if
+     * this were ever used inside one - a padded `String.format` table, say.
+     */
+    fun grandTotal(amount: String): String = RUPEE + amount
+
     // ---- For slips drawn on a canvas ----------------------------------------
 
     /**

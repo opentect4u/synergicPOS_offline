@@ -1266,7 +1266,7 @@ class BillReceiptRenderer(context: Context) {
                     // bold and set apart between two rules - not the plain row the tax
                     // breakdown above it uses. This is what makes a section read as a
                     // complete bill of its own rather than a summary block.
-                    llItems.addView(grandTotalRow(money(secTotals.grandTotal), grandSp, narrow))
+                    llItems.addView(grandTotalRow(PrintType.grandTotal(money(secTotals.grandTotal)), grandSp, narrow))
                 }
                 sectionSummary(partRaws.filter { TaxPart.WITHOUT_VAT.covers(it.vat, it.vatRate) })
                 // The VAT half, under its own bill number - "10A" to this bill's "10".
@@ -1546,7 +1546,7 @@ class BillReceiptRenderer(context: Context) {
                 view.findViewById<TextView>(R.id.tvGrandTotalLabel)?.textSize = grandSp
                 view.findViewById<TextView>(R.id.tvGrandTotal)?.apply {
                     textSize = grandSp
-                    text = money(payable)
+                    text = PrintType.grandTotal(money(payable))
                 }
             } else {
                 renderStandardSummary(
@@ -1691,7 +1691,7 @@ class BillReceiptRenderer(context: Context) {
             )
         }
         if (showsRoundOff(showRoundOff, roundOff)) row("ROUND OFF", money(roundOff))
-        row("NET AMT", money(payable), bold = true, valueSize = netSize)
+        row("NET AMT", PrintType.grandTotal(money(payable)), bold = true, valueSize = netSize)
         // The account block under the totals (credit breakdown, or change + outstanding).
         // Its labels arrive already translated, so they go through summaryRow directly
         // rather than through row(), which translates what it is given.

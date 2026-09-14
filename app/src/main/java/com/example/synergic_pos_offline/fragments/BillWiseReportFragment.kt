@@ -23,6 +23,7 @@ import com.example.synergic_pos_offline.utils.ReportDownloads
 import com.example.synergic_pos_offline.utils.ReportExport
 import com.example.synergic_pos_offline.utils.ReportTable
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.PrintType
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import java.text.SimpleDateFormat
@@ -302,7 +303,7 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
                 // not a figure left dangling under it.
                 add("Round Off Amount" to money(r.totalRoundOff))
             }.map { (label, value) -> label.uppercase().padEnd(LABEL_WIDTH) + " :" to value },
-            total = "Total Amount".uppercase().padEnd(LABEL_WIDTH) + " :" to money(r.totalAmount),
+            total = "Total Amount".uppercase().padEnd(LABEL_WIDTH) + " :" to PrintType.grandTotal(money(r.totalAmount)),
             emptyNote = "No bills in this period."
         )
 

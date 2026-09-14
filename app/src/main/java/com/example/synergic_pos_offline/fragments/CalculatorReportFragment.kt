@@ -23,6 +23,7 @@ import com.example.synergic_pos_offline.utils.ReportDownloads
 import com.example.synergic_pos_offline.utils.ReportExport
 import com.example.synergic_pos_offline.utils.ReportTable
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.PrintType
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import java.text.SimpleDateFormat
@@ -183,7 +184,7 @@ class CalculatorReportFragment : Fragment(), TitledScreen {
             columns = listOf("BILL NO", "AMOUNT"),
             rows = r.rows.map { listOf(it.billNumber, money(it.amount)) },
             summary = emptyList(),
-            total = "TOTAL AMOUNT :" to money(r.totalAmount),
+            total = "TOTAL AMOUNT :" to PrintType.grandTotal(money(r.totalAmount)),
             emptyNote = "No bills in this period."
         )
 

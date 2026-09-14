@@ -105,7 +105,7 @@ class UdfWiseItemReportRenderer(context: Context) {
         root.addView(
             fourCol(
                 t("TOTAL QTY :"), qtyFmt(report.totalQty),
-                t("TOTAL AMT :"), money(report.totalAmount)
+                t("TOTAL AMT :"), PrintType.grandTotal(money(report.totalAmount))
             )
         )
         root.addView(rule())

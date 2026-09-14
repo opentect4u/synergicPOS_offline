@@ -218,7 +218,14 @@ class ReturnReceiptRenderer(context: Context) {
                 summary.addView(
                     summaryRow(
                         label = t(line.label),
-                        value = if (line.isMoney) money(line.value) else count(line.value),
+                        // The emphasised money row is the REFUND - what the customer
+                        // is handed back, and the one figure this slip is read for -
+                        // so it carries the rupee sign the way a bill's total does.
+                        value = when {
+                            !line.isMoney -> count(line.value)
+                            line.emphasis -> PrintType.grandTotal(money(line.value))
+                            else -> money(line.value)
+                        },
                         sizeSp = itemSp,
                         spacing = spacing,
                         bold = line.emphasis,

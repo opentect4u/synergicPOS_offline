@@ -2,6 +2,7 @@ package com.example.synergic_pos_offline.fragments
 
 import com.example.synergic_pos_offline.database.PaymentWiseReportDao
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
+import com.example.synergic_pos_offline.utils.PrintType
 import java.util.Locale
 
 /**
@@ -95,7 +96,7 @@ class PaymentWiseReportFragment : PeriodReportFragment<PaymentWiseReportDao.Repo
                 "TOTAL PAID   :" to money(report.collectedAmount),
                 "TOTAL CREDIT :" to money(report.creditAmount)
             ),
-            total = "TOTAL AMOUNT :" to money(report.totalPaid),
+            total = "TOTAL AMOUNT :" to PrintType.grandTotal(money(report.totalPaid)),
             emptyNote = "No payments in this period."
         )
 

@@ -847,17 +847,23 @@ class BillDao(context: Context) {
     }
 
     /**
-     * Throws a bill away: the sale is undone, the stock goes back on the shelf and the
-     * bill is deleted outright.
+     * Cancels a bill: the sale is undone, the stock goes back on the shelf and the
+     * bill is moved to the cancelled-bill archive.
      *
-     * ## Deleted, not flagged
+     * ## Moved, not erased
      *
-     * `bill_status` has a CANCELLED value and Bill History has a filter for it, but a
-     * cancelled bill is REMOVED here rather than marked. That is what was asked for,
-     * and it is the reading that matches what the rest of this till already does with
-     * bills it is told to get rid of - see BillErase, which deletes them outright too.
-     * A bill flagged and kept would still be a row every report has to remember to
-     * exclude; a bill deleted is simply not there.
+     * The bill leaves `td_bills` - which is what takes it out of every sales report
+     * at a stroke, rather than leaving a row two dozen reports each have to remember
+     * to exclude - and lands in `td_bills_delete`, where Bill History's **Cancelled**
+     * filter and the Void Bill Report both read it back. See [BillDeleteDao], whose
+     * archive this is and which the Delete on the single-bill screen already used.
+     *
+     * It used to delete the row outright. Everything downstream was already built for
+     * the archive - [Bill.deleted], History's union across both tables, the Void Bill
+     * Report, even reprinting from the archive - so a bill cancelled from the LIST
+     * simply vanished, while the same bill cancelled from the bill SCREEN was filed
+     * where the operator could find it. One button, two meanings; this is the one
+     * meaning.
      *
      * ## The stock goes back exactly where it came from
      *
@@ -880,8 +886,11 @@ class BillDao(context: Context) {
      * number and its own stock, and deleting the bill under it would leave a credit
      * note pointing at nothing. Reverse the return first.
      *
-     * The customer's ledger entry goes with the bill, so a credit sale stops being owed
-     * - a debt for a bill that no longer exists is not a debt anybody can settle.
+     * A credit sale is NOT refused. Its ledger entry goes with the bill and the
+     * customer's balance moves back by what the sale put on it - see [reverseLedger] -
+     * so nothing is left owed for a bill that no longer exists. Refusing instead
+     * would read defensibly on paper and make every credit sale permanently
+     * uncancellable, which is not a state a counter can work in.
      */
     fun cancelBill(receiptNo: Long): CancelResult {
         val db = helper.writableDatabase
@@ -948,24 +957,80 @@ class BillDao(context: Context) {
                 )
             }
 
-            // The bill and everything that is part of it, children before parents.
-            val id = arrayOf(receiptNo.toString())
-            db.delete(DatabaseHelper.Tables.TD_BILL_PRINTS, "bill_id = ?", id)
-            db.delete(DatabaseHelper.Tables.TD_PAYMENTS, "bill_id = ?", id)
-            db.execSQL(
-                "DELETE FROM ${DatabaseHelper.Tables.TD_KOT_ITEMS} WHERE kot_id IN " +
-                    "(SELECT id FROM ${DatabaseHelper.Tables.TD_KOT} WHERE bill_id = ?)",
-                id
-            )
-            db.delete(DatabaseHelper.Tables.TD_KOT, "bill_id = ?", id)
-            db.delete(DatabaseHelper.Tables.TD_CUSTOMER_LEDGER, "bill_id = ?", id)
-            db.delete(DatabaseHelper.Tables.TD_BILL_ITEMS, "bill_id = ?", id)
-            db.delete(DatabaseHelper.Tables.TD_BILLS, "receipt_no = ?", id)
+            // The customer's account, put back to where the sale found it. Done
+            // before the move, because the archive refuses a bill still carrying
+            // ledger lines - see [reverseLedger] for why the figure comes off the
+            // lines themselves rather than off the bill.
+            reverseLedger(db, receiptNo)
+
+            // And the bill itself is MOVED, not erased - the same archive the Delete
+            // on the bill screen uses, which is what puts it in History's Cancelled
+            // list and on the Void Bill Report.
+            val moved = BillDeleteDao(appContext).delete(receiptNo)
+            if (!moved.deleted) {
+                return CancelResult(refusal = moved.reason ?: "The bill could not be cancelled.")
+            }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
         return CancelResult(itemsRestored = restored)
+    }
+
+    /**
+     * Takes this bill back off the customer's running account.
+     *
+     * A credit sale moved two things: it wrote its DEBIT and CREDIT lines onto
+     * `td_customer_ledger`, and it moved `md_customers.balance_amount` by the net of
+     * them. Deleting the lines alone would leave the customer still owing for a bill
+     * that no longer exists - a debt with nothing behind it, which is neither
+     * collectable nor explainable.
+     *
+     * The figure is summed FROM THE LINES rather than recomputed from the bill. The
+     * lines are what actually moved the balance, so they are what has to be undone;
+     * a bill re-read and re-totalled here could differ from what was booked at the
+     * time and would silently leave the account out by the difference.
+     *
+     * The credit limit goes back the same way. It came down by what the sale put ON
+     * the account - the shortfall, floored at zero - so it goes back up by the same
+     * amount and no more. An over-paid bill put nothing on, and gives nothing back.
+     */
+    private fun reverseLedger(db: SQLiteDatabase, receiptNo: Long) {
+        var customerId: Long? = null
+        var net = 0.0
+        db.rawQuery(
+            """
+            SELECT customer_id,
+                   COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT'  THEN amount ELSE 0 END), 0)
+                 - COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' THEN amount ELSE 0 END), 0)
+            FROM ${DatabaseHelper.Tables.TD_CUSTOMER_LEDGER}
+            WHERE bill_id = ?
+            GROUP BY customer_id
+            """.trimIndent(),
+            arrayOf(receiptNo.toString())
+        ).use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) {
+                customerId = c.getLong(0)
+                net = c.getDouble(1)
+            }
+        }
+
+        db.delete(DatabaseHelper.Tables.TD_CUSTOMER_LEDGER, "bill_id = ?", arrayOf(receiptNo.toString()))
+
+        val id = customerId ?: return
+        db.execSQL(
+            """
+            UPDATE ${DatabaseHelper.Tables.MD_CUSTOMERS}
+               SET balance_amount = COALESCE(balance_amount, 0) - ?,
+                   credit_limit   = COALESCE(credit_limit, 0) + ?
+             WHERE id = ?
+            """.trimIndent(),
+            arrayOf<Any>(
+                BillRounding.toPaise(net),
+                BillRounding.toPaise(net.coerceAtLeast(0.0)),
+                id
+            )
+        )
     }
 
     companion object {

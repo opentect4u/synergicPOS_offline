@@ -9,6 +9,7 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.BillDao
 import com.example.synergic_pos_offline.database.BillDeleteDao
 import com.example.synergic_pos_offline.database.BillSettingsDao
 import com.example.synergic_pos_offline.utils.BillPrinter
@@ -116,28 +117,43 @@ class BillFragment : Fragment(), TitledScreen {
             title = "Delete bill $billNo?",
             message = "It will be taken out of every sales report and total. You will " +
                 "still find it under Cancelled bills in Bill History and on the Void " +
-                "Bill Report.",
+                "Bill Report.\n\nThe stock it sold goes back on the shelf, and a credit " +
+                "sale comes off the customer's ledger and their balance.",
             positiveText = "Delete",
             destructive = true,
             onConfirm = { deleteBill(receiptNo) }
         )
     }
 
+    /**
+     * Through [BillDao.cancelBill], which is the same operation the delete icon in
+     * the Bill History LIST performs.
+     *
+     * Deliberately not [BillDeleteDao.delete] directly, though that is where the bill
+     * still ends up. This screen used to call the archive on its own, and so deleted
+     * a bill without putting its stock back and refused outright on any credit sale -
+     * while the list's own delete restored the stock and reversed the ledger. Two
+     * buttons that both say Delete have to mean one thing.
+     */
     private fun deleteBill(receiptNo: Long) {
-        val outcome = BillDeleteDao(requireContext()).delete(receiptNo)
-        if (!outcome.deleted) {
+        val outcome = BillDao(requireContext()).cancelBill(receiptNo)
+        if (!outcome.ok) {
             // The reason, in a dialog rather than a toast: it names the document
             // standing in the way and what to do about it, which is more than a
             // message that disappears in two seconds can carry.
             DialogUtils.showSuccess(
                 context = requireContext(),
                 title = "Bill not deleted",
-                message = outcome.reason ?: "The bill could not be deleted.",
+                message = outcome.refusal ?: "The bill could not be deleted.",
                 buttonText = "OK"
             ) {}
             return
         }
-        toast("Bill deleted")
+        toast(
+            if (outcome.itemsRestored > 0)
+                "Bill deleted - ${outcome.itemsRestored} item(s) back in stock"
+            else "Bill deleted"
+        )
         // Back to wherever this was opened from - Bill History reloads on resume, so
         // the bill moves to the Cancelled list without anything else being asked.
         parentFragmentManager.popBackStack()

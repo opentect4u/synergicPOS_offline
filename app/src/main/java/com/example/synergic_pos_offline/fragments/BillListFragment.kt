@@ -381,13 +381,14 @@ class BillListFragment : Fragment(), TitledScreen {
                 append("₹ ${bill.total}")
                 who?.let { append("  ·  $it") }
                 append("  ·  ${bill.date}")
-                append("\n\nThe bill is deleted - its items, payments, print record and ")
-                append("kitchen order go with it, and it stops counting in every report.")
+                append("\n\nThe bill stops counting in every sales report. You will ")
+                append("still find it under Cancelled bills here in Bill History, and ")
+                append("on the Void Bill Report.")
                 append("\n\nThe stock it sold goes back on the shelf, and the sale's own ")
                 append("stock movement is removed, so the till reads as though it never ")
                 append("happened.")
-                append("\n\nA credit sale's entry on the customer's ledger goes too, so ")
-                append("nothing is left owing for a bill that no longer exists.")
+                append("\n\nA credit sale comes off the customer's ledger and their ")
+                append("balance, so nothing is left owing for a bill that no longer counts.")
                 append("\n\nThis cannot be undone.")
             },
             positiveText = "Cancel Bill",
@@ -411,9 +412,12 @@ class BillListFragment : Fragment(), TitledScreen {
                 else "Bill ${bill.billNo} cancelled",
                 android.widget.Toast.LENGTH_SHORT
             ).show()
-            // The row has to go from the list it was tapped in, not just from the
-            // database - see [refresh], which re-reads and re-filters.
-            refresh()
+            // RELOAD, not refresh. Cancelling moves the bill between two tables, so
+            // the row in hand is stale in a way re-filtering cannot fix: [refresh]
+            // only re-filters what was last read, so the bill went on showing as
+            // active and never appeared under Cancelled until the screen was left and
+            // come back to. [reload] re-reads both tables first.
+            reload()
         }
     }
 

@@ -159,7 +159,7 @@ object RestaurantBillPrinter {
         if (ticket.cgst > 0) totalRow("CGST", money(ticket.cgst), totLabel, false)
         if (ticket.sgst > 0) totalRow("SGST", money(ticket.sgst), totLabel, false)
         rule()
-        totalRow("TOTAL", money(ticket.total), grand, true)
+        totalRow("TOTAL", PrintType.grandTotal(money(ticket.total)), grand, true)
         if (ticket.payment.isNotBlank()) totalRow("Paid via", ticket.payment, totLabel, false)
         if (ticket.note.isNotBlank()) { rule(); left("Note: ${ticket.note}", meta) }
         rule()

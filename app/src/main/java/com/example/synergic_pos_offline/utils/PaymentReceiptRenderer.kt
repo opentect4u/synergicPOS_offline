@@ -159,7 +159,7 @@ class PaymentReceiptRenderer(context: Context) {
             // The running balance after this collection, set apart between two rules.
             val total = view.findViewById<LinearLayout>(R.id.llPayTotal)
             total.removeAllViews()
-            total.addView(kvRow(t("TOTAL BALANCE"), money(receipt.totalDue), bold = true))
+            total.addView(kvRow(t("TOTAL BALANCE"), PrintType.grandTotal(money(receipt.totalDue)), bold = true))
         } catch (e: Exception) {
             android.util.Log.e(TAG, "Error rendering payment receipt ${receipt.receiptNumber}", e)
         }

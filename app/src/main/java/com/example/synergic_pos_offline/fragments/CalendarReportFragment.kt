@@ -3,6 +3,7 @@ package com.example.synergic_pos_offline.fragments
 import com.example.synergic_pos_offline.database.CalendarReportDao
 import com.example.synergic_pos_offline.utils.CalendarGrain
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
+import com.example.synergic_pos_offline.utils.PrintType
 
 /**
  * The Day Wise, Month Wise and Year Wise reports: takings totalled by the calendar.
@@ -137,7 +138,7 @@ abstract class CalendarReportFragment : PeriodReportFragment<CalendarReportDao.R
                 add("PARCEL CHG  :" to money(report.totalParcelCharge))
                 add("ROUND OFF   :" to money(report.totalRoundOff))
             },
-            total = "TOTAL AMOUNT:" to money(report.totalAmount),
+            total = "TOTAL AMOUNT:" to PrintType.grandTotal(money(report.totalAmount)),
             emptyNote = "No bills in this range."
         )
 

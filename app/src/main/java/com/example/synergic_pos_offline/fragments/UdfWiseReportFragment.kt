@@ -23,6 +23,7 @@ import com.example.synergic_pos_offline.utils.ReportDownloads
 import com.example.synergic_pos_offline.utils.ReportExport
 import com.example.synergic_pos_offline.utils.ReportTable
 import com.example.synergic_pos_offline.utils.ThemeManager
+import com.example.synergic_pos_offline.utils.PrintType
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import java.text.SimpleDateFormat
@@ -278,7 +279,7 @@ class UdfWiseReportFragment : Fragment(), TitledScreen {
                 if (r.totalOtherCharges > 0.005) add("EXTRA CHGS  :" to money(r.totalOtherCharges))
                 if (r.totalParcelCharge > 0.005) add("PARCEL CHG  :" to money(r.totalParcelCharge))
             },
-            total = "TOTAL  :" to money(r.totalBillAmount),
+            total = "TOTAL  :" to PrintType.grandTotal(money(r.totalBillAmount)),
             emptyNote = "No bills in this period."
         )
 

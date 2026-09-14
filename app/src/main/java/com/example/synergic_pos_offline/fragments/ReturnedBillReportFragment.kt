@@ -3,6 +3,7 @@ package com.example.synergic_pos_offline.fragments
 import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.database.ReturnedBillReportDao
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
+import com.example.synergic_pos_offline.utils.PrintType
 
 /**
  * Returned Bill Report - the bill wise report read over returns: every bill-wise
@@ -127,7 +128,7 @@ class ReturnedBillReportFragment : PeriodReportFragment<ReturnedBillReportDao.Re
                 }
             },
             summary = summaryOf(report).map { (label, value) -> label.uppercase() to value },
-            total = totalOf(report).let { (label, value) -> label.uppercase() to value },
+            total = totalOf(report).let { (label, value) -> label.uppercase() to PrintType.grandTotal(value) },
             emptyNote = "No returns in this period."
         )
 

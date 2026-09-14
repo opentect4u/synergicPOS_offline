@@ -107,7 +107,7 @@ class CustomerItemWiseReportRenderer(context: Context) {
         root.addView(totalLine(t("TOTAL CGST:"), money(report.totalCgst)))
         if (report.hasIgst) root.addView(totalLine(t("TOTAL IGST:"), money(report.totalIgst)))
         if (report.hasVat) root.addView(totalLine(t("TOTAL VAT :"), money(report.totalVat)))
-        root.addView(totalLine(t("TOTAL AMT :"), money(report.totalAmount)))
+        root.addView(totalLine(t("TOTAL AMT :"), PrintType.grandTotal(money(report.totalAmount))))
         root.addView(rule())
         return root
     }
