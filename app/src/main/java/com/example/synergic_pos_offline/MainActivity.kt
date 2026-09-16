@@ -672,6 +672,7 @@ class MainActivity : AppCompatActivity() {
             "Units" -> navigateTo(UnitFragment())
             "Rate Name" -> navigateTo(RateNameFragment())
             "Extra Charges" -> navigateTo(ChargesFragment())
+            "Barcode" -> navigateTo(BarcodeLabelsFragment())
             // Restaurant-only masters. Listed in the drawer only in Restaurant mode,
             // and routed here to the same screens the Database Settings grid opens.
             "Waiter" -> navigateTo(WaiterFragment())
@@ -740,7 +741,10 @@ class MainActivity : AppCompatActivity() {
             TreeNode("Description/Ledger"),
             TreeNode("Units"),
             TreeNode("Rate Name"),
-            TreeNode("Extra Charges")
+            TreeNode("Extra Charges"),
+            // Shelf-edge labels for the shop's own stock - last, in the same position
+            // it holds on the tile grid.
+            TreeNode("Barcode")
         )
         // Only where the shop runs shifts. Off, there is nothing to put in the master
         // and nothing that reads it - see App Settings' Shift toggle.

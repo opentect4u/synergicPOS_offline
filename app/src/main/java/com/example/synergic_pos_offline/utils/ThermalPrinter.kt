@@ -258,6 +258,9 @@ object ThermalPrinter {
     private const val JOB_ATTEMPTS = 3
     private const val RETRY_BACKOFF_MS = 700L
 
+    /** How long a raw (TSPL) job is given to drain before the port is closed. */
+    private const val RAW_DRAIN_MS = 400L
+
     /**
      * Runs the job, retrying a printer that refuses the connection.
      *
@@ -270,6 +273,106 @@ object ThermalPrinter {
      * printer a failure might mean a half-printed slip, and starting over there
      * risks handing the customer two.
      */
+    /**
+     * Sends [bytes] to the printer exactly as they are - no raster, no ESC/POS.
+     *
+     * ## What this is for
+     *
+     * A TSC label printer speaks TSPL, not ESC/POS. It is not fed a picture of a label;
+     * it is fed a program describing one (see [TsplLabel]). None of the receipt path
+     * above applies to it - no bitmap to scale, no `ESC @`, no cut command, no status
+     * query - so rather than teach [runJob] a second language, this opens the same
+     * transport the SDK already knows how to open and writes the job straight down it.
+     *
+     * ## Why there is no handshake
+     *
+     * [runJob] sends `Initialize` and `SetPrintDensity` before every receipt, which are
+     * ESC/POS commands. A TSPL printer would read those bytes as the start of a label
+     * program, fail to parse them, and either discard the job or print the remains of
+     * one. The TSPL job carries its own reset - `CLS` clears the image buffer - so
+     * there is nothing a handshake would add.
+     *
+     * ## Why it does not retry
+     *
+     * [sendWithRetry] can retry a receipt because `PortOpen` failing means nothing was
+     * sent. Here the write either reached a printer that has already begun cutting
+     * labels or it did not, and a blind second attempt on a machine holding stock is
+     * how a shop ends up with two sets of labels for one product. A failure is reported
+     * and the operator decides.
+     *
+     * @param onResult called on the main thread once the job finishes
+     */
+    fun printRaw(context: Context, bytes: ByteArray, config: Config, onResult: (Result) -> Unit) {
+        if (bytes.isEmpty()) { onResult(Result.Failure("Nothing to print")); return }
+        if (config.isUsb) {
+            UsbPrinters.ensurePermission(context, config.ip) { granted, reason ->
+                if (!granted) {
+                    PrintLog.d(context, TAG, "USB not available: $reason")
+                    onResult(Result.Failure(reason))
+                } else {
+                    dispatchRaw(context, bytes, config, onResult)
+                }
+            }
+            return
+        }
+        dispatchRaw(context, bytes, config, onResult)
+    }
+
+    private fun dispatchRaw(context: Context, bytes: ByteArray, config: Config, onResult: (Result) -> Unit) {
+        worker.execute {
+            val result = runCatching { runRawJob(context, bytes, config) }
+                .getOrElse { e ->
+                    Log.e(TAG, "Raw print failed", e)
+                    PrintLog.d(context, TAG, "RAW EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
+                    Result.Failure(e.message ?: "Could not reach the printer")
+                }
+            PrintLog.d(context, TAG, "raw job finished: $result")
+            main.post { onResult(result) }
+        }
+    }
+
+    private fun runRawJob(context: Context, bytes: ByteArray, config: Config): Result {
+        // Always a fresh port, Bluetooth included: the keep-open cache belongs to the
+        // receipt path and holds a port to an ESC/POS printer, which this is not.
+        runCatching { Print.PortClose() }
+        openPort = null
+
+        val usbDevice = if (config.isUsb) UsbPrinters.find(context, config.ip) else null
+        if (config.isUsb && usbDevice == null) {
+            return Result.Failure("USB printer not connected - plug it in and try again")
+        }
+        PrintLog.d(
+            context, TAG,
+            "==== raw job: connection=${config.connection} address=${config.ip} " +
+                "port=${config.port} bytes=${bytes.size} ===="
+        )
+        val opened = when {
+            usbDevice != null -> Print.PortOpen(context.applicationContext, usbDevice)
+            config.isBluetooth -> Print.portOpenBT(context, config.ip)
+            else -> Print.PortOpen(context, "WiFi,${config.ip},${config.port}")
+        }
+        if (opened != 0) {
+            PrintLog.d(context, TAG, "raw port open FAILED result=$opened")
+            return Result.Failure("Cannot reach printer at ${config.description}")
+        }
+        try {
+            val written = Print.WriteData(bytes)
+            PrintLog.d(context, TAG, "WriteData returned $written for ${bytes.size} bytes")
+            if (written < 0) return Result.Failure("Printer rejected the label")
+            // A label printer answers no status query this SDK knows how to ask, and
+            // closing the port with the job still in flight loses its tail - so the
+            // write is given a moment to drain before the socket goes.
+            Thread.sleep(RAW_DRAIN_MS)
+            // Sent, not Success: nothing acknowledged it. Saying otherwise would be
+            // claiming a label came out on the word of a socket that accepted bytes.
+            return Result.Sent
+        } finally {
+            runCatching { Print.PortClose() }
+            openPort = null
+            PrintLog.d(context, TAG, "raw port closed")
+        }
+    }
+
     private fun sendWithRetry(context: Context, receipt: Bitmap, config: Config): Result {
         var last: Result = Result.Failure("Cannot reach printer at ${config.ip}:${config.port}")
         repeat(JOB_ATTEMPTS) { attempt ->
