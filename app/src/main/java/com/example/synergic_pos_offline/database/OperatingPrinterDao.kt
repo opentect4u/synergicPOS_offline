@@ -148,9 +148,20 @@ class OperatingPrinterDao(context: Context) {
         const val DEFAULT_PAPER_MM = 80
 
         /** "K" for a KOT connection, "B" for a BILL connection. */
+        /**
+         * The one-letter flag a purpose is stored under in `print_flag`.
+         *
+         * "O" is OTHERS - the third printer, which in practice is the label printer: a
+         * TSC or similar standing beside the receipt printer. It used to fall through
+         * to "", and a blank flag is what
+         * [com.example.synergic_pos_offline.utils.ThermalPrinter] treats as "this row
+         * names no purpose", so an OTHERS printer added on the Connections screen saved
+         * successfully and could then never be found again.
+         */
         fun flagFor(purpose: String): String = when {
             purpose.equals("KOT", ignoreCase = true) -> "K"
             purpose.equals("BILL", ignoreCase = true) -> "B"
+            purpose.equals("OTHERS", ignoreCase = true) -> "O"
             else -> ""
         }
 

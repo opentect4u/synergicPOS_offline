@@ -134,7 +134,27 @@ class BarcodeLabelsFragment : DataTableFragment() {
 
         val config = labelPrinter()
         if (config == null) {
-            toast("No label printer set up — configure one under Printer Settings")
+            // NAMES THE CARD, because "configure one under Printer Settings" sent the
+            // operator to a page with three cards on it and no clue which. The label
+            // printer is the OTHERS one - see [labelPrinter] for why - and that is not
+            // guessable from a screen that calls the other two BILL and KOT.
+            DialogUtils.showConfirm(
+                context = requireContext(),
+                title = "No label printer set up",
+                message = "Add the TSC label printer under Print Settings › " +
+                    "Connections, and pick one of the OTHERS options in the printer " +
+                    "dropdown — OTHERS-USB, OTHERS-LAN or OTHERS-BLUETOOTH, whichever " +
+                    "matches how it is plugged in.\n\n" +
+                    "Enter its address, tick Default, and save. BILL and KOT stay as " +
+                    "they are for receipts and kitchen tickets.",
+                positiveText = "Open Connections",
+                negativeText = "Close"
+            ) {
+                requireActivity().supportFragmentManager.beginTransaction()
+                    .replace(R.id.fragment_container, OperatingPrinterFragment())
+                    .addToBackStack(null)
+                    .commit()
+            }
             return
         }
 
@@ -215,18 +235,23 @@ class BarcodeLabelsFragment : DataTableFragment() {
     }
 
     /**
-     * The label printer: the one set up under the OTHERS purpose, falling back to the
-     * bill printer.
+     * The label printer: the one set up under the OTHERS purpose, and ONLY that one.
      *
-     * OTHERS first because that is the third printer slot the app already has, and a
-     * shop with a TSC beside its receipt printer has somewhere to put it without a new
-     * settings screen. The fall back to BILL covers the shop whose ONLY printer is the
-     * TSC - it will have been set up as the bill printer, because that is the slot that
-     * gets configured first.
+     * OTHERS because it is the third printer slot the app already has, so a TSC sitting
+     * beside the receipt printer has somewhere to live without a new settings screen.
+     *
+     * ## Why there is no fall back to the bill printer
+     *
+     * There was one, and it was wrong. The job this screen sends is TSPL - a program
+     * for a label printer - and the BILL printer is an ESC/POS receipt printer. Handed
+     * TSPL it does not fail; it prints the commands as text, so a shop with its receipt
+     * printer set up and its TSC not yet set up would get a page of
+     * "SIZE 50 mm,25 mm / GAP 2 mm..." spooling out of the till roll, with nothing on
+     * screen to say why. A shop that has not told the app where its label printer is
+     * should be asked, not guessed at.
      */
     private fun labelPrinter(): ThermalPrinter.Config? =
         ThermalPrinter.configForPurpose(requireContext(), "OTHERS")
-            ?: ThermalPrinter.configForPurpose(requireContext(), "BILL")
 
     /**
      * The product's default selling price, or null where it has none.

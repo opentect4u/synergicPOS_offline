@@ -118,11 +118,22 @@ class OperatingPrinterFragment : DataTableFragment() {
         btPermissionLauncher.launch(requiredBtPermissions())
     }
 
-    /** BILL/KOT purpose-type combos from md_printer, e.g. "BILL-WIFI" -> that md_printer row (its sl_no is what gets saved). */
+    /**
+     * Purpose-type combos from md_printer, e.g. "BILL-WIFI" -> that md_printer row (its
+     * sl_no is what gets saved).
+     *
+     * OTHERS is offered alongside BILL and KOT. It was filtered out while nothing in
+     * the app printed to it, which stopped being true when the Barcode screen started
+     * sending labels to a TSC - and a shop with a label printer had no way to tell the
+     * app about it from the screen where every other printer is added.
+     */
     private fun loadCombos(): LinkedHashMap<String, PrinterDao.Printer> =
         LinkedHashMap<String, PrinterDao.Printer>().apply {
             printerDao.getAll()
-                .filter { it.purpose.equals("BILL", true) || it.purpose.equals("KOT", true) }
+                .filter {
+                    it.purpose.equals("BILL", true) || it.purpose.equals("KOT", true) ||
+                        it.purpose.equals("OTHERS", true)
+                }
                 .forEach { put("${it.purpose.uppercase()}-${it.type.uppercase()}", it) }
         }
 
