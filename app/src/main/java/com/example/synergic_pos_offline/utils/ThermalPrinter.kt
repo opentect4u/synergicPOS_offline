@@ -216,7 +216,30 @@ object ThermalPrinter {
      * Operating Printer's rows) so they all print the same thing.
      */
     fun testPrint(context: Context, purpose: String, config: Config, onResult: (Result) -> Unit) {
+        // A LABEL PRINTER GETS A LABEL, not a receipt raster.
+        //
+        // This used to send every printer the same ESC/POS bitmap. On a TSC that is not
+        // a poor test, it is a misleading one: the machine cannot read ESC/POS at all,
+        // so it spat the raster out as a page of huge broken characters across several
+        // labels - which reads as "the label printing is broken" when the printer and
+        // the connection were both fine and only this button was speaking the wrong
+        // language.
+        if (isLabelPurpose(purpose)) {
+            printRaw(context, TsplLabel.sample(), config, onResult)
+            return
+        }
         print(context, buildTestPrintBitmap(purpose, config), config, onResult)
+    }
+
+    /**
+     * Whether [purpose] names the label printer, which speaks TSPL rather than ESC/POS.
+     *
+     * Takes the name in any of the three shapes the callers have: "BARCODE" from the
+     * Printer Settings card, "O" from an operating-printer row's `print_flag`, and
+     * "OTHERS" from anything still using the name that purpose had before v22.
+     */
+    private fun isLabelPurpose(purpose: String): Boolean = purpose.trim().let {
+        it.equals("BARCODE", true) || it.equals("OTHERS", true) || it.equals("O", true)
     }
 
     private fun buildTestPrintBitmap(purpose: String, config: Config): Bitmap {

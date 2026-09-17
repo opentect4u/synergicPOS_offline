@@ -161,7 +161,17 @@
                 android:textColor="@color/text_secondary"
                 android:visibility="gone" />
 
-            <!-- Paper width -->
+            <!-- Paper width. Hidden as a BLOCK - caption and radios together - for a
+                 printer whose stock is not a roll width: a label printer's stock is a
+                 width AND a height AND a gap, and those are asked on the Barcode screen
+                 where a label is actually printed. See
+                 OperatingPrinterDao.usesPaperWidth. -->
+            <LinearLayout
+                android:id="@+id/llPaperWidth"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -198,6 +208,7 @@
                     android:textColor="@color/text_main"
                     android:checked="true" />
             </RadioGroup>
+            </LinearLayout>
 
             <!-- Default printer toggle -->
             <com.google.android.material.card.MaterialCardView

@@ -1,7 +1,6 @@
 package com.example.synergic_pos_offline.fragments
 
 import com.example.synergic_pos_offline.R
-import com.example.synergic_pos_offline.database.AppSettingsDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.utils.BarcodeGenerator
 import com.example.synergic_pos_offline.utils.DialogUtils
@@ -67,7 +66,6 @@ class BarcodeLabelsFragment : DataTableFragment() {
             WHERE p.store_id = ?
             ORDER BY p.id DESC
         """.trimIndent()
-
         db.rawQuery(sql, arrayOf(storeId().toString())).use { cursor ->
             while (cursor.moveToNext()) {
                 rows.add(
@@ -105,8 +103,7 @@ class BarcodeLabelsFragment : DataTableFragment() {
     override val rowActionLabel = "Print barcode label"
 
     /**
-     * Asks how many labels and what stock they are on, then sends the job to the TSC
-     * printer.
+     * Asks how many labels this product needs, then sends that many to the TSC printer.
      *
      * ONE PRODUCT NEEDS AS MANY LABELS AS IT HAS FACINGS. A delivery of twelve jars
      * wants twelve labels, and a single shelf-edge strip wants one - so the count is
@@ -114,37 +111,42 @@ class BarcodeLabelsFragment : DataTableFragment() {
      * table, because it is a fact about this trip to the printer and not about the
      * product.
      *
-     * The label's size is asked on the same card, and REMEMBERED: a shop buys one size
-     * of label stock and works through the roll, so it is typed once and prefilled
-     * every time after. It has to be asked at all because TSPL needs to be told - the
-     * printer cannot measure its own stock, and a size that does not match the roll is
-     * how bars end up printed across the gap between two labels.
+     * It is the ONLY thing asked. The stock never changes between prints, so its size
+     * and gap are constants - see [TsplLabel] - rather than four boxes to retype every
+     * time a label is wanted.
      *
      * The printer is looked for BEFORE the card opens: told there is none, the operator
      * has nothing to do with a number they have just typed.
      */
     override fun onRowAction(row: DataRow) {
-        val code = row.cells.getOrNull(2).orEmpty()
-        val name = row.cells.getOrNull(1).orEmpty()
         val id = row.id.toIntOrNull()
-        if (code.isBlank() || id == null) {
+        // READ FRESH, not off the row. The cells on screen are as old as the last table
+        // load, and between then and now the code may have been generated on this very
+        // screen, or the price changed on the product master. What goes on a label that
+        // is about to be stuck to a shelf has to be what the catalogue says NOW.
+        val product = id?.let { productForLabel(it) }
+        if (product == null) {
+            toast("Could not read this product")
+            return
+        }
+        val name = product.name
+        val code = product.code
+        if (code.isBlank()) {
             toast("This product has no barcode yet")
             return
         }
 
         val config = labelPrinter()
         if (config == null) {
-            // NAMES THE CARD, because "configure one under Printer Settings" sent the
-            // operator to a page with three cards on it and no clue which. The label
-            // printer is the OTHERS one - see [labelPrinter] for why - and that is not
-            // guessable from a screen that calls the other two BILL and KOT.
+            // NAMES THE OPTION, because "configure one under Printer Settings" sent the
+            // operator to a page of printers with no clue which one this screen wants.
             DialogUtils.showConfirm(
                 context = requireContext(),
-                title = "No label printer set up",
+                title = "No barcode printer set up",
                 message = "Add the TSC label printer under Print Settings › " +
-                    "Connections, and pick one of the OTHERS options in the printer " +
-                    "dropdown — OTHERS-USB, OTHERS-LAN or OTHERS-BLUETOOTH, whichever " +
-                    "matches how it is plugged in.\n\n" +
+                    "Connections, and pick one of the BARCODE options in the printer " +
+                    "dropdown — BARCODE-USB, BARCODE-LAN or BARCODE-BLUETOOTH, " +
+                    "whichever matches how it is plugged in.\n\n" +
                     "Enter its address, tick Default, and save. BILL and KOT stay as " +
                     "they are for receipts and kitchen tickets.",
                 positiveText = "Open Connections",
@@ -158,7 +160,6 @@ class BarcodeLabelsFragment : DataTableFragment() {
             return
         }
 
-        val settings = AppSettingsDao(requireContext())
         DialogUtils.showForm(
             context = requireContext(),
             title = "Print barcode label",
@@ -170,54 +171,26 @@ class BarcodeLabelsFragment : DataTableFragment() {
                 DialogUtils.FormField("Product", name, locked = true),
                 DialogUtils.FormField(
                     label = "Number of labels", value = "1", inputType = "number", maxLength = 3
-                ),
-                DialogUtils.FormField(
-                    label = "Label width (mm)",
-                    value = settings.get(KEY_LABEL_WIDTH_MM) ?: DEFAULT_LABEL_WIDTH_MM.toString(),
-                    inputType = "number", maxLength = 3
-                ),
-                DialogUtils.FormField(
-                    label = "Label height (mm)",
-                    value = settings.get(KEY_LABEL_HEIGHT_MM) ?: DEFAULT_LABEL_HEIGHT_MM.toString(),
-                    inputType = "number", maxLength = 3
-                ),
-                DialogUtils.FormField(
-                    label = "Gap between labels (mm)",
-                    value = settings.get(KEY_LABEL_GAP_MM) ?: DEFAULT_LABEL_GAP_MM.toString(),
-                    inputType = "number", maxLength = 2
                 )
             ),
-            mandatoryFields = listOf(1, 2, 3),
+            mandatoryFields = listOf(1),
             positiveText = "Print",
             negativeText = "Cancel"
         ) { values ->
             val asked = values.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
-            val widthMm = values.getOrNull(2)?.trim()?.toIntOrNull() ?: 0
-            val heightMm = values.getOrNull(3)?.trim()?.toIntOrNull() ?: 0
-            // Blank means continuous stock, which is a real answer and means no gap.
-            val gapMm = values.getOrNull(4)?.trim()?.toIntOrNull() ?: 0
-
             if (asked <= 0) { toast("Enter how many labels to print"); return@showForm }
-            if (widthMm <= 0 || heightMm <= 0) { toast("Enter the label size in mm"); return@showForm }
 
             val copies = asked.coerceAtMost(MAX_LABELS)
             if (asked > MAX_LABELS) toast("Printing the first $MAX_LABELS labels")
 
-            // Kept for next time, so the size is typed once per roll and not per label.
-            settings.put(KEY_LABEL_WIDTH_MM, widthMm.toString())
-            settings.put(KEY_LABEL_HEIGHT_MM, heightMm.toString())
-            settings.put(KEY_LABEL_GAP_MM, gapMm.coerceAtLeast(0).toString())
-
             val job = TsplLabel.build(
-                widthMm = widthMm,
-                heightMm = heightMm,
-                gapMm = gapMm.coerceAtLeast(0),
                 productName = name,
                 code = code,
-                price = sellingPrice(id),
-                shopName = storeName(),
-                // The printer repeats the label itself and feeds the gap between each
-                // one - see TsplLabel.build. One job, however many labels.
+                price = product.price,
+                mrp = product.mrp,
+                // STICKERS, not feeds. On two-up stock ten of these is five feeds, and
+                // an odd count leaves the last feed's right-hand cell blank rather than
+                // handing over a spare sticker - see TsplLabel.build.
                 copies = copies
             )
 
@@ -235,9 +208,10 @@ class BarcodeLabelsFragment : DataTableFragment() {
     }
 
     /**
-     * The label printer: the one set up under the OTHERS purpose, and ONLY that one.
+     * The label printer: the one set up under the BARCODE purpose, and ONLY that one.
      *
-     * OTHERS because it is the third printer slot the app already has, so a TSC sitting
+     * BARCODE is the third printer slot the app has always had - it was called OTHERS
+     * until it had a job to do (see DatabaseHelper's v22 migration) - so a TSC sitting
      * beside the receipt printer has somewhere to live without a new settings screen.
      *
      * ## Why there is no fall back to the bill printer
@@ -251,34 +225,64 @@ class BarcodeLabelsFragment : DataTableFragment() {
      * should be asked, not guessed at.
      */
     private fun labelPrinter(): ThermalPrinter.Config? =
-        ThermalPrinter.configForPurpose(requireContext(), "OTHERS")
+        ThermalPrinter.configForPurpose(requireContext(), "BARCODE")
+
+    /** Everything one label carries, read off the catalogue at the moment of printing. */
+    private data class LabelData(
+        val name: String,
+        val code: String,
+        val price: Double?,
+        val mrp: Double?
+    )
 
     /**
-     * The product's default selling price, or null where it has none.
+     * The product as it stands RIGHT NOW - name, barcode and prices - or null if it has
+     * gone.
      *
-     * Null rather than 0.00: a label reading "Rs 0.00" prices the goods at nothing,
-     * which is worse on a shelf than a label with no price on it at all - so
-     * [TsplLabel.build] leaves the line off entirely.
+     * One query rather than three. The label is a single statement about one product
+     * and the four values on it have to agree with each other; read separately, a price
+     * edited on another screen between two of the reads would put a name and a price on
+     * the same sticker that never belonged together.
      *
-     * COALESCE(sell_price, sale_price) because the two are duplicate columns for the
-     * one figure and either may be the populated one - the same read the rest of the
-     * app makes (see DatabaseHelper's own note on them).
+     * ## Where the two prices come from
+     *
+     * The selling price is the product's DEFAULT rate - `COALESCE(sell_price,
+     * sale_price)`, because those are duplicate columns for the one figure and either
+     * may be the populated one (see DatabaseHelper's own note on them).
+     *
+     * MRP IS A RATE NAME, not a column. A product carries a row per rate in
+     * md_product_rates - "Rate 1", "Rate 2", "MRP" - named from the Rate Name master,
+     * so the listed price is the row whose rate_name says MRP.
+     *
+     * Both come back null rather than 0.00 where there is no such rate. A label reading
+     * "PRICE:0.00" prices the goods at nothing, which is worse on a shelf than a label
+     * carrying no price at all - so [TsplLabel.build] leaves the line off entirely.
      */
-    private fun sellingPrice(productId: Int): Double? = runCatching {
+    private fun productForLabel(productId: Int): LabelData? = runCatching {
+        val rates = DatabaseHelper.Tables.MD_PRODUCT_RATES
         DatabaseHelper.getInstance(requireContext()).readableDatabase.rawQuery(
-            "SELECT COALESCE(sell_price, sale_price) FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES} " +
-                "WHERE product_id = ? ORDER BY \"default\" DESC, id ASC LIMIT 1",
+            """
+            SELECT p.product_name,
+                   COALESCE(p.bar_code, ''),
+                   (SELECT COALESCE(r.sell_price, r.sale_price) FROM $rates r
+                     WHERE r.product_id = p.id ORDER BY r."default" DESC, r.id ASC LIMIT 1),
+                   (SELECT COALESCE(r.sell_price, r.sale_price, r.rate) FROM $rates r
+                     WHERE r.product_id = p.id
+                       AND UPPER(TRIM(COALESCE(r.rate_name, ''))) = 'MRP'
+                     ORDER BY r.id ASC LIMIT 1)
+            FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
+            WHERE p.id = ?
+            """.trimIndent(),
             arrayOf(productId.toString())
         ).use { c ->
-            if (c.moveToFirst() && !c.isNull(0)) c.getDouble(0).takeIf { it > 0.0 } else null
+            if (!c.moveToFirst()) return@use null
+            LabelData(
+                name = c.getString(0).orEmpty(),
+                code = c.getString(1).orEmpty().trim(),
+                price = if (c.isNull(2)) null else c.getDouble(2).takeIf { it > 0.0 },
+                mrp = if (c.isNull(3)) null else c.getDouble(3).takeIf { it > 0.0 }
+            )
         }
-    }.getOrNull()
-
-    /** The shop's name for the top of the label, or null to leave that line off. */
-    private fun storeName(): String? = runCatching {
-        DatabaseHelper.getInstance(requireContext()).readableDatabase.rawQuery(
-            "SELECT store_name FROM ${DatabaseHelper.Tables.MD_REGISTRATION} LIMIT 1", null
-        ).use { c -> if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() } else null }
     }.getOrNull()
 
     // ---- Generate ----------------------------------------------------------
@@ -452,7 +456,21 @@ class BarcodeLabelsFragment : DataTableFragment() {
 
     private fun storeId(): Int = SessionManager.currentUser?.storeId ?: 0
 
-    private companion object {
+    companion object {
+        /**
+         * WHETHER THE BARCODE SCREEN IS OFFERED AT ALL.
+         *
+         * Off, and it is listed nowhere: neither the Database Settings tile grid nor
+         * the drawer's Master > Database Settings branch carries it, so there is no way
+         * in and nothing half-finished for an operator to find.
+         *
+         * The screen, the TSPL builder, the generator and their tests all stay exactly
+         * where they are - this hides the door, it does not pull the room down. Turning
+         * it back on is this one word, and both listings pick it up, because both ask
+         * here rather than each keeping its own copy of the answer.
+         */
+        const val ENABLED = false
+
         /**
          * The most labels one tap will print.
          *
@@ -460,22 +478,6 @@ class BarcodeLabelsFragment : DataTableFragment() {
          * digit ("100" typed as "1000") costs a torn strip of paper rather than the
          * whole roll and a printer that cannot be stopped from the app.
          */
-        const val MAX_LABELS = 100
-
-        /**
-         * The label stock's size, remembered between prints.
-         *
-         * In App Settings' key-value table rather than on the printer row, because it
-         * describes the ROLL rather than the machine - the same printer runs 50x25 one
-         * week and 40x30 the next, and it is the operator loading the roll who knows.
-         */
-        const val KEY_LABEL_WIDTH_MM = "barcode_label_width_mm"
-        const val KEY_LABEL_HEIGHT_MM = "barcode_label_height_mm"
-        const val KEY_LABEL_GAP_MM = "barcode_label_gap_mm"
-
-        /** 50x25mm on a 2mm gap - far and away the commonest shelf-label stock. */
-        const val DEFAULT_LABEL_WIDTH_MM = 50
-        const val DEFAULT_LABEL_HEIGHT_MM = 25
-        const val DEFAULT_LABEL_GAP_MM = 2
+        private const val MAX_LABELS = 100
     }
 }

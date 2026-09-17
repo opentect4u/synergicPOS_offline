@@ -46,13 +46,20 @@ class DatabaseSettingsFragment : Fragment() {
             DatabaseItem("Description/Ledger", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon),
             DatabaseItem("Units", android.R.drawable.ic_menu_crop, R.color.menu_settings, R.color.menu_settings_icon),
             DatabaseItem("Rate Name", android.R.drawable.ic_menu_sort_by_size, R.color.menu_inventory, R.color.menu_inventory_icon),
-            DatabaseItem("Extra Charges", android.R.drawable.ic_menu_agenda, R.color.menu_settings, R.color.menu_settings_icon),
-            // Shelf-edge labels for the shop's own stock. It sits among the masters
-            // because it is a job done against the whole catalogue - a delivery lands
-            // and twenty lines need labelling - rather than against one product at a
-            // time, which the product form already covers.
-            DatabaseItem("Barcode", R.drawable.ic_print, R.color.menu_master, R.color.menu_master_icon)
+            DatabaseItem("Extra Charges", android.R.drawable.ic_menu_agenda, R.color.menu_settings, R.color.menu_settings_icon)
         )
+        // Shelf-edge labels for the shop's own stock. It sits among the masters because
+        // it is a job done against the whole catalogue - a delivery lands and twenty
+        // lines need labelling - rather than against one product at a time, which the
+        // product form already covers.
+        //
+        // Off for now; the drawer's own copy of this list is gated on the same flag, so
+        // the two cannot disagree about whether the screen exists.
+        if (BarcodeLabelsFragment.ENABLED) {
+            items.add(
+                DatabaseItem("Barcode", R.drawable.ic_print, R.color.menu_master, R.color.menu_master_icon)
+            )
+        }
         // Only where the shop runs shifts. Off, there is nothing to put in the master
         // and nothing that reads it - see App Settings' Shift toggle.
         if (com.example.synergic_pos_offline.database.ShiftDao.isEnabled(requireContext())) {

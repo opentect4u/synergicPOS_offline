@@ -46,8 +46,15 @@ class OperatingPrinterDao(context: Context) {
         val printerLabel: String
             get() = if (printerPurpose != null && printerType != null) "$printerPurpose-$printerType" else ""
 
-        /** "2 inch (58mm)" / "3 inch (80mm)" - the operator-facing paper width label. */
-        val paperLabel: String get() = paperLabelFor(paperMm)
+        /**
+         * "2 inch (58mm)" / "3 inch (80mm)" - the operator-facing paper width label.
+         *
+         * A dash for the barcode printer. Its stored width is whatever the column
+         * defaults to and nothing reads it (see [usesPaperWidth]); printing "3 inch
+         * (80mm)" against a roll of 50x25 labels would be the table stating something
+         * that is not true of the machine it names.
+         */
+        val paperLabel: String get() = if (usesPaperWidth(printerPurpose)) paperLabelFor(paperMm) else "—"
     }
 
     /** All operating printers, ordered by serial number; each row's md_printer combo is joined in for display. */
@@ -151,19 +158,40 @@ class OperatingPrinterDao(context: Context) {
         /**
          * The one-letter flag a purpose is stored under in `print_flag`.
          *
-         * "O" is OTHERS - the third printer, which in practice is the label printer: a
-         * TSC or similar standing beside the receipt printer. It used to fall through
-         * to "", and a blank flag is what
+         * BARCODE is the label printer - the TSC the Barcode screen sends TSPL to. It
+         * used to fall through to "", and a blank flag is what
          * [com.example.synergic_pos_offline.utils.ThermalPrinter] treats as "this row
-         * names no purpose", so an OTHERS printer added on the Connections screen saved
+         * names no purpose", so a label printer added on the Connections screen saved
          * successfully and could then never be found again.
+         *
+         * Its letter is "O", not "R" or "L", because the purpose used to be called
+         * OTHERS - see DatabaseHelper's v22 migration. The name on screen changed; the
+         * letter did not, so a row saved before the rename still resolves.
+         *
+         * OTHERS is still accepted for the same reason: the migration renames the
+         * md_printer rows, but a caller somewhere asking for the old name should get
+         * the printer rather than silently nothing.
          */
         fun flagFor(purpose: String): String = when {
             purpose.equals("KOT", ignoreCase = true) -> "K"
             purpose.equals("BILL", ignoreCase = true) -> "B"
+            purpose.equals("BARCODE", ignoreCase = true) -> "O"
             purpose.equals("OTHERS", ignoreCase = true) -> "O"
             else -> ""
         }
+
+        /**
+         * Whether [purpose] is the label printer, which has no paper WIDTH to set.
+         *
+         * A receipt printer is asked 58mm or 80mm because the roll is what it is and
+         * every slip is scaled to it. A label printer's stock is not a width, it is a
+         * width AND a height AND the gap between one label and the next - and those are
+         * asked where a label is actually printed, on the Barcode screen, because the
+         * operator changes rolls more often than they change printers.
+         */
+        fun usesPaperWidth(purpose: String?): Boolean =
+            !(purpose.orEmpty().equals("BARCODE", ignoreCase = true) ||
+                purpose.orEmpty().equals("OTHERS", ignoreCase = true))
 
         /** "2 inch (58mm)" / "3 inch (80mm)" - falls back to the raw width for anything else. */
         fun paperLabelFor(paperMm: Int): String = when (paperMm) {
