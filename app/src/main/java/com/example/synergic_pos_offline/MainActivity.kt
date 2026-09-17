@@ -663,7 +663,9 @@ class MainActivity : AppCompatActivity() {
             "User Management" -> navigateTo(UserManagementFragment())
             "Shifts" -> navigateTo(ShiftFragment())
             "Bill Header & Footer" -> navigateTo(BillHeaderFooterFragment())
+            "KOT Header & Footer" -> navigateTo(KotHeaderFooterFragment())
             "Bill Header Footer Logo" -> navigateTo(BillLogoFragment())
+            "KOT Header Footer Logo" -> navigateTo(KotLogoFragment())
             "Database Settings" -> navigateTo(DatabaseSettingsFragment())
             "Category/Department" -> navigateTo(CategoryDepartmentFragment())
             "Products" -> navigateTo(ProductsFragment())
@@ -672,6 +674,7 @@ class MainActivity : AppCompatActivity() {
             "Units" -> navigateTo(UnitFragment())
             "Rate Name" -> navigateTo(RateNameFragment())
             "Extra Charges" -> navigateTo(ChargesFragment())
+            "Barcode" -> navigateTo(BarcodeLabelsFragment())
             // Restaurant-only masters. Listed in the drawer only in Restaurant mode,
             // and routed here to the same screens the Database Settings grid opens.
             "Waiter" -> navigateTo(WaiterFragment())
@@ -742,6 +745,10 @@ class MainActivity : AppCompatActivity() {
             TreeNode("Rate Name"),
             TreeNode("Extra Charges")
         )
+        // Shelf-edge labels for the shop's own stock - last, in the same position it
+        // holds on the tile grid, and gated on the same flag so the drawer and the grid
+        // cannot disagree about whether the screen exists.
+        if (BarcodeLabelsFragment.ENABLED) databaseSettingsNodes.add(TreeNode("Barcode"))
         // Only where the shop runs shifts. Off, there is nothing to put in the master
         // and nothing that reads it - see App Settings' Shift toggle.
         if (com.example.synergic_pos_offline.database.ShiftDao.isEnabled(context)) {

@@ -108,6 +108,21 @@
                 app:tint="@color/primary_blue"
                 android:contentDescription="Download template" />
 
+            <!-- Mints a barcode for the ticked rows (Barcode screen only - see
+                 DataTableFragment.showsGenerateAction). Sits ahead of the printer in
+                 the row: coding stock comes before printing anything for it, and on
+                 the one screen that shows this the printer is hidden anyway. -->
+            <ImageButton
+                android:id="@+id/btnGlobalGenerate"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_barcode"
+                android:visibility="gone"
+                app:tint="@color/primary_blue"
+                android:contentDescription="Generate barcodes for selected" />
+
             <ImageButton
                 android:id="@+id/btnGlobalPrint"
                 android:layout_width="44dp"

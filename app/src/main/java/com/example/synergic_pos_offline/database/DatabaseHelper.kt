@@ -948,6 +948,7 @@ class DatabaseHelper private constructor(context: Context) :
             addColumnIfMissing(db, Tables.MD_CHARGES, "charge_kind", "TEXT DEFAULT 'EXTRA'")
         }
         if (oldVersion < 21) migrateV21AllowSplitBillType(db)
+        if (oldVersion < 22) migrateV22RenameOthersPrinterToBarcode(db)
         // gst_rate is dropped in onOpen via a portable table rebuild (see
         // dropProductGstRateIfPresent), which works on every SQLite version.
     }
@@ -1045,7 +1046,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     /** Ensures every purpose has a BLUETOOTH and a USB option (unselected). */
     private fun addExtraPrinterTypes(db: SQLiteDatabase) {
-        for (purpose in listOf("BILL", "KOT", "OTHERS")) {
+        for (purpose in listOf("BILL", "KOT", "BARCODE")) {
             for (type in listOf("BLUETOOTH", "USB")) {
                 db.execSQL(
                     "INSERT INTO ${Tables.MD_PRINTER} (printer_purpose, printer_type, is_selected) " +
@@ -1103,7 +1104,7 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(
             """
             INSERT OR IGNORE INTO ${Tables.MD_PRINTER} (sl_no, printer_purpose, printer_type)
-            VALUES (1, 'BILL', 'WIFI'), (2, 'KOT', 'LAN'), (3, 'OTHERS', 'LAN')
+            VALUES (1, 'BILL', 'WIFI'), (2, 'KOT', 'LAN'), (3, 'BARCODE', 'LAN')
             """.trimIndent()
         )
     }
@@ -1423,6 +1424,25 @@ class DatabaseHelper private constructor(context: Context) :
      *
      * A bill with one payment row is left exactly as it is.
      */
+    /**
+     * v22: renames the third printer purpose from OTHERS to BARCODE.
+     *
+     * "OTHERS" was a spare slot with nothing pointed at it. It has a job now - it is the
+     * label printer, the TSC the Barcode screen sends TSPL to - and a shop setting one
+     * up was being asked to work out that the label printer is the one called "other".
+     *
+     * Renamed in the table rather than relabelled on screen, so there is one name for
+     * it everywhere: the dropdown, the saved row and the code that looks it up all say
+     * BARCODE. Any row the shop already configured under OTHERS keeps its address and
+     * its connection type and simply answers to the new name.
+     */
+    private fun migrateV22RenameOthersPrinterToBarcode(db: SQLiteDatabase) {
+        db.execSQL(
+            "UPDATE ${Tables.MD_PRINTER} SET printer_purpose = 'BARCODE' " +
+                "WHERE UPPER(TRIM(printer_purpose)) = 'OTHERS'"
+        )
+    }
+
     private fun migrateV21AllowSplitBillType(db: SQLiteDatabase) {
         // Relies on foreign keys being off for the upgrade (see [onConfigure]):
         // td_bill_items and td_payments reference td_bills.
@@ -1596,7 +1616,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 21
+        private const val DATABASE_VERSION = 22
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of

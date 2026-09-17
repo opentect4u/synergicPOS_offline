@@ -118,11 +118,23 @@ class OperatingPrinterFragment : DataTableFragment() {
         btPermissionLauncher.launch(requiredBtPermissions())
     }
 
-    /** BILL/KOT purpose-type combos from md_printer, e.g. "BILL-WIFI" -> that md_printer row (its sl_no is what gets saved). */
+    /**
+     * Purpose-type combos from md_printer, e.g. "BILL-WIFI" -> that md_printer row (its
+     * sl_no is what gets saved).
+     *
+     * BARCODE is offered alongside BILL and KOT. It was filtered out - as OTHERS, which
+     * is what it used to be called - while nothing in the app printed to it, and that
+     * stopped being true when the Barcode screen started sending labels to a TSC. A
+     * shop with a label printer had no way to tell the app about it from the screen
+     * where every other printer is added.
+     */
     private fun loadCombos(): LinkedHashMap<String, PrinterDao.Printer> =
         LinkedHashMap<String, PrinterDao.Printer>().apply {
             printerDao.getAll()
-                .filter { it.purpose.equals("BILL", true) || it.purpose.equals("KOT", true) }
+                .filter {
+                    it.purpose.equals("BILL", true) || it.purpose.equals("KOT", true) ||
+                        it.purpose.equals("BARCODE", true)
+                }
                 .forEach { put("${it.purpose.uppercase()}-${it.type.uppercase()}", it) }
         }
 
@@ -212,6 +224,7 @@ class OperatingPrinterFragment : DataTableFragment() {
         val tvUsbNote = view.findViewById<TextView>(R.id.tvUsbNote)
         val rb58mm = view.findViewById<RadioButton>(R.id.rb58mm)
         val rb80mm = view.findViewById<RadioButton>(R.id.rb80mm)
+        val llPaperWidth = view.findViewById<View>(R.id.llPaperWidth)
         val swDefault = view.findViewById<SwitchMaterial>(R.id.swDefault)
         val tvDefaultState = view.findViewById<TextView>(R.id.tvDefaultState)
         val btnSave = view.findViewById<MaterialButton>(R.id.btnFormPositive)
@@ -242,9 +255,23 @@ class OperatingPrinterFragment : DataTableFragment() {
             }
         }
 
+        /**
+         * Paper width is a RECEIPT question. A label printer's stock is a width, a
+         * height and the gap between labels, and those are asked on the Barcode screen
+         * where the roll is actually loaded - so asking "2 inch or 3 inch" here would
+         * be asking for a number that nothing reads and that cannot describe the stock
+         * anyway.
+         */
+        fun showPaperFor(purpose: String?) {
+            llPaperWidth.visibility =
+                if (OperatingPrinterDao.usesPaperWidth(purpose)) View.VISIBLE else View.GONE
+        }
+
         actvCombo.setOnItemClickListener { _, _, position, _ ->
-            val type = comboMap[comboOptions.getOrNull(position)]?.type?.uppercase()
+            val combo = comboMap[comboOptions.getOrNull(position)]
+            val type = combo?.type?.uppercase()
             showFieldsFor(type)
+            showPaperFor(combo?.purpose)
             // A freshly chosen combo has nothing selected yet; tapping the field opens the picker.
             if (type == "BLUETOOTH") actvBt.setText("", false)
             if (type == "USB") actvUsb.setText("", false)
@@ -258,6 +285,7 @@ class OperatingPrinterFragment : DataTableFragment() {
         val initialType = initialCombo?.let { comboMap[it]?.type?.uppercase() }
         if (initialCombo != null) actvCombo.setText(initialCombo, false)
         showFieldsFor(initialType)
+        showPaperFor(initialCombo?.let { comboMap[it]?.purpose })
         if (initialType == "WIFI" || initialType == "LAN") etIp.setText(existing?.value.orEmpty())
         if (initialType == "BLUETOOTH") prefillBtField(actvBt, existing?.value)
         if (initialType == "USB") prefillUsbField(actvUsb, existing?.value)
