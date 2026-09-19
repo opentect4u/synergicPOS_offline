@@ -41,6 +41,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
 
     private val dao by lazy { GeneralSettingsDao(requireContext()) }
     private val userDao by lazy { UserDao(requireContext()) }
+    private val weighingScaleBaudRates = listOf(1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200)
 
     private lateinit var actMode: MaterialAutoCompleteTextView
     private lateinit var swSaleReturn: SwitchMaterial
@@ -68,6 +69,13 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var llNegativeStock: View
     private lateinit var tilStockAlertQty: View
     private lateinit var etStockAlertQty: TextInputEditText
+    private lateinit var swWeighingScale: SwitchMaterial
+    private lateinit var llWeighingScaleBaud: View
+    private lateinit var actWeighingScaleBaud: MaterialAutoCompleteTextView
+    private lateinit var llWeighingScaleCharCount: View
+    private lateinit var etWeighingScaleCharCount: TextInputEditText
+    private lateinit var llWeighingScaleDecimalPosition: View
+    private lateinit var etWeighingScaleDecimalPosition: TextInputEditText
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -97,6 +105,13 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         llNegativeStock = view.findViewById(R.id.llNegativeStock)
         tilStockAlertQty = view.findViewById(R.id.tilStockAlertQty)
         etStockAlertQty = view.findViewById(R.id.etStockAlertQty)
+        swWeighingScale = view.findViewById(R.id.swWeighingScale)
+        llWeighingScaleBaud = view.findViewById(R.id.llWeighingScaleBaud)
+        actWeighingScaleBaud = view.findViewById(R.id.actWeighingScaleBaud)
+        llWeighingScaleCharCount = view.findViewById(R.id.llWeighingScaleCharCount)
+        etWeighingScaleCharCount = view.findViewById(R.id.etWeighingScaleCharCount)
+        llWeighingScaleDecimalPosition = view.findViewById(R.id.llWeighingScaleDecimalPosition)
+        etWeighingScaleDecimalPosition = view.findViewById(R.id.etWeighingScaleDecimalPosition)
 
         val s = dao.load()
         // Section access is an admin-only control: only an admin sees or sets it.
@@ -173,6 +188,25 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             applyStockState()
         }
 
+        // ---- Weighing scale: baud rate, character count and decimal position only
+        // matter once the scale itself is on ----------------------------------
+        swWeighingScale.isChecked = s.weighingScaleEnabled
+        actWeighingScaleBaud.setAdapter(NoFilterAdapter(requireContext(), weighingScaleBaudRates.map { it.toString() }))
+        actWeighingScaleBaud.setText(s.weighingScaleBaudRate.toString(), false)
+        etWeighingScaleCharCount.setText(s.weighingScaleCharCount.toString())
+        etWeighingScaleDecimalPosition.setText(s.weighingScaleDecimalPosition.toString())
+
+        fun applyWeighingScaleState() {
+            val on = swWeighingScale.isChecked
+            llWeighingScaleBaud.setRowEnabled(on)
+            actWeighingScaleBaud.isEnabled = on
+            llWeighingScaleCharCount.setRowEnabled(on)
+            etWeighingScaleCharCount.isEnabled = on
+            llWeighingScaleDecimalPosition.setRowEnabled(on)
+            etWeighingScaleDecimalPosition.isEnabled = on
+        }
+        applyWeighingScaleState()
+
         view.findViewById<MaterialButton>(R.id.btnChangePassword).setOnClickListener {
             showChangePasswordDialog()
         }
@@ -198,6 +232,12 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             val alertQty =
                 if (alertApply) etStockAlertQty.text?.toString()?.toIntOrNull() ?: 0 else 0
 
+            val defaults = GeneralSettings()
+            val baudVal = actWeighingScaleBaud.text?.toString()?.toIntOrNull() ?: defaults.weighingScaleBaudRate
+            val charCountVal = etWeighingScaleCharCount.text?.toString()?.toIntOrNull() ?: defaults.weighingScaleCharCount
+            val decimalPositionVal = etWeighingScaleDecimalPosition.text?.toString()?.toIntOrNull()
+                ?: defaults.weighingScaleDecimalPosition
+
             return GeneralSettings(
                 mode = modeVal,
                 saleReturn = swSaleReturn.isChecked,
@@ -220,7 +260,11 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 accessMaster = s.accessMaster,
                 accessSettings = s.accessSettings,
                 accessReports = s.accessReports,
-                accessAboutApp = s.accessAboutApp
+                accessAboutApp = s.accessAboutApp,
+                weighingScaleEnabled = swWeighingScale.isChecked,
+                weighingScaleBaudRate = baudVal,
+                weighingScaleCharCount = charCountVal,
+                weighingScaleDecimalPosition = decimalPositionVal
             )
         }
 
@@ -296,9 +340,12 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         SettingsAutoSave.onChange(
             ::autoSave,
             swLastBillStatus, swQuantityStatus, /* swCustomerInfo, */ swNegativeStock,
-            rgItemRate, rgLandingScreen, actProductSort
+            rgItemRate, rgLandingScreen, actProductSort, actWeighingScaleBaud
         )
-        SettingsAutoSave.onTyped(::autoSave, etSaleReturnDays, etStockAlertQty)
+        SettingsAutoSave.onTyped(
+            ::autoSave,
+            etSaleReturnDays, etStockAlertQty, etWeighingScaleCharCount, etWeighingScaleDecimalPosition
+        )
 
         // The stock pair keep the behaviour they were given further up and save from
         // inside it. Re-stated here because autoSave is not in scope where they were
@@ -312,6 +359,10 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         swStockAlert.setOnCheckedChangeListener { _, on ->
             if (!on) etStockAlertQty.setText("")
             applyStockState()
+            autoSave()
+        }
+        swWeighingScale.setOnCheckedChangeListener { _, _ ->
+            applyWeighingScaleState()
             autoSave()
         }
 

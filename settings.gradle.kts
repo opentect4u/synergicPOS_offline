@@ -19,6 +19,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // usb-serial-for-android (weighing scale integration) is only published on JitPack.
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
