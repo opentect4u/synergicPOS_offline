@@ -948,8 +948,54 @@ class DatabaseHelper private constructor(context: Context) :
             addColumnIfMissing(db, Tables.MD_CHARGES, "charge_kind", "TEXT DEFAULT 'EXTRA'")
         }
         if (oldVersion < 21) migrateV21AllowSplitBillType(db)
+        if (oldVersion < 22) migrateV22RenameOthersPrinterToBarcode(db)
         // gst_rate is dropped in onOpen via a portable table rebuild (see
         // dropProductGstRateIfPresent), which works on every SQLite version.
+    }
+
+    /**
+     * A database left behind by a NEWER build of the app than the one now installed.
+     *
+     * ## Why this exists at all
+     *
+     * SQLiteOpenHelper's own answer is to throw `SQLiteException: Can't downgrade
+     * database from version N to M`, and because everything in this app reads the
+     * database, that throw lands on whatever touched it first - which is the Login
+     * button. The till then cannot be signed into at all. Not a screen broken: the
+     * shop shut.
+     *
+     * It is not a hypothetical. It happens whenever a build is rolled back - a feature
+     * pulled before release, a tester moved back to the last good APK, a device given
+     * an older version than the one it was set up with. The data is the shop's and is
+     * perfectly readable; the only thing wrong is a number.
+     *
+     * ## Why accepting it is safe HERE
+     *
+     * Every migration in [onUpgrade] only ever ADDS - a column, a table, a wider CHECK
+     * constraint, a renamed lookup value. None drops a column or narrows a type. So a
+     * database written by a later build is a superset of what this build expects: the
+     * extra columns sit there unread, and everything this build looks for is present.
+     *
+     * [onOpen] then tops up anything genuinely missing through `addColumnIfMissing`,
+     * which is how this schema has always healed itself.
+     *
+     * Android stamps the version down to [DATABASE_VERSION] after this returns, so a
+     * device that later takes the newer build again simply replays that build's own
+     * migrations. Those are written to be safe to re-run - see the ones above, which
+     * check for what they are about to add.
+     *
+     * ## What it deliberately does NOT do
+     *
+     * Wipe and recreate. That is the other common answer to a downgrade and it would
+     * destroy a shop's bills, customers and stock to fix a version number - the one
+     * outcome worse than the crash it replaces.
+     */
+    override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        android.util.Log.w(
+            "DatabaseHelper",
+            "Database is from a newer build (v$oldVersion) than this one (v$newVersion); " +
+                "opening it as it is. Its extra columns are simply not read."
+        )
     }
 
     /**
@@ -1045,7 +1091,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     /** Ensures every purpose has a BLUETOOTH and a USB option (unselected). */
     private fun addExtraPrinterTypes(db: SQLiteDatabase) {
-        for (purpose in listOf("BILL", "KOT", "OTHERS")) {
+        for (purpose in listOf("BILL", "KOT", "BARCODE")) {
             for (type in listOf("BLUETOOTH", "USB")) {
                 db.execSQL(
                     "INSERT INTO ${Tables.MD_PRINTER} (printer_purpose, printer_type, is_selected) " +
@@ -1103,7 +1149,7 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(
             """
             INSERT OR IGNORE INTO ${Tables.MD_PRINTER} (sl_no, printer_purpose, printer_type)
-            VALUES (1, 'BILL', 'WIFI'), (2, 'KOT', 'LAN'), (3, 'OTHERS', 'LAN')
+            VALUES (1, 'BILL', 'WIFI'), (2, 'KOT', 'LAN'), (3, 'BARCODE', 'LAN')
             """.trimIndent()
         )
     }
@@ -1423,6 +1469,25 @@ class DatabaseHelper private constructor(context: Context) :
      *
      * A bill with one payment row is left exactly as it is.
      */
+    /**
+     * v22: renames the third printer purpose from OTHERS to BARCODE.
+     *
+     * "OTHERS" was a spare slot with nothing pointed at it. It has a job now - it is the
+     * label printer, the TSC the Barcode screen sends TSPL to - and a shop setting one
+     * up was being asked to work out that the label printer is the one called "other".
+     *
+     * Renamed in the table rather than relabelled on screen, so there is one name for
+     * it everywhere: the dropdown, the saved row and the code that looks it up all say
+     * BARCODE. Any row the shop already configured under OTHERS keeps its address and
+     * its connection type and simply answers to the new name.
+     */
+    private fun migrateV22RenameOthersPrinterToBarcode(db: SQLiteDatabase) {
+        db.execSQL(
+            "UPDATE ${Tables.MD_PRINTER} SET printer_purpose = 'BARCODE' " +
+                "WHERE UPPER(TRIM(printer_purpose)) = 'OTHERS'"
+        )
+    }
+
     private fun migrateV21AllowSplitBillType(db: SQLiteDatabase) {
         // Relies on foreign keys being off for the upgrade (see [onConfigure]):
         // td_bill_items and td_payments reference td_bills.
@@ -1596,7 +1661,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 21
+        private const val DATABASE_VERSION = 22
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of

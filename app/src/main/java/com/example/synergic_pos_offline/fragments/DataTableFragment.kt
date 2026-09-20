@@ -205,6 +205,34 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     open val showsSelection: Boolean get() = true
 
     /**
+     * Set false to keep the tick boxes and the Print action but drop Delete.
+     *
+     * [showsSelection] takes the two down together, which is the right answer for a
+     * table that is only being read. A table that SELECTS rows in order to do
+     * something with them - the barcode screen picks products to print labels for -
+     * needs the boxes and the Print button but has no business deleting a product
+     * from the catalogue, which is the product master's job.
+     */
+    open val showsDeleteAction: Boolean get() = true
+
+    /**
+     * Set false to keep the tick boxes but drop Print.
+     *
+     * The companion to [showsDeleteAction]: a table whose selection feeds an action of
+     * its own does not necessarily want the generic "print these rows" slip as well.
+     */
+    open val showsPrintAction: Boolean get() = true
+
+    /**
+     * Set true to add a "generate barcode" action beside Print, calling
+     * [onBulkGenerate] for the ticked rows.
+     *
+     * Off everywhere but the Barcode screen, where giving unlabelled stock a code is
+     * the step before printing a label for it.
+     */
+    open val showsGenerateAction: Boolean get() = false
+
+    /**
      * The columns' current left-to-right order, as indices into [columns] - identity
      * ([0, 1, 2, ...]) until [columnsReorderable] lets the operator drag one out of
      * place. Read by the header (labels) and by [DataTableAdapter] (cells) alike, so
@@ -231,6 +259,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     private lateinit var tvSelectionCount: TextView
     private lateinit var btnGlobalPrint: ImageButton
     private lateinit var btnGlobalDelete: ImageButton
+    private lateinit var btnGlobalGenerate: ImageButton
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -245,6 +274,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         tvSelectionCount = view.findViewById(R.id.tvSelectionCount)
         btnGlobalPrint = view.findViewById(R.id.btnGlobalPrint)
         btnGlobalDelete = view.findViewById(R.id.btnGlobalDelete)
+        btnGlobalGenerate = view.findViewById(R.id.btnGlobalGenerate)
 
         rvTable = view.findViewById(R.id.rvTable)
         tvEmpty = view.findViewById(R.id.tvEmpty)
@@ -317,8 +347,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         // own.
         view.findViewById<View>(R.id.llActionRow).isVisible = showsSelection || showDownloadTemplate()
         view.findViewById<View>(R.id.tvSelectionCount).isVisible = showsSelection
-        view.findViewById<View>(R.id.btnGlobalPrint).isVisible = showsSelection
-        view.findViewById<View>(R.id.btnGlobalDelete).isVisible = showsSelection
+        view.findViewById<View>(R.id.btnGlobalPrint).isVisible = showsSelection && showsPrintAction
+        view.findViewById<View>(R.id.btnGlobalDelete).isVisible = showsSelection && showsDeleteAction
+        view.findViewById<View>(R.id.btnGlobalGenerate).isVisible = showsSelection && showsGenerateAction
 
         // A single FAB that opens a dedicated bulk-upload page (product screen).
         view.findViewById<View>(R.id.btnBulkPage).apply {
@@ -333,6 +364,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
         btnGlobalDelete.setOnClickListener { onBulkDelete() }
         btnGlobalPrint.setOnClickListener { onBulkPrint() }
+        btnGlobalGenerate.setOnClickListener { onBulkGenerate() }
 
         ThemeManager.applyTheme(view)
     }
@@ -446,9 +478,11 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
         btnGlobalPrint.isEnabled = hasSelection
         btnGlobalDelete.isEnabled = hasSelection
+        btnGlobalGenerate.isEnabled = hasSelection
 
         btnGlobalPrint.alpha = if (hasSelection) 1f else 0.35f
         btnGlobalDelete.alpha = if (hasSelection) 1f else 0.35f
+        btnGlobalGenerate.alpha = if (hasSelection) 1f else 0.35f
 
         suppressSelectAll = true
         cbSelectAll.isChecked = shownRows.isNotEmpty() && shownRows.all { selectedIds.contains(it.id) }
@@ -679,6 +713,12 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
      * record rather than being shown a generic refusal.
      */
     protected open fun deleteBlockedReason(ids: Set<String>): String? = null
+
+    /**
+     * The "generate barcode" action, for a screen that opted in with
+     * [showsGenerateAction]. Does nothing anywhere else.
+     */
+    protected open fun onBulkGenerate() {}
 
     protected open fun onBulkPrint() {
         val rows = allRows.filter { it.id in selectedIds }

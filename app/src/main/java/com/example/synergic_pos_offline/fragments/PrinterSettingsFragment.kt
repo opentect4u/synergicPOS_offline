@@ -27,6 +27,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.OperatingPrinterDao
 import com.example.synergic_pos_offline.database.PrinterDao
 import com.example.synergic_pos_offline.utils.PrintLog
 import com.example.synergic_pos_offline.utils.ThemeManager
@@ -45,7 +46,7 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
 
     override val screenTitle = "Printer Settings"
 
-    private val purposes = listOf("BILL", "KOT", "OTHERS")
+    private val purposes = listOf("BILL", "KOT", "BARCODE")
 
     private lateinit var llPurposes: LinearLayout
     private lateinit var dao: PrinterDao
@@ -449,12 +450,21 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
         }
         (if (printer.paperMm == 58) rb58 else rb80).isChecked = true
 
+        // Paper width is a RECEIPT question - 58mm or 80mm of till roll, which every
+        // slip is scaled to. A label printer's stock is a width AND a height AND the
+        // gap between labels, and those are asked on the Barcode screen where the roll
+        // is loaded. Offering "2 inch / 3 inch" here would be asking for a number that
+        // nothing reads and that cannot describe label stock anyway.
+        val asksPaper = OperatingPrinterDao.usesPaperWidth(printer.purpose)
+
         return LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, 0)
             addView(header)
-            addView(paperLabel)
-            addView(paperGroup)
+            if (asksPaper) {
+                addView(paperLabel)
+                addView(paperGroup)
+            }
         }
     }
 }

@@ -76,6 +76,15 @@ object ThermalPrinter {
     private val main = Handler(Looper.getMainLooper())
 
     /**
+     * How much of a label's TSPL goes in the print log.
+     *
+     * A one- or two-sticker job is a few hundred bytes, so this only ever bites on a
+     * job built wrong - a runaway loop emitting a block per sticker - which is itself
+     * worth seeing the start of.
+     */
+    private const val MAX_LOGGED_TSPL = 4_000
+
+    /**
      * A printer to send to. [ip] is an IP for WIFI/LAN, a device MAC for BLUETOOTH or
      * a "VVVV:PPPP" vendor/product pair for USB ([UsbPrinters.addressOf]);
      * [connection] selects which transport is opened. Paper width is held in mm -
@@ -216,7 +225,30 @@ object ThermalPrinter {
      * Operating Printer's rows) so they all print the same thing.
      */
     fun testPrint(context: Context, purpose: String, config: Config, onResult: (Result) -> Unit) {
+        // A LABEL PRINTER GETS A LABEL, not a receipt raster.
+        //
+        // This used to send every printer the same ESC/POS bitmap. On a TSC that is not
+        // a poor test, it is a misleading one: the machine cannot read ESC/POS at all,
+        // so it spat the raster out as a page of huge broken characters across several
+        // labels - which reads as "the label printing is broken" when the printer and
+        // the connection were both fine and only this button was speaking the wrong
+        // language.
+        if (isLabelPurpose(purpose)) {
+            printRaw(context, TsplLabel.sample(), config, onResult)
+            return
+        }
         print(context, buildTestPrintBitmap(purpose, config), config, onResult)
+    }
+
+    /**
+     * Whether [purpose] names the label printer, which speaks TSPL rather than ESC/POS.
+     *
+     * Takes the name in any of the three shapes the callers have: "BARCODE" from the
+     * Printer Settings card, "O" from an operating-printer row's `print_flag`, and
+     * "OTHERS" from anything still using the name that purpose had before v22.
+     */
+    private fun isLabelPurpose(purpose: String): Boolean = purpose.trim().let {
+        it.equals("BARCODE", true) || it.equals("OTHERS", true) || it.equals("O", true)
     }
 
     private fun buildTestPrintBitmap(purpose: String, config: Config): Bitmap {
@@ -270,6 +302,112 @@ object ThermalPrinter {
      * printer a failure might mean a half-printed slip, and starting over there
      * risks handing the customer two.
      */
+    /**
+     * Sends [bytes] to the printer exactly as they are - no raster, no ESC/POS.
+     *
+     * ## What this is for
+     *
+     * A TSC label printer speaks TSPL, not ESC/POS. It is not fed a picture of a label;
+     * it is fed a program describing one (see [TsplLabel]). None of the receipt path
+     * above applies to it - no bitmap to scale, no `ESC @`, no cut command, no status
+     * query - so rather than teach [runJob] a second language, this hands the job to
+     * [TscPrinter], which speaks to the printer through TSC's own SDK instead of the
+     * ESC/POS one [runJob] uses.
+     *
+     * ## Why there is no handshake
+     *
+     * [runJob] sends `Initialize` and `SetPrintDensity` before every receipt, which are
+     * ESC/POS commands. A TSPL printer would read those bytes as the start of a label
+     * program, fail to parse them, and either discard the job or print the remains of
+     * one. The TSPL job carries its own reset - `CLS` clears the image buffer - so
+     * there is nothing a handshake would add.
+     *
+     * ## Why it does not retry
+     *
+     * [sendWithRetry] can retry a receipt because `PortOpen` failing means nothing was
+     * sent. Here the write either reached a printer that has already begun cutting
+     * labels or it did not, and a blind second attempt on a machine holding stock is
+     * how a shop ends up with two sets of labels for one product. A failure is reported
+     * and the operator decides.
+     *
+     * @param onResult called on the main thread once the job finishes
+     */
+    fun printRaw(context: Context, bytes: ByteArray, config: Config, onResult: (Result) -> Unit) {
+        // Opened before anything can go wrong, so that even a job rejected on the first
+        // line leaves a numbered block in the log rather than nothing at all.
+        val job = PrintLog.job(
+            context, TAG,
+            "label print -> ${config.connection} ${config.ip}:${config.port}, ${bytes.size} bytes"
+        )
+        // The whole TSPL program, as the printer will read it. It is a few hundred bytes
+        // of text and it is the one thing that makes a wrongly placed label diagnosable
+        // without the roll in hand - coordinates, sizes, gap, copies, all of it.
+        job.detail("TSPL sent", bytes.toString(Charsets.ISO_8859_1).trimEnd().take(MAX_LOGGED_TSPL))
+
+        if (bytes.isEmpty()) {
+            job.done("REFUSED: nothing to print")
+            onResult(Result.Failure("Nothing to print"))
+            return
+        }
+        if (config.isUsb) {
+            job.step("USB: asking for permission on ${config.ip}")
+            UsbPrinters.ensurePermission(context, config.ip) { granted, reason ->
+                if (!granted) {
+                    job.done("FAILED: USB not available - $reason")
+                    onResult(Result.Failure(reason))
+                } else {
+                    job.step("USB permission granted")
+                    dispatchRaw(context, bytes, config, job, onResult)
+                }
+            }
+            return
+        }
+        dispatchRaw(context, bytes, config, job, onResult)
+    }
+
+    private fun dispatchRaw(
+        context: Context, bytes: ByteArray, config: Config, job: PrintLog.Job, onResult: (Result) -> Unit
+    ) {
+        job.step("queued on the print worker")
+        worker.execute {
+            job.step("picked up by the print worker")
+            val result = runCatching { runRawJob(context, bytes, config, job) }
+                .getOrElse { e ->
+                    Log.e(TAG, "Raw print failed", e)
+                    job.failed("the job threw", e)
+                    Result.Failure(e.message ?: "Could not reach the printer")
+                }
+            job.done("result = $result")
+            main.post {
+                job.step("result handed back to the screen")
+                onResult(result)
+            }
+        }
+    }
+
+    /**
+     * The transport itself lives in [TscPrinter], which speaks to the printer through
+     * TSC's own SDK rather than `print.Print`'s. What stays here is what every raw job
+     * needs regardless of which SDK carries it: closing off the ESC/POS keep-open
+     * cache first (a label job and a receipt job must never be able to collide on it),
+     * and writing the one job-level log line the ESC/POS path also writes.
+     */
+    private fun runRawJob(context: Context, bytes: ByteArray, config: Config, job: PrintLog.Job): Result {
+        // Always closed first, Bluetooth included: the keep-open cache belongs to the
+        // receipt path and holds a port to an ESC/POS printer, which TscPrinter never
+        // touches - but a stale one left dangling here would still block a later
+        // receipt from opening its own.
+        val previous = openPort
+        val closed = runCatching { Print.PortClose() }
+        openPort = null
+        job.step(
+            "cleared the ESC/POS keep-open cache (held=${previous ?: "none"}, " +
+                "PortClose=${closed.getOrNull() ?: closed.exceptionOrNull()?.javaClass?.simpleName})"
+        )
+
+        return TscPrinter.send(context, bytes, config, job)
+    }
+
     private fun sendWithRetry(context: Context, receipt: Bitmap, config: Config): Result {
         var last: Result = Result.Failure("Cannot reach printer at ${config.ip}:${config.port}")
         repeat(JOB_ATTEMPTS) { attempt ->
