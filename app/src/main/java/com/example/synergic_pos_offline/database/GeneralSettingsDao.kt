@@ -179,7 +179,26 @@ class GeneralSettingsDao(context: Context) {
          * actions (erase bills, restore, restore defaults), so it is granted separately
          * from the rest of Settings rather than coming along with it.
          */
-        val accessAboutApp: Boolean = false
+        val accessAboutApp: Boolean = false,
+        /**
+         * Whether a USB weighing scale is wired in at all. Off, the product popup
+         * never touches USB and the three settings below mean nothing - see
+         * `UsbScaleManager`.
+         */
+        val weighingScaleEnabled: Boolean = false,
+        /** Serial speed the scale communicates at - must match the scale's own setting. */
+        val weighingScaleBaudRate: Int = 9600,
+        /**
+         * How many digits the scale's raw serial output carries for the weight value,
+         * e.g. a scale sending "001250" for 1.250 has 6.
+         */
+        val weighingScaleCharCount: Int = 6,
+        /**
+         * How many of those digits, counted from the right, fall after the decimal
+         * point - e.g. 3 turns "001250" into 1.250. Most scales send a fixed-width
+         * digit run with no decimal point of their own, so this is what places it.
+         */
+        val weighingScaleDecimalPosition: Int = 3
     )
 
     /** Reads every general setting for the current store, applying defaults. */
@@ -204,7 +223,12 @@ class GeneralSettingsDao(context: Context) {
             accessMaster = m[KEY_ACCESS_MASTER]?.toBool() ?: d.accessMaster,
             accessSettings = m[KEY_ACCESS_SETTINGS]?.toBool() ?: d.accessSettings,
             accessReports = m[KEY_ACCESS_REPORTS]?.toBool() ?: d.accessReports,
-            accessAboutApp = m[KEY_ACCESS_ABOUT_APP]?.toBool() ?: d.accessAboutApp
+            accessAboutApp = m[KEY_ACCESS_ABOUT_APP]?.toBool() ?: d.accessAboutApp,
+            weighingScaleEnabled = m[KEY_WEIGHING_SCALE_ENABLED]?.toBool() ?: d.weighingScaleEnabled,
+            weighingScaleBaudRate = m[KEY_WEIGHING_SCALE_BAUD_RATE]?.toIntOrNull() ?: d.weighingScaleBaudRate,
+            weighingScaleCharCount = m[KEY_WEIGHING_SCALE_CHAR_COUNT]?.toIntOrNull() ?: d.weighingScaleCharCount,
+            weighingScaleDecimalPosition = m[KEY_WEIGHING_SCALE_DECIMAL_POSITION]?.toIntOrNull()
+                ?: d.weighingScaleDecimalPosition
         )
     }
 
@@ -235,6 +259,10 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_ACCESS_SETTINGS, s.accessSettings.b())
         put(KEY_ACCESS_REPORTS, s.accessReports.b())
         put(KEY_ACCESS_ABOUT_APP, s.accessAboutApp.b())
+        put(KEY_WEIGHING_SCALE_ENABLED, s.weighingScaleEnabled.b())
+        put(KEY_WEIGHING_SCALE_BAUD_RATE, s.weighingScaleBaudRate.toString())
+        put(KEY_WEIGHING_SCALE_CHAR_COUNT, s.weighingScaleCharCount.toString())
+        put(KEY_WEIGHING_SCALE_DECIMAL_POSITION, s.weighingScaleDecimalPosition.toString())
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "General settings save (type G)")
     }
@@ -385,6 +413,10 @@ class GeneralSettingsDao(context: Context) {
         const val KEY_ACCESS_SETTINGS = "Access Settings"
         const val KEY_ACCESS_REPORTS = "Access Reports"
         const val KEY_ACCESS_ABOUT_APP = "Access About App"
+        private const val KEY_WEIGHING_SCALE_ENABLED = "Weighing Scale Enabled"
+        private const val KEY_WEIGHING_SCALE_BAUD_RATE = "Weighing Scale Baud Rate"
+        private const val KEY_WEIGHING_SCALE_CHAR_COUNT = "Weighing Scale Character Count"
+        private const val KEY_WEIGHING_SCALE_DECIMAL_POSITION = "Weighing Scale Decimal Position"
 
         /**
          * Whether the signed-in user may open [key] (one of the KEY_ACCESS_* keys).
@@ -479,6 +511,19 @@ class GeneralSettingsDao(context: Context) {
                 .value(context, "G", KEY_PRODUCT_SORT)
             ProductSort.fromStored(cached)?.let { return it }
             return GeneralSettingsDao(context).load().productSort
+        }
+
+        /**
+         * Whether a USB weighing scale is wired in - General Settings ▸ Weighing Scale.
+         *
+         * Checked every time the product popup opens for a fraction-enabled unit, so
+         * it follows the same cache-first, database-fallback pattern as [isStockEnabled].
+         */
+        fun isWeighingScaleEnabled(context: Context): Boolean {
+            val cached = com.example.synergic_pos_offline.utils.SettingsCache
+                .value(context, "G", KEY_WEIGHING_SCALE_ENABLED)
+            if (!cached.isNullOrBlank()) return cached == "1" || cached.equals("true", true)
+            return GeneralSettingsDao(context).load().weighingScaleEnabled
         }
     }
 }

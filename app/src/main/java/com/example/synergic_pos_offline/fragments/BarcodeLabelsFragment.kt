@@ -150,6 +150,12 @@ class BarcodeLabelsFragment : DataTableFragment() {
         val config = labelPrinter()
         if (config == null) {
             PrintLog.d(requireContext(), LOG_TAG, "STOPPED: no printer saved under the BARCODE purpose")
+            toast("This product has no barcode yet")
+            return
+        }
+
+        val config = labelPrinter()
+        if (config == null) {
             // NAMES THE OPTION, because "configure one under Printer Settings" sent the
             // operator to a page of printers with no clue which one this screen wants.
             DialogUtils.showConfirm(
@@ -202,6 +208,10 @@ class BarcodeLabelsFragment : DataTableFragment() {
             val copies = asked.coerceAtMost(MAX_LABELS)
             if (asked > MAX_LABELS) toast("Printing the first $MAX_LABELS labels")
             PrintLog.d(requireContext(), LOG_TAG, "operator asked for $asked label(s), printing $copies")
+            if (asked <= 0) { toast("Enter how many labels to print"); return@showForm }
+
+            val copies = asked.coerceAtMost(MAX_LABELS)
+            if (asked > MAX_LABELS) toast("Printing the first $MAX_LABELS labels")
 
             val job = TsplLabel.build(
                 productName = name,
@@ -221,6 +231,7 @@ class BarcodeLabelsFragment : DataTableFragment() {
                 // finishing after the operator has moved on is exactly the case where
                 // the toast is missed and the log is all there is.
                 PrintLog.d(ctx, LOG_TAG, "screen got the result: $result (screen still open=$isAdded)")
+            ThermalPrinter.printRaw(requireContext(), job, config) { result ->
                 if (!isAdded) return@printRaw
                 when (result) {
                     is ThermalPrinter.Result.Failure -> toast("Print failed: ${result.message}")
@@ -499,6 +510,8 @@ class BarcodeLabelsFragment : DataTableFragment() {
          * [ThermalPrinter.printRaw].
          */
         const val ENABLED = true
+         */
+        const val ENABLED = false
 
         /**
          * The most labels one tap will print.

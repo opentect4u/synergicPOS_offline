@@ -15,6 +15,7 @@ bcrypt = "0.10.2"
 swipeRefreshLayout = "1.1.0"
 biometric = "1.1.0"
 zxing = "3.5.3"
+usbSerial = "3.7.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -41,6 +42,8 @@ androidx-biometric = { group = "androidx.biometric", name = "biometric", version
 # reads a shopkeeper's existing QR image to pull the UPI ID out of it. No Android
 # or network dependency of its own, so it works on an offline till.
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
+# USB serial I/O for the weighing scale integration - JitPack only, see settings.gradle.kts.
+usb-serial-android = { group = "com.github.mik3y", name = "usb-serial-for-android", version.ref = "usbSerial" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

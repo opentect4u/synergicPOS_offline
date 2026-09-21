@@ -8,14 +8,26 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Data-access layer for bill header/footer lines, which live in two tables:
+ * Data-access layer for printed header/footer lines, which live in two tables:
  * [DatabaseHelper.Tables.MD_HEADERS] and [DatabaseHelper.Tables.MD_FOOTERS].
  *
- * Both are filtered to `*_type = 'BILL'`. Rows from the two tables share an id
- * space, so each entry is addressed by a [rowKey] that prefixes the id with the
- * section ("H12" / "F3").
+ * Rows from the two tables share an id space, so each entry is addressed by a
+ * [rowKey] that prefixes the id with the section ("H12" / "F3").
+ *
+ * ## One class, two documents
+ *
+ * [type] decides which set of lines this instance reads and writes - [TYPE_BILL] for
+ * the customer's receipt, [TYPE_KOT] for the kitchen ticket. The two are separate sets
+ * of lines in the same tables, told apart by the `header_type` / `footer_type` column
+ * that has been in the schema from the start.
+ *
+ * It defaults to BILL, so every caller written before the kitchen ticket had lines of
+ * its own goes on meaning exactly what it meant.
  */
-class BillHeaderFooterDao(context: Context) {
+class BillHeaderFooterDao(
+    context: Context,
+    private val type: String = TYPE_BILL
+) {
 
     private val helper = DatabaseHelper.getInstance(context)
 
@@ -58,15 +70,23 @@ class BillHeaderFooterDao(context: Context) {
 
     // ---- Read --------------------------------------------------------------
 
-    /** All BILL header lines followed by all BILL footer lines, by number. */
+    /** All header lines of this [type] followed by all its footer lines, by number. */
     fun getAll(): List<Entry> = readSection(Section.HEADER) + readSection(Section.FOOTER)
+
+    /**
+     * The lines of one section that are actually switched ON, in print order.
+     *
+     * What a printer wants, as against [getAll], which is what the management screen
+     * wants - that one lists the disabled lines too so they can be switched back on.
+     */
+    fun enabled(section: Section): List<Entry> = readSection(section).filter { it.enabled }
 
     private fun readSection(section: Section): List<Entry> {
         val cfg = config(section)
         val list = mutableListOf<Entry>()
         val store = currentStoreId()
         val where = if (store != null) "${cfg.typeCol} = ? AND store_id = ?" else "${cfg.typeCol} = ?"
-        val args = if (store != null) arrayOf("BILL", store.toString()) else arrayOf("BILL")
+        val args = if (store != null) arrayOf(type, store.toString()) else arrayOf(type)
         helper.readableDatabase.query(
             cfg.table,
             arrayOf("id", cfg.numberCol, cfg.textCol, "font_size", "is_bold", "is_enabled"),
@@ -104,7 +124,7 @@ class BillHeaderFooterDao(context: Context) {
             put("font_size", fontSize.stored)
             put("is_bold", if (bold) 1 else 0)
             put("is_enabled", if (enabled) 1 else 0)
-            put(cfg.typeCol, "BILL")
+            put(cfg.typeCol, type)
             put("created_at", now())
             put("created_by", currentUser())
         }
@@ -141,14 +161,14 @@ class BillHeaderFooterDao(context: Context) {
         return helper.writableDatabase.update(config(section).table, values, "id = ?", arrayOf(id.toString()))
     }
 
-    /** Number of BILL lines currently in a section (used to cap at 10), this store only. */
+    /** Number of this [type]'s lines in a section (used to cap at 10), this store only. */
     fun count(section: Section): Int {
         val cfg = config(section)
         val store = currentStoreId()
         val storeClause = if (store != null) " AND store_id = ?" else ""
         val args = store?.let { arrayOf(it.toString()) }
         helper.readableDatabase.rawQuery(
-            "SELECT COUNT(*) FROM ${cfg.table} WHERE ${cfg.typeCol} = 'BILL'$storeClause", args
+            "SELECT COUNT(*) FROM ${cfg.table} WHERE ${cfg.typeCol} = '$type'$storeClause", args
         ).use { c ->
             return if (c.moveToFirst()) c.getInt(0) else 0
         }
@@ -170,7 +190,7 @@ class BillHeaderFooterDao(context: Context) {
         val storeClause = if (store != null) " AND store_id = ?" else ""
         val args = store?.let { arrayOf(it.toString()) }
         helper.readableDatabase.rawQuery(
-            "SELECT MAX(${cfg.numberCol}) FROM ${cfg.table} WHERE ${cfg.typeCol} = 'BILL'$storeClause", args
+            "SELECT MAX(${cfg.numberCol}) FROM ${cfg.table} WHERE ${cfg.typeCol} = '$type'$storeClause", args
         ).use { c ->
             val max = if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else 0
             return (max + 1).coerceIn(1, 10)
@@ -216,4 +236,17 @@ class BillHeaderFooterDao(context: Context) {
 
     private fun currentUser(): String? = SessionManager.auditUser
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+
+    companion object {
+        /**
+         * The two documents that carry their own header and footer lines.
+         *
+         * These are the only values the `header_type` / `footer_type` CHECK constraint
+         * accepts, so they are spelled once here rather than as literals at each call
+         * site - a typo in one of those is a row the database refuses on insert and a
+         * set of lines that silently reads back empty.
+         */
+        const val TYPE_BILL = "BILL"
+        const val TYPE_KOT = "KOT"
+    }
 }

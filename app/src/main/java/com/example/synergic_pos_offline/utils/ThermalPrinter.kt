@@ -290,6 +290,9 @@ object ThermalPrinter {
     private const val JOB_ATTEMPTS = 3
     private const val RETRY_BACKOFF_MS = 700L
 
+    /** How long a raw (TSPL) job is given to drain before the port is closed. */
+    private const val RAW_DRAIN_MS = 400L
+
     /**
      * Runs the job, retrying a printer that refuses the connection.
      *

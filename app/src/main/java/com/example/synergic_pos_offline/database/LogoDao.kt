@@ -58,6 +58,22 @@ class LogoDao(context: Context) {
         return list
     }
 
+    /**
+     * The most recently added logo of [type], decoded, or null when there is none.
+     *
+     * LAST rather than first: a shop replacing an old logo adds the new one, and the
+     * newest is what they expect to see come out - the same rule the bill renderer
+     * applies (see BillReceiptRenderer.renderLogos).
+     *
+     * Decoded here rather than by the caller so that everything printing a logo reads
+     * it the same way, at the same modest size; a full-resolution image costs memory
+     * for pixels a thermal head cannot print anyway.
+     */
+    fun newest(type: LogoType): android.graphics.Bitmap? =
+        getAll(listOf(type)).lastOrNull()?.image
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { com.example.synergic_pos_offline.utils.ImageUtils.decodeThumb(it, LOGO_PX) }
+
     /** The stored image bytes for one row, or null when none/absent. */
     fun getImage(id: Long): ByteArray? {
         helper.readableDatabase.query(
@@ -113,4 +129,15 @@ class LogoDao(context: Context) {
 
     private fun now(): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+
+    private companion object {
+        /**
+         * How large a logo is decoded for printing.
+         *
+         * Comfortably over the widest roll's dot count, so the image is scaled DOWN to
+         * the paper rather than up to it - the same figure the bill renderer decodes
+         * its own logos at.
+         */
+        const val LOGO_PX = 480
+    }
 }

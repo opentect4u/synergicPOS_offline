@@ -259,6 +259,39 @@ object ProductEntryDialog {
         etQty.addTextChangedListener(watcher { refreshAmount() })
         refreshAmount()
 
+        // Live weight from a USB weighing scale - only for a fraction-enabled unit,
+        // and only once General Settings' Weighing Scale is switched on. The field
+        // is a display, not an input: "Use" is what actually moves a reading into
+        // the quantity, so a jittery scale never overwrites what the operator typed.
+        val llScaleWeight = view.findViewById<android.view.View>(R.id.llScaleWeight)
+        val etScaleWeight = view.findViewById<TextInputEditText>(R.id.etScaleWeight)
+        val btnUseScaleWeight = view.findViewById<MaterialButton>(R.id.btnUseScaleWeight)
+        val scaleEnabled = product.allowFraction && UsbScaleManager.isEnabled(context)
+        llScaleWeight.visibility = if (scaleEnabled) android.view.View.VISIBLE else android.view.View.GONE
+        var lastWeight: Double? = null
+        if (scaleEnabled) {
+            UsbScaleManager.connect(
+                context,
+                onWeight = { weight ->
+                    lastWeight = weight
+                    etScaleWeight.setText(qtyText(weight))
+                },
+                onError = { message ->
+                    etScaleWeight.setText("")
+                    etScaleWeight.hint = message
+                }
+            )
+            btnUseScaleWeight.setOnClickListener {
+                val weight = lastWeight
+                if (weight == null) {
+                    toast(context, "No weight received from the scale yet")
+                } else {
+                    etQty.setText(qtyText(weight))
+                    refreshAmount()
+                }
+            }
+        }
+
         // Multiple rates: a dropdown swaps the rate and its own tax split. The rate
         // is chosen from the list, so manual entry into the Rate field is disabled.
         if (product.rates.size > 1) {
@@ -295,6 +328,9 @@ object ProductEntryDialog {
 
         val dialog = AlertDialog.Builder(context).setView(view).create()
         dialog.setCanceledOnTouchOutside(false)
+        // Whichever way the popup closes - Add, Cancel, or the back press - the scale
+        // connection goes with it rather than lingering for the next popup to inherit.
+        if (scaleEnabled) dialog.setOnDismissListener { UsbScaleManager.disconnect() }
         // Show the custom card (its own rounded background), centred - the same look as
         // every other popup, not the default Material dialog panel.
         dialog.window?.apply {

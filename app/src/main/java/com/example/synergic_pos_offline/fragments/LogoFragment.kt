@@ -26,16 +26,25 @@ import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import java.io.File
 
 /**
- * "Bill Header Footer Logo" management screen — a concrete [DataTableFragment]
- * backed by the [LogoDao] (md_logos, BILL_HEADER / BILL_FOOTER).
+ * The logo management screen, for whichever document carries them — a
+ * [DataTableFragment] backed by [LogoDao] (md_logos).
  *
- * Each row is a logo image (captured from camera or gallery, stored as a BLOB)
- * tagged with a type. The image column renders as a tappable thumbnail that
+ * Each row is a logo image (captured from camera or gallery, cropped, stored as a
+ * BLOB) tagged with a slot. The image column renders as a tappable thumbnail that
  * opens a full-size preview.
+ *
+ * ## One screen, two documents
+ *
+ * The receipt and the kitchen ticket keep their own logos, but managing them is the
+ * same job - the same table, the same camera/gallery pick, the same crop step, the same
+ * preview. So there is one screen and the subclasses supply only what differs: the
+ * [screenTitle], the [myTypes] slots they own, and the word the preview card is
+ * captioned with.
+ *
+ * The DAO was already built for this - it takes the subset of types a caller owns - so
+ * nothing below it had to change. See [BillLogoFragment] and [KotLogoFragment].
  */
-class BillLogoFragment : DataTableFragment() {
-
-    override val screenTitle = "Bill Header Footer Logo"
+abstract class LogoFragment : DataTableFragment() {
 
     // Table columns. Cell layout per row: [imageState, typeLabel].
     override val columns = listOf("Logo", "Type")
@@ -45,8 +54,11 @@ class BillLogoFragment : DataTableFragment() {
         const val COL_TYPE = 1
     }
 
-    /** The logo slots this screen owns. */
-    private val myTypes = listOf(LogoType.BILL_HEADER, LogoType.BILL_FOOTER)
+    /** The logo slots this screen owns - the rest of md_logos is another screen's. */
+    protected abstract val myTypes: List<LogoType>
+
+    /** What the full-size preview card calls these, e.g. "Bill Logo". */
+    protected abstract val previewCaption: String
 
     private val dao: LogoDao by lazy { LogoDao(requireContext()) }
 
@@ -109,7 +121,7 @@ class BillLogoFragment : DataTableFragment() {
         val tvEmpty = view.findViewById<TextView>(R.id.tvPreviewEmpty)
         val btnClose = view.findViewById<MaterialButton>(R.id.btnPreviewClose)
         view.findViewById<TextView>(R.id.tvPreviewName).text = row.cells.getOrNull(COL_TYPE).orEmpty()
-        view.findViewById<TextView>(R.id.tvPreviewCode).text = "Bill Logo"
+        view.findViewById<TextView>(R.id.tvPreviewCode).text = previewCaption
 
         val bytes = row.id.toLongOrNull()?.let { dao.getImage(it) }
         if (bytes != null) {
@@ -274,4 +286,32 @@ class BillLogoFragment : DataTableFragment() {
         target.imageTintList = null
         target.setImageBitmap(BitmapFactory.decodeByteArray(bytes, 0, bytes.size))
     }
+}
+
+/**
+ * "Bill Header Footer Logo" - the images printed at the head and foot of the
+ * customer's receipt.
+ */
+class BillLogoFragment : LogoFragment() {
+    override val screenTitle = "Bill Header Footer Logo"
+    override val myTypes = listOf(LogoType.BILL_HEADER, LogoType.BILL_FOOTER)
+    override val previewCaption = "Bill Logo"
+}
+
+/**
+ * "KOT Header Footer Logo" - the images printed at the head and foot of the kitchen
+ * ticket.
+ *
+ * Its own slots, not the bill's. The two documents go to different people, and a shop
+ * that wants its full logo on a customer's receipt often wants nothing but a plain
+ * kitchen ticket - or a different mark on it entirely, telling one branch's pass from
+ * another's.
+ *
+ * Restaurant mode only - a grocery till prints no kitchen ticket, so the tile and the
+ * drawer entry are both hidden there.
+ */
+class KotLogoFragment : LogoFragment() {
+    override val screenTitle = "KOT Header Footer Logo"
+    override val myTypes = listOf(LogoType.KOT_HEADER, LogoType.KOT_FOOTER)
+    override val previewCaption = "KOT Logo"
 }

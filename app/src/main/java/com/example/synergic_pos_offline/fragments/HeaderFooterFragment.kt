@@ -50,8 +50,9 @@ class HeaderFooterFragment : Fragment() {
         rvHeaderFooter.adapter = HeaderFooterAdapter(items) { item ->
             when (item.title) {
                 "Bill Header & Footer" -> openFragment(BillHeaderFooterFragment())
+                "KOT Header & Footer" -> openFragment(KotHeaderFooterFragment())
                 "Bill Header Footer Logo" -> openFragment(BillLogoFragment())
-                // KOT screens don't exist yet -> clean placeholder.
+                "KOT Header Footer Logo" -> openFragment(KotLogoFragment())
                 else -> openFragment(ComingSoonFragment.newInstance(item.title))
             }
         }

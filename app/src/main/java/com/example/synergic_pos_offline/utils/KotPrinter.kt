@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import com.example.synergic_pos_offline.database.BillHeaderFooterDao
+import com.example.synergic_pos_offline.database.LogoDao
 import com.example.synergic_pos_offline.database.OperatingPrinterDao
 import com.example.synergic_pos_offline.database.RunningOrderDao
 
@@ -55,9 +57,18 @@ object KotPrinter {
         // PRODUCT NAMES come out in the Products master's language, not this one.
         // `language` above sets the ticket's own words - KOT NO, ITEM, QUANTITY - and
         // what the dishes are CALLED is the master's question. See [RegionalName].
+        // The shop's own KOT header/footer lines and logos - its own set, not the
+        // bill's. Read here, where there is a Context, and handed to [render], which
+        // has none.
+        val lines = BillHeaderFooterDao(context, BillHeaderFooterDao.TYPE_KOT)
+        val logos = LogoDao(context)
         val bitmap = render(
             batch, config.paperDots, language,
-            RegionalName.language(context), RegionalName.map(context)
+            RegionalName.language(context), RegionalName.map(context),
+            headerLines = lines.enabled(BillHeaderFooterDao.Section.HEADER),
+            footerLines = lines.enabled(BillHeaderFooterDao.Section.FOOTER),
+            headerLogo = logos.newest(LogoDao.LogoType.KOT_HEADER),
+            footerLogo = logos.newest(LogoDao.LogoType.KOT_FOOTER)
         )
         ThermalPrinter.print(context, bitmap, config) { result ->
             when (result) {
@@ -90,7 +101,16 @@ object KotPrinter {
         /** How far [right] sits in from the paper's own right edge, overriding
          *  the ticket's usual [padX] - see the QUANTITY column's own note. Null
          *  keeps the usual margin, which is every [right] but the quantity's. */
-        val rightInset: Float? = null
+        val rightInset: Float? = null,
+        /**
+         * A logo, drawn centred at its own height INSTEAD of [text].
+         *
+         * A line rather than a special case outside the list, so the measuring pass
+         * and the drawing pass account for it the same way they account for everything
+         * else - the ticket's height is whatever walking this list comes to, and an
+         * image reserved anywhere but here would be an image drawn off the bottom.
+         */
+        val bitmap: Bitmap? = null
     )
 
     /**
@@ -169,7 +189,20 @@ object KotPrinter {
         // Passed IN rather than read here, so this stays free of a Context - it is the
         // one function on this object a test can call. Empty means none is saved, which
         // falls back to translating each name, exactly as this always did.
-        regionalNames: Map<String, String> = emptyMap()
+        regionalNames: Map<String, String> = emptyMap(),
+        // The shop's own KOT header and footer lines, already filtered to the enabled
+        // ones and in print order - see BillHeaderFooterDao.enabled. Passed in for the
+        // same reason regionalNames is: this function stays free of a Context.
+        //
+        // NOT the bill's lines. The two documents go to different people, and a footer
+        // thanking the customer for their visit has no business on a ticket the kitchen
+        // reads. Empty is the ordinary case and prints exactly what it always did.
+        headerLines: List<BillHeaderFooterDao.Entry> = emptyList(),
+        footerLines: List<BillHeaderFooterDao.Entry> = emptyList(),
+        // The shop's own KOT logos, already decoded. Null for either is the ordinary
+        // case - most kitchens want a plain ticket - and prints nothing in that slot.
+        headerLogo: Bitmap? = null,
+        footerLogo: Bitmap? = null
     ): Bitmap {
         // Set from [PrintType], so the ticket carries the same face and the same
         // sizes as the bill. These used to be fractions of the paper width, which
@@ -213,6 +246,53 @@ object KotPrinter {
         val ruleBefore = mutableSetOf<Int>()
         /** This ticket's own labels, in the till's print language. */
         fun t(text: String) = PrintLanguage.tr(language, text)
+
+        /**
+         * A shop's own header/footer line, set at the size and weight it was saved at.
+         *
+         * Centred, as the bill's are: these are the shop's name, its address, a note to
+         * the kitchen - statements about the whole document rather than entries in a
+         * column, and the bill sets them the same way (see
+         * BillReceiptRenderer.renderFixedLines).
+         *
+         * Wrapped to the paper, because a header is a whole sentence and a roll is
+         * narrow. Left unwrapped it runs off the edge and the end of it is simply lost.
+         */
+        fun fixed(entry: BillHeaderFooterDao.Entry): List<Line> {
+            val paint = PrintType.paint(entry.fontSize.sp, bold = entry.bold)
+            return wrapToWidth(entry.text, paint, width - padX * 2)
+                .map { Line(it, paint, center = true) }
+        }
+
+        /**
+         * A logo as a printable line, scaled to fit between the ticket's margins.
+         *
+         * Scaled DOWN only. A small image blown up to the width of the roll is a
+         * blurred one, and on a thermal head - which is one bit per dot, no greys -
+         * that turns into a smear rather than a soft edge.
+         *
+         * Done once, when the line is built, because [layout] walks the list twice and
+         * scaling inside it would do the work twice and - worse - could measure one
+         * size and draw another.
+         */
+        fun logoLine(bmp: Bitmap): Line {
+            val max = (width - padX * 2).toInt().coerceAtLeast(1)
+            val scaled = if (bmp.width > max) {
+                val h = (bmp.height.toFloat() / bmp.width * max).toInt().coerceAtLeast(1)
+                Bitmap.createScaledBitmap(bmp, max, h, true)
+            } else bmp
+            return Line("", sub, bitmap = scaled)
+        }
+
+        // The logo at the very top, above even the shop's own text lines - it is the
+        // letterhead, and the lines under it are the address.
+        headerLogo?.let { lines += logoLine(it) }
+
+        // The shop's own lines come FIRST, above the document's own title, exactly
+        // where the bill puts them: they are the letterhead, and a letterhead under the
+        // heading is not one.
+        headerLines.forEach { lines += fixed(it) }
+        if (headerLines.isNotEmpty() || headerLogo != null) ruleBefore += lines.size
 
         // BILL KOT stays as it is in every language. It is what the trade calls this
         // document - the kitchen, the floor and the till all say it - and spelling out
@@ -294,6 +374,12 @@ object KotPrinter {
             }
         }
 
+        // The shop's own closing lines, under a rule so they read as the foot of the
+        // ticket rather than as one more note to the kitchen.
+        if (footerLines.isNotEmpty() || footerLogo != null) ruleBefore += lines.size
+        footerLines.forEach { lines += fixed(it) }
+        footerLogo?.let { lines += logoLine(it) }
+
         // Measured and drawn by walking the same list twice, so the height reserved
         // is the height used - the rule is a line of text now, not a bar of known
         // thickness, and guessing at it would crop the ticket.
@@ -301,6 +387,13 @@ object KotPrinter {
             var y = padTop
             lines.forEachIndexed { index, line ->
                 if (index in ruleBefore) y = PrintType.drawRule(canvas, y, width, padX)
+                // A logo line: centred on the paper, at whatever height it scaled to.
+                // No ascent/descent involved - an image has none.
+                line.bitmap?.let { bmp ->
+                    canvas?.drawBitmap(bmp, (width - bmp.width) / 2f, y, null)
+                    y += bmp.height + gap
+                    return@forEachIndexed
+                }
                 y -= line.paint.ascent()
                 if (line.center) {
                     canvas?.drawText(line.text, width / 2f, y, line.paint.apply { textAlign = Paint.Align.CENTER })
