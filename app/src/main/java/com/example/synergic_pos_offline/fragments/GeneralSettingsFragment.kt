@@ -76,6 +76,10 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var etWeighingScaleCharCount: TextInputEditText
     private lateinit var llWeighingScaleDecimalPosition: View
     private lateinit var etWeighingScaleDecimalPosition: TextInputEditText
+    private lateinit var llWeighingScaleStartPoint: View
+    private lateinit var etWeighingScaleStartPoint: TextInputEditText
+    private lateinit var llWeighingScaleEndPoint: View
+    private lateinit var etWeighingScaleEndPoint: TextInputEditText
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -112,6 +116,10 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         etWeighingScaleCharCount = view.findViewById(R.id.etWeighingScaleCharCount)
         llWeighingScaleDecimalPosition = view.findViewById(R.id.llWeighingScaleDecimalPosition)
         etWeighingScaleDecimalPosition = view.findViewById(R.id.etWeighingScaleDecimalPosition)
+        llWeighingScaleStartPoint = view.findViewById(R.id.llWeighingScaleStartPoint)
+        etWeighingScaleStartPoint = view.findViewById(R.id.etWeighingScaleStartPoint)
+        llWeighingScaleEndPoint = view.findViewById(R.id.llWeighingScaleEndPoint)
+        etWeighingScaleEndPoint = view.findViewById(R.id.etWeighingScaleEndPoint)
 
         val s = dao.load()
         // Section access is an admin-only control: only an admin sees or sets it.
@@ -195,6 +203,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         actWeighingScaleBaud.setText(s.weighingScaleBaudRate.toString(), false)
         etWeighingScaleCharCount.setText(s.weighingScaleCharCount.toString())
         etWeighingScaleDecimalPosition.setText(s.weighingScaleDecimalPosition.toString())
+        etWeighingScaleStartPoint.setText(s.weighingScaleStartPoint.toString())
+        etWeighingScaleEndPoint.setText(s.weighingScaleEndPoint.toString())
 
         fun applyWeighingScaleState() {
             val on = swWeighingScale.isChecked
@@ -204,6 +214,10 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             etWeighingScaleCharCount.isEnabled = on
             llWeighingScaleDecimalPosition.setRowEnabled(on)
             etWeighingScaleDecimalPosition.isEnabled = on
+            llWeighingScaleStartPoint.setRowEnabled(on)
+            etWeighingScaleStartPoint.isEnabled = on
+            llWeighingScaleEndPoint.setRowEnabled(on)
+            etWeighingScaleEndPoint.isEnabled = on
         }
         applyWeighingScaleState()
 
@@ -237,6 +251,13 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             val charCountVal = etWeighingScaleCharCount.text?.toString()?.toIntOrNull() ?: defaults.weighingScaleCharCount
             val decimalPositionVal = etWeighingScaleDecimalPosition.text?.toString()?.toIntOrNull()
                 ?: defaults.weighingScaleDecimalPosition
+            // Blank reads as 0, which is what "no window set" means - see
+            // GeneralSettings.weighingScaleStartPoint. Negatives are floored there too,
+            // since a character position before the first one is not a position.
+            val startPointVal = (etWeighingScaleStartPoint.text?.toString()?.toIntOrNull() ?: 0)
+                .coerceAtLeast(0)
+            val endPointVal = (etWeighingScaleEndPoint.text?.toString()?.toIntOrNull() ?: 0)
+                .coerceAtLeast(0)
 
             return GeneralSettings(
                 mode = modeVal,
@@ -264,7 +285,9 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 weighingScaleEnabled = swWeighingScale.isChecked,
                 weighingScaleBaudRate = baudVal,
                 weighingScaleCharCount = charCountVal,
-                weighingScaleDecimalPosition = decimalPositionVal
+                weighingScaleDecimalPosition = decimalPositionVal,
+                weighingScaleStartPoint = startPointVal,
+                weighingScaleEndPoint = endPointVal
             )
         }
 
@@ -344,7 +367,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         )
         SettingsAutoSave.onTyped(
             ::autoSave,
-            etSaleReturnDays, etStockAlertQty, etWeighingScaleCharCount, etWeighingScaleDecimalPosition
+            etSaleReturnDays, etStockAlertQty, etWeighingScaleCharCount, etWeighingScaleDecimalPosition,
+            etWeighingScaleStartPoint, etWeighingScaleEndPoint
         )
 
         // The stock pair keep the behaviour they were given further up and save from

@@ -198,7 +198,24 @@ class GeneralSettingsDao(context: Context) {
          * point - e.g. 3 turns "001250" into 1.250. Most scales send a fixed-width
          * digit run with no decimal point of their own, so this is what places it.
          */
-        val weighingScaleDecimalPosition: Int = 3
+        val weighingScaleDecimalPosition: Int = 3,
+        /**
+         * WHERE IN THE SCALE'S LINE THE WEIGHT ACTUALLY IS - first and last character,
+         * counted from 1, inclusive of both.
+         *
+         * An indicator rarely sends the weight on its own. A common frame is
+         * `ST,GS,+  1.250kg` - a status, a sign, the figure, a unit - and the reading
+         * wanted is characters 8 to 13 of it. [weighingScaleCharCount] alone cannot
+         * express that: it takes the LAST n digits of whatever arrived, so a frame
+         * carrying any digits after the weight (a piece count, a unit like "2kg", a
+         * checksum) reads the wrong number - quietly, and as a plausible weight.
+         *
+         * Both zero means "not set", and parsing falls back to the character-count
+         * behaviour that shipped before - so a till already weighing correctly goes on
+         * doing exactly what it did. See `UsbScaleManager.parseWeight`.
+         */
+        val weighingScaleStartPoint: Int = 0,
+        val weighingScaleEndPoint: Int = 0
     )
 
     /** Reads every general setting for the current store, applying defaults. */
@@ -227,6 +244,10 @@ class GeneralSettingsDao(context: Context) {
             weighingScaleEnabled = m[KEY_WEIGHING_SCALE_ENABLED]?.toBool() ?: d.weighingScaleEnabled,
             weighingScaleBaudRate = m[KEY_WEIGHING_SCALE_BAUD_RATE]?.toIntOrNull() ?: d.weighingScaleBaudRate,
             weighingScaleCharCount = m[KEY_WEIGHING_SCALE_CHAR_COUNT]?.toIntOrNull() ?: d.weighingScaleCharCount,
+            weighingScaleStartPoint = m[KEY_WEIGHING_SCALE_START_POINT]?.toIntOrNull()
+                ?: d.weighingScaleStartPoint,
+            weighingScaleEndPoint = m[KEY_WEIGHING_SCALE_END_POINT]?.toIntOrNull()
+                ?: d.weighingScaleEndPoint,
             weighingScaleDecimalPosition = m[KEY_WEIGHING_SCALE_DECIMAL_POSITION]?.toIntOrNull()
                 ?: d.weighingScaleDecimalPosition
         )
@@ -263,6 +284,8 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_WEIGHING_SCALE_BAUD_RATE, s.weighingScaleBaudRate.toString())
         put(KEY_WEIGHING_SCALE_CHAR_COUNT, s.weighingScaleCharCount.toString())
         put(KEY_WEIGHING_SCALE_DECIMAL_POSITION, s.weighingScaleDecimalPosition.toString())
+        put(KEY_WEIGHING_SCALE_START_POINT, s.weighingScaleStartPoint.toString())
+        put(KEY_WEIGHING_SCALE_END_POINT, s.weighingScaleEndPoint.toString())
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "General settings save (type G)")
     }
@@ -417,6 +440,8 @@ class GeneralSettingsDao(context: Context) {
         private const val KEY_WEIGHING_SCALE_BAUD_RATE = "Weighing Scale Baud Rate"
         private const val KEY_WEIGHING_SCALE_CHAR_COUNT = "Weighing Scale Character Count"
         private const val KEY_WEIGHING_SCALE_DECIMAL_POSITION = "Weighing Scale Decimal Position"
+        private const val KEY_WEIGHING_SCALE_START_POINT = "Weighing Scale Start Point"
+        private const val KEY_WEIGHING_SCALE_END_POINT = "Weighing Scale End Point"
 
         /**
          * Whether the signed-in user may open [key] (one of the KEY_ACCESS_* keys).

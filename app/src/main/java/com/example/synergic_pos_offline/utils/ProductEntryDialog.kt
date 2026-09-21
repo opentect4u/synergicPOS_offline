@@ -270,11 +270,36 @@ object ProductEntryDialog {
         llScaleWeight.visibility = if (scaleEnabled) android.view.View.VISIBLE else android.view.View.GONE
         var lastWeight: Double? = null
         if (scaleEnabled) {
+            // THE READING GOES STRAIGHT INTO QUANTITY, which is the whole point of
+            // having a scale wired in: the operator puts the goods on the pan and the
+            // till has the weight. It used to land only in the display box above, and
+            // "Use" was the one thing that moved it down - so a counter that did not
+            // know about that button weighed everything and then typed it in by hand.
+            //
+            // ...UNTIL THE OPERATOR TYPES A QUANTITY THEMSELVES. That was the reason
+            // for the button, and it is a real one: a scale still settling sends a
+            // stream of readings, and one landing a moment after someone keyed in 1.5
+            // would wipe it. So typing hands the field over, and the live stream stops
+            // writing to it - the same rule the split-payment boxes follow. "Use" is
+            // still there to take it back.
+            var qtyTypedByHand = false
+            var fillingQty = false
+            etQty.addTextChangedListener(watcher { if (!fillingQty) qtyTypedByHand = true })
+
+            fun applyWeight(weight: Double) {
+                fillingQty = true
+                etQty.setText(qtyText(weight))
+                etQty.setSelection(etQty.text?.length ?: 0)
+                fillingQty = false
+                refreshAmount()
+            }
+
             UsbScaleManager.connect(
                 context,
                 onWeight = { weight ->
                     lastWeight = weight
                     etScaleWeight.setText(qtyText(weight))
+                    if (!qtyTypedByHand) applyWeight(weight)
                 },
                 onError = { message ->
                     etScaleWeight.setText("")
@@ -286,8 +311,10 @@ object ProductEntryDialog {
                 if (weight == null) {
                     toast(context, "No weight received from the scale yet")
                 } else {
-                    etQty.setText(qtyText(weight))
-                    refreshAmount()
+                    // Takes the field back for the scale as well as filling it, so the
+                    // stream resumes following the pan after a hand-typed quantity.
+                    qtyTypedByHand = false
+                    applyWeight(weight)
                 }
             }
         }

@@ -139,7 +139,13 @@ object UsbScaleManager {
         buffer = ""
         ioManager = SerialInputOutputManager(p, object : SerialInputOutputManager.Listener {
             override fun onNewData(data: ByteArray) {
-                val weight = feed(String(data, Charsets.US_ASCII), settings.weighingScaleCharCount, settings.weighingScaleDecimalPosition)
+                val weight = feed(
+                    String(data, Charsets.US_ASCII),
+                    settings.weighingScaleCharCount,
+                    settings.weighingScaleDecimalPosition,
+                    settings.weighingScaleStartPoint,
+                    settings.weighingScaleEndPoint
+                )
                 if (weight != null) postWeight(weight, onWeight)
             }
 
@@ -174,7 +180,13 @@ object UsbScaleManager {
      * mid-transmission is expected every so often on a live stream and is simply
      * dropped rather than surfaced as an error.
      */
-    private fun feed(chunk: String, charCount: Int, decimalPosition: Int): Double? {
+    private fun feed(
+        chunk: String,
+        charCount: Int,
+        decimalPosition: Int,
+        startPoint: Int,
+        endPoint: Int
+    ): Double? {
         buffer += chunk
         var last: Double? = null
         while (true) {
@@ -182,7 +194,7 @@ object UsbScaleManager {
             if (idx < 0) break
             val line = buffer.substring(0, idx)
             buffer = buffer.substring(idx + 1)
-            parseWeight(line, charCount, decimalPosition)?.let { last = it }
+            parseWeight(line, charCount, decimalPosition, startPoint, endPoint)?.let { last = it }
         }
         // A line that never terminates (noise, or a scale with no CR/LF framing)
         // would otherwise grow the buffer forever - cap it and start fresh.
@@ -190,34 +202,15 @@ object UsbScaleManager {
         return last
     }
 
-    /**
-     * Reads a weight out of one raw line from the scale, using only the two things
-     * General Settings asks the operator for: how many digits the weight carries
-     * ([charCount]), and how many of those, counted from the right, are decimals
-     * ([decimalPosition]).
-     *
-     * Most indicators send a fixed-width run of digits with no decimal point of its
-     * own (e.g. "001250" for 1.250kg) and may pad it with a status prefix, a "kg"
-     * suffix, or leading zeros that vary with the reading. Taking the LAST
-     * [charCount] digits and inserting the point [decimalPosition] places from the
-     * right handles both of those without needing to know the scale's exact
-     * protocol - only its digit width and decimal placement, which the operator
-     * reads off the scale's own display/manual.
-     *
-     * A leading "-" anywhere before the digits (as a net-negative or tare reading)
-     * carries through as a negative value.
-     */
-    private fun parseWeight(rawLine: String, charCount: Int, decimalPosition: Int): Double? {
-        if (charCount <= 0) return null
-        val trimmed = rawLine.trim()
-        if (trimmed.isEmpty()) return null
-        val digits = trimmed.filter { it.isDigit() }
-        if (digits.length < charCount) return null
-        val field = digits.takeLast(charCount)
-        val magnitude = field.toLongOrNull() ?: return null
-        val value = magnitude / Math.pow(10.0, decimalPosition.toDouble())
-        return if (trimmed.contains('-')) -value else value
-    }
+    /** Delegates to [ScaleReading.parse], which is split out so it can be tested. */
+    private fun parseWeight(
+        rawLine: String,
+        charCount: Int,
+        decimalPosition: Int,
+        startPoint: Int = 0,
+        endPoint: Int = 0
+    ): Double? = ScaleReading.parse(rawLine, charCount, decimalPosition, startPoint, endPoint)
+
 
     private fun requestPermission(
         context: Context, manager: UsbManager, device: UsbDevice, onResult: (Boolean) -> Unit

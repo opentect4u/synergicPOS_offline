@@ -503,7 +503,7 @@
                     style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">
                         <TextView style="@style/BillSettingTitle" android:text="Number of Characters" />
-                        <TextView style="@style/BillSettingSub" android:text="How many digits the scale sends for the weight value" />
+                        <TextView style="@style/BillSettingSub" android:text="How many digits the scale sends for the weight value. Ignored once Start and End Point are set below" />
                     </LinearLayout>
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilWeighingScaleCharCount"
@@ -549,6 +549,72 @@
                         app:boxCornerRadiusBottomEnd="12dp">
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/etWeighingScaleDecimalPosition"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:gravity="end"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Start point: which character of the scale's line the weight begins
+                     at, counted from 1. Together with End Point it names the exact
+                     slice that holds the reading, which is how an indicator sending
+                     more than the weight (a status, a unit, a piece count) is read
+                     correctly - see UsbScaleManager.parseWeight. -->
+                <LinearLayout
+                    android:id="@+id/llWeighingScaleStartPoint"
+                    style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Starting Point" />
+                        <TextView style="@style/BillSettingSub" android:text="First character of the weight in the scale's line, counted from 1. Leave 0 to use Number of Characters instead" />
+                    </LinearLayout>
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilWeighingScaleStartPoint"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="90dp"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:hint="Start"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etWeighingScaleStartPoint"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:gravity="end"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- End point: the last character of the weight, inclusive. -->
+                <LinearLayout
+                    android:id="@+id/llWeighingScaleEndPoint"
+                    style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Ending Point" />
+                        <TextView style="@style/BillSettingSub" android:text="Last character of the weight, counted from 1 and included" />
+                    </LinearLayout>
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilWeighingScaleEndPoint"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="90dp"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:hint="End"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etWeighingScaleEndPoint"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="number"
