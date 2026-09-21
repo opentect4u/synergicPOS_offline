@@ -85,24 +85,31 @@ class DashboardHomeFragment : Fragment() {
     fun refresh() {
         if (!isAdded || !pageLoaded) return
         val w = webView ?: return
-        
+
         val context = requireContext().applicationContext
         val colorInt = ThemeManager.getThemeColor(requireContext())
         val accentStr = String.format("#%06X", 0xFFFFFF and colorInt)
-        
+
         Thread {
             try {
                 val data = DashboardDao(context).snapshot()
                 data.put("accent", accentStr)
                 val jsonPayload = data.toString()
-                
+
                 w.post {
-                    if (isAdded) {
+                    // webView is nulled in onDestroyView, so this also covers the case
+                    // where the view went away while the snapshot was being read - the
+                    // fragment can still be "added" with its view already destroyed.
+                    if (isAdded && webView != null) {
                         w.evaluateJavascript("render(" + JSONObject.quote(jsonPayload) + ");", null)
                         swipeLayout?.isRefreshing = false
                     }
                 }
             } catch (e: Exception) {
+                // Logged, not swallowed. The dashboard reads a dozen figures out of the
+                // books; one bad query left the spinner stopping with the old numbers
+                // still on screen and nothing anywhere to say the screen was stale.
+                android.util.Log.e("DashboardHome", "Could not build the dashboard snapshot", e)
                 w.post {
                     if (isAdded) swipeLayout?.isRefreshing = false
                 }
@@ -110,23 +117,74 @@ class DashboardHomeFragment : Fragment() {
         }.start()
     }
 
+    /**
+     * Lets the WebView go when the screen does.
+     *
+     * A WebView holds its JavascriptInterface for as long as it lives, and [Bridge] is
+     * an inner class - it holds this fragment, which holds the WebView. Left alone that
+     * is a cycle rooted in a view that has been destroyed, so every visit to the
+     * dashboard leaked the one before it along with its whole view tree.
+     *
+     * The JavaScript interface is removed before the WebView is destroyed so that a
+     * callback already in flight cannot land on a fragment whose view has gone.
+     */
+    override fun onDestroyView() {
+        webView?.let { w ->
+            runCatching { w.removeJavascriptInterface("POS") }
+            w.stopLoading()
+            w.webViewClient = WebViewClient()
+            (w.parent as? ViewGroup)?.removeView(w)
+            w.destroy()
+        }
+        webView = null
+        swipeLayout = null
+        pageLoaded = false
+        super.onDestroyView()
+    }
+
+    /**
+     * Opens the screen a dashboard card stands for.
+     *
+     * ## Why this uses the ACTIVITY's fragment manager
+     *
+     * This fragment is a CHILD of [DashboardFragment], added to that screen's own
+     * `dashboardTabContainer` through its `childFragmentManager`. So
+     * `parentFragmentManager` here is not the activity's - it is the dashboard's child
+     * manager, and the only container it can see is the one inside the dashboard's own
+     * view.
+     *
+     * `R.id.fragment_container` is in activity_main, an ANCESTOR of that view. Asking
+     * the child manager to replace it threw `IllegalArgumentException: No view found
+     * for id ... fragment_container`, which is why every card on the dashboard crashed
+     * the app the moment it was tapped rather than opening anything.
+     *
+     * The activity's manager is also the right one on its own merits: these cards lead
+     * to whole screens - Bill History, Reports - which replace the dashboard rather
+     * than opening inside it, and they go on the same back stack the drawer's own
+     * destinations use, so Back returns here exactly as it does from a drawer route.
+     */
     private fun navigate(target: String) {
         if (!isAdded) return
-        val fragment: Fragment? = when (target) {
+        val fragment: Fragment = when (target) {
             "bills" -> BillListFragment()
             "reports" -> ReportsFragment()
             "customers" -> CustomerFragment()
             "lowstock" -> LowStockReportFragment()
             "inventory" -> InventoryFragment()
-            else -> null
+            // A card naming a screen this build does not have. Ignored rather than
+            // crashed on - the page is an asset and can name a target the app has not
+            // caught up with.
+            else -> return
         }
-        
-        if (fragment != null) {
-            parentFragmentManager.beginTransaction()
-                .replace(R.id.fragment_container, fragment)
-                .addToBackStack(null)
-                .commit()
-        }
+
+        // commitAllowingStateLoss: this arrives from a WebView callback, which can land
+        // after the activity has been backgrounded (the operator taps a card and the
+        // screen locks). A plain commit throws there; losing this one navigation does
+        // not matter, because the dashboard is still what they come back to.
+        requireActivity().supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, fragment)
+            .addToBackStack(null)
+            .commitAllowingStateLoss()
     }
 
     /**

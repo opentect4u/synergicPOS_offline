@@ -19,15 +19,27 @@ import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 
 /**
- * "Bill Header & Footer" management screen — a concrete [DataTableFragment]
- * backed by the [BillHeaderFooterDao] (md_headers + md_footers, type='BILL').
+ * The header/footer line management screen, for whichever document carries them - a
+ * [DataTableFragment] backed by [BillHeaderFooterDao] (md_headers + md_footers).
  *
- * Each row is a printed header/footer line with text, section, font size, bold
- * and enabled flags. Add/Edit/Delete are fully persisted.
+ * Each row is a printed line with text, section, font size, bold and enabled flags.
+ * Add/Edit/Delete are fully persisted.
+ *
+ * ## One screen, two documents
+ *
+ * The bill and the kitchen ticket keep separate sets of lines, but the job of managing
+ * them is the same job: the same columns, the same add/edit card, the same cap of ten a
+ * section, the same inline enable switch. So there is one screen and the subclasses
+ * supply only what actually differs - the [screenTitle] and the [type] of line.
+ *
+ * Copying it would have been the other way to do this, and the Bill screen and the KOT
+ * screen would then have drifted apart the first time either was touched. See
+ * [BillHeaderFooterFragment] and [KotHeaderFooterFragment], which are four lines each.
  */
-class BillHeaderFooterFragment : DataTableFragment() {
+abstract class HeaderFooterLinesFragment : DataTableFragment() {
 
-    override val screenTitle = "Bill Header & Footer"
+    /** [BillHeaderFooterDao.TYPE_BILL] or [BillHeaderFooterDao.TYPE_KOT]. */
+    protected abstract val type: String
 
     // Table columns. Cell layout per row: [text, section, font, status].
     override val columns = listOf("Text", "Section", "Font", "Status")
@@ -46,7 +58,7 @@ class BillHeaderFooterFragment : DataTableFragment() {
         const val MAX_PER_SECTION = 10
     }
 
-    private val dao: BillHeaderFooterDao by lazy { BillHeaderFooterDao(requireContext()) }
+    private val dao: BillHeaderFooterDao by lazy { BillHeaderFooterDao(requireContext(), type) }
 
     /** Full entries keyed by rowKey ("H12"/"F3"), for edit prefill. */
     private val entryCache = mutableMapOf<String, BillHeaderFooterDao.Entry>()
@@ -183,4 +195,29 @@ class BillHeaderFooterFragment : DataTableFragment() {
             setGravity(android.view.Gravity.CENTER)
         }
     }
+}
+
+/**
+ * "Bill Header & Footer" - the lines printed above and below the customer's receipt.
+ */
+class BillHeaderFooterFragment : HeaderFooterLinesFragment() {
+    override val screenTitle = "Bill Header & Footer"
+    override val type = BillHeaderFooterDao.TYPE_BILL
+}
+
+/**
+ * "KOT Header & Footer" - the lines printed above and below the kitchen ticket.
+ *
+ * A separate set from the bill's, and rightly so: the two documents go to different
+ * people. A receipt footer thanking the customer for their visit has no business on a
+ * ticket the kitchen reads, and "CHECK ALLERGIES" belongs only on the one going to the
+ * pass.
+ *
+ * Restaurant mode only - a grocery till prints no kitchen ticket, so the tile and the
+ * drawer entry are both hidden there (see [HeaderFooterFragment] and MainActivity's
+ * menu tree).
+ */
+class KotHeaderFooterFragment : HeaderFooterLinesFragment() {
+    override val screenTitle = "KOT Header & Footer"
+    override val type = BillHeaderFooterDao.TYPE_KOT
 }
