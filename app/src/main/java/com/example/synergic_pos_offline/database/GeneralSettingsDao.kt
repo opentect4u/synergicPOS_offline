@@ -189,6 +189,21 @@ class GeneralSettingsDao(context: Context) {
         /** Serial speed the scale communicates at - must match the scale's own setting. */
         val weighingScaleBaudRate: Int = 9600,
         /**
+         * WHICH PORT THE SCALE IS ON.
+         *
+         * [WEIGHING_SCALE_PORT_USB] - the default - is the behaviour that has always
+         * been here: probe the USB bus, take the first USB-serial adapter found, open
+         * it through the usb-serial driver. A till with a scale on a USB dongle needs
+         * nothing else and is unaffected by any of this.
+         *
+         * Anything else is a device node - "/dev/ttyS7" and the like - a hardware UART
+         * brought out on the board itself. USB probing cannot see one of those at all,
+         * so a scale wired to the built-in serial header was simply invisible however
+         * the rest of the settings were filled in. Naming the node is what makes it
+         * reachable.
+         */
+        val weighingScalePort: String = WEIGHING_SCALE_PORT_USB,
+        /**
          * How many digits the scale's raw serial output carries for the weight value,
          * e.g. a scale sending "001250" for 1.250 has 6.
          */
@@ -243,6 +258,7 @@ class GeneralSettingsDao(context: Context) {
             accessAboutApp = m[KEY_ACCESS_ABOUT_APP]?.toBool() ?: d.accessAboutApp,
             weighingScaleEnabled = m[KEY_WEIGHING_SCALE_ENABLED]?.toBool() ?: d.weighingScaleEnabled,
             weighingScaleBaudRate = m[KEY_WEIGHING_SCALE_BAUD_RATE]?.toIntOrNull() ?: d.weighingScaleBaudRate,
+            weighingScalePort = m[KEY_WEIGHING_SCALE_PORT]?.takeIf { it.isNotBlank() } ?: d.weighingScalePort,
             weighingScaleCharCount = m[KEY_WEIGHING_SCALE_CHAR_COUNT]?.toIntOrNull() ?: d.weighingScaleCharCount,
             weighingScaleStartPoint = m[KEY_WEIGHING_SCALE_START_POINT]?.toIntOrNull()
                 ?: d.weighingScaleStartPoint,
@@ -282,6 +298,7 @@ class GeneralSettingsDao(context: Context) {
         put(KEY_ACCESS_ABOUT_APP, s.accessAboutApp.b())
         put(KEY_WEIGHING_SCALE_ENABLED, s.weighingScaleEnabled.b())
         put(KEY_WEIGHING_SCALE_BAUD_RATE, s.weighingScaleBaudRate.toString())
+        put(KEY_WEIGHING_SCALE_PORT, s.weighingScalePort)
         put(KEY_WEIGHING_SCALE_CHAR_COUNT, s.weighingScaleCharCount.toString())
         put(KEY_WEIGHING_SCALE_DECIMAL_POSITION, s.weighingScaleDecimalPosition.toString())
         put(KEY_WEIGHING_SCALE_START_POINT, s.weighingScaleStartPoint.toString())
@@ -438,6 +455,16 @@ class GeneralSettingsDao(context: Context) {
         const val KEY_ACCESS_ABOUT_APP = "Access About App"
         private const val KEY_WEIGHING_SCALE_ENABLED = "Weighing Scale Enabled"
         private const val KEY_WEIGHING_SCALE_BAUD_RATE = "Weighing Scale Baud Rate"
+        private const val KEY_WEIGHING_SCALE_PORT = "Weighing Scale Port"
+
+        /**
+         * The default port setting: probe USB and take the first serial adapter.
+         *
+         * A word rather than a path, because it does not name one device - it names
+         * the whole USB-probing behaviour, which picks whatever adapter is plugged in
+         * at the time. Every other value IS a path.
+         */
+        const val WEIGHING_SCALE_PORT_USB = "USB"
         private const val KEY_WEIGHING_SCALE_CHAR_COUNT = "Weighing Scale Character Count"
         private const val KEY_WEIGHING_SCALE_DECIMAL_POSITION = "Weighing Scale Decimal Position"
         private const val KEY_WEIGHING_SCALE_START_POINT = "Weighing Scale Start Point"

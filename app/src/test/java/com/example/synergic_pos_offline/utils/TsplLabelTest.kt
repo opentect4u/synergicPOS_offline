@@ -147,6 +147,87 @@ class TsplLabelTest {
         assertFalse(build().contains("\n\n"))
     }
 
+    // ---- A different roll ---------------------------------------------------
+
+    /**
+     * The stock defaults to the shop's usual roll, so a caller passing only a product
+     * and a count gets exactly what it always got. That is what keeps the print popup
+     * a one-question card on the common day.
+     */
+    @Test
+    fun `the stock defaults to the shop's own roll`() {
+        assertTrue(build(), build().contains("SIZE 100 mm, 25 mm"))
+        assertTrue(build(), build().contains("GAP 2 mm, 0 mm"))
+    }
+
+    /** A roll of another size is printed on, not just accepted. */
+    @Test
+    fun `another roll is described to the printer`() {
+        val tspl = String(
+            TsplLabel.build(
+                productName = "Rice 1kg", code = validEan, price = 120.0, copies = 1,
+                widthMm = 50, heightMm = 30, gapMm = 3, across = 1
+            ),
+            Charsets.ISO_8859_1
+        )
+        assertTrue(tspl, tspl.contains("SIZE 50 mm, 30 mm"))
+        assertTrue(tspl, tspl.contains("GAP 3 mm, 0 mm"))
+    }
+
+    /**
+     * One-up stock puts every sticker on its own feed - the count cannot be halved
+     * when there is only one cell to fill.
+     */
+    @Test
+    fun `one sticker across means one feed per label`() {
+        val tspl = String(
+            TsplLabel.build(
+                productName = "Rice 1kg", code = validEan, price = 120.0, copies = 6,
+                widthMm = 50, heightMm = 25, gapMm = 2, across = 1
+            ),
+            Charsets.ISO_8859_1
+        )
+        assertTrue(tspl, tspl.contains("PRINT 6,1"))
+        assertEquals("one block", 1, Regex("PRINT ").findAll(tspl).count())
+        assertEquals("one sticker per feed", 1, nameXs(tspl).size)
+    }
+
+    /**
+     * The layout follows the stock rather than staying where it was drawn. On a label
+     * twice the size, everything is twice as far in - otherwise a bigger roll would
+     * print the same small block in one corner.
+     */
+    @Test
+    fun `the layout scales onto a bigger sticker`() {
+        val tspl = String(
+            TsplLabel.build(
+                productName = "Rice 1kg", code = validEan, price = 120.0, copies = 1,
+                widthMm = 100, heightMm = 50, gapMm = 2, across = 1
+            ),
+            Charsets.ISO_8859_1
+        )
+        // 100mm one-up at 8 dots/mm is an 800-dot sticker - twice the 400 the layout
+        // was drawn for - and 50mm is twice the 25mm height.
+        val names = nameXs(tspl)
+        assertEquals(1, names.size)
+        val onDefault = nameXs(build())
+        assertEquals("twice as far in", onDefault[0] * 2, names[0])
+    }
+
+    /** Nonsense from a blank box must not divide by zero or print an empty job. */
+    @Test
+    fun `an unusable stock is floored rather than crashing`() {
+        val tspl = String(
+            TsplLabel.build(
+                productName = "Rice 1kg", code = validEan, price = 120.0, copies = 0,
+                widthMm = 0, heightMm = 0, gapMm = -5, across = 0
+            ),
+            Charsets.ISO_8859_1
+        )
+        assertTrue(tspl, tspl.contains("PRINT 1,1"))
+        assertTrue(tspl, tspl.contains("GAP 0 mm, 0 mm"))
+    }
+
     // ---- Two stickers to a feed --------------------------------------------
 
     /**

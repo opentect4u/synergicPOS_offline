@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.fragments
 
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.database.AppSettingsDao
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.utils.BarcodeGenerator
 import com.example.synergic_pos_offline.utils.DialogUtils
@@ -187,9 +188,39 @@ class BarcodeLabelsFragment : DataTableFragment() {
                 DialogUtils.FormField("Product", name, locked = true),
                 DialogUtils.FormField(
                     label = "Number of labels", value = "1", inputType = "number", maxLength = 3
+                ),
+                // THE STOCK, prefilled with the roll the shop actually runs.
+                //
+                // Here rather than buried in settings because the roll is changed at
+                // the printer, by the person standing at it, and that is the moment
+                // they know its size. Prefilled because they almost never change it:
+                // the common print is still Enter-Enter, and these four only need
+                // touching on the day a different roll goes in.
+                //
+                // Remembered afterwards, so the new roll's numbers are the defaults
+                // from then on rather than something retyped every label.
+                DialogUtils.FormField(
+                    label = "Roll width (mm)",
+                    value = savedStock(KEY_WIDTH, TsplLabel.LABEL_WIDTH_MM),
+                    inputType = "number", maxLength = 3
+                ),
+                DialogUtils.FormField(
+                    label = "Label height (mm)",
+                    value = savedStock(KEY_HEIGHT, TsplLabel.LABEL_HEIGHT_MM),
+                    inputType = "number", maxLength = 3
+                ),
+                DialogUtils.FormField(
+                    label = "Stickers across",
+                    value = savedStock(KEY_ACROSS, TsplLabel.STICKERS_ACROSS),
+                    inputType = "number", maxLength = 1
+                ),
+                DialogUtils.FormField(
+                    label = "Gap between labels (mm)",
+                    value = savedStock(KEY_GAP, TsplLabel.LABEL_GAP_MM),
+                    inputType = "number", maxLength = 2
                 )
             ),
-            mandatoryFields = listOf(1),
+            mandatoryFields = listOf(1, 2, 3, 4),
             positiveText = "Print",
             negativeText = "Cancel"
         ) { values ->
@@ -198,12 +229,35 @@ class BarcodeLabelsFragment : DataTableFragment() {
                 PrintLog.d(requireContext(), LOG_TAG, "STOPPED: \"${values.getOrNull(1)}\" is not a count")
                 toast("Enter how many labels to print"); return@showForm
             }
+            val widthMm = values.getOrNull(2)?.trim()?.toIntOrNull() ?: 0
+            val heightMm = values.getOrNull(3)?.trim()?.toIntOrNull() ?: 0
+            val across = values.getOrNull(4)?.trim()?.toIntOrNull() ?: 0
+            // Blank gap means continuous stock, which is a real answer and means none.
+            val gapMm = (values.getOrNull(5)?.trim()?.toIntOrNull() ?: 0).coerceAtLeast(0)
+
+            if (widthMm <= 0 || heightMm <= 0) {
+                PrintLog.d(requireContext(), LOG_TAG, "STOPPED: label size ${widthMm}x$heightMm is not usable")
+                toast("Enter the label size in mm"); return@showForm
+            }
+            if (across <= 0) {
+                PrintLog.d(requireContext(), LOG_TAG, "STOPPED: $across stickers across is not usable")
+                toast("Enter how many stickers sit across the roll"); return@showForm
+            }
 
             val copies = asked.coerceAtMost(MAX_LABELS)
             if (asked > MAX_LABELS) toast("Printing the first $MAX_LABELS labels")
-            PrintLog.d(requireContext(), LOG_TAG, "operator asked for $asked label(s), printing $copies")
+            PrintLog.d(
+                requireContext(), LOG_TAG,
+                "operator asked for $asked label(s), printing $copies on " +
+                    "${widthMm}x${heightMm}mm, $across across, ${gapMm}mm gap"
+            )
+            rememberStock(widthMm, heightMm, across, gapMm)
 
             val job = TsplLabel.build(
+                widthMm = widthMm,
+                heightMm = heightMm,
+                gapMm = gapMm,
+                across = across,
                 productName = name,
                 code = code,
                 price = product.price,
@@ -481,6 +535,36 @@ class BarcodeLabelsFragment : DataTableFragment() {
 
     private fun storeId(): Int = SessionManager.currentUser?.storeId ?: 0
 
+    // ---- The label stock, remembered between prints -------------------------
+
+    /**
+     * What the stock box should open on: whatever was printed last, or [fallback] -
+     * the roll the shop normally runs, from [TsplLabel].
+     *
+     * Kept in App Settings' key-value table rather than on the printer row, because it
+     * describes the ROLL rather than the machine: the same printer runs 100x25 two-up
+     * one week and something else the next, and it is the person loading it who knows.
+     */
+    private fun savedStock(key: String, fallback: Int): String =
+        AppSettingsDao(requireContext()).get(key)?.trim()?.takeIf { it.toIntOrNull() != null }
+            ?: fallback.toString()
+
+    /** Keeps this print's stock as the next print's defaults. */
+    private fun rememberStock(widthMm: Int, heightMm: Int, across: Int, gapMm: Int) {
+        runCatching {
+            AppSettingsDao(requireContext()).apply {
+                put(KEY_WIDTH, widthMm.toString())
+                put(KEY_HEIGHT, heightMm.toString())
+                put(KEY_ACROSS, across.toString())
+                put(KEY_GAP, gapMm.toString())
+            }
+        }.onFailure {
+            // Not worth failing a print over: the label still comes out, and the only
+            // cost is that the next popup opens on the built-in defaults again.
+            PrintLog.d(requireContext(), LOG_TAG, "could not save the label stock: ${it.message}")
+        }
+    }
+
     companion object {
         /**
          * WHETHER THE BARCODE SCREEN IS OFFERED AT ALL.
@@ -511,5 +595,11 @@ class BarcodeLabelsFragment : DataTableFragment() {
 
         /** What this screen's lines are filed under in the print log. */
         private const val LOG_TAG = "BarcodeLabels"
+
+        /** Where the last-printed label stock is kept - see [savedStock]. */
+        private const val KEY_WIDTH = "barcode_label_width_mm"
+        private const val KEY_HEIGHT = "barcode_label_height_mm"
+        private const val KEY_ACROSS = "barcode_label_across"
+        private const val KEY_GAP = "barcode_label_gap_mm"
     }
 }

@@ -66,16 +66,16 @@ object TsplLabel {
     const val DOTS_PER_MM = 8
 
     /**
-     * THE STOCK, fixed.
+     * THE STOCK THE SHOP ACTUALLY RUNS - a 100mm roll, 25mm tall, carrying two 50mm
+     * stickers side by side, with a 2mm gap between one 100mm label and the next.
      *
-     * A 100mm roll, 25mm tall, carrying two 50mm stickers side by side, with a 2mm gap
-     * between one 100mm label and the next. These are the shop's own measurements, not
-     * a guess, and they are constants rather than a question on the print popup because
-     * a shop buys one kind of label stock and works through it. Asking for four numbers
-     * before every print was asking the counter to re-describe the roll it has been
-     * using all week, and a slip on any one of them puts the bars across a gap.
+     * Defaults, not constants. [build] takes each of them as a parameter so a different
+     * roll can be printed without a code change, and the print popup opens with these
+     * already filled in - so the common case is still "how many?" and nothing else,
+     * while a shop that changes stock can say so.
      *
-     * Change them here if the roll ever changes.
+     * Change these if the roll the shop normally runs changes, so the popup opens on
+     * the right answer rather than on one the operator has to correct every time.
      */
     const val LABEL_WIDTH_MM = 100
     const val LABEL_HEIGHT_MM = 25
@@ -112,37 +112,58 @@ object TsplLabel {
     /**
      * Builds the whole job for [copies] STICKERS of one product.
      *
-     * The stock is not a parameter - see [LABEL_WIDTH_MM] and its neighbours. The only
-     * thing that changes from one print to the next is how many stickers are wanted.
+     * The stock defaults to the roll the shop runs - see [LABEL_WIDTH_MM] and its
+     * neighbours - so a caller that does not care passes only the product and a count.
      *
-     * @param copies how many STICKERS are wanted, not how many feeds
-     * @param price  what the customer pays; printed as OUR PRICE when [mrp] is also
-     *               given, and as the only price line when it is not
-     * @param mrp    the listed price, printed struck through beside [price]. Left off
-     *               entirely when it is absent or equal to [price] - striking through a
-     *               number to show the same number beside it says nothing
+     * @param copies   how many STICKERS are wanted, not how many feeds
+     * @param widthMm  the width of the label the printer FEEDS - the whole web, both
+     *                 stickers, 100mm on the usual stock. NOT one sticker: `SIZE` has
+     *                 to be told the whole thing, and the sticker is this divided by
+     *                 [across]
+     * @param heightMm the label's height in mm
+     * @param gapMm    the gap between one label and the next, 0 on continuous stock
+     * @param across   how many stickers are printed side by side across [widthMm]
+     * @param price    what the customer pays; printed as OUR PRICE when [mrp] is also
+     *                 given, and as the only price line when it is not
+     * @param mrp      the listed price, printed struck through beside [price]. Left off
+     *                 entirely when it is absent or equal to [price] - striking through
+     *                 a number to show the same number beside it says nothing
      */
     fun build(
         productName: String,
         code: String,
         price: Double? = null,
         mrp: Double? = null,
-        copies: Int = 1
+        copies: Int = 1,
+        widthMm: Int = LABEL_WIDTH_MM,
+        heightMm: Int = LABEL_HEIGHT_MM,
+        gapMm: Int = LABEL_GAP_MM,
+        across: Int = STICKERS_ACROSS
     ): ByteArray {
-        val perRow = STICKERS_ACROSS
+        // Guarded here rather than trusted from the caller: a zero width would divide
+        // by zero working out the sticker, and a zero count would tell the printer to
+        // print nothing at all. A popup can always hand over a blank box.
+        val rollWidth = widthMm.coerceAtLeast(1)
+        val rollHeight = heightMm.coerceAtLeast(1)
+        val gap = gapMm.coerceAtLeast(0)
+        val perRow = across.coerceAtLeast(1)
         val wanted = copies.coerceAtLeast(1)
         val fullRows = wanted / perRow
         val remainder = wanted % perRow
 
         val out = StringBuilder()
         if (fullRows > 0) {
-            out.append(block(perRow, fullRows, productName, code, price, mrp))
+            out.append(
+                block(rollWidth, rollHeight, gap, perRow, perRow, fullRows, productName, code, price, mrp)
+            )
         }
         // The odd one out. Same physical label - the stock does not change - with only
         // its first cell filled, so the operator gets the count they asked for instead
         // of one spare sticker per print that has to be peeled off and binned.
         if (remainder > 0) {
-            out.append(block(remainder, 1, productName, code, price, mrp))
+            out.append(
+                block(rollWidth, rollHeight, gap, perRow, remainder, 1, productName, code, price, mrp)
+            )
         }
         // TSPL is a text protocol and the printer's parser is byte-oriented; anything
         // outside Latin-1 would be sent as multi-byte UTF-8 and printed as mojibake, so
@@ -180,6 +201,10 @@ object TsplLabel {
      * that keeps the bars on the labels rather than across the joins.
      */
     private fun block(
+        widthMm: Int,
+        heightMm: Int,
+        gapMm: Int,
+        across: Int,
         fill: Int,
         rows: Int,
         productName: String,
@@ -187,18 +212,18 @@ object TsplLabel {
         price: Double?,
         mrp: Double?
     ): String {
-        val stickerDots = LABEL_WIDTH_MM * DOTS_PER_MM / STICKERS_ACROSS
-        val heightDots = LABEL_HEIGHT_MM * DOTS_PER_MM
-        // Both are 1.0 on this stock - the sticker is exactly the 400 x 200 dots the
-        // reference template was drawn for - so its proven coordinates go out untouched.
-        // They stay as a scale rather than being folded away so that changing the stock
-        // constants above moves the layout with it instead of leaving it in a corner.
+        val stickerDots = widthMm * DOTS_PER_MM / across
+        val heightDots = heightMm * DOTS_PER_MM
+        // Both are 1.0 on the usual stock - the sticker is exactly the 400 x 200 dots
+        // the reference template was drawn for - so its proven coordinates go out
+        // untouched. On any other stock they carry the same layout onto it, rather than
+        // leaving it sitting in one corner of a bigger label or running off a smaller.
         val sx = stickerDots.toFloat() / REF_STICKER_WIDTH
         val sy = heightDots.toFloat() / REF_HEIGHT
 
         val out = StringBuilder()
-        out.line("SIZE $LABEL_WIDTH_MM mm, $LABEL_HEIGHT_MM mm")
-        out.line("GAP $LABEL_GAP_MM mm, 0 mm")
+        out.line("SIZE $widthMm mm, $heightMm mm")
+        out.line("GAP $gapMm mm, 0 mm")
         out.line("DENSITY 10")
         out.line("SPEED 4")
         out.line("DIRECTION 1")

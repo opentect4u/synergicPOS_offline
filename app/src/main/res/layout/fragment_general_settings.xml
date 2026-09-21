@@ -468,6 +468,37 @@
 
                 <!-- Baud rate (only meaningful while the scale is ON) -->
                 <LinearLayout
+                    android:id="@+id/llWeighingScalePort"
+                    style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Port" />
+                        <TextView style="@style/BillSettingSub" android:text="USB finds a plugged-in serial adapter. Pick a /dev/tty… node for a scale wired to the board's own serial port" />
+                    </LinearLayout>
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilWeighingScalePort"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:minWidth="160dp"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusBottomEnd="12dp">
+                        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                            android:id="@+id/actWeighingScalePort"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none"
+                            android:focusable="false"
+                            android:maxLines="1"
+                            android:textSize="16sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <LinearLayout
                     android:id="@+id/llWeighingScaleBaud"
                     style="@style/BillSettingRow">
                     <LinearLayout style="@style/BillSettingText">

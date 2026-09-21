@@ -62,6 +62,29 @@ object UsbScaleManager {
      */
     fun connect(context: Context, onWeight: (Double) -> Unit, onError: (String) -> Unit) {
         val app = context.applicationContext
+
+        // A SCALE ON ONE OF THE BOARD'S OWN SERIAL PORTS goes down a different road.
+        //
+        // Everything below this point enumerates the USB bus, and a hardware UART -
+        // /dev/ttyS7 and its like - is not on it. The branch is here, at the very top
+        // and before anything else runs, so the USB path it guards is the same code it
+        // always was: a till on a USB dongle stays on the setting it shipped with and
+        // never reaches this line's other half.
+        val chosen = GeneralSettingsDao(app).load()
+        if (!chosen.weighingScalePort.equals(GeneralSettingsDao.WEIGHING_SCALE_PORT_USB, true)) {
+            TtyScaleReader.connect(
+                path = chosen.weighingScalePort,
+                baudRate = chosen.weighingScaleBaudRate,
+                charCount = chosen.weighingScaleCharCount,
+                decimalPosition = chosen.weighingScaleDecimalPosition,
+                startPoint = chosen.weighingScaleStartPoint,
+                endPoint = chosen.weighingScaleEndPoint,
+                onWeight = onWeight,
+                onError = onError
+            )
+            return
+        }
+
         val manager = app.getSystemService(Context.USB_SERVICE) as? UsbManager
         if (manager == null) {
             onError("USB is not supported on this device")
@@ -84,6 +107,11 @@ object UsbScaleManager {
 
     /** Stops streaming and releases the port. Safe to call even when not connected. */
     fun disconnect() {
+        // Unconditional, and harmless when the scale was on USB: the caller does not
+        // know which road [connect] took, and closing the one that was never opened
+        // does nothing. Making this conditional on the setting would leak a tty reader
+        // any time the port was changed while a product popup was open.
+        TtyScaleReader.disconnect()
         ioManager?.stop()
         runCatching { port?.close() }
         runCatching { connection?.close() }

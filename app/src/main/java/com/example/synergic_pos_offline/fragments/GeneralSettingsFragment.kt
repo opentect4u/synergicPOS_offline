@@ -70,6 +70,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var tilStockAlertQty: View
     private lateinit var etStockAlertQty: TextInputEditText
     private lateinit var swWeighingScale: SwitchMaterial
+    private lateinit var llWeighingScalePort: View
+    private lateinit var actWeighingScalePort: MaterialAutoCompleteTextView
     private lateinit var llWeighingScaleBaud: View
     private lateinit var actWeighingScaleBaud: MaterialAutoCompleteTextView
     private lateinit var llWeighingScaleCharCount: View
@@ -110,6 +112,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         tilStockAlertQty = view.findViewById(R.id.tilStockAlertQty)
         etStockAlertQty = view.findViewById(R.id.etStockAlertQty)
         swWeighingScale = view.findViewById(R.id.swWeighingScale)
+        llWeighingScalePort = view.findViewById(R.id.llWeighingScalePort)
+        actWeighingScalePort = view.findViewById(R.id.actWeighingScalePort)
         llWeighingScaleBaud = view.findViewById(R.id.llWeighingScaleBaud)
         actWeighingScaleBaud = view.findViewById(R.id.actWeighingScaleBaud)
         llWeighingScaleCharCount = view.findViewById(R.id.llWeighingScaleCharCount)
@@ -199,6 +203,18 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         // ---- Weighing scale: baud rate, character count and decimal position only
         // matter once the scale itself is on ----------------------------------
         swWeighingScale.isChecked = s.weighingScaleEnabled
+        // USB first - it is the default and what nearly every till uses - then whatever
+        // serial nodes this particular board actually exposes, read off /dev rather
+        // than guessed at. A saved port that is no longer present is kept in the list
+        // so the dropdown shows what is configured instead of silently reverting to USB
+        // while the setting still says otherwise.
+        val ports = buildList {
+            add(GeneralSettingsDao.WEIGHING_SCALE_PORT_USB)
+            addAll(com.example.synergic_pos_offline.utils.TtyScaleReader.availablePorts())
+            if (s.weighingScalePort !in this) add(s.weighingScalePort)
+        }
+        actWeighingScalePort.setAdapter(NoFilterAdapter(requireContext(), ports))
+        actWeighingScalePort.setText(s.weighingScalePort, false)
         actWeighingScaleBaud.setAdapter(NoFilterAdapter(requireContext(), weighingScaleBaudRates.map { it.toString() }))
         actWeighingScaleBaud.setText(s.weighingScaleBaudRate.toString(), false)
         etWeighingScaleCharCount.setText(s.weighingScaleCharCount.toString())
@@ -210,6 +226,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             val on = swWeighingScale.isChecked
             llWeighingScaleBaud.setRowEnabled(on)
             actWeighingScaleBaud.isEnabled = on
+            llWeighingScalePort.setRowEnabled(on)
+            actWeighingScalePort.isEnabled = on
             llWeighingScaleCharCount.setRowEnabled(on)
             etWeighingScaleCharCount.isEnabled = on
             llWeighingScaleDecimalPosition.setRowEnabled(on)
@@ -248,6 +266,8 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
 
             val defaults = GeneralSettings()
             val baudVal = actWeighingScaleBaud.text?.toString()?.toIntOrNull() ?: defaults.weighingScaleBaudRate
+            val portVal = actWeighingScalePort.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+                ?: defaults.weighingScalePort
             val charCountVal = etWeighingScaleCharCount.text?.toString()?.toIntOrNull() ?: defaults.weighingScaleCharCount
             val decimalPositionVal = etWeighingScaleDecimalPosition.text?.toString()?.toIntOrNull()
                 ?: defaults.weighingScaleDecimalPosition
@@ -284,6 +304,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                 accessAboutApp = s.accessAboutApp,
                 weighingScaleEnabled = swWeighingScale.isChecked,
                 weighingScaleBaudRate = baudVal,
+                weighingScalePort = portVal,
                 weighingScaleCharCount = charCountVal,
                 weighingScaleDecimalPosition = decimalPositionVal,
                 weighingScaleStartPoint = startPointVal,
@@ -363,7 +384,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         SettingsAutoSave.onChange(
             ::autoSave,
             swLastBillStatus, swQuantityStatus, /* swCustomerInfo, */ swNegativeStock,
-            rgItemRate, rgLandingScreen, actProductSort, actWeighingScaleBaud
+            rgItemRate, rgLandingScreen, actProductSort, actWeighingScaleBaud, actWeighingScalePort
         )
         SettingsAutoSave.onTyped(
             ::autoSave,
