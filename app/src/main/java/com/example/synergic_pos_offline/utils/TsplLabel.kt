@@ -26,22 +26,26 @@ import java.util.Locale
  * followed by `PRINT 1,1` of a label with only its left half filled. Both blocks go in
  * one job, which TSPL allows - each is its own CLS...PRINT.
  *
- * ## The layout is a known-good one
+ * ## Everything is laid out inside a SAFE BOX, not on the sticker's edges
  *
- * The command sequence, the coordinates, the fonts and the density are taken from a
- * TSPL template already proven against this shop's own TSC printer, rather than worked
- * out from the manual. Within one 50mm sticker (400 dots at 203 dpi):
+ * The sticker's pitch and its printable area are not the same rectangle, and the
+ * difference is what used to come off the printer wrong. Die-cut stock has rounded
+ * corners, the channel cut between the two columns eats a couple of millimetres off
+ * each inside edge, and the gap sensor registers the roll to about a millimetre either
+ * way. The original layout ran from dot 20 to dot 190 of a 200-dot sticker, so it was
+ * relying on all three of those being perfect: the price line, which ended 10 dots -
+ * 1.25mm - from the bottom edge, came out sliced in half along the die cut, and the
+ * product name at the top fared no better.
  *
- * ```
- * TEXT 20,20     product name        font 2
- * BARCODE 80,60  the code            Code 128 or EAN-13, 65 dots tall, digits off
- * TEXT 100,130   the code in digits  font 3
- * TEXT 20,170    MRP                 font 2, struck through
- * TEXT 180,170   OUR PRICE           font 2
- * ```
+ * So nothing is positioned against the sticker's edge any more. [REF_MARGIN_X] and
+ * [REF_MARGIN_Y] fence off a safe box inside it, the four rows are stacked from the top
+ * of that box down to the bottom of it, and the bars take whatever height is left over
+ * ([barsHeight] in [sticker]) instead of a fixed 65 dots - which on this stock makes
+ * them taller than they were, not shorter. Change a margin and the whole stack moves
+ * with it; there are no hand-placed coordinates left to fall out of step.
  *
  * The second sticker is the same block shifted a whole sticker to the right - +400 dots
- * on the reference stock, which is exactly what the template does by hand.
+ * on the reference stock.
  *
  * ## The dialect kept deliberately old
  *
@@ -81,6 +85,29 @@ object TsplLabel {
     /** One STICKER of that stock, in dots - 50 x 25mm at 203 dpi. */
     private const val REF_STICKER_WIDTH = 400
     private const val REF_HEIGHT = 200
+
+    /**
+     * The border kept clear inside every sticker - 3mm across, 3.5mm down at 203 dpi.
+     *
+     * Sideways, the stock loses room to the die-cut channel between the two columns: a
+     * good 4-5mm of the 50mm pitch, so a name or a price run out to dot 395 is printed
+     * onto the cut, not onto the sticker.
+     *
+     * Down the label, 3.5mm is more than the 2mm gap because the gap alone was not what
+     * went wrong. On the label that prompted this, the bottom row was sliced along its
+     * middle with the layout ending at dot 190 - so the last few dots of a 200-dot
+     * sticker are not reliably on the sticker at all, once the die cut's rounding and
+     * about a millimetre of registration drift have both had their share.
+     * [REF_MARGIN_Y] is set past that, not up against it.
+     *
+     * These are the numbers to change if a label comes out with its edges clipped -
+     * everything in [sticker] is measured from them.
+     */
+    private const val REF_MARGIN_X = 24
+    private const val REF_MARGIN_Y = 28
+
+    /** Clear space between one row of the label and the next. */
+    private const val REF_ROW_GAP = 6
 
     /**
      * Builds the whole job for [copies] STICKERS of one product.
@@ -182,7 +209,7 @@ object TsplLabel {
 
         repeat(fill) { column ->
             out.append(
-                sticker(column * stickerDots, sx, sy, stickerDots, productName, code, price, mrp)
+                sticker(column * stickerDots, sx, sy, productName, code, price, mrp)
             )
         }
 
@@ -190,12 +217,18 @@ object TsplLabel {
         return out.toString()
     }
 
-    /** One sticker's worth of commands, its left edge at [originX] dots. */
+    /**
+     * One sticker's worth of commands, its left edge at [originX] dots.
+     *
+     * The four rows are stacked inside the safe box rather than dropped at fixed
+     * coordinates - see the class doc. Name from the top down, prices from the bottom
+     * up, digits above the prices, and the bars filling whatever is left in between, so
+     * the block always ends exactly on the bottom margin however the stock is sized.
+     */
     private fun sticker(
         originX: Int,
         sx: Float,
         sy: Float,
-        stickerDots: Int,
         productName: String,
         code: String,
         price: Double?,
@@ -204,17 +237,45 @@ object TsplLabel {
         fun x(v: Int) = originX + (v * sx).toInt()
         fun y(v: Int) = (v * sy).toInt()
 
+        val left = REF_MARGIN_X
+        val right = REF_STICKER_WIDTH - REF_MARGIN_X
+        val safeWidth = right - left
+        /** Where something [widthDots] wide starts if it is to sit in the middle. */
+        fun centred(widthDots: Int) = left + ((safeWidth - widthDots) / 2).coerceAtLeast(0)
+
+        val nameY = REF_MARGIN_Y
+        val priceY = REF_HEIGHT - REF_MARGIN_Y - FONT_MEDIUM_H
+        val digitsY = priceY - REF_ROW_GAP - FONT_LARGE_H
+        val barsY = nameY + FONT_MEDIUM_H + REF_ROW_GAP
+        // What the rows above and below did not use. Floored at a height a hand scanner
+        // can still resolve: if a stock ever turns out too short for the full stack, a
+        // barcode running a little into the name is worth more than one too thin to read.
+        val barsHeight = (digitsY - REF_ROW_GAP - barsY).coerceAtLeast(MIN_BAR_HEIGHT)
+
         val out = StringBuilder()
-        // Product name, clipped to the STICKER rather than the label - the neighbour's
-        // cell is not spare room, and TSPL would happily run the text across it.
-        out.text(x(20), y(20), FONT_MEDIUM, clip(productName, stickerDots - (40 * sx).toInt(), FONT_MEDIUM_W))
+        // Product name, clipped to the SAFE BOX rather than the sticker - the die-cut
+        // channel beside it is not spare room, and TSPL would happily run text across it.
+        //
+        // CENTRED, like every other row. It used to be anchored at the left margin while
+        // the bars and the digits below it were centred, and a sticker with its name and
+        // its price hard left under a centred barcode reads as two layouts printed on
+        // top of each other rather than one label. TSPL has no alignment argument in the
+        // form this uses - see the class note on old firmware - so centring is arithmetic
+        // here: a bitmap font is a fixed cell wide, so the text is exactly as wide as its
+        // own character count.
+        val name = clip(productName, safeWidth, FONT_MEDIUM_W)
+        out.text(x(centred(name.length * FONT_MEDIUM_W)), y(nameY), FONT_MEDIUM, name)
 
         // The bars, with the printer's own human-readable line switched OFF (the 0
         // after the height). The digits go on as their own TEXT below instead, which is
-        // what lets them sit where the template puts them rather than jammed under the
-        // bars wherever the firmware decides.
-        out.barcode(x(80), y(60), symbologyFor(code), (65 * sy).toInt(), code.trim())
-        out.text(x(100), y(130), FONT_LARGE, code.trim())
+        // what lets them sit on their own row rather than jammed under the bars wherever
+        // the firmware decides.
+        val digits = clip(code.trim(), safeWidth, FONT_LARGE_W)
+        out.barcode(
+            x(centred(barcodeWidthDots(code.trim()))), y(barsY),
+            symbologyFor(code), (barsHeight * sy).toInt(), code.trim()
+        )
+        out.text(x(centred(digits.length * FONT_LARGE_W)), y(digitsY), FONT_LARGE, digits)
 
         // Prices. MRP struck through on the left, what the customer actually pays on the
         // right - the shelf-edge convention. With no MRP on file there is nothing to
@@ -223,17 +284,66 @@ object TsplLabel {
         val showBoth = price != null && mrp != null && kotlin.math.abs(mrp - price) > 0.001
         if (showBoth) {
             val mrpText = "MRP:${money(mrp!!)}"
-            out.text(x(20), y(170), FONT_MEDIUM, mrpText)
-            // A filled bar two dots high, drawn across the MRP text. BAR is used rather
-            // than the reference's LINE: BAR is in every TSPL2 firmware, LINE is not
-            // universally implemented, and a command a printer does not know can take
-            // the whole label down with it. The two draw the same thing.
-            out.line("BAR ${x(20)},${y(180)},${mrpText.length * FONT_MEDIUM_W},2")
-            out.text(x(180), y(170), FONT_MEDIUM, "OUR PRICE:${money(price!!)}")
+            val mrpWidth = mrpText.length * FONT_MEDIUM_W
+            // The paid price is set against the RIGHT margin, not at a fixed dot 180.
+            // Its width is whatever the figure needs - a four-figure rate is two
+            // characters longer than a two-figure one - and anchored on the left it grew
+            // off the edge of the sticker. "OUR PRICE:" is dropped for the shorter label
+            // first, since losing a word beats losing a digit.
+            val priceText = "OUR PRICE:${money(price!!)}".let {
+                if (mrpWidth + REF_ROW_GAP + it.length * FONT_MEDIUM_W <= safeWidth) it
+                else "PRICE:${money(price)}"
+            }
+            val priceX = (right - priceText.length * FONT_MEDIUM_W).coerceAtLeast(left)
+            // Only when the MRP still has room of its own. A long pair would otherwise
+            // print one over the other, which reads as a third, wrong number.
+            if (priceX >= left + mrpWidth + REF_ROW_GAP) {
+                out.text(x(left), y(priceY), FONT_MEDIUM, mrpText)
+                // A filled bar two dots high, drawn across the MRP text. BAR is used
+                // rather than the reference's LINE: BAR is in every TSPL2 firmware, LINE
+                // is not universally implemented, and a command a printer does not know
+                // can take the whole label down with it. The two draw the same thing.
+                // Its width is scaled like every other measurement here - left in
+                // reference dots it would have struck through the wrong span on any
+                // stock but the 50mm one.
+                out.line(
+                    "BAR ${x(left)},${y(priceY + FONT_MEDIUM_H / 2)}," +
+                        "${(mrpWidth * sx).toInt().coerceAtLeast(1)},2"
+                )
+            }
+            out.text(x(priceX), y(priceY), FONT_MEDIUM, priceText)
         } else if (price != null) {
-            out.text(x(20), y(170), FONT_MEDIUM, "PRICE:${money(price)}")
+            // Centred, on the same middle line as the name, the bars and the digits.
+            // Only the MRP pair above is spread left-and-right, and that is a two-column
+            // row on purpose - the struck-through list price beside what is actually
+            // charged - rather than a row that failed to be centred.
+            val priceText = clip("PRICE:${money(price)}", safeWidth, FONT_MEDIUM_W)
+            out.text(
+                x(centred(priceText.length * FONT_MEDIUM_W)), y(priceY), FONT_MEDIUM, priceText
+            )
         }
         return out.toString()
+    }
+
+    /**
+     * Roughly how wide the Code 128 symbol for [code] prints, in dots - enough to centre
+     * the bars on the sticker, which is all it is used for.
+     *
+     * The printer renders the symbol itself, so nothing here can ask it how wide the
+     * answer came out. The count is the standard one: every symbol character is 11
+     * modules, the run carries a start character and a checksum, and the stop pattern is
+     * 13 modules. Subset C packs two digits into each character, which is why a 13-digit
+     * retail code is barely wider than a 10-digit one - with the odd digit costing a
+     * switch back to subset B plus a character of its own.
+     *
+     * An over- or under-estimate only shifts the bars a few dots off centre; the clamp in
+     * [sticker]'s `centred` keeps them inside the margin either way.
+     */
+    private fun barcodeWidthDots(code: String): Int {
+        val characters =
+            if (code.isNotEmpty() && code.all { it.isDigit() }) code.length / 2 + (code.length % 2) * 2
+            else code.length
+        return (11 * (characters + 2) + 13) * BAR_NARROW
     }
 
     /**
@@ -290,10 +400,23 @@ object TsplLabel {
      */
     private fun StringBuilder.barcode(
         x: Int, y: Int, type: String, height: Int, content: String
-    ) = line("BARCODE $x,$y,\"$type\",$height,0,0,2,2,\"$content\"")
+    ) = line("BARCODE $x,$y,\"$type\",$height,0,0,$BAR_NARROW,$BAR_NARROW,\"$content\"")
+
+    /** The narrow bar, in dots - and with it the whole symbol's width. */
+    private const val BAR_NARROW = 2
+
+    /**
+     * How short the bars are allowed to get before height is taken from the rows around
+     * them instead. About 3mm at 203 dpi, below which hand scanners start to miss the
+     * symbol on a sticker that is not held square.
+     */
+    private const val MIN_BAR_HEIGHT = 24
 
     // TSC's built-in bitmap fonts, with the cell size each one occupies in dots.
     private const val FONT_MEDIUM = "2"
     private const val FONT_MEDIUM_W = 12
+    private const val FONT_MEDIUM_H = 20
     private const val FONT_LARGE = "3"
+    private const val FONT_LARGE_W = 16
+    private const val FONT_LARGE_H = 24
 }

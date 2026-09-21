@@ -954,6 +954,51 @@ class DatabaseHelper private constructor(context: Context) :
     }
 
     /**
+     * A database left behind by a NEWER build of the app than the one now installed.
+     *
+     * ## Why this exists at all
+     *
+     * SQLiteOpenHelper's own answer is to throw `SQLiteException: Can't downgrade
+     * database from version N to M`, and because everything in this app reads the
+     * database, that throw lands on whatever touched it first - which is the Login
+     * button. The till then cannot be signed into at all. Not a screen broken: the
+     * shop shut.
+     *
+     * It is not a hypothetical. It happens whenever a build is rolled back - a feature
+     * pulled before release, a tester moved back to the last good APK, a device given
+     * an older version than the one it was set up with. The data is the shop's and is
+     * perfectly readable; the only thing wrong is a number.
+     *
+     * ## Why accepting it is safe HERE
+     *
+     * Every migration in [onUpgrade] only ever ADDS - a column, a table, a wider CHECK
+     * constraint, a renamed lookup value. None drops a column or narrows a type. So a
+     * database written by a later build is a superset of what this build expects: the
+     * extra columns sit there unread, and everything this build looks for is present.
+     *
+     * [onOpen] then tops up anything genuinely missing through `addColumnIfMissing`,
+     * which is how this schema has always healed itself.
+     *
+     * Android stamps the version down to [DATABASE_VERSION] after this returns, so a
+     * device that later takes the newer build again simply replays that build's own
+     * migrations. Those are written to be safe to re-run - see the ones above, which
+     * check for what they are about to add.
+     *
+     * ## What it deliberately does NOT do
+     *
+     * Wipe and recreate. That is the other common answer to a downgrade and it would
+     * destroy a shop's bills, customers and stock to fix a version number - the one
+     * outcome worse than the crash it replaces.
+     */
+    override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        android.util.Log.w(
+            "DatabaseHelper",
+            "Database is from a newer build (v$oldVersion) than this one (v$newVersion); " +
+                "opening it as it is. Its extra columns are simply not read."
+        )
+    }
+
+    /**
      * v6: adds the md_printer lookup, mapping each print purpose (BILL/KOT/OTHERS)
      * to its connection type. Created and seeded here for existing databases; fresh
      * installs get the same from onCreate.

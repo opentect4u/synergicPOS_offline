@@ -60,14 +60,85 @@ class TsplLabelTest {
         assertTrue(tspl, tspl.contains("CLS"))
     }
 
-    /** The proven template's coordinates, untouched, for the left-hand sticker. */
+    /**
+     * One sticker carries all four things, in top-to-bottom order.
+     *
+     * Asserted by ORDER rather than by exact coordinates. The layout computes its
+     * positions from the stock and the font metrics - it centres the bars, and sizes
+     * them from whatever room the text leaves - so pinning 20,20 here only records
+     * whatever the arithmetic happened to produce the day it was written, and breaks
+     * the moment anyone tunes it without anything actually being wrong.
+     *
+     * What must not change is that all four are present, each below the last.
+     */
     @Test
-    fun `the sticker keeps the proven coordinates`() {
+    fun `a sticker carries name, bars, digits and price in that order`() {
         val tspl = build()
-        assertTrue(tspl, tspl.contains("""TEXT 20,20,"2",0,1,1,"Rice 1kg""""))
-        assertTrue(tspl, tspl.contains("""TEXT 100,130,"3",0,1,1,"$validEan""""))
-        assertTrue(tspl, tspl.contains("""TEXT 20,170,"2",0,1,1,"PRICE:120.00""""))
+        val name = yOf(tspl, """TEXT (\d+),(\d+),"2",0,1,1,"Rice 1kg"""")
+        val bars = yOf(tspl, """BARCODE (\d+),(\d+),"128"""")
+        val digits = yOf(tspl, """TEXT (\d+),(\d+),"3",0,1,1,"$validEan"""")
+        val price = yOf(tspl, """TEXT (\d+),(\d+),"2",0,1,1,"PRICE:120.00"""")
+        assertTrue("name $name < bars $bars", name < bars)
+        assertTrue("bars $bars < digits $digits", bars < digits)
+        assertTrue("digits $digits < price $price", digits < price)
     }
+
+    /**
+     * Every row on a sticker shares one middle line.
+     *
+     * This is the bug that reached paper: the name and the price were anchored at the
+     * left margin while the bars and the digits were centred, so a printed label read as
+     * two layouts stacked rather than one. TSPL's `TEXT` has no alignment argument in the
+     * seven-argument form the builder uses, so centring is arithmetic - which is exactly
+     * the kind of thing that silently stops being true.
+     *
+     * A bitmap font is a fixed cell wide, so a row's width is its character count times
+     * that cell, and its centre is computable from the command alone.
+     */
+    @Test
+    fun `every text row is centred on the sticker`() {
+        val tspl = build(name = "Chicken Lollypop", code = "2897330055552", price = 220.0)
+        val sticker = TsplLabel.LABEL_WIDTH_MM * TsplLabel.DOTS_PER_MM / TsplLabel.STICKERS_ACROSS
+        val middle = sticker / 2
+
+        val rows = Regex("""TEXT (\d+),\d+,"([23])",0,1,1,"([^"]*)"""").findAll(tspl).toList()
+        assertEquals("name, digits and price", 3, rows.size)
+        rows.forEach { m ->
+            val x = m.groupValues[1].toInt()
+            val cell = if (m.groupValues[2] == "3") 16 else 12
+            val centre = x + m.groupValues[3].length * cell / 2
+            // A character cell cannot be split, so a row whose width is an odd number of
+            // cells lands half a cell off centre. Anything beyond that is a row that was
+            // not centred at all.
+            assertTrue("\"${m.groupValues[3]}\" centres on $centre, not $middle",
+                kotlin.math.abs(centre - middle) <= cell / 2)
+        }
+    }
+
+    /** Everything a sticker draws has to land inside the 25mm label, 200 dots at 203dpi. */
+    @Test
+    fun `nothing is drawn past the bottom of the label`() {
+        val tspl = build(price = 120.0, mrp = 135.0)
+        Regex("""(?:TEXT|BARCODE|BAR) (\d+),(\d+)""").findAll(tspl).forEach { m ->
+            val y = m.groupValues[2].toInt()
+            assertTrue("${m.value} is at y=$y, past the 200-dot label", y < 200)
+        }
+    }
+
+    /** The y of the first match of [pattern], whose second group is the y coordinate. */
+    private fun yOf(tspl: String, pattern: String): Int =
+        Regex(pattern).find(tspl)?.groupValues?.get(2)?.toInt()
+            ?: throw AssertionError("not found: $pattern\nin:\n$tspl")
+
+    /** The x of the first match of [pattern], whose first group is the x coordinate. */
+    private fun xOf(tspl: String, pattern: String): Int =
+        Regex(pattern).find(tspl)?.groupValues?.get(1)?.toInt()
+            ?: throw AssertionError("not found: $pattern\nin:\n$tspl")
+
+    /** Every x a product name is drawn at - one per filled sticker cell. */
+    private fun nameXs(tspl: String): List<Int> =
+        Regex("""TEXT (\d+),\d+,"2",0,1,1,"Rice 1kg"""").findAll(tspl)
+            .map { it.groupValues[1].toInt() }.toList()
 
     /** Every command ends CRLF, which is what the printer's parser breaks on. */
     @Test
@@ -89,8 +160,7 @@ class TsplLabelTest {
         assertTrue(tspl, tspl.contains("PRINT 5,1"))
         assertEquals("one block only", 1, Regex("PRINT ").findAll(tspl).count())
         // Both cells filled: the second sticker sits a whole sticker to the right.
-        assertTrue(tspl, tspl.contains("TEXT 20,20,"))
-        assertTrue(tspl, tspl.contains("TEXT 420,20,"))
+        assertEquals("two stickers drawn", 2, nameXs(tspl).size)
     }
 
     /**
@@ -105,9 +175,8 @@ class TsplLabelTest {
         assertEquals("two blocks", 2, Regex("PRINT ").findAll(tspl).count())
         // Each block clears the buffer before drawing into it.
         assertEquals(2, Regex("\\bCLS\\b").findAll(tspl).count())
-        val last = tspl.substringAfterLast("CLS")
-        assertTrue(last, last.contains("TEXT 20,20,"))
-        assertFalse(last, last.contains("TEXT 420,20,"))
+        // The last feed carries one sticker, not two.
+        assertEquals("one sticker on the last feed", 1, nameXs(tspl.substringAfterLast("CLS")).size)
     }
 
     /** One sticker is a single part-filled feed, not a full one. */
@@ -116,8 +185,7 @@ class TsplLabelTest {
         val tspl = build(copies = 1)
         assertEquals(1, Regex("PRINT ").findAll(tspl).count())
         assertTrue(tspl, tspl.contains("PRINT 1,1"))
-        assertTrue(tspl, tspl.contains("TEXT 20,20,"))
-        assertFalse(tspl, tspl.contains("TEXT 420,20,"))
+        assertEquals("one sticker only", 1, nameXs(tspl).size)
     }
 
     /** A count of zero would tell the printer to print nothing at all. */
@@ -133,9 +201,20 @@ class TsplLabelTest {
     @Test
     fun `the second sticker is offset by one sticker width`() {
         val tspl = build(copies = 2)
-        assertTrue(tspl, tspl.contains("""TEXT 420,20,"2",0,1,1,"Rice 1kg""""))
-        assertTrue(tspl, tspl.contains("""BARCODE 480,60,"128",65,0,0,2,2,"$validEan""""))
-        assertTrue(tspl, tspl.contains("""TEXT 500,130,"3",0,1,1,"$validEan""""))
+        // 100mm of stock, two across, 8 dots/mm - so one sticker is 400 dots. Derived
+        // from the constants rather than typed, so changing the stock moves the test
+        // with the code instead of against it.
+        val sticker = TsplLabel.LABEL_WIDTH_MM * TsplLabel.DOTS_PER_MM / TsplLabel.STICKERS_ACROSS
+        assertEquals(400, sticker)
+
+        val names = nameXs(tspl)
+        assertEquals("two stickers", 2, names.size)
+        assertEquals("second sticker is one sticker to the right", names[0] + sticker, names[1])
+
+        // Every element of the second sticker moves with it, not just the name.
+        val bars = Regex("""BARCODE (\d+),""").findAll(tspl).map { it.groupValues[1].toInt() }.toList()
+        assertEquals(2, bars.size)
+        assertEquals(bars[0] + sticker, bars[1])
     }
 
     // ---- The barcode -------------------------------------------------------
@@ -160,7 +239,7 @@ class TsplLabelTest {
     /** The printer's own readable line is off; the digits are placed by us. */
     @Test
     fun `barcode suppresses the built-in human readable line`() {
-        assertTrue(build().contains("""BARCODE 80,60,"128",65,0,0,2,2,"$validEan""""))
+        assertTrue(build(), build().contains("""BARCODE""") && Regex("""BARCODE \d+,\d+,"128",\d+,0,0,""").containsMatchIn(build()))
     }
 
     // ---- Prices ------------------------------------------------------------
@@ -169,9 +248,9 @@ class TsplLabelTest {
     @Test
     fun `an MRP above the price prints struck through`() {
         val tspl = build(price = 120.0, mrp = 135.0)
-        assertTrue(tspl, tspl.contains("""TEXT 20,170,"2",0,1,1,"MRP:135.00""""))
-        assertTrue(tspl, tspl.contains("""TEXT 180,170,"2",0,1,1,"OUR PRICE:120.00""""))
-        assertTrue(tspl, tspl.contains("BAR 20,180,"))
+        assertTrue(tspl, Regex("""TEXT \d+,\d+,"2",0,1,1,"MRP:135.00"""").containsMatchIn(tspl))
+        assertTrue(tspl, Regex("""TEXT \d+,\d+,"2",0,1,1,"OUR PRICE:120.00"""").containsMatchIn(tspl))
+        assertTrue(tspl, Regex("""BAR \d+,\d+,\d+,2""").containsMatchIn(tspl))
     }
 
     /**
@@ -181,7 +260,7 @@ class TsplLabelTest {
     @Test
     fun `an MRP equal to the price prints one price and no strike`() {
         val tspl = build(price = 120.0, mrp = 120.0)
-        assertTrue(tspl, tspl.contains("""TEXT 20,170,"2",0,1,1,"PRICE:120.00""""))
+        assertTrue(tspl, Regex("""TEXT \d+,\d+,"2",0,1,1,"PRICE:120.00"""").containsMatchIn(tspl))
         assertFalse(tspl, tspl.contains("BAR "))
         assertFalse(tspl, tspl.contains("OUR PRICE"))
     }
@@ -204,7 +283,7 @@ class TsplLabelTest {
     @Test
     fun `a long product name is clipped to the sticker`() {
         val tspl = build(name = "X".repeat(200))
-        val printed = Regex("""TEXT 20,20,"2",0,1,1,"([^"]*)"""").find(tspl)!!.groupValues[1]
+        val printed = Regex("""TEXT \d+,\d+,"2",0,1,1,"([^"]*)"""").find(tspl)!!.groupValues[1]
         // A 50mm sticker at 203 dpi is 400 dots; font 2 is 12 wide, less the margins.
         assertTrue("was ${printed.length} chars", printed.length <= 30)
         assertTrue(printed.endsWith("."))
@@ -214,7 +293,7 @@ class TsplLabelTest {
     @Test
     fun `quotes in a name cannot break out of the command`() {
         val tspl = build(name = """6" Pipe""")
-        val line = tspl.lines().first { it.startsWith("TEXT 20,20") }
+        val line = tspl.lines().first { it.contains("Pipe") }
         assertEquals("one opening and one closing quote pair", 4, line.count { it == '"' })
     }
 }

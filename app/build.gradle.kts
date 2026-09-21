@@ -93,6 +93,10 @@ dependencies {
     // PR-55 thermal printer SDK (ESC/POS). Vendor jar, no Maven artifact; the
     // matching .so files live in src/main/jniLibs.
     implementation(files("libs/ESC_SDK_V1.24.04.jar"))
+    // TSC's own Android SDK (package com.example.tscdll), for the label printer. The
+    // ESC/POS jar above drives the receipt printers; the two speak different languages
+    // and neither can stand in for the other - see TscPrinter.
+    implementation(files("libs/tscsdk.jar"))
     implementation(libs.androidx.swiperefreshlayout)
     implementation(libs.androidx.biometric)
     implementation(libs.zxing.core)

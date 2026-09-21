@@ -76,6 +76,15 @@ object ThermalPrinter {
     private val main = Handler(Looper.getMainLooper())
 
     /**
+     * How much of a label's TSPL goes in the print log.
+     *
+     * A one- or two-sticker job is a few hundred bytes, so this only ever bites on a
+     * job built wrong - a runaway loop emitting a block per sticker - which is itself
+     * worth seeing the start of.
+     */
+    private const val MAX_LOGGED_TSPL = 4_000
+
+    /**
      * A printer to send to. [ip] is an IP for WIFI/LAN, a device MAC for BLUETOOTH or
      * a "VVVV:PPPP" vendor/product pair for USB ([UsbPrinters.addressOf]);
      * [connection] selects which transport is opened. Paper width is held in mm -
@@ -304,8 +313,9 @@ object ThermalPrinter {
      * A TSC label printer speaks TSPL, not ESC/POS. It is not fed a picture of a label;
      * it is fed a program describing one (see [TsplLabel]). None of the receipt path
      * above applies to it - no bitmap to scale, no `ESC @`, no cut command, no status
-     * query - so rather than teach [runJob] a second language, this opens the same
-     * transport the SDK already knows how to open and writes the job straight down it.
+     * query - so rather than teach [runJob] a second language, this hands the job to
+     * [TscPrinter], which speaks to the printer through TSC's own SDK instead of the
+     * ESC/POS one [runJob] uses.
      *
      * ## Why there is no handshake
      *
@@ -326,74 +336,79 @@ object ThermalPrinter {
      * @param onResult called on the main thread once the job finishes
      */
     fun printRaw(context: Context, bytes: ByteArray, config: Config, onResult: (Result) -> Unit) {
-        if (bytes.isEmpty()) { onResult(Result.Failure("Nothing to print")); return }
+        // Opened before anything can go wrong, so that even a job rejected on the first
+        // line leaves a numbered block in the log rather than nothing at all.
+        val job = PrintLog.job(
+            context, TAG,
+            "label print -> ${config.connection} ${config.ip}:${config.port}, ${bytes.size} bytes"
+        )
+        // The whole TSPL program, as the printer will read it. It is a few hundred bytes
+        // of text and it is the one thing that makes a wrongly placed label diagnosable
+        // without the roll in hand - coordinates, sizes, gap, copies, all of it.
+        job.detail("TSPL sent", bytes.toString(Charsets.ISO_8859_1).trimEnd().take(MAX_LOGGED_TSPL))
+
+        if (bytes.isEmpty()) {
+            job.done("REFUSED: nothing to print")
+            onResult(Result.Failure("Nothing to print"))
+            return
+        }
         if (config.isUsb) {
+            job.step("USB: asking for permission on ${config.ip}")
             UsbPrinters.ensurePermission(context, config.ip) { granted, reason ->
                 if (!granted) {
-                    PrintLog.d(context, TAG, "USB not available: $reason")
+                    job.done("FAILED: USB not available - $reason")
                     onResult(Result.Failure(reason))
                 } else {
-                    dispatchRaw(context, bytes, config, onResult)
+                    job.step("USB permission granted")
+                    dispatchRaw(context, bytes, config, job, onResult)
                 }
             }
             return
         }
-        dispatchRaw(context, bytes, config, onResult)
+        dispatchRaw(context, bytes, config, job, onResult)
     }
 
-    private fun dispatchRaw(context: Context, bytes: ByteArray, config: Config, onResult: (Result) -> Unit) {
+    private fun dispatchRaw(
+        context: Context, bytes: ByteArray, config: Config, job: PrintLog.Job, onResult: (Result) -> Unit
+    ) {
+        job.step("queued on the print worker")
         worker.execute {
-            val result = runCatching { runRawJob(context, bytes, config) }
+            job.step("picked up by the print worker")
+            val result = runCatching { runRawJob(context, bytes, config, job) }
                 .getOrElse { e ->
                     Log.e(TAG, "Raw print failed", e)
-                    PrintLog.d(context, TAG, "RAW EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
+                    job.failed("the job threw", e)
                     Result.Failure(e.message ?: "Could not reach the printer")
                 }
-            PrintLog.d(context, TAG, "raw job finished: $result")
-            main.post { onResult(result) }
+            job.done("result = $result")
+            main.post {
+                job.step("result handed back to the screen")
+                onResult(result)
+            }
         }
     }
 
-    private fun runRawJob(context: Context, bytes: ByteArray, config: Config): Result {
-        // Always a fresh port, Bluetooth included: the keep-open cache belongs to the
-        // receipt path and holds a port to an ESC/POS printer, which this is not.
-        runCatching { Print.PortClose() }
+    /**
+     * The transport itself lives in [TscPrinter], which speaks to the printer through
+     * TSC's own SDK rather than `print.Print`'s. What stays here is what every raw job
+     * needs regardless of which SDK carries it: closing off the ESC/POS keep-open
+     * cache first (a label job and a receipt job must never be able to collide on it),
+     * and writing the one job-level log line the ESC/POS path also writes.
+     */
+    private fun runRawJob(context: Context, bytes: ByteArray, config: Config, job: PrintLog.Job): Result {
+        // Always closed first, Bluetooth included: the keep-open cache belongs to the
+        // receipt path and holds a port to an ESC/POS printer, which TscPrinter never
+        // touches - but a stale one left dangling here would still block a later
+        // receipt from opening its own.
+        val previous = openPort
+        val closed = runCatching { Print.PortClose() }
         openPort = null
-
-        val usbDevice = if (config.isUsb) UsbPrinters.find(context, config.ip) else null
-        if (config.isUsb && usbDevice == null) {
-            return Result.Failure("USB printer not connected - plug it in and try again")
-        }
-        PrintLog.d(
-            context, TAG,
-            "==== raw job: connection=${config.connection} address=${config.ip} " +
-                "port=${config.port} bytes=${bytes.size} ===="
+        job.step(
+            "cleared the ESC/POS keep-open cache (held=${previous ?: "none"}, " +
+                "PortClose=${closed.getOrNull() ?: closed.exceptionOrNull()?.javaClass?.simpleName})"
         )
-        val opened = when {
-            usbDevice != null -> Print.PortOpen(context.applicationContext, usbDevice)
-            config.isBluetooth -> Print.portOpenBT(context, config.ip)
-            else -> Print.PortOpen(context, "WiFi,${config.ip},${config.port}")
-        }
-        if (opened != 0) {
-            PrintLog.d(context, TAG, "raw port open FAILED result=$opened")
-            return Result.Failure("Cannot reach printer at ${config.description}")
-        }
-        try {
-            val written = Print.WriteData(bytes)
-            PrintLog.d(context, TAG, "WriteData returned $written for ${bytes.size} bytes")
-            if (written < 0) return Result.Failure("Printer rejected the label")
-            // A label printer answers no status query this SDK knows how to ask, and
-            // closing the port with the job still in flight loses its tail - so the
-            // write is given a moment to drain before the socket goes.
-            Thread.sleep(RAW_DRAIN_MS)
-            // Sent, not Success: nothing acknowledged it. Saying otherwise would be
-            // claiming a label came out on the word of a socket that accepted bytes.
-            return Result.Sent
-        } finally {
-            runCatching { Print.PortClose() }
-            openPort = null
-            PrintLog.d(context, TAG, "raw port closed")
-        }
+
+        return TscPrinter.send(context, bytes, config, job)
     }
 
     private fun sendWithRetry(context: Context, receipt: Bitmap, config: Config): Result {

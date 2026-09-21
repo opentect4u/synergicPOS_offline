@@ -4,6 +4,7 @@ import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.DatabaseHelper
 import com.example.synergic_pos_offline.utils.BarcodeGenerator
 import com.example.synergic_pos_offline.utils.DialogUtils
+import com.example.synergic_pos_offline.utils.PrintLog
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.example.synergic_pos_offline.utils.TsplLabel
@@ -119,6 +120,10 @@ class BarcodeLabelsFragment : DataTableFragment() {
      * has nothing to do with a number they have just typed.
      */
     override fun onRowAction(row: DataRow) {
+        // The tap itself is logged before anything is looked up, so a print that never
+        // reaches the printer can still be told apart from one that was never asked for.
+        // Everything that follows either prints, or says here why it did not.
+        PrintLog.d(requireContext(), LOG_TAG, "barcode print icon tapped on row ${row.id}")
         val id = row.id.toIntOrNull()
         // READ FRESH, not off the row. The cells on screen are as old as the last table
         // load, and between then and now the code may have been generated on this very
@@ -126,12 +131,25 @@ class BarcodeLabelsFragment : DataTableFragment() {
         // is about to be stuck to a shelf has to be what the catalogue says NOW.
         val product = id?.let { productForLabel(it) }
         if (product == null) {
+            PrintLog.d(requireContext(), LOG_TAG, "STOPPED: product $id could not be read")
             toast("Could not read this product")
             return
         }
         val name = product.name
         val code = product.code
         if (code.isBlank()) {
+            PrintLog.d(requireContext(), LOG_TAG, "STOPPED: \"$name\" has no barcode")
+            toast("This product has no barcode yet")
+            return
+        }
+        PrintLog.d(
+            requireContext(), LOG_TAG,
+            "product: \"$name\" code=$code price=${product.price} mrp=${product.mrp}"
+        )
+
+        val config = labelPrinter()
+        if (config == null) {
+            PrintLog.d(requireContext(), LOG_TAG, "STOPPED: no printer saved under the BARCODE purpose")
             toast("This product has no barcode yet")
             return
         }
@@ -159,6 +177,10 @@ class BarcodeLabelsFragment : DataTableFragment() {
             }
             return
         }
+        PrintLog.d(
+            requireContext(), LOG_TAG,
+            "label printer: ${config.connection} ${config.ip}:${config.port}"
+        )
 
         DialogUtils.showForm(
             context = requireContext(),
@@ -178,6 +200,14 @@ class BarcodeLabelsFragment : DataTableFragment() {
             negativeText = "Cancel"
         ) { values ->
             val asked = values.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
+            if (asked <= 0) {
+                PrintLog.d(requireContext(), LOG_TAG, "STOPPED: \"${values.getOrNull(1)}\" is not a count")
+                toast("Enter how many labels to print"); return@showForm
+            }
+
+            val copies = asked.coerceAtMost(MAX_LABELS)
+            if (asked > MAX_LABELS) toast("Printing the first $MAX_LABELS labels")
+            PrintLog.d(requireContext(), LOG_TAG, "operator asked for $asked label(s), printing $copies")
             if (asked <= 0) { toast("Enter how many labels to print"); return@showForm }
 
             val copies = asked.coerceAtMost(MAX_LABELS)
@@ -195,6 +225,12 @@ class BarcodeLabelsFragment : DataTableFragment() {
             )
 
             toast(if (copies == 1) "Printing 1 label…" else "Printing $copies labels…")
+            val ctx = requireContext()
+            ThermalPrinter.printRaw(ctx, job, config) { result ->
+                // Logged whether or not the screen is still there to be told. A print
+                // finishing after the operator has moved on is exactly the case where
+                // the toast is missed and the log is all there is.
+                PrintLog.d(ctx, LOG_TAG, "screen got the result: $result (screen still open=$isAdded)")
             ThermalPrinter.printRaw(requireContext(), job, config) { result ->
                 if (!isAdded) return@printRaw
                 when (result) {
@@ -468,6 +504,12 @@ class BarcodeLabelsFragment : DataTableFragment() {
          * where they are - this hides the door, it does not pull the room down. Turning
          * it back on is this one word, and both listings pick it up, because both ask
          * here rather than each keeping its own copy of the answer.
+         *
+         * On, now that the print path behind it sends TSPL through TSC's own SDK
+         * ([TscPrinter]) rather than the ESC/POS receipt SDK's raw byte pipe - see
+         * [ThermalPrinter.printRaw].
+         */
+        const val ENABLED = true
          */
         const val ENABLED = false
 
@@ -479,5 +521,8 @@ class BarcodeLabelsFragment : DataTableFragment() {
          * whole roll and a printer that cannot be stopped from the app.
          */
         private const val MAX_LABELS = 100
+
+        /** What this screen's lines are filed under in the print log. */
+        private const val LOG_TAG = "BarcodeLabels"
     }
 }
