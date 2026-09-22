@@ -5,7 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.example.synergic_pos_offline.utils.RowThumbnails
+import com.example.synergic_pos_offline.utils.ThumbnailCache
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -29,7 +29,7 @@ import java.io.ByteArrayOutputStream
  * machine runs it.
  */
 @RunWith(AndroidJUnit4::class)
-class RowThumbnailsTest {
+class ThumbnailCacheTest {
 
     /** A JPEG the size of a photograph taken on a phone, as a product image would be. */
     private fun photo(px: Int = 1600): ByteArray {
@@ -53,13 +53,13 @@ class RowThumbnailsTest {
     }
 
     @Before
-    fun emptyTheCache() = RowThumbnails.clear()
+    fun emptyTheCache() = ThumbnailCache.clear()
 
     @Test
     fun theSameRowIsDecodedOnceAndHandedBackAfterwards() {
         val bytes = photo(600)
-        val first = RowThumbnails.bitmap("1", bytes)
-        val second = RowThumbnails.bitmap("1", bytes)
+        val first = ThumbnailCache.bitmap("1", bytes)
+        val second = ThumbnailCache.bitmap("1", bytes)
         assertNotNull(first)
         // The very same object, which is what makes a rebind free.
         assertSame("a second bind should not decode again", first, second)
@@ -67,15 +67,15 @@ class RowThumbnailsTest {
 
     @Test
     fun aRowWithNoImageGetsNoBitmap() {
-        assertNull(RowThumbnails.bitmap("1", null))
-        assertNull("an empty blob is not an image", RowThumbnails.bitmap("2", ByteArray(0)))
+        assertNull(ThumbnailCache.bitmap("1", null))
+        assertNull("an empty blob is not an image", ThumbnailCache.bitmap("2", ByteArray(0)))
     }
 
     @Test
     fun bytesThatAreNotAnImageGiveAPlaceholderRatherThanACrash() {
         // A column holding something that is not an image should be a blank thumbnail on
         // screen, not a list that dies while being scrolled.
-        assertNull(RowThumbnails.bitmap("3", ByteArray(64) { it.toByte() }))
+        assertNull(ThumbnailCache.bitmap("3", ByteArray(64) { it.toByte() }))
     }
 
     @Test
@@ -83,9 +83,9 @@ class RowThumbnailsTest {
         // Why every reload clears it: edit a product's photo and the old bitmap would
         // otherwise still be held under the same row id.
         val bytes = photo(600)
-        val first = RowThumbnails.bitmap("1", bytes)
-        RowThumbnails.clear()
-        val afterClear = RowThumbnails.bitmap("1", bytes)
+        val first = ThumbnailCache.bitmap("1", bytes)
+        ThumbnailCache.clear()
+        val afterClear = ThumbnailCache.bitmap("1", bytes)
         assertNotNull(afterClear)
         assertTrue("clear() should have dropped the old bitmap", first !== afterClear)
     }
@@ -94,22 +94,22 @@ class RowThumbnailsTest {
     fun differentRowsKeepTheirOwnImages() {
         val a = photo(400)
         val b = photo(600)
-        val first = RowThumbnails.bitmap("a", a)
-        val second = RowThumbnails.bitmap("b", b)
+        val first = ThumbnailCache.bitmap("a", a)
+        val second = ThumbnailCache.bitmap("b", b)
         assertTrue("two rows must not share one bitmap", first !== second)
-        assertSame(first, RowThumbnails.bitmap("a", a))
-        assertSame(second, RowThumbnails.bitmap("b", b))
+        assertSame(first, ThumbnailCache.bitmap("a", a))
+        assertSame(second, ThumbnailCache.bitmap("b", b))
     }
 
     @Test
     fun theThumbnailIsScaledDownNotKeptAtFullSize() {
         // The point of the sampling pass. A 1600px photo held at full size would be
         // 10MB of bitmap per row; at 120px it is about 57KB.
-        val thumb = RowThumbnails.bitmap("1", photo(1600))
+        val thumb = ThumbnailCache.bitmap("1", photo(1600))
         assertNotNull(thumb)
         assertTrue(
             "decoded at ${thumb!!.width}x${thumb.height}, expected no more than 2x the 120px target",
-            thumb.width <= RowThumbnails.THUMB_PX * 2 && thumb.height <= RowThumbnails.THUMB_PX * 2
+            thumb.width <= ThumbnailCache.THUMB_PX * 2 && thumb.height <= ThumbnailCache.THUMB_PX * 2
         )
     }
 
@@ -119,22 +119,22 @@ class RowThumbnailsTest {
         val binds = 200
 
         // What the list used to do: a decode on every pass of every row.
-        RowThumbnails.clear()
+        ThumbnailCache.clear()
         val uncached = nanos {
             repeat(binds) {
-                RowThumbnails.bitmap("row$it", bytes)
-                RowThumbnails.clear()
+                ThumbnailCache.bitmap("row$it", bytes)
+                ThumbnailCache.clear()
             }
         }
 
         // What it does now: decode once, then hand the same bitmap back.
-        RowThumbnails.clear()
-        RowThumbnails.bitmap("row", bytes)
-        val cached = nanos { repeat(binds) { RowThumbnails.bitmap("row", bytes) } }
+        ThumbnailCache.clear()
+        ThumbnailCache.bitmap("row", bytes)
+        val cached = nanos { repeat(binds) { ThumbnailCache.bitmap("row", bytes) } }
 
         val ratio = uncached.toDouble() / cached.coerceAtLeast(1)
         println(
-            "RowThumbnails: $binds binds - decoding ${uncached / 1_000_000}ms, " +
+            "ThumbnailCache: $binds binds - decoding ${uncached / 1_000_000}ms, " +
                 "cached ${cached / 1_000_000}ms (${"%.0f".format(ratio)}x)"
         )
         assertTrue(
@@ -150,18 +150,62 @@ class RowThumbnailsTest {
     }
 
     @Test
+    fun twoScreensHoldingTheSameIdDoNotShareABitmap() {
+        // The cache is shared by the masters' tables and the restaurant grid, and a row
+        // id is only unique within its own table - customer 5 and product 5 are both
+        // "5". Without the screen's name in front of them, one would be shown wearing
+        // the other's photograph.
+        val customerPhoto = photo(400)
+        val productPhoto = photo(600)
+        val customer = ThumbnailCache.bitmap("CustomersFragment:5", customerPhoto)
+        val product = ThumbnailCache.bitmap("ProductsFragment:5", productPhoto)
+        assertTrue("two screens must not share one bitmap", customer !== product)
+        assertSame(customer, ThumbnailCache.bitmap("CustomersFragment:5", customerPhoto))
+        assertSame(product, ThumbnailCache.bitmap("ProductsFragment:5", productPhoto))
+    }
+
+    @Test
+    fun theSameProductAtTwoSizesIsHeldSeparately() {
+        // A 120px table thumbnail and a 320px grid tile of the same product: the size is
+        // part of the key, or the grid would be handed the table's small one to stretch.
+        val bytes = photo(1200)
+        val small = ThumbnailCache.bitmap("p:1", bytes, ThumbnailCache.THUMB_PX)!!
+        val large = ThumbnailCache.bitmap("p:1", bytes, ThumbnailCache.TILE_PX)!!
+        assertTrue("a tile should be bigger than a row thumbnail", large.width > small.width)
+    }
+
+    @Test
+    fun aTileCostsAFractionOfTheFullSizedPhotograph() {
+        // What the restaurant grid used to do on EVERY bind: decode at full resolution.
+        val bytes = photo(1600)
+        val full = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)!!
+        val tile = ThumbnailCache.bitmap("p:1", bytes, ThumbnailCache.TILE_PX)!!
+
+        println(
+            "ThumbnailCache: full ${full.width}x${full.height} = ${full.byteCount / 1024}KB, " +
+                "tile ${tile.width}x${tile.height} = ${tile.byteCount / 1024}KB"
+        )
+        assertTrue(
+            "a tile should be a small fraction of the full photo, " +
+                "was ${tile.byteCount} against ${full.byteCount}",
+            tile.byteCount * 8 < full.byteCount
+        )
+        full.recycle()
+    }
+
+    @Test
     fun theCacheDoesNotGrowWithoutBound() {
         // Every row of a large catalogue, bound once. The cache must evict rather than
         // hold every product photo in the shop - which is the memory problem it would
         // otherwise create while solving the speed one.
         val bytes = photo(800)
-        repeat(400) { RowThumbnails.bitmap("row$it", bytes) }
+        repeat(400) { ThumbnailCache.bitmap("row$it", bytes) }
         // The earliest entries should have been evicted; the most recent must survive.
-        assertNotNull("the newest thumbnail should still be held", RowThumbnails.bitmap("row399", bytes))
+        assertNotNull("the newest thumbnail should still be held", ThumbnailCache.bitmap("row399", bytes))
         assertEquals(
             "the newest thumbnail should be the cached instance",
-            RowThumbnails.bitmap("row399", bytes),
-            RowThumbnails.bitmap("row399", bytes)
+            ThumbnailCache.bitmap("row399", bytes),
+            ThumbnailCache.bitmap("row399", bytes)
         )
     }
 }

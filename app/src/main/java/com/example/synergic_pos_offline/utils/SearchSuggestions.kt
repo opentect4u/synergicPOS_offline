@@ -351,9 +351,14 @@ class SearchSuggestions(
 
             val thumb = v.findViewById<ImageView>(R.id.ivSuggestThumb)
             val initial = v.findViewById<TextView>(R.id.tvSuggestInitial)
-            val bmp = item.bitmap ?: item.image?.let {
-                runCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull()
-            }
+            // Sampled and cached rather than decoded at full size on every bind. A
+            // suggestion list is short, but it is rebuilt on each keystroke, so the same
+            // photographs were being decoded from scratch as fast as the operator types.
+            val bmp = item.bitmap ?: ThumbnailCache.bitmap(
+                key = "suggest:${item.id}",
+                bytes = item.image,
+                targetPx = ThumbnailCache.THUMB_PX
+            )
             if (bmp != null) {
                 thumb.setImageBitmap(bmp); thumb.visibility = View.VISIBLE
                 initial.visibility = View.GONE

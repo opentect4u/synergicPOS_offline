@@ -24,7 +24,14 @@ class CategoryProductsFragment : Fragment(), TitledScreen {
     private lateinit var tvNoProducts: TextView
     private var categoryId: Long = 0
     private var categoryName: String = ""
+    /** Every product in the category. Only [shownProducts] of it reaches the adapter. */
     private var products = mutableListOf<Product>()
+
+    /** The pages handed over so far - what the list actually draws. */
+    private val shownProducts = mutableListOf<Product>()
+
+    /** Feeds [shownProducts] a page at a time as the list is scrolled. */
+    private var pager: com.example.synergic_pos_offline.utils.GridPager<Product>? = null
 
     data class Product(
         val id: Int,
@@ -72,7 +79,15 @@ class CategoryProductsFragment : Fragment(), TitledScreen {
             tvNoProducts = view.findViewById(R.id.tvNoProducts) ?: return
 
             rvProducts.layoutManager = LinearLayoutManager(requireContext())
-            rvProducts.adapter = ProductsAdapter(products)
+            // The adapter is given the PAGED list, not the whole category. A category
+            // of a few hundred products laid on the adapter at once is the first screen
+            // waiting behind measuring every row of it - see GridPager.
+            rvProducts.adapter = ProductsAdapter(shownProducts)
+            pager = com.example.synergic_pos_offline.utils.GridPager(rvProducts) { page ->
+                shownProducts.clear()
+                shownProducts.addAll(page)
+                rvProducts.adapter?.notifyDataSetChanged()
+            }
 
             loadCategoryProducts()
 
@@ -115,7 +130,10 @@ class CategoryProductsFragment : Fragment(), TitledScreen {
             } else {
                 rvProducts.visibility = View.VISIBLE
                 tvNoProducts.visibility = View.GONE
-                rvProducts.adapter?.notifyDataSetChanged()
+                // The photos held are the previous category's; this list is a new one.
+                com.example.synergic_pos_offline.utils.ThumbnailCache.clear()
+                // The pager submits the first page and refreshes the adapter itself.
+                pager?.set(products.toList())
             }
         } catch (e: Exception) {
             android.util.Log.e("CategoryProducts", "Error loading products", e)
@@ -149,13 +167,17 @@ class CategoryProductsFragment : Fragment(), TitledScreen {
                     tvBarcode?.visibility = View.GONE
                 }
 
-                if (product.image != null) {
-                    try {
-                        val bitmap = BitmapFactory.decodeByteArray(product.image, 0, product.image.size)
-                        ivImage?.setImageBitmap(bitmap)
-                    } catch (_: Exception) {
-                        ivImage?.setImageResource(R.drawable.ic_placeholder_image)
-                    }
+                // Sampled and cached, rather than decoded at full resolution on every
+                // bind: a 1600px product photograph is about ten megabytes of bitmap,
+                // built and thrown away each time the row crossed the screen to be drawn
+                // into a thumbnail. See ThumbnailCache.
+                val bitmap = com.example.synergic_pos_offline.utils.ThumbnailCache.bitmap(
+                    key = "categoryProducts:${product.id}",
+                    bytes = product.image,
+                    targetPx = com.example.synergic_pos_offline.utils.ThumbnailCache.THUMB_PX
+                )
+                if (bitmap != null) {
+                    ivImage?.setImageBitmap(bitmap)
                 } else {
                     ivImage?.setImageResource(R.drawable.ic_placeholder_image)
                 }

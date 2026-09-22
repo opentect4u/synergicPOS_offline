@@ -253,6 +253,17 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
      */
     private var columnLayoutVersion = 0
 
+    /**
+     * The cache key for [row]'s thumbnail, scoped to this screen.
+     *
+     * The cache is shared - the masters' tables and the restaurant grid all draw from it -
+     * and a row id is only unique within its own table. Customer 5 and product 5 are both
+     * "5", so without the screen's name in front of them one would be shown wearing the
+     * other's photograph: rare, baffling, and exactly the kind of fault that is never
+     * reproduced on the bench.
+     */
+    private fun thumbKey(row: DataRow) = "${javaClass.simpleName}:${row.id}"
+
     private val allRows = mutableListOf<DataRow>()
     // The full result of the current search/filter. [visibleRows] is the paged slice
     // of this that the adapter actually renders; select-all and the empty state still
@@ -288,7 +299,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
      */
     override fun onDestroyView() {
         super.onDestroyView()
-        com.example.synergic_pos_offline.utils.RowThumbnails.clear()
+        com.example.synergic_pos_offline.utils.ThumbnailCache.clear()
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -650,7 +661,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     protected fun refreshRows() {
         // The cached thumbnails are a snapshot of the rows being replaced: edit a
         // product's photo and its old one would still be held under the same id.
-        com.example.synergic_pos_offline.utils.RowThumbnails.clear()
+        com.example.synergic_pos_offline.utils.ThumbnailCache.clear()
         allRows.clear()
         allRows.addAll(loadRows())
         selectedIds.clear()
@@ -1126,9 +1137,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
             // Through the cache: this runs on every pass of a row across the screen, and
             // decoding the same JPEG each time was the bulk of what made a long product
-            // list stutter. See RowThumbnails.
-            val bitmap = com.example.synergic_pos_offline.utils.RowThumbnails.bitmap(
-                row.id, row.thumbnail, THUMB_PX
+            // list stutter. See ThumbnailCache.
+            val bitmap = com.example.synergic_pos_offline.utils.ThumbnailCache.bitmap(
+                thumbKey(row), row.thumbnail, THUMB_PX
             )
             if (bitmap == null) {
                 holder.ivThumb.setImageDrawable(null)

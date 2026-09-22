@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.utils
 
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 
 /**
@@ -39,11 +40,11 @@ class GridPager<T>(
                 // Only on the way down: paging in more while scrolling back up would
                 // grow the list under a finger that is heading away from its end.
                 if (dy <= 0) return
-                val lm = recyclerView.layoutManager as? GridLayoutManager ?: return
+                val lm = recyclerView.layoutManager as? LinearLayoutManager ?: return
                 // Measured in ROWS, not items: a threshold of 10 items is barely one
                 // row on a grid seven across, so the next page would arrive after the
                 // end had already been reached rather than before it.
-                val ahead = LOAD_AHEAD_ROWS * lm.spanCount
+                val ahead = LOAD_AHEAD_ROWS * lm.spanCount()
                 if (lm.findLastVisibleItemPosition() >= shown - ahead) next()
             }
         })
@@ -66,6 +67,18 @@ class GridPager<T>(
     }
 
     /**
+     * Columns this layout puts a row into: a grid's own span, or 1 for a plain list.
+     *
+     * [GridLayoutManager] IS a [LinearLayoutManager], so asking for the general one
+     * covers both - which is what lets a single-column list (the category product list
+     * off Sales) page the same way the tile grids do. It used to cast straight to
+     * GridLayoutManager and give up, so a linear list got no paging at all and nothing
+     * said so.
+     */
+    private fun LinearLayoutManager.spanCount(): Int =
+        (this as? GridLayoutManager)?.spanCount ?: 1
+
+    /**
      * Grows the first page until the grid holds MORE than a screenful - [OVERSCAN]
      * screens of it - or the list runs out.
      *
@@ -82,7 +95,7 @@ class GridPager<T>(
      * is always being fetched into slack rather than into a gap being looked at.
      */
     private fun fillViewport() {
-        val lm = rv.layoutManager as? GridLayoutManager ?: return
+        val lm = rv.layoutManager as? LinearLayoutManager ?: return
         val viewport = rv.height
         if (viewport <= 0) return
 
@@ -91,7 +104,7 @@ class GridPager<T>(
         // screen's business.
         val rowHeight = rv.getChildAt(0)?.height?.takeIf { it > 0 } ?: return
         val rowsWanted = kotlin.math.ceil(viewport * OVERSCAN / rowHeight.toDouble()).toInt()
-        val target = (rowsWanted * lm.spanCount).coerceAtLeast(PAGE_SIZE)
+        val target = (rowsWanted * lm.spanCount()).coerceAtLeast(PAGE_SIZE)
 
         var guard = 0
         while (shown < all.size && shown < target && guard++ < MAX_FILL) next()
@@ -105,12 +118,17 @@ class GridPager<T>(
 
     private companion object {
         /**
-         * Rows handed over at a time.
+         * Tiles put on the adapter at a time.
          *
          * Comfortably more than a screen holds at seven or eight across, so a page
          * boundary is never visible as a pause while scrolling at a normal speed.
+         *
+         * A hundred, matching the masters' table, and affordable for the same reason:
+         * binding a tile no longer decodes its photograph from scratch. A deeper page
+         * means fewer appends on the way down a long menu, and [fillViewport] still
+         * grows the first one further where a wide grid would otherwise not overflow.
          */
-        const val PAGE_SIZE = 60
+        const val PAGE_SIZE = 100
 
         /** How many ROWS ahead of the end the next page is fetched. */
         const val LOAD_AHEAD_ROWS = 2

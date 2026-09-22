@@ -3243,6 +3243,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 // what that one is about to overwrite anyway.
                 if (!isAdded || generation != productCatalogGeneration) return@post
                 if (result != null) {
+                    // The cached tile photos belong to the catalogue being replaced: a
+                    // dish whose picture was changed would otherwise keep showing the
+                    // old one for as long as this screen stayed open.
+                    com.example.synergic_pos_offline.utils.ThumbnailCache.clear()
                     allProducts = result.products
                     stockTrackingOn = result.stockTrackingOn
                     regionalNames = result.regionalNames
@@ -4743,9 +4747,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // Recycled tiles: a dish with no photo has to clear the one before it rather
             // than inherit it - the "no photo" caption behind shows through instead.
             holder.itemView.findViewById<android.widget.ImageView>(R.id.ivProductPhoto).apply {
-                val bmp = gp.image?.let {
-                    runCatching { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull()
-                }
+                // THROUGH THE CACHE, AND SAMPLED DOWN.
+                //
+                // This decoded the photo at FULL RESOLUTION on every bind. A 1600px
+                // product picture is about ten megabytes of bitmap, built from scratch
+                // each time the tile crossed the screen and thrown away again - to be
+                // drawn into a tile a couple of hundred pixels wide. That is what made
+                // the restaurant grid stutter, and on a catalogue of photographed dishes
+                // it is also how it ran out of memory.
+                val bmp = com.example.synergic_pos_offline.utils.ThumbnailCache.bitmap(
+                    // Scoped to this grid - see DataTableFragment.thumbKey for why a
+                    // bare id is not enough in a cache several screens share.
+                    key = "restGrid:${p.id}",
+                    bytes = gp.image,
+                    targetPx = com.example.synergic_pos_offline.utils.ThumbnailCache.TILE_PX
+                )
                 if (bmp != null) { setImageBitmap(bmp); visibility = View.VISIBLE }
                 else { setImageDrawable(null); visibility = View.GONE }
             }
