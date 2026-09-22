@@ -52,6 +52,44 @@
             android:textSize="12.5sp"
             android:textColor="@color/text_secondary" />
 
+        <!-- What is being paid for: every line of the order, with its quantity.
+
+             Above the total rather than below it, because it is read first - the
+             customer asks what they are paying for, and the figure they are asked for
+             follows from it.
+
+             Its height is capped in code (see showQuickPayment's QP_LIST_* constants),
+             NOT by MaxHeightScrollView. That view caps at a fraction of the SCREEN,
+             which is right when the scrolling part is most of a dialog and wrong here:
+             everything that collects the money sits below this list, so a 30-line
+             ticket claimed its 62% and pushed the pay tiles and the buttons off the
+             bottom of the card. Measured: 1851px of dialog on a 1504px screen. -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#EEEEEE"
+            android:layout_marginTop="14dp" />
+
+        <ScrollView
+            android:id="@+id/svQpItems"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:scrollbars="vertical">
+
+            <LinearLayout
+                android:id="@+id/llQpItems"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#EEEEEE"
+            android:layout_marginTop="6dp" />
+
         <!-- The amount owed, set large and on its own. It is the one figure the
              counter reads out loud, and everything under it is about collecting it. -->
         <TextView

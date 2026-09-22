@@ -9,6 +9,7 @@ import android.widget.TextView
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.AppSettingsDao
+import com.example.synergic_pos_offline.database.GeneralSettingsDao
 import com.example.synergic_pos_offline.utils.BiometricLogin
 import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.SettingsCache
@@ -51,6 +52,10 @@ class AppSettingsFragment : Fragment(), TitledScreen {
     private lateinit var swTableMerge: SwitchMaterial
     private lateinit var swTableShift: SwitchMaterial
     private lateinit var swTableSplit: SwitchMaterial
+    private lateinit var cardRestaurantMode: View
+    private lateinit var swModeDineIn: SwitchMaterial
+    private lateinit var swModeTakeaway: SwitchMaterial
+    private lateinit var swModeQsr: SwitchMaterial
     private var storedCouponMode = false
 
     override fun onCreateView(
@@ -76,10 +81,29 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         swTableMerge = view.findViewById(R.id.swTableMerge)
         swTableShift = view.findViewById(R.id.swTableShift)
         swTableSplit = view.findViewById(R.id.swTableSplit)
+        cardRestaurantMode = view.findViewById(R.id.cardRestaurantMode)
+        swModeDineIn = view.findViewById(R.id.swModeDineIn)
+        swModeTakeaway = view.findViewById(R.id.swModeTakeaway)
+        swModeQsr = view.findViewById(R.id.swModeQsr)
 
-        // The restaurant toggles only exist in Restaurant mode (md_app_settings type 'G', key Mode).
-        val isRestaurant = SettingsCache.value(requireContext(), "G", "Mode") == "R"
+        // The restaurant cards exist in Restaurant mode and nowhere else - the mode is
+        // General Settings' own (md_app_settings type 'G', key Mode).
+        //
+        // The CACHE IS ASKED FIRST AND THE TABLE SECOND, rather than the cache alone.
+        // SettingsCache.value returns null when the cache is empty - it is wiped on
+        // logout and refilled on the way back in - and null is not "R", so a till that
+        // reached this screen before the cache was rebuilt hid both restaurant cards
+        // while General Settings plainly said Restaurant. The table is where the mode
+        // actually lives; the cache is a fast copy of it, and falling through to the
+        // original when the copy has nothing to say is what makes the answer reliable.
+        val cachedMode = SettingsCache.value(requireContext(), "G", "Mode")
+        val isRestaurant = if (cachedMode.isNullOrBlank()) {
+            GeneralSettingsDao(requireContext()).load().mode == GeneralSettingsDao.Mode.RESTAURANT
+        } else {
+            cachedMode == "R"
+        }
         cardRestaurantSettings.visibility = if (isRestaurant) View.VISIBLE else View.GONE
+        cardRestaurantMode.visibility = if (isRestaurant) View.VISIBLE else View.GONE
 
         bind(dao.load())
 
@@ -91,8 +115,31 @@ class AppSettingsFragment : Fragment(), TitledScreen {
             ::onSave,
             swManualRate, swCashReception, swPaymentMode, swOtherCharges, swParcelCharge,
             swDirectAddToCart, /* swBiometricLogin, */ swShift,
-            /* swCouponMode, */ swKot, swTableMerge, swTableShift, swTableSplit
+            /* swCouponMode, */ swKot, swTableMerge, swTableShift, swTableSplit,
+            swModeDineIn, swModeTakeaway, swModeQsr
         )
+
+        // AT LEAST ONE WAY OF SERVING HAS TO STAY ON.
+        //
+        // All three off is a restaurant that takes no orders at all - every route into
+        // the Orders screen closed and nothing on the till to sell by. It is never what
+        // anyone means; it is the second or third tap in a row while turning the one
+        // they DO use on. So the last one standing refuses to go off, says why, and
+        // springs back rather than saving a state the app cannot work in.
+        listOf(swModeDineIn, swModeTakeaway, swModeQsr).forEach { sw ->
+            sw.setOnClickListener {
+                if (!sw.isChecked && !swModeDineIn.isChecked &&
+                    !swModeTakeaway.isChecked && !swModeQsr.isChecked
+                ) {
+                    sw.isChecked = true
+                    android.widget.Toast.makeText(
+                        requireContext(),
+                        "A restaurant has to serve at least one way",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
 
         // Theme accent for switches, header and button.
         ThemeManager.applyTheme(view)
@@ -117,6 +164,9 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         swTableMerge.isChecked = s.tableMerge
         swTableShift.isChecked = s.tableShift
         swTableSplit.isChecked = s.tableSplit
+        swModeDineIn.isChecked = s.modeDineIn
+        swModeTakeaway.isChecked = s.modeTakeaway
+        swModeQsr.isChecked = s.modeQsr
     }
 
     private fun collect(): AppSettingsDao.AppSettings = AppSettingsDao.AppSettings(
@@ -134,7 +184,10 @@ class AppSettingsFragment : Fragment(), TitledScreen {
         kot = swKot.isChecked,
         tableMerge = swTableMerge.isChecked,
         tableShift = swTableShift.isChecked,
-        tableSplit = swTableSplit.isChecked
+        tableSplit = swTableSplit.isChecked,
+        modeDineIn = swModeDineIn.isChecked,
+        modeTakeaway = swModeTakeaway.isChecked,
+        modeQsr = swModeQsr.isChecked
     )
 
     // bindBiometric and the fingerprint-specific half of onSave are commented out

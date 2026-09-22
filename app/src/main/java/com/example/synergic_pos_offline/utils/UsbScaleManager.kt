@@ -49,6 +49,12 @@ object UsbScaleManager {
     private val updatePending = AtomicBoolean(false)
     @Volatile private var latestWeight: Double? = null
 
+    // The raw stream gets its own pair of these, and for the same reason. It arrives on
+    // every chunk - including the ones that parse to nothing, which are exactly the ones
+    // worth seeing - so it is posted more often than the weight, not less.
+    private val rawPending = AtomicBoolean(false)
+    @Volatile private var latestRaw: String? = null
+
     /** Whether the till has a weighing scale configured at all - General Settings. */
     fun isEnabled(context: Context): Boolean = GeneralSettingsDao.isWeighingScaleEnabled(context)
 
@@ -59,8 +65,18 @@ object UsbScaleManager {
      * [onWeight] and [onError] are both delivered on the main thread. A device
      * needing permission raises the system dialog; the connection opens once it is
      * granted, or [onError] fires if it is refused.
+     *
+     * [onRaw], if given, receives the stream exactly as it arrives, before any parsing -
+     * it is what the product popup shows along its bottom edge so an installer can see
+     * what the scale is actually sending. Optional, and null for every caller that does
+     * not want it, so the reading path is unchanged for everyone else.
      */
-    fun connect(context: Context, onWeight: (Double) -> Unit, onError: (String) -> Unit) {
+    fun connect(
+        context: Context,
+        onWeight: (Double) -> Unit,
+        onError: (String) -> Unit,
+        onRaw: ((String) -> Unit)? = null
+    ) {
         val app = context.applicationContext
 
         // A SCALE ON ONE OF THE BOARD'S OWN SERIAL PORTS goes down a different road.
@@ -80,7 +96,8 @@ object UsbScaleManager {
                 startPoint = chosen.weighingScaleStartPoint,
                 endPoint = chosen.weighingScaleEndPoint,
                 onWeight = onWeight,
-                onError = onError
+                onError = onError,
+                onRaw = onRaw
             )
             return
         }
@@ -96,10 +113,10 @@ object UsbScaleManager {
             return
         }
         if (manager.hasPermission(driver.device)) {
-            openAndListen(app, manager, driver, onWeight, onError)
+            openAndListen(app, manager, driver, onWeight, onError, onRaw)
         } else {
             requestPermission(app, manager, driver.device) { granted ->
-                if (granted) openAndListen(app, manager, driver, onWeight, onError)
+                if (granted) openAndListen(app, manager, driver, onWeight, onError, onRaw)
                 else onError("USB access was not allowed for the weighing scale")
             }
         }
@@ -121,6 +138,8 @@ object UsbScaleManager {
         buffer = ""
         updatePending.set(false)
         latestWeight = null
+        rawPending.set(false)
+        latestRaw = null
         receiver?.let { r -> runCatching { unregister(r) } }
         receiver = null
     }
@@ -136,7 +155,8 @@ object UsbScaleManager {
         manager: UsbManager,
         driver: UsbSerialDriver,
         onWeight: (Double) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        onRaw: ((String) -> Unit)? = null
     ) {
         val conn = manager.openDevice(driver.device)
         if (conn == null) {
@@ -167,8 +187,12 @@ object UsbScaleManager {
         buffer = ""
         ioManager = SerialInputOutputManager(p, object : SerialInputOutputManager.Listener {
             override fun onNewData(data: ByteArray) {
+                val text = String(data, Charsets.US_ASCII)
+                // Reported before parsing, so the popup shows what the scale sent even
+                // when - especially when - none of it parses into a weight.
+                postRaw(text, onRaw)
                 val weight = feed(
-                    String(data, Charsets.US_ASCII),
+                    text,
                     settings.weighingScaleCharCount,
                     settings.weighingScaleDecimalPosition,
                     settings.weighingScaleStartPoint,
@@ -196,6 +220,25 @@ object UsbScaleManager {
             main.post {
                 updatePending.set(false)
                 latestWeight?.let(onWeight)
+            }
+        }
+    }
+
+    /**
+     * The same collapsing as [postWeight], for the raw stream.
+     *
+     * Kept separate rather than folded into [postWeight] because raw data arrives on
+     * chunks that produce no weight at all, and those are the ones somebody looking at
+     * this display most needs to see. Costs nothing when [onRaw] is null, which it is
+     * for every caller but the product popup.
+     */
+    private fun postRaw(chunk: String, onRaw: ((String) -> Unit)?) {
+        if (onRaw == null) return
+        latestRaw = chunk
+        if (rawPending.compareAndSet(false, true)) {
+            main.post {
+                rawPending.set(false)
+                latestRaw?.let(onRaw)
             }
         }
     }

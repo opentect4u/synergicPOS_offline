@@ -149,6 +149,76 @@
         </com.google.android.material.card.MaterialCardView>
 
         <!-- Restaurant-only settings (shown only when Mode = Restaurant) -->
+        <!-- WHICH WAYS THIS RESTAURANT SERVES.
+             Its own card rather than three more rows on the RESTAURANT one below: the
+             switches there turn FEATURES on and off - tickets, merging, splitting -
+             while these say what kind of business the place is, which is the question
+             every one of those features hangs off. A shop with no counter has no
+             take-away to print a ticket for.
+             Restaurant mode only, gated in AppSettingsFragment with the card below. -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardRestaurantMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:visibility="gone"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="RESTAURANT MODE" android:textSize="12sp" android:letterSpacing="0.08"
+                    android:textStyle="bold" android:textColor="@color/primary_blue" />
+
+                <TextView
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="The ways this restaurant serves. At least one has to stay on."
+                    android:textSize="12sp" android:textColor="@color/text_secondary" />
+
+                <!-- Dine In -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Dine In" />
+                        <TextView style="@style/BillSettingSub" android:text="Guests seated at a table, billed when they leave" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swModeDineIn" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- Take Away -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="Take Away" />
+                        <TextView style="@style/BillSettingSub" android:text="Ordered and paid at the counter, carried out" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swModeTakeaway" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+
+                <View style="@style/BillSettingDivider" />
+
+                <!-- QSR -->
+                <LinearLayout style="@style/BillSettingRow">
+                    <LinearLayout style="@style/BillSettingText">
+                        <TextView style="@style/BillSettingTitle" android:text="QSR" />
+                        <TextView style="@style/BillSettingSub" android:text="Quick service - rung up and settled in one go at the counter" />
+                    </LinearLayout>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swModeQsr" style="@style/BillSettingSwitch" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/cardRestaurantSettings"
             android:layout_width="match_parent"

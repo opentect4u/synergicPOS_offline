@@ -45,6 +45,44 @@ private const val SCAN_GAP_MS = 50L
 private const val SCAN_FLUSH_MS = 120L
 
 /**
+ * A row of the counter settlement dialog's item list - `item_quick_pay_line.xml`,
+ * being 14sp of text plus 5dp of padding either side.
+ */
+private const val QP_LIST_ROW_DP = 30
+
+/** How many lines of a counter order the settlement dialog shows before it scrolls. */
+private const val QP_LIST_ROWS_BEFORE_SCROLL = 7
+
+/**
+ * The height the settlement dialog's item list is given for [itemCount] lines, in
+ * pixels, or [ViewGroup.LayoutParams.WRAP_CONTENT] when the whole order fits.
+ *
+ * ## Why a fixed number of rows and not a fraction of the screen
+ *
+ * Everything that takes the money - the pay tiles, the tendered box, Confirm - sits
+ * BELOW this list and none of it can shrink. Left to wrap, a thirty-line QSR ticket made
+ * the dialog half again as tall as the display and pushed the buttons off the bottom, so
+ * there was no way to settle the order or to leave the dialog. [MaxHeightScrollView] is
+ * no help here either: its cap is a fraction of the screen, which is right when the
+ * scrolling part is most of a dialog and wrong when it is the top third of one.
+ *
+ * Seven rows is about what a counter ticket runs to, so the common case is the whole
+ * order visible and no scrolling at all. Font scale is pinned by `FixedFontScale`, so a
+ * row is a known height and this does not drift.
+ *
+ * Top-level, and internal, so the layout test can drive the rule the dialog actually
+ * uses. The first version of that test re-implemented the filling, applied no cap at
+ * all, and reported a dialog two and a half screens tall while the real one was fine - a
+ * test measuring its own mistake.
+ */
+internal fun quickPayListHeight(itemCount: Int, density: Float): Int =
+    if (itemCount > QP_LIST_ROWS_BEFORE_SCROLL) {
+        (QP_LIST_ROW_DP * QP_LIST_ROWS_BEFORE_SCROLL * density).toInt()
+    } else {
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    }
+
+/**
  * Restaurant "Sale" screen — an Orders workspace (order list + live order detail
  * + summary). Opened in place of the grocery POS billing when Mode = Restaurant.
  *
@@ -645,6 +683,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             )
         }
         segOrderType.check(R.id.btnDineIn)
+        // ...and then drop whichever modes this restaurant does not serve, which moves
+        // that selection off Dine In in a place that has no tables. No order is open on
+        // this paint, so nothing is kept back and the bar shows the settings exactly.
+        applyEnabledModes(segOrderType, R.id.btnDineIn, R.id.btnTakeAway, R.id.btnQsr)
 
         // Take Away needs no table — tapping it opens a take-away order: if one is
         // already active, just select it (no duplicate token); otherwise start a new one.
@@ -1156,14 +1198,93 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         else -> R.id.btnDineIn
     }
 
+    /**
+     * Shows only the ways this restaurant actually serves - App Settings' Restaurant
+     * Mode card.
+     *
+     * Applied to both segments that offer the choice: the one on this page, and the
+     * band across the top of the table picker. They ask the same question, so a place
+     * that has turned its counter off must not still be offered QSR in the picker.
+     *
+     * ## A mode with an order OPEN in it is never hidden
+     *
+     * A button stays if the currently selected order is of that type, whatever the
+     * setting says. Switching Take Away off while a take-away order is running would
+     * otherwise take its own segment button off the screen, and with it the way back to
+     * an order with money on it. The setting decides what can be STARTED; it does not
+     * reach back and strand what is already open. The button goes as soon as the
+     * operator moves off that order, which is the moment it stops being needed.
+     *
+     * The test is the selected ORDER, deliberately, and not the lit button: the segment
+     * is checked programmatically for defaults too, and reading that made a default
+     * look like a running order on the first paint.
+     *
+     * ## One mode left is not a choice
+     *
+     * With a single way of serving there is nothing for a segment of one to ask, so the
+     * whole group goes. Its checked state stays correct underneath - everything else on
+     * this screen reads `checkedButtonId` to decide what an order is - so hiding it
+     * changes what is shown and nothing about what happens.
+     */
+    private fun applyEnabledModes(
+        group: com.google.android.material.button.MaterialButtonToggleGroup,
+        dineInId: Int,
+        takeAwayId: Int,
+        qsrId: Int
+    ) {
+        val s = com.example.synergic_pos_offline.database.AppSettingsDao(requireContext()).load()
+
+        // THE ORDER ON SCREEN, not the button that happens to be lit.
+        //
+        // This used to keep whichever button was CHECKED, which is wrong on the one
+        // paint that matters most: onViewCreated checks Dine In and then calls this, so
+        // "checked" was a default nobody had chosen, and a counter-only shop opened
+        // showing Dine In beside QSR. The exception is for an order that is genuinely
+        // open - there is no such order on the first paint - so it asks the order list,
+        // which is the thing it was always about.
+        val openType = orders.firstOrNull { it.selected }?.type
+        val keepId = when {
+            openType == null -> View.NO_ID
+            openType.equals(TYPE_TAKE_AWAY, ignoreCase = true) -> takeAwayId
+            openType.equals(TYPE_QSR, ignoreCase = true) -> qsrId
+            else -> dineInId
+        }
+
+        // Ordered, so "the first one still on" below is Dine In, then Take Away, then
+        // QSR - the order the segment reads in.
+        val allowed = linkedMapOf(
+            dineInId to s.modeDineIn,
+            takeAwayId to s.modeTakeaway,
+            qsrId to s.modeQsr
+        )
+        val onScreen = allowed.keys.filter { allowed[it] == true || it == keepId }
+        allowed.keys.forEach { id ->
+            group.findViewById<View>(id)?.visibility =
+                if (id in onScreen) View.VISIBLE else View.GONE
+        }
+        // Whatever is checked has to be something the operator can see. After a mode is
+        // switched off that leaves the group pointing at a hidden button, and the screen
+        // would go on acting on a mode that is no longer on the bar.
+        if (group.checkedButtonId !in onScreen) onScreen.firstOrNull()?.let { group.check(it) }
+        // Counted over what is actually on screen rather than over the settings: a kept
+        // running-order button is a second choice on the segment, and the control has to
+        // stay up to offer the way back off it.
+        group.visibility = if (onScreen.size > 1) View.VISIBLE else View.GONE
+    }
+
     private fun selectOrder(order: OrderCard) {
         orders.forEach { it.selected = (it === order) }
         val root = view ?: return
         // Reflect the selected order's type on the top segment (programmatic check
         // doesn't fire the Take Away click listener, so it won't open a new order).
-        root.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType).check(
-            segmentFor(order.type)
-        )
+        root.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType).let { seg ->
+            seg.check(segmentFor(order.type))
+            // Re-applied after the check. The order's own type may be one the shop has
+            // since switched off, and that mode's button has to come back while this
+            // order is the one on screen - which it can, because the selected flag was
+            // set on the line above. See applyEnabledModes.
+            applyEnabledModes(seg, R.id.btnDineIn, R.id.btnTakeAway, R.id.btnQsr)
+        }
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         showOrderDetail(order)
         renderCart()   // show this table's own items + totals
@@ -1509,6 +1630,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * into starting a second token for a counter that already has one open.
      */
     private fun openTakeAway() = openCounterOrder(TYPE_TAKE_AWAY)
+
+    /**
+     * Opens whichever counter order this restaurant actually serves, or none.
+     *
+     * For the paths that reach a counter order WITHOUT the operator naming its type -
+     * dismissing the table picker having declined a table. Take Away is preferred
+     * because that is what that path has always opened; QSR stands in where the shop
+     * runs a quick-service counter instead; and a dine-in-only place gets nothing,
+     * because there is no counter for the order to belong to.
+     */
+    private fun fallbackCounterOrder() {
+        val s = com.example.synergic_pos_offline.database.AppSettingsDao(requireContext()).load()
+        when {
+            s.modeTakeaway -> openCounterOrder(TYPE_TAKE_AWAY)
+            s.modeQsr -> openCounterOrder(TYPE_QSR)
+        }
+    }
 
     /**
      * Opens a counter order of [type] - a take-away token or a QSR one.
@@ -1978,8 +2116,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** Choose Table, greyed out the same way the other dine-in-only actions are. */
     private fun setChooseTableEnabled(root: View, enabled: Boolean) {
+        // Dine In off takes the button off the bar altogether, rather than greying it.
+        // Greyed says "not now" - it is how this button already reports a counter order
+        // selected, which IS a not-now, since moving to Dine In brings it back. A shop
+        // with no table service is a never, and a permanently grey button is a control
+        // the operator has to learn to stop reaching for.
+        val servesDineIn = com.example.synergic_pos_offline.database.AppSettingsDao(requireContext())
+            .load().modeDineIn
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnChooseTable).apply {
-            isEnabled = enabled; alpha = if (enabled) 1f else 0.4f
+            visibility = if (servesDineIn) View.VISIBLE else View.GONE
+            isEnabled = enabled
+            alpha = if (enabled) 1f else 0.4f
         }
     }
 
@@ -3720,6 +3867,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * one, or starts a new dine-in order on it when it is free.
      */
     private fun showChooseTableDialog() {
+        // NO DINE IN, NO FLOOR PLAN.
+        //
+        // The picker is a grid of tables and the only thing it can do is start or open
+        // a dine-in order. A restaurant that has switched Dine In off has no table
+        // service to offer, so the modal would be a page of cards that cannot lead
+        // anywhere - and on a counter-only till it would be covering the screen the
+        // operator is actually trying to work on.
+        //
+        // The guard is HERE rather than at the seven places that call this. Some of
+        // those are buttons, and some are follow-ups that raise the picker after
+        // something else finished - a table freed, a bill settled, a split collapsed.
+        // Gating each one would mean finding all seven and then remembering the eighth;
+        // gating the picker itself is one rule that no caller can get around.
+        if (!com.example.synergic_pos_offline.database.AppSettingsDao(requireContext())
+                .load().modeDineIn
+        ) return
+
         // Before the plan is drawn, not after: a split whose parts are all finished
         // with is table 1 again, and it has to be table 1 on the grid the operator is
         // about to read - not 1 A and 1 B that turn back into 1 the next time they
@@ -3965,6 +4129,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 else -> R.id.btnModeDineIn
             }
         )
+        // The band offers the same three modes as the page behind it, so it hides the
+        // same ones. Without this a shop that had switched its counter off would still
+        // be offered Take Away here - the one place the choice is most likely to be
+        // made, since this is the dialog that starts an order.
+        applyEnabledModes(segMode, R.id.btnModeDineIn, R.id.btnModeTakeAway, R.id.btnModeQsr)
 
         /** Starts a counter order of [type] and lets the picker go. */
         fun startCounter(type: String, then: (() -> Unit)? = null) {
@@ -4059,7 +4228,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // Handed back before anything else: the listeners hold this dialog, and a
             // header that outlives it would go on trying to close one already gone.
             headerControls.forEach { it.setOnTouchListener(null) }
-            if (!pickedATable && !bandHandled && isAdded) openTakeAway()
+            // Closing the picker without choosing a table means "not a dine-in after
+            // all", and the fallback opens a counter order instead. WHICH counter
+            // order depends on what this restaurant serves: a place that has switched
+            // Take Away off would otherwise be handed one here, by a dismiss rather
+            // than by any button, and end up with a running order of a type it does
+            // not sell. A dine-in-only place gets no order at all, which is the honest
+            // answer when the one thing the picker was for has been declined.
+            if (!pickedATable && !bandHandled && isAdded) fallbackCounterOrder()
         }
 
         ThemeManager.applyTheme(v)
@@ -5143,11 +5319,60 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * token closed and the stock moved by the one path that has always done it. What
      * is different is only where the operator stands while answering.
      *
-     * The itemised list the checkout screen shows is deliberately not repeated. The
-     * order is on the panel behind this dialog, rung up moments ago in front of the
-     * person paying; the two questions worth asking at the counter are how they are
-     * paying and what they handed over.
+     * ## It lists what is being paid for
+     *
+     * This once showed the total alone, on the reasoning that the order was on the panel
+     * behind the dialog and had been rung up moments earlier in front of the person
+     * paying. That holds right up until the counter is busy: the dialog covers the panel,
+     * and the one question a customer asks before handing money over is what they are
+     * being charged for. So every line and its quantity is listed here.
+     *
+     * Quantity only - no rate, no line amount. The sum is already on the dialog, large
+     * and on its own; repeating the arithmetic per line turns a glance into a check. A
+     * table's bill is itemised in full on the checkout screen, because a table's bill is
+     * queried before it is paid. A counter ticket is read, not audited.
      */
+    /**
+     * Fills the settlement dialog's item list: every line of [order], with its quantity.
+     *
+     * The WHOLE order, not the pending part. The panel behind this shows what has yet to
+     * go to the kitchen, which is the right question while an order is being built and
+     * the wrong one here - money is being taken for all of it, so all of it is listed.
+     *
+     * In the order it was rung up, unlike the panel, which puts the newest line first so
+     * the last thing added is under the operator's eye. Here the customer is reading
+     * along with what they asked for, and that is the order they asked for it in.
+     */
+    private fun fillQuickPayItems(root: View, order: OrderCard) {
+        val container = root.findViewById<LinearLayout>(R.id.llQpItems) ?: return
+        container.removeAllViews()
+        val inflater = LayoutInflater.from(container.context)
+        order.items.forEach { item ->
+            val row = inflater.inflate(R.layout.item_quick_pay_line, container, false)
+            row.findViewById<TextView>(R.id.tvQpLineName).text = item.name
+            row.findViewById<TextView>(R.id.tvQpLineQty).text = "×${qtyText(item.qty)}"
+            container.addView(row)
+        }
+
+        // A LONG TICKET SCROLLS RATHER THAN GROWING THE CARD.
+        //
+        // Everything that takes the money - the pay tiles, the tendered box, Confirm -
+        // is below this list, and none of it can shrink. Left to wrap, a thirty-line
+        // QSR ticket made the dialog half again as tall as the screen and pushed the
+        // buttons off the bottom, so there was no way to settle it or to get out.
+        //
+        // A fixed number of rows rather than a fraction of the screen: what matters is
+        // how much of the ORDER can be read at once, and that is the same question on
+        // every device. The font scale is pinned by FixedFontScale, so a row is a known
+        // height and this cap does not drift.
+        val scroll = root.findViewById<android.widget.ScrollView>(R.id.svQpItems) ?: return
+        scroll.layoutParams = scroll.layoutParams.apply {
+            height = quickPayListHeight(
+                order.items.size, scroll.resources.displayMetrics.density
+            )
+        }
+    }
+
     private fun showQuickPayment(order: OrderCard) {
         // NO POPUP WHERE THERE IS NOTHING TO ASK.
         //
@@ -5199,6 +5424,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val who = customerNameFor(order.phone)?.takeIf { it.isNotBlank() } ?: order.phone
             if (who.isNotBlank()) append("  ·  ").append(who)
         }
+        fillQuickPayItems(v, order)
 
         val etTendered = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etQpTendered)
         val tvChange = v.findViewById<TextView>(R.id.tvQpChange)
@@ -6282,6 +6508,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
          */
         const val TYPE_TAKE_AWAY = "Take Away"
         const val TYPE_QSR = "QSR"
+
+        /**
+         * How much of a counter order the settlement dialog shows before it scrolls -
+         * see [fillQuickPayItems].
+         *
+         * Seven rows is about what a counter ticket runs to, so the common case is the
+         * whole order visible at once and no scrolling at all. The row height is
+         * `item_quick_pay_line.xml`'s: 14sp of text plus 5dp of padding either side.
+         */
 
         /**
          * `td_running_order.status` for an order the counter has parked - see

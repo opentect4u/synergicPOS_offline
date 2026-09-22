@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One line of the order being settled at the counter: what it is, and how many.
+
+  Name and quantity only - no rate, no amount. The amount is the one figure this dialog
+  already shows, large and on its own, and repeating it per line would turn a glance
+  into a reconciliation. What this list answers is the other question the counter gets
+  asked: "what am I paying for?"
+
+  Ids are prefixed Qp like the rest of the dialog's, so they cannot collide with the
+  order panel's own row (item_order_line_compact.xml), which carries steppers and is
+  bound by different code.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingVertical="5dp">
+
+    <TextView
+        android:id="@+id/tvQpLineName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:textSize="14sp"
+        android:textColor="@color/text_main"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="Chicken Biryani" />
+
+    <!-- The quantity is what the reader is checking down the column, so it is set bold
+         and hard against the right margin where every row's sits at the same x. -->
+    <TextView
+        android:id="@+id/tvQpLineQty"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_main"
+        android:text="×2" />
+</LinearLayout>

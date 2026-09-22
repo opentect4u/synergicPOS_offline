@@ -57,6 +57,10 @@ object TtyScaleReader {
     private val updatePending = AtomicBoolean(false)
     @Volatile private var latestWeight: Double? = null
 
+    // The raw stream, collapsed the same way and for the same reason - see postRaw.
+    private val rawPending = AtomicBoolean(false)
+    @Volatile private var latestRaw: String? = null
+
     /**
      * Every serial device node present on this board, as paths, sorted.
      *
@@ -100,7 +104,8 @@ object TtyScaleReader {
         startPoint: Int,
         endPoint: Int,
         onWeight: (Double) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        onRaw: ((String) -> Unit)? = null
     ) {
         disconnect()
 
@@ -133,7 +138,11 @@ object TtyScaleReader {
                     val read = input.read(chunk)
                     if (read < 0) break
                     if (read == 0) continue
-                    buffer.append(String(chunk, 0, read, Charsets.US_ASCII))
+                    val text = String(chunk, 0, read, Charsets.US_ASCII)
+                    // Before parsing, so the popup shows what the port sent even when
+                    // none of it parses - which is the case worth looking at.
+                    postRaw(text, onRaw)
+                    buffer.append(text)
                     drain(buffer, charCount, decimalPosition, startPoint, endPoint, onWeight)
                 }
             } catch (e: Exception) {
@@ -161,6 +170,27 @@ object TtyScaleReader {
         reader = null
         updatePending.set(false)
         latestWeight = null
+        rawPending.set(false)
+        latestRaw = null
+    }
+
+    /**
+     * The same collapsing as [postWeight], for the raw stream.
+     *
+     * A tty read returns as soon as there are bytes, so on a chatty scale this fires
+     * several times a second; one Runnable per chunk is the backlog that froze the till
+     * before, so the newest chunk replaces the pending one rather than queueing behind
+     * it. Costs nothing when [onRaw] is null.
+     */
+    private fun postRaw(chunk: String, onRaw: ((String) -> Unit)?) {
+        if (onRaw == null) return
+        latestRaw = chunk
+        if (rawPending.compareAndSet(false, true)) {
+            main.post {
+                rawPending.set(false)
+                latestRaw?.let(onRaw)
+            }
+        }
     }
 
     /**

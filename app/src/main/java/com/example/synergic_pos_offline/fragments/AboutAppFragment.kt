@@ -232,6 +232,11 @@ class AboutAppFragment : Fragment(), TitledScreen {
 
         container.addView(section("DATA", dataRows()))
         container.addView(section("THIS INSTALLATION", installationRows()))
+        // Above Legal: the manual is the thing an operator comes looking for, and the
+        // terms are the thing they are sent to. Put under them it sat below three
+        // documents nobody opens twice.
+        container.addView(manualSection())
+
         container.addView(legalSection())
     }
 
@@ -318,6 +323,44 @@ class AboutAppFragment : Fragment(), TitledScreen {
      * point at afterwards is not much of an agreement, and this is the screen somebody
      * would come to to check.
      */
+    /**
+     * The operator's manual - ONE row, opening a page of its own.
+     *
+     * Not a row per chapter. Six of those turned this card into a contents page sitting
+     * in the middle of About App, and pushed the legal documents under a list most
+     * people would scroll straight past. The manual is one thing to reach for; where it
+     * divides is a question for the manual's own screen, which answers it with a tab
+     * per chapter - see [UserManualFragment].
+     *
+     * A page rather than the reader dialog the legal documents use, because the manual
+     * is read WHILE something is being done. It wants the room and a Back that behaves
+     * like every other Back in the app, and moving between chapters has to be a tap
+     * rather than closing one modal and finding the next.
+     */
+    private fun manualSection(): View {
+        val card = MaterialCardView(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(12) }
+            radius = dp(16).toFloat()
+            cardElevation = dp(2).toFloat()
+            setCardBackgroundColor(Color.WHITE)
+        }
+        val body = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            addView(TextView(context).apply {
+                text = "HELP"
+                textSize = 13f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(resources.getColor(R.color.text_secondary, null))
+            })
+            addView(documentRow("User Manual") { openUserManual() })
+        }
+        card.addView(body)
+        return card
+    }
+
     private fun legalSection(): View {
         val card = MaterialCardView(requireContext()).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -348,6 +391,20 @@ class AboutAppFragment : Fragment(), TitledScreen {
         }
         card.addView(body)
         return card
+    }
+
+    /**
+     * Opens the manual as a page on the back stack, so Back returns here.
+     *
+     * The activity's own manager, not this fragment's - the manual replaces About App
+     * rather than opening inside it, exactly as every other screen reached from a menu
+     * does.
+     */
+    private fun openUserManual() {
+        requireActivity().supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, UserManualFragment())
+            .addToBackStack(null)
+            .commit()
     }
 
     /** One tappable document row: its name, and a chevron saying it opens. */

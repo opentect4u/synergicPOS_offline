@@ -106,6 +106,11 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.fragment.testing)
+    // Supplies the empty host Activity that launchFragmentInContainer starts. It has to
+    // be on the APP under test, not the test APK, so it is declared debug-only - it
+    // never reaches a release build.
+    debugImplementation(libs.androidx.fragment.testing.manifest)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

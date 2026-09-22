@@ -51,8 +51,12 @@ private const val PREVIEW_PX = 1200
  * Rows shown before the list has to be scrolled to reveal more. The table renders
  * one page at a time and appends the next page as the bottom nears, so a screen
  * backed by a few thousand records still opens instantly and scrolls smoothly.
+ *
+ * A hundred rather than fifty: a page is cheap now that binding a row does not rebuild
+ * its cells or re-decode its photograph, and a deeper first page means fewer appends
+ * on the way down a long catalogue.
  */
-private const val PAGE_SIZE = 50
+private const val PAGE_SIZE = 100
 
 /** Start loading the next page this many rows before the current end is reached. */
 private const val LOAD_MORE_THRESHOLD = 10
@@ -240,6 +244,15 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
      */
     private val columnOrder = mutableListOf<Int>()
 
+    /**
+     * Bumped whenever [columnOrder] changes, so holders know their cells are stale.
+     *
+     * A counter rather than a flag because holders are rebuilt one at a time, as each
+     * scrolls back into view - a flag would have to be cleared by whichever holder
+     * happened to bind first, leaving the rest with the old layout.
+     */
+    private var columnLayoutVersion = 0
+
     private val allRows = mutableListOf<DataRow>()
     // The full result of the current search/filter. [visibleRows] is the paged slice
     // of this that the adapter actually renders; select-all and the empty state still
@@ -265,6 +278,18 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View? = inflater.inflate(R.layout.fragment_data_table, container, false)
+
+    /**
+     * Gives the decoded thumbnails back when the table is closed.
+     *
+     * They exist to make scrolling THIS list smooth and are worth nothing once it is
+     * gone, while the memory they hold is worth a great deal to the bill screen the
+     * operator has just gone back to. Cheap to rebuild if the table is reopened.
+     */
+    override fun onDestroyView() {
+        super.onDestroyView()
+        com.example.synergic_pos_offline.utils.RowThumbnails.clear()
+    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -456,6 +481,10 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
                     if (from != null && to != null && from != to) {
                         val moved = columnOrder.removeAt(from)
                         columnOrder.add(to, moved)
+                        // Every holder's cells were built for the OLD order, so they are
+                        // rebuilt on their next bind rather than left showing the right
+                        // values in the wrong columns.
+                        columnLayoutVersion++
                         buildHeader(header)
                         adapter.notifyDataSetChanged()
                     }
@@ -619,6 +648,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     /** Re-runs [loadRows] and repaints the table, keeping the current search filter. */
     protected fun refreshRows() {
+        // The cached thumbnails are a snapshot of the rows being replaced: edit a
+        // product's photo and its old one would still be held under the same id.
+        com.example.synergic_pos_offline.utils.RowThumbnails.clear()
         allRows.clear()
         allRows.addAll(loadRows())
         selectedIds.clear()
@@ -865,11 +897,73 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             val btnEdit: View = view.findViewById(R.id.btnRowEdit)
             val btnTestPrint: View = view.findViewById(R.id.btnRowTestPrint)
             val btnAction: MaterialButton = view.findViewById(R.id.btnRowAction)
+
+            /** The cell views, one per entry of `columnOrder` and in its order. */
+            val cellViews = mutableListOf<View>()
+
+            /** Which column layout [cellViews] was built for; -1 until it has been. */
+            var cellsVersion = -1
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
             val v = LayoutInflater.from(parent.context).inflate(R.layout.item_data_row, parent, false)
+            // Themed here rather than on every bind. The views this paints - the
+            // checkbox, the Edit button - belong to the row layout and are recycled with
+            // it, so painting them again per bind re-walked the whole row tree to
+            // discover nothing had changed. The cells added later carry their own
+            // colours, so they lose nothing by being built after this runs.
+            ThemeManager.applyTheme(v)
             return ViewHolder(v)
+        }
+
+        /**
+         * Creates one view per column, in the current column order.
+         *
+         * Only the structure: what a cell SAYS is set in [bindCells], because that is
+         * what differs from row to row. Everything decided here - whether a column is
+         * text, a thumbnail or a switch, whether it wraps, its size and colour - is a
+         * property of the column and is the same for every row in it.
+         */
+        private fun buildCells(holder: ViewHolder, ctx: android.content.Context) {
+            holder.llCells.removeAllViews()
+            holder.cellViews.clear()
+            for (i in columnOrder) {
+                val cell = when (i) {
+                    thumbnailColumn -> buildThumbnailCell(ctx)
+                    switchColumn -> buildSwitchCell(ctx)
+                    else -> TextView(ctx).apply {
+                        layoutParams =
+                            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        setTextColor(
+                            androidx.core.content.ContextCompat.getColor(ctx, R.color.text_main)
+                        )
+                        textSize = 16f
+                        if (i in wrappingColumns) {
+                            maxLines = Int.MAX_VALUE
+                            ellipsize = null
+                        } else {
+                            maxLines = 1
+                            ellipsize = android.text.TextUtils.TruncateAt.END
+                        }
+                        setPadding(0, 0, (8 * ctx.resources.displayMetrics.density).toInt(), 0)
+                    }
+                }
+                holder.cellViews.add(cell)
+                holder.llCells.addView(cell)
+            }
+        }
+
+        /** Puts [row] into the cells built by [buildCells]. */
+        private fun bindCells(holder: ViewHolder, row: DataRow) {
+            columnOrder.forEachIndexed { slot, i ->
+                val cell = holder.cellViews.getOrNull(slot) ?: return@forEachIndexed
+                when (i) {
+                    thumbnailColumn -> bindThumbnailCell(cell, row)
+                    switchColumn -> bindSwitchCell(cell, row, i)
+                    else -> (cell as? TextView)?.text =
+                        formatCellText(i, row, row.cells.getOrNull(i).orEmpty())
+                }
+            }
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -878,37 +972,22 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
             bindThumbnail(holder, row, ctx)
 
-            holder.llCells.removeAllViews()
-            for (i in columnOrder) {
-                if (i == thumbnailColumn) {
-                    holder.llCells.addView(buildThumbnailCell(ctx, row))
-                    continue
-                }
-                if (i == switchColumn) {
-                    holder.llCells.addView(buildSwitchCell(ctx, row, i))
-                    continue
-                }
-                val tv = TextView(ctx)
-                tv.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                val cellText = row.cells.getOrNull(i).orEmpty()
-                tv.text = formatCellText(i, row, cellText)
-                tv.setTextColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.text_main))
-                tv.textSize = 16f
-                // Recycled cells carry the last row's setting, so both branches always
-                // run rather than only the one that turns wrapping on.
-                if (i in wrappingColumns) {
-                    tv.maxLines = Int.MAX_VALUE
-                    tv.ellipsize = null
-                } else {
-                    tv.maxLines = 1
-                    tv.ellipsize = android.text.TextUtils.TruncateAt.END
-                }
-                tv.setPadding(0, 0, (8 * ctx.resources.displayMetrics.density).toInt(), 0)
-                holder.llCells.addView(tv)
+            // CELLS ARE BUILT ONCE PER HOLDER, NOT ONCE PER BIND.
+            //
+            // This used to empty llCells and allocate a fresh TextView per column on
+            // every bind - seven of them on Products - then walk the whole row with
+            // ThemeManager. RecyclerView was recycling the row shell and the cells
+            // inside it were being thrown away regardless, so the expensive half of a
+            // bind was never actually recycled.
+            //
+            // Which view belongs in which slot depends only on the column layout, and
+            // that changes only when the operator drags a heading. So it is built when
+            // the version says it has, and every other bind only sets the content.
+            if (holder.cellsVersion != columnLayoutVersion) {
+                buildCells(holder, ctx)
+                holder.cellsVersion = columnLayoutVersion
             }
-
-            // Apply the dynamic theme to the entire row (Edit button, Checkbox, etc.)
-            ThemeManager.applyTheme(holder.itemView)
+            bindCells(holder, row)
 
             holder.cbRow.setOnCheckedChangeListener(null)
             holder.cbRow.isChecked = selectedIds.contains(row.id)
@@ -957,8 +1036,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             }
         }
 
-        /** A weighted table cell holding a rounded 40dp image thumbnail. */
-        private fun buildThumbnailCell(ctx: android.content.Context, row: DataRow): View {
+        /** A weighted table cell holding a rounded 40dp image thumbnail, with no image yet. */
+        private fun buildThumbnailCell(ctx: android.content.Context): View {
             val density = ctx.resources.displayMetrics.density
             val size = (40 * density).toInt()
 
@@ -976,17 +1055,34 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             card.setCardBackgroundColor(android.graphics.Color.parseColor("#F1F3F4"))
             card.isClickable = true
             card.isFocusable = true
-            card.setOnClickListener { onThumbnailClick(row) }
 
             val iv = ImageView(ctx)
             iv.layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
             )
+            card.addView(iv)
+            slot.addView(card)
+            return slot
+        }
+
+        /** Puts [row]'s image into a cell built by [buildThumbnailCell]. */
+        private fun bindThumbnailCell(cell: View, row: DataRow) {
+            val card = (cell as? ViewGroup)?.getChildAt(0) as? MaterialCardView ?: return
+            val iv = card.getChildAt(0) as? ImageView ?: return
+            val ctx = cell.context
+            val density = ctx.resources.displayMetrics.density
+            card.setOnClickListener { onThumbnailClick(row) }
+
             val thumb = thumbnailProvider(row)
             if (thumb != null) {
                 iv.scaleType = ImageView.ScaleType.CENTER_CROP
+                iv.setPadding(0, 0, 0, 0)
+                iv.imageTintList = null
                 iv.setImageBitmap(thumb)
             } else {
+                // Both branches always run: a recycled cell carries the last row's
+                // image, its padding and its tint, and a row with no picture has to
+                // actively lose all three.
                 iv.scaleType = ImageView.ScaleType.CENTER_INSIDE
                 val pad = (10 * density).toInt()
                 iv.setPadding(pad, pad, pad, pad)
@@ -995,24 +1091,29 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
                     androidx.core.content.ContextCompat.getColor(ctx, R.color.text_secondary)
                 )
             }
-            card.addView(iv)
-            slot.addView(card)
-            return slot
         }
-        /** A weighted table cell holding an inline ON/OFF switch driven by cell text. */
-        private fun buildSwitchCell(ctx: android.content.Context, row: DataRow, col: Int): View {
+
+        /** A weighted table cell holding an inline ON/OFF switch, not yet set either way. */
+        private fun buildSwitchCell(ctx: android.content.Context): View {
             val slot = LinearLayout(ctx)
             slot.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             slot.gravity = Gravity.CENTER_VERTICAL
 
             val sw = SwitchMaterial(ctx)
-            val on = row.cells.getOrNull(col)?.lowercase() in ON_VALUES
-            sw.setOnCheckedChangeListener(null)
-            sw.isChecked = on
             sw.thumbTintList = ColorStateList.valueOf(ThemeManager.getThemeColor(ctx))
-            sw.setOnCheckedChangeListener { _, checked -> onSwitchToggled(row, checked) }
             slot.addView(sw)
             return slot
+        }
+
+        /** Sets a cell built by [buildSwitchCell] from [row]'s value in column [col]. */
+        private fun bindSwitchCell(cell: View, row: DataRow, col: Int) {
+            val sw = (cell as? ViewGroup)?.getChildAt(0) as? SwitchMaterial ?: return
+            // Cleared first: setting isChecked on a recycled switch that still carries
+            // the previous row's listener would report a toggle nobody made, and write
+            // that row's setting onto this one.
+            sw.setOnCheckedChangeListener(null)
+            sw.isChecked = row.cells.getOrNull(col)?.lowercase() in ON_VALUES
+            sw.setOnCheckedChangeListener { _, checked -> onSwitchToggled(row, checked) }
         }
 
         /** Shows the row's image as a circle, or a plain placeholder circle when absent. */
@@ -1023,7 +1124,12 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             }
             holder.ivThumb.visibility = View.VISIBLE
 
-            val bitmap = row.thumbnail?.let { decodeSampledBitmap(it, THUMB_PX) }
+            // Through the cache: this runs on every pass of a row across the screen, and
+            // decoding the same JPEG each time was the bulk of what made a long product
+            // list stutter. See RowThumbnails.
+            val bitmap = com.example.synergic_pos_offline.utils.RowThumbnails.bitmap(
+                row.id, row.thumbnail, THUMB_PX
+            )
             if (bitmap == null) {
                 holder.ivThumb.setImageDrawable(null)
                 holder.ivThumb.setBackgroundResource(R.drawable.bg_thumb_placeholder)

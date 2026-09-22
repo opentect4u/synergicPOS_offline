@@ -102,10 +102,44 @@ class LedgerReceiptRenderer(context: Context) {
         if (card.measuredHeight <= 0) return null
         card.layout(0, 0, card.measuredWidth, card.measuredHeight)
 
-        ReceiptPrinter.capture(card)
+        withFeed(ReceiptPrinter.capture(card) ?: return null)
     }.getOrElse {
         android.util.Log.e(TAG, "Could not render the ledger", it)
         null
+    }
+
+    /**
+     * [src] with [EXTRA_FEED_LINES] blank lines of paper fed under it.
+     *
+     * The same two lines the kitchen ticket and the return slip get, for the same
+     * reason - see [KotPrinter.EXTRA_FEED_LINES] and [ReturnReceiptRenderer]. On most
+     * counter printers the last line stops under the print HEAD rather than past the
+     * tear bar, so a statement torn straight after printing takes the bottom of itself
+     * with it - and on a ledger that bottom is the closing balance, which is the one
+     * figure the customer is being handed the paper for.
+     *
+     * ## Why two LINES rather than a number of dots
+     *
+     * Print sizes here are absolute - 13sp is the same height of character on 58mm as on
+     * 80mm (see [PrintType]) - so a line is the one unit that means the same length of
+     * paper on every roll. Measured off a paint at the statement's own body size, so the
+     * feed matches the document rather than being a figure picked in dots.
+     */
+    private fun withFeed(src: Bitmap): Bitmap {
+        val paint = android.graphics.Paint().apply {
+            textSize = PrintType.BODY_SP * ctx.resources.displayMetrics.density
+        }
+        val feed = (EXTRA_FEED_LINES * (paint.descent() - paint.ascent())).toInt()
+        if (feed <= 0) return src
+        val out = Bitmap.createBitmap(src.width, src.height + feed, Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(out).apply {
+            // White, not transparent: the printer reads dark pixels as burn, and an
+            // unpainted bitmap is not guaranteed to be either.
+            drawColor(android.graphics.Color.WHITE)
+            drawBitmap(src, 0f, 0f, null)
+        }
+        src.recycle()
+        return out
     }
 
     /**
@@ -444,6 +478,9 @@ class LedgerReceiptRenderer(context: Context) {
 
     private companion object {
         const val TAG = "LedgerReceiptRenderer"
+
+        /** Blank lines fed after a ledger statement - see [withFeed]. */
+        const val EXTRA_FEED_LINES = 2
 
         /**
          * Type sizes the statement table is tried at, largest first.

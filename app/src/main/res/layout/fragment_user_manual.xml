@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The user manual: one tab per chapter, and the chapter under it.
+
+  The tabs are SCROLLABLE rather than fixed. Six chapters shared across a fixed strip
+  leaves each title a couple of words wide and wrapped, which is how a tab bar stops
+  being readable; scrollable lets each keep its own name and lets the strip run off the
+  edge, which on a screen of this width is the lesser cost.
+
+  Unlike Printer Settings' tabs, the content here is not a child fragment - a chapter is
+  a list of blocks, and a fragment each would be six classes to hold six lists. The
+  container below is emptied and refilled as the tab changes.
+
+  The chapter is BUILT rather than laid out here: a heading, a step and a caution each
+  want their own type and spacing, and how many of each a chapter has is not known until
+  it is read. See UserManualFragment, which owns the type scale.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/bg_light">
+
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/tabsUserManual"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/white"
+        app:tabMode="scrollable"
+        app:tabIndicatorHeight="3dp"
+        app:tabRippleColor="@null" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#E0E4E4" />
+
+    <!-- The download floats over the text rather than sitting in a bar of its own: a
+         permanent bar would take a strip off every chapter for a button that is pressed
+         once. The scroll's bottom padding is what keeps the last line clear of it. -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+    <ScrollView
+        android:id="@+id/scrollUserManual"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="88dp"
+        android:clipToPadding="false"
+        android:scrollbars="vertical">
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/white">
+
+            <!-- A reading column, not a table: generous side padding so a line of prose
+                 does not run the full width of a till screen, which is the width at
+                 which the eye loses its place coming back to the left margin. -->
+            <LinearLayout
+                android:id="@+id/containerManualBody"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="18dp" />
+        </com.google.android.material.card.MaterialCardView>
+    </ScrollView>
+
+        <!-- Two buttons rather than one opening a chooser: it is the same count of taps
+             either way, and the reports screen already offers its PDF and its spreadsheet
+             side by side, so this is the shape the app already asks people to read.
+
+             Labelled with the format, not just an arrow. A download icon on a page of
+             text could as easily mean the chapter showing as the whole manual, and which
+             one you get is the thing worth knowing before pressing it. -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="20dp"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDownloadManualDoc"
+                style="@style/Widget.MaterialComponents.Button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="12dp"
+                android:text="DOC"
+                android:textAllCaps="false"
+                android:letterSpacing="0"
+                app:icon="@drawable/ic_download"
+                app:iconTint="@color/white"
+                app:cornerRadius="24dp"
+                android:textColor="@color/white"
+                android:contentDescription="Download the full user manual as a Word document" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDownloadManual"
+                style="@style/Widget.MaterialComponents.Button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="PDF"
+                android:textAllCaps="false"
+                android:letterSpacing="0"
+                app:icon="@drawable/ic_download"
+                app:iconTint="@color/white"
+                app:cornerRadius="24dp"
+                android:textColor="@color/white"
+                android:contentDescription="Download the full user manual as a PDF" />
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>

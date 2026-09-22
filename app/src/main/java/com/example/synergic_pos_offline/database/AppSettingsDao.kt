@@ -54,7 +54,18 @@ class AppSettingsDao(context: Context) {
         val kot: Boolean = false,
         val tableMerge: Boolean = false,
         val tableShift: Boolean = false,
-        val tableSplit: Boolean = false
+        val tableSplit: Boolean = false,
+        /**
+         * WHICH WAYS THIS RESTAURANT SERVES - see the Restaurant Mode card.
+         *
+         * All three default ON, which is how the till behaved before they were
+         * settings: every order type was offered and a place that did not use one
+         * simply never picked it. Turning one off is a shop saying it has no counter,
+         * or no tables, and wanting the screens to stop asking.
+         */
+        val modeDineIn: Boolean = true,
+        val modeTakeaway: Boolean = true,
+        val modeQsr: Boolean = true
     )
 
     fun load(): AppSettings {
@@ -72,7 +83,10 @@ class AppSettingsDao(context: Context) {
             kot = m[KEY_KOT]?.toBool() ?: false,
             tableMerge = m[KEY_TABLE_MERGE]?.toBool() ?: false,
             tableShift = m[KEY_TABLE_SHIFT]?.toBool() ?: false,
-            tableSplit = m[KEY_TABLE_SPLIT]?.toBool() ?: false
+            tableSplit = m[KEY_TABLE_SPLIT]?.toBool() ?: false,
+            modeDineIn = m[KEY_MODE_DINE_IN]?.toBool() ?: true,
+            modeTakeaway = m[KEY_MODE_TAKEAWAY]?.toBool() ?: true,
+            modeQsr = m[KEY_MODE_QSR]?.toBool() ?: true
         )
     }
 
@@ -90,6 +104,9 @@ class AppSettingsDao(context: Context) {
         upsertAppSetting(KEY_TABLE_MERGE, s.tableMerge.b())
         upsertAppSetting(KEY_TABLE_SHIFT, s.tableShift.b())
         upsertAppSetting(KEY_TABLE_SPLIT, s.tableSplit.b())
+        upsertAppSetting(KEY_MODE_DINE_IN, s.modeDineIn.b())
+        upsertAppSetting(KEY_MODE_TAKEAWAY, s.modeTakeaway.b())
+        upsertAppSetting(KEY_MODE_QSR, s.modeQsr.b())
         helper.regroupAppSettingsByType()
         com.example.synergic_pos_offline.utils.SettingsCache.storeFromDb(appContext, "App settings save (type A)")
     }
@@ -207,5 +224,8 @@ class AppSettingsDao(context: Context) {
         const val KEY_TABLE_MERGE = "Table Merge"
         const val KEY_TABLE_SHIFT = "Table Shift"
         const val KEY_TABLE_SPLIT = "Table Split"
+        const val KEY_MODE_DINE_IN = "Mode Dine In"
+        const val KEY_MODE_TAKEAWAY = "Mode Take Away"
+        const val KEY_MODE_QSR = "Mode QSR"
     }
 }
