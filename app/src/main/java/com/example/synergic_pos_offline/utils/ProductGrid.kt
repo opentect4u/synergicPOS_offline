@@ -35,6 +35,9 @@ object ProductGrid {
      */
     const val TARGET_TILE_DP = 128
 
+    /** Rows of recycled tiles kept for reuse - see [keepSpareTiles]. */
+    private const val SPARE_ROWS = 4
+
     /**
      * Gives [rv] a grid that re-counts its columns whenever its width changes - which
      * covers a rotation, a fold, and the cart panel beside it being resized.
@@ -46,12 +49,25 @@ object ProductGrid {
     fun attach(rv: RecyclerView) {
         val lm = GridLayoutManager(rv.context, MIN_SPANS)
         rv.layoutManager = lm
+        keepSpareTiles(rv, MIN_SPANS)
         rv.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
             val width = right - left
             if (width <= 0 || width == oldRight - oldLeft) return@addOnLayoutChangeListener
             val spans = spansFor(rv.context, width)
-            if (spans != lm.spanCount) rv.post { lm.spanCount = spans }
+            if (spans != lm.spanCount) rv.post { lm.spanCount = spans; keepSpareTiles(rv, spans) }
         }
+    }
+
+    /**
+     * Enough recycled tiles on hand for a few whole rows.
+     *
+     * RecyclerView keeps five spare views of a kind by default - fewer than one row of
+     * a grid seven or eight across. So every row scrolled into view had tiles left over
+     * to INFLATE, a whole card layout each, in the middle of the scroll: the stutter
+     * that no amount of cheaper binding could take out.
+     */
+    private fun keepSpareTiles(rv: RecyclerView, spans: Int) {
+        rv.recycledViewPool.setMaxRecycledViews(0, spans * SPARE_ROWS)
     }
 
     /** How many tiles of [TARGET_TILE_DP] fit across [widthPx], floored at [MIN_SPANS]. */

@@ -648,14 +648,18 @@ class BillDao(context: Context) {
         db: SQLiteDatabase, table: String, dateCol: String,
         resetMode: BillSettingsDao.ResetMode, nowDate: String
     ): Int? {
+        // A month or a year as a range on the date's own text rather than substr() of
+        // it: the same rows ("2026-09" <= "2026-09-14" < "2026-09~"), but a range can
+        // be answered from the (date, bill_seq_no) index where substr() reads every
+        // bill ever written to find this period's.
         val periodWhere = when (resetMode) {
-            BillSettingsDao.ResetMode.DAILY -> "$dateCol = ?" to nowDate
-            BillSettingsDao.ResetMode.MONTHLY -> "substr($dateCol, 1, 7) = ?" to nowDate.take(7)
-            BillSettingsDao.ResetMode.YEARLY -> "substr($dateCol, 1, 4) = ?" to nowDate.take(4)
+            BillSettingsDao.ResetMode.DAILY -> "$dateCol = ?" to arrayOf(nowDate)
+            BillSettingsDao.ResetMode.MONTHLY -> nowDate.take(7).let { "$dateCol >= ? AND $dateCol < ?" to arrayOf(it, "$it~") }
+            BillSettingsDao.ResetMode.YEARLY -> nowDate.take(4).let { "$dateCol >= ? AND $dateCol < ?" to arrayOf(it, "$it~") }
             BillSettingsDao.ResetMode.CONTINUE -> null
         }
         val sql = "SELECT MAX(bill_seq_no) FROM $table" + (periodWhere?.let { " WHERE ${it.first}" } ?: "")
-        val args = periodWhere?.let { arrayOf(it.second) }
+        val args = periodWhere?.second
         return runCatching {
             db.rawQuery(sql, args).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getInt(0) else null }
         }.getOrNull()
@@ -825,9 +829,172 @@ class BillDao(context: Context) {
         return list
     }
 
-    /** Distinct product names across all bills (for the item filter suggestions). */
-    fun allItems(): List<String> =
-        loadItemsByBill().values.flatten().distinct().sorted()
+    /**
+     * What Bill History is filtered and sorted by - everything [page] needs to pick
+     * one page of bills in SQL instead of reading the whole book and sifting it here.
+     *
+     * Dates are `yyyy-MM-dd`, compared against bill_date. [after] is exclusive and
+     * [from] / [to] inclusive, which is how the screen's presets and custom range
+     * each read.
+     */
+    data class HistoryFilter(
+        val text: String = "",
+        val item: String = "",
+        val minAmount: Double? = null,
+        val maxAmount: Double? = null,
+        val after: String? = null,
+        val from: String? = null,
+        val to: String? = null,
+        /** Sale Return Days bound: bills on or after this date, or dateless ones. */
+        val returnableFrom: String? = null,
+        val showCancelled: Boolean = false,
+        /** The return picker files a returned bill as live - see BillListFragment. */
+        val pickingForReturn: Boolean = false,
+        val sort: HistorySort = HistorySort.BILL_NO_DESC
+    )
+
+    enum class HistorySort { BILL_NO_DESC, BILL_NO_ASC, DATE_DESC, DATE_ASC, AMOUNT_DESC, AMOUNT_ASC }
+
+    /**
+     * One page of Bill History: [limit] bills from [offset], filtered and sorted by
+     * [filter]. The same rows [getAll] reads - live and deleted bills, current store
+     * only - but only the ones on screen, so a book of a lakh bills opens as fast as
+     * a book of twenty.
+     *
+     * Bill-number order is the prefix as text, then the trailing counter as a
+     * number, then receipt_no - the order the screen always sorted in, so INV-9
+     * still sits above INV-10 rather than after it.
+     */
+    fun page(filter: HistoryFilter, offset: Int, limit: Int): List<Bill> {
+        val store = currentStoreId()
+        val args = mutableListOf<String>()
+        fun half(bills: String, items: String, deleted: Boolean): String {
+            val cancelled = if (deleted) "1" else "(UPPER(COALESCE(b.bill_status, '')) = 'CANCELLED')"
+            val returned = "EXISTS(SELECT 1 FROM ${DatabaseHelper.Tables.TD_SALE_RETURNS} r " +
+                "WHERE r.original_bill_id = b.receipt_no)"
+            val billNo = "CASE WHEN TRIM(COALESCE(b.bill_number, '')) <> '' THEN b.bill_number " +
+                "ELSE CAST(b.receipt_no AS TEXT) END"
+            val where = mutableListOf<String>()
+            // Arguments bind as text. A column compares them by its own type, but an
+            // expression like ROUND() has none, and SQLite sorts every number below
+            // every string - so the amounts are cast back to numbers explicitly.
+            //
+            // The unary + keeps SQLite off the store_id index. Every bill on a till is
+            // the one store's, so that index narrows nothing, yet it looks like an
+            // exact match and wins over the bill_date range - Today then read all
+            // 1.5 lakh bills (76 ms on a PC) instead of today's (0.3 ms).
+            store?.let { where += "+b.store_id = CAST(? AS INTEGER)"; args += it.toString() }
+            filter.after?.let { where += "b.bill_date > ?"; args += it }
+            filter.from?.let { where += "b.bill_date >= ?"; args += it }
+            filter.to?.let { where += "b.bill_date <= ?"; args += it }
+            filter.returnableFrom?.let { where += "(b.bill_date IS NULL OR b.bill_date >= ?)"; args += it }
+            filter.minAmount?.let { where += "ROUND(b.net_amount, 2) >= CAST(? AS REAL)"; args += it.toString() }
+            filter.maxAmount?.let { where += "ROUND(b.net_amount, 2) <= CAST(? AS REAL)"; args += it.toString() }
+            // History files a returned bill with the cancelled ones; the return picker
+            // judges by the bill's own status alone, or the rest of a part-return
+            // could never be taken.
+            val filedCancelled = if (filter.pickingForReturn) cancelled else "($cancelled OR $returned)"
+            where += "$filedCancelled = ${if (filter.showCancelled) 1 else 0}"
+            if (filter.text.isNotEmpty()) {
+                val like = likeArg(filter.text)
+                val amountLike = likeArg(filter.text.replace(",", ""))
+                where += """(
+                    $billNo LIKE ? ESCAPE '\'
+                    OR (CASE WHEN TRIM(COALESCE(c.customer_name, '')) <> '' THEN c.customer_name ELSE 'Walk-in' END) LIKE ? ESCAPE '\'
+                    OR COALESCE(strftime('%d-%m-%Y', b.bill_date_time), strftime('%d-%m-%Y', b.bill_date), b.bill_date) LIKE ? ESCAPE '\'
+                    OR strftime('%H:%M', b.bill_date_time) LIKE ? ESCAPE '\'
+                    OR printf('%.2f', b.net_amount) LIKE ? ESCAPE '\'
+                )"""
+                args += listOf(like, like, like, like, amountLike)
+            }
+            if (filter.item.isNotEmpty()) {
+                where += """EXISTS(SELECT 1 FROM $items bi LEFT JOIN md_products p ON p.id = bi.product_id
+                    WHERE bi.bill_id = b.receipt_no
+                    AND COALESCE(NULLIF(TRIM(bi.product_name), ''), p.product_name) LIKE ? ESCAPE '\')"""
+                args += likeArg(filter.item)
+            }
+            return """
+                SELECT b.receipt_no AS receipt_no, $billNo AS bill_no, b.bill_date AS bill_date,
+                       b.bill_date_time AS bill_date_time, b.net_amount AS net_amount,
+                       COALESCE(c.customer_name, '') AS customer, $cancelled AS cancelled,
+                       $returned AS returned, ${if (deleted) 1 else 0} AS deleted
+                FROM $bills b
+                LEFT JOIN md_customers c ON c.id = b.customer_id
+                WHERE ${where.joinToString(" AND ")}
+            """.trimIndent()
+        }
+
+        val union = half("td_bills", DatabaseHelper.Tables.TD_BILL_ITEMS, deleted = false) +
+            "\nUNION ALL\n" +
+            half(DatabaseHelper.Tables.TD_BILLS_DELETE, DatabaseHelper.Tables.TD_BILL_ITEMS_DELETE, deleted = true)
+        // Prefix = the number with its trailing digits taken off; the counter is those
+        // digits. A number with no digits at all sorts as the largest, as it did.
+        val prefix = "rtrim(bill_no, '0123456789')"
+        val counter = "COALESCE(CAST(NULLIF(substr(bill_no, length($prefix) + 1), '') AS INTEGER), 9223372036854775807)"
+        val order = when (filter.sort) {
+            HistorySort.BILL_NO_DESC -> "$prefix DESC, $counter DESC, receipt_no DESC"
+            HistorySort.BILL_NO_ASC -> "$prefix ASC, $counter ASC, receipt_no ASC"
+            HistorySort.DATE_DESC -> "COALESCE(bill_date_time, bill_date) DESC, receipt_no DESC"
+            HistorySort.DATE_ASC -> "COALESCE(bill_date_time, bill_date) ASC, receipt_no DESC"
+            HistorySort.AMOUNT_DESC -> "net_amount DESC, receipt_no DESC"
+            HistorySort.AMOUNT_ASC -> "net_amount ASC, receipt_no DESC"
+        }
+        val sql = "SELECT * FROM (\n$union\n) ORDER BY $order LIMIT $limit OFFSET $offset"
+
+        val list = mutableListOf<Bill>()
+        helper.readableDatabase.rawQuery(sql, args.toTypedArray()).use { c ->
+            while (c.moveToNext()) {
+                val rawDateTime = c.getString(3)
+                list.add(
+                    Bill(
+                        receiptNo = c.getLong(0),
+                        billNo = c.getString(1).orEmpty(),
+                        name = c.getString(5)?.takeIf { it.isNotBlank() } ?: "Walk-in",
+                        date = formatDate(rawDateTime, c.getString(2)),
+                        time = formatTime(rawDateTime),
+                        total = String.format(Locale.US, "%,.2f", c.getDouble(4)),
+                        items = emptyList(),
+                        cancelled = c.getInt(6) == 1,
+                        returned = c.getInt(7) == 1,
+                        deleted = c.getInt(8) == 1
+                    )
+                )
+            }
+        }
+        return list
+    }
+
+    /** [text] as a LIKE "contains" pattern, its own % and _ taken literally. */
+    private fun likeArg(text: String): String =
+        "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+    /**
+     * Distinct product names across all bills (for the item filter suggestions).
+     *
+     * DISTINCT in SQL rather than every bill line read back and de-duplicated here:
+     * the same names, without holding a lakh bills' worth of lines in memory. Still a
+     * pass over every line, so callers read it off the main thread.
+     */
+    fun allItems(): List<String> {
+        val store = currentStoreId()
+        val storeClause = if (store != null) "WHERE bi.store_id = ?" else ""
+        val args = store?.let { arrayOf(it.toString(), it.toString()) }
+        val name = "COALESCE(NULLIF(TRIM(bi.product_name), ''), p.product_name)"
+        val sql = """
+            SELECT name FROM (
+                SELECT $name AS name FROM td_bill_items bi
+                LEFT JOIN md_products p ON p.id = bi.product_id $storeClause
+                UNION
+                SELECT $name AS name FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS_DELETE} bi
+                LEFT JOIN md_products p ON p.id = bi.product_id $storeClause
+            ) WHERE name IS NOT NULL AND TRIM(name) <> '' ORDER BY name
+        """.trimIndent()
+        val out = mutableListOf<String>()
+        helper.readableDatabase.rawQuery(sql, args).use { c ->
+            while (c.moveToNext()) out.add(c.getString(0))
+        }
+        return out
+    }
 
     /** Maps each bill's receipt_no to the list of its product names (current store only). */
     private fun loadItemsByBill(): Map<Long, MutableList<String>> {
