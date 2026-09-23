@@ -18,13 +18,22 @@ import com.example.synergic_pos_offline.utils.SessionManager
  * the Item Wise Report prints as AMOUNT, so a department's takings can be added
  * against either without one of them quietly carrying tax the other does not.
  *
- * Each line is run back through [BillPricing] - the same function that priced it when
- * it was sold - given its own stored inputs and the rules frozen onto its bill: the
- * regime, whether the listed price included tax, and whether the discount came off
- * before or after the rate. A line on a bill with no snapshot, or one carrying IGST
- * (which [BillPricing] does not model), falls back to what was stored, with the base
- * recovered by inverting the rate off the booked tax. See [TaxReportDao], which
- * recovers the same figure the same way.
+ * Each line's taxable value is READ, not recomputed: the line total it was saved with,
+ * less the CGST, SGST, IGST and VAT booked on it. Those are the very figures that were
+ * summed into the bill's own totals when it was sold, so this report, the item-wise
+ * report, the tax report and the bill-wise report agree by construction.
+ *
+ * It used to re-price every line through [BillPricing] instead, from the rules frozen
+ * onto its bill. [TaxReportDao] sets out at length why that was dropped: the flaw was
+ * not the arithmetic but there being two of them, so the same books reached a period's
+ * figures by two routes and a paisa of rounding put two reports apart with neither
+ * demonstrably wrong.
+ *
+ * So nothing here reads the settings a bill was made under. That is why this query
+ * selects no settings column - neither the old `settings_snapshot` nor the
+ * `settings_id` that replaced it. The frozen settings still matter to a bill REPRINT,
+ * which must look as it did on the day (see `BillReceiptRenderer`), and to pricing a
+ * return (see `ReturnDao.basisForBill`) - but not to totalling what was already booked.
  */
 class CategoryWiseReportDao(context: Context) {
 
