@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Credit mode's panel on the restaurant's payment screens - the grocery checkout's
+  sectionCredit, the same two things in the same words: what is handed over now
+  against the bill, and the balance left owing on the account. Shown only while
+  Credit is the chosen mode; see CreditSale.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/sectionCreditPay"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="14dp"
+    android:orientation="vertical"
+    android:visibility="gone">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Credit amount (₹)"
+        android:textColor="@color/text_secondary"
+        android:textSize="12sp" />
+
+    <com.google.android.material.textfield.TextInputLayout
+        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        app:boxCornerRadiusBottomEnd="12dp"
+        app:boxCornerRadiusBottomStart="12dp"
+        app:boxCornerRadiusTopEnd="12dp"
+        app:boxCornerRadiusTopStart="12dp">
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/etCreditPaid"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="0.00"
+            android:inputType="numberDecimal"
+            android:maxLines="1"
+            android:textColor="@color/text_main"
+            android:textColorHint="@color/text_secondary"
+            android:textSize="18sp" />
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/pos_hint_bg"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="14dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:letterSpacing="0.06"
+            android:text="BALANCE DUE"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvCreditBalanceDue"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="₹0.00"
+            android:textColor="@color/text_main"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+</LinearLayout>

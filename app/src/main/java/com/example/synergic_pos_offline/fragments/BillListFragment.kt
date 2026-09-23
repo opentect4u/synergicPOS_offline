@@ -57,6 +57,7 @@ class BillListFragment : Fragment(), TitledScreen {
 
     private lateinit var rv: RecyclerView
     private lateinit var tvEmpty: TextView
+    private lateinit var llLoading: View
     private val dao by lazy { BillDao(requireContext()) }
     private var actItem: MaterialAutoCompleteTextView? = null
 
@@ -148,6 +149,10 @@ class BillListFragment : Fragment(), TitledScreen {
 
         rv = view.findViewById(R.id.rvBills)
         tvEmpty = view.findViewById(R.id.tvEmpty)
+        llLoading = view.findViewById(R.id.llLoading)
+        // In the till's own accent, like the rest of this screen's controls.
+        view.findViewById<com.google.android.material.progressindicator.CircularProgressIndicator>(R.id.pbLoading)
+            .setIndicatorColor(ThemeManager.getThemeColor(requireContext()))
 
         loadExecutor = Executors.newSingleThreadExecutor()
         rv.layoutManager = LinearLayoutManager(requireContext())
@@ -284,6 +289,10 @@ class BillListFragment : Fragment(), TitledScreen {
     private fun load(offset: Int, limit: Int, replace: Boolean, scrollState: android.os.Parcelable? = null) {
         val gen = if (replace) ++generation else generation
         loading = true
+        // Nothing on screen yet - the first visit, or a list that was empty - so the
+        // wait would read as "No bills found" or a blank card. A list already showing
+        // stays up while its replacement is read, and needs no spinner over it.
+        if (replace && bills.isEmpty()) showLoading(true)
         val filter = currentFilter()
         val dao = dao   // resolved here, on the main thread, not first touched on the reader's
         loadExecutor.execute {
@@ -293,6 +302,7 @@ class BillListFragment : Fragment(), TitledScreen {
             view?.post {
                 if (!isAdded || gen != generation) return@post
                 loading = false
+                showLoading(false)
                 if (replace) {
                     bills.clear()
                     bills.addAll(rows)
@@ -381,6 +391,12 @@ class BillListFragment : Fragment(), TitledScreen {
             pickingForReturn = pickingForReturn,
             sort = BillDao.HistorySort.valueOf(sort.name)
         )
+    }
+
+    /** The "Loading bills…" spinner, in place of the empty message while it shows. */
+    private fun showLoading(on: Boolean) {
+        llLoading.visibility = if (on) View.VISIBLE else View.GONE
+        if (on) tvEmpty.visibility = View.GONE
     }
 
     private fun showEmptyState() {

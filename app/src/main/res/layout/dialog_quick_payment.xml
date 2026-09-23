@@ -23,6 +23,18 @@
     app:cardElevation="16dp"
     app:cardBackgroundColor="@color/white">
 
+    <!-- THE WHOLE POPUP SCROLLS. With part payment and credit on it, it can be taller
+         than the space left once the keyboard is up, and the cash / UPI / credit
+         boxes sat under the keyboard with no way to reach them. The dialog resizes
+         for the keyboard (see showQuickPayment) and this scrolls whatever no longer
+         fits, so the box being typed in is always brought into view. -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/svQuickPay"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:fillViewport="true"
+        android:scrollbars="vertical">
+
     <LinearLayout
         android:id="@+id/llQuickPayContent"
         android:layout_width="430dp"
@@ -43,14 +55,33 @@
             android:gravity="center"
             android:textColor="@color/text_main" />
 
-        <TextView
-            android:id="@+id/tvQpSubtitle"
+        <!-- The token and its customer, with the customer's details behind the info
+             button - the grocery checkout's btnCustInfo. -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="3dp"
             android:gravity="center"
-            android:textSize="12.5sp"
-            android:textColor="@color/text_secondary" />
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvQpSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:textSize="12.5sp"
+                android:textColor="@color/text_secondary" />
+
+            <ImageButton
+                android:id="@+id/btnQpCustInfo"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:layout_marginStart="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Customer details"
+                android:src="@android:drawable/ic_dialog_info"
+                android:visibility="gone" />
+        </LinearLayout>
 
         <!-- What is being paid for: every line of the order, with its quantity.
 
@@ -70,7 +101,13 @@
             android:background="#EEEEEE"
             android:layout_marginTop="14dp" />
 
-        <ScrollView
+        <!-- Nested, so the order's own list still scrolls inside the scrolling popup
+             rather than the two fighting over the same drag. NestedScrollView nests by
+             default - do NOT add android:nestedScrollingEnabled here: View's own
+             constructor applies it before NestedScrollView has built the helper it
+             forwards to, and inflating the popup crashes (NullPointerException in
+             NestedScrollView.setNestedScrollingEnabled). -->
+        <androidx.core.widget.NestedScrollView
             android:id="@+id/svQpItems"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -82,7 +119,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical" />
-        </ScrollView>
+        </androidx.core.widget.NestedScrollView>
 
         <View
             android:layout_width="match_parent"
@@ -155,6 +192,20 @@
                 android:text="Online"
                 android:textAllCaps="false"
                 app:cornerRadius="10dp" />
+
+            <!-- On the customer's account - see CreditSale. -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnQpCredit"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="Credit"
+                android:textAllCaps="false"
+                app:cornerRadius="10dp" />
         </LinearLayout>
 
         <!-- Cash only. Card and Online are paid to the penny by the machine, so a
@@ -212,6 +263,14 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- PART PAYMENT under the Cash tile, as on the grocery checkout: notes and a
+             UPI transfer against one bill. The panel's own CASH row takes over from
+             the tendered box above while it is on. See SplitPayment. -->
+        <include layout="@layout/view_split_payment" />
+
+        <!-- Credit only: what is handed over now, and what is left on the account. -->
+        <include layout="@layout/view_credit_payment" />
+
         <!-- Scan-to-pay, on the same terms as the checkout screen: shown while Online
              is chosen, carrying the amount so the customer confirms a figure rather
              than keying one in. -->
@@ -253,4 +312,5 @@
                 app:cornerRadius="12dp" />
         </LinearLayout>
     </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
 </com.google.android.material.card.MaterialCardView>

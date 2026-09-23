@@ -46,8 +46,9 @@ object CustomerPrompt {
      *
      * At [PHONE_LENGTH] digits the customer list is searched. A match fills the name
      * and address in and says so; no match says the record will be added. Below that
-     * length nothing is searched - a partial number matches the wrong person, and a
-     * name appearing and then changing as more digits arrive is worse than none.
+     * length the fields are left alone - a partial number matches the wrong person -
+     * and the matches are OFFERED instead, in a dropdown under the box from the first
+     * digit, for the operator to pick from. See [CustomerPhoneSearch].
      *
      * The filled-in fields stay editable, and an edit is kept: a customer who has
      * moved is corrected here rather than in the master, which is where the counter
@@ -133,6 +134,17 @@ object CustomerPrompt {
         // updating somebody or adding them, without searching again.
         var matched: CustomerDao.Customer? = null
 
+        // SEARCH AS THE NUMBER IS TYPED, from the first digit - the dropdown every
+        // customer form shares. Picking a customer writes their number in, and the
+        // complete-number lookup below then fills the rest exactly as if it had been
+        // typed. See CustomerPhoneSearch.
+        val dropdown = CustomerPhoneSearch.attach(
+            ctx, view.findViewById(R.id.tilQuickPhone), etPhone
+        ) { picked ->
+            etPhone.setText(picked.phone)
+            etPhone.setSelection(etPhone.text?.length ?: 0)
+        }
+
         etPhone.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) {
                 val phone = s?.toString()?.trim().orEmpty()
@@ -212,7 +224,11 @@ object CustomerPrompt {
             if (customer == null) onCancel?.invoke() else onPicked(customer)
         }
         // Skip and the back press both mean "carry on without a customer".
-        dialog.setOnDismissListener { if (!saved) onCancel?.invoke() }
+        dialog.setOnDismissListener {
+            // The dropdown is its own window; left up it would float over the screen.
+            dropdown.dismiss()
+            if (!saved) onCancel?.invoke()
+        }
 
         dialog.show()
     }

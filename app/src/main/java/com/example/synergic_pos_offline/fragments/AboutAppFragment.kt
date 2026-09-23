@@ -94,18 +94,27 @@ class AboutAppFragment : Fragment(), TitledScreen {
         bindRollOverDesign(view)
         view.findViewById<MaterialButton>(R.id.btnBackupData).setOnClickListener { onBackup() }
         view.findViewById<MaterialButton>(R.id.btnRestoreData).setOnClickListener {
-            // Anything, rather than a MIME filter: a .sql file is typed differently
-            // by different file managers - text/plain here, application/octet-stream
-            // there - and a filter that hides the operator's own backup is worse than
-            // one that shows too much.
-            pickBackup.launch(arrayOf("*/*"))
+            // THE PASSWORD FIRST, before the file is even chosen. A restore replaces
+            // every bill, customer and setting on the till, so who is asking is settled
+            // before anything else - not after the operator has gone looking for a file
+            // - the same check the screen's other irreversible actions make. See
+            // [withPassword].
+            withPassword("restore data from a backup", "Choose Backup") {
+                // Anything, rather than a MIME filter: a .sql file is typed differently
+                // by different file managers - text/plain here, application/octet-stream
+                // there - and a filter that hides the operator's own backup is worse than
+                // one that shows too much.
+                pickBackup.launch(arrayOf("*/*"))
+            }
         }
 
         view.findViewById<MaterialButton>(R.id.btnExportMasters).setOnClickListener {
             onExportMasters()
         }
         view.findViewById<MaterialButton>(R.id.btnRestoreMasters).setOnClickListener {
-            chooseMasterExport()
+            // Asked here, before a file is chosen, as Restore data asks - once, and
+            // first. It used to come after the file and its warning.
+            withPassword("restore the master tables", "Choose File") { chooseMasterExport() }
         }
 
         view.findViewById<MaterialButton>(R.id.btnEraseBills).setOnClickListener {
@@ -1129,9 +1138,8 @@ class AboutAppFragment : Fragment(), TitledScreen {
             negativeText = "Cancel",
             destructive = true
         ) {
-            withPassword("restore the master tables", "Restore Masters") {
-                runRestoreMasters(uri)
-            }
+            // The password was taken before the file was chosen - see the button.
+            runRestoreMasters(uri)
         }
     }
 

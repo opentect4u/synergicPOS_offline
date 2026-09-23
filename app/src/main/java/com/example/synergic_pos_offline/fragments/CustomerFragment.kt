@@ -1,5 +1,6 @@
 package com.example.synergic_pos_offline.fragments
 
+import com.example.synergic_pos_offline.utils.CustomerPhoneSearch
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -104,6 +105,24 @@ class CustomerFragment : DataTableFragment() {
         tvTitle.text = if (existing == null) "Add Customer" else "Edit Customer"
         etName.setText(existing?.name.orEmpty())
         etPhone.setText(existing?.phone.orEmpty())
+        // ADDING, the dropdown every customer form shares, from the first digit - see
+        // CustomerPhoneSearch. Picking someone already on the list opens THEIR record
+        // to edit rather than adding them a second time under the same number. Not on
+        // Edit: that form is one customer's already, and a list of others under its
+        // phone box would be an invitation to overwrite them.
+        val phoneSearch = if (existing != null) null else CustomerPhoneSearch.attach(ctx, etPhone, etPhone) { picked ->
+            val row = DataRow(picked.id.toString(), emptyList())
+            if (cache[row.id] != null) {
+                dialog.dismiss()
+                showCustomerDialog(row)
+            } else {
+                etPhone.setText(picked.phone)
+                etName.setText(picked.name)
+                etAddress.setText(picked.address)
+                etGstin.setText(picked.gstin)
+            }
+        }
+        dialog.setOnDismissListener { phoneSearch?.dismiss() }
         etBirthday.setText(existing?.birthday.orEmpty())
         etAnniversary.setText(existing?.anniversary.orEmpty())
         etAddress.setText(existing?.address.orEmpty())

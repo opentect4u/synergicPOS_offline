@@ -240,11 +240,11 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         populateItems(view)
 
         // Payment method selection — always re-read the current theme colour.
-        mapOf(R.id.btnPayCash to "Cash", R.id.btnPayCard to "Card", R.id.btnPayOnline to "Online")
-            .forEach { (id, name) ->
+        METHODS.forEach { (id, name) ->
                 view.findViewById<MaterialButton>(id).setOnClickListener {
                     payMethod = name
                     restyle(view)
+                    applyCreditState(view)
                     showUpiQr(view)
                 }
             }
@@ -256,7 +256,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         if (!com.example.synergic_pos_offline.utils.PaymentModeSetting.asked(requireContext())) {
             payMethod = com.example.synergic_pos_offline.utils.PaymentModeSetting.CASH_LABEL
             com.example.synergic_pos_offline.utils.PaymentModeSetting.cashOnly(
-                view.findViewById(R.id.btnPayCard), view.findViewById(R.id.btnPayOnline)
+                view.findViewById(R.id.btnPayCard), view.findViewById(R.id.btnPayOnline),
+                view.findViewById(R.id.btnPayCredit)
             )
         }
 
@@ -270,6 +271,17 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             val tendered = com.example.synergic_pos_offline.utils.Amounts.parse(it?.toString())
             tvChange.text = if (tendered != null && tendered >= total) "₹ ${money(tendered - total)}" else "—"
         }
+
+        // Credit's own panel and the customer's details, the grocery checkout's both.
+        creditPaidNow = com.example.synergic_pos_offline.utils.CreditSale.bindPanel(
+            view, { total }, { "\u20b9 ${money(it)}" }
+        )
+        view.findViewById<android.widget.ImageButton>(R.id.btnCoCustInfo).setOnClickListener {
+            com.example.synergic_pos_offline.utils.CreditSale.showCustomer(
+                requireContext(), customer.takeIf { it != "Walk-in" }
+            )
+        }
+        applyCreditState(view)
 
         // Part payment. Bound after populateItems, which is what sets [total] - the
         // figure the split has to add up to.
@@ -285,8 +297,54 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             requireActivity().supportFragmentManager.popBackStack()
         }
         view.findViewById<MaterialButton>(R.id.btnConfirmPay).setOnClickListener {
-            // Hand the paid table + method back to the Orders screen, which prints the
-            // receipt (with preview) and settles/removes the table — like the grocery flow.
+            // ON THE ACCOUNT, once there is an account that can take it: the table's
+            // customer when they have credit terms, otherwise whoever the account form
+            // names and puts on credit. Backing out of it leaves this screen as it was.
+            if (isCredit()) {
+                com.example.synergic_pos_offline.utils.CreditSale.ensure(
+                    requireContext(), customer.takeIf { it != "Walk-in" }, total, { "\u20b9 ${money(it)}" }
+                ) { account -> if (isAdded) sendPaid(etTendered, account.phone) }
+                return@setOnClickListener
+            }
+            sendPaid(etTendered, null)
+        }
+
+        // Re-apply our accents after MainActivity's global theme pass.
+        view.post { if (isAdded) restyle(view) }
+    }
+
+    /** Credit is the chosen mode. */
+    private fun isCredit(): Boolean = payMethod.equals(CREDIT, ignoreCase = true)
+
+    /** What is handed over now against a credit bill - see CreditSale.bindPanel. */
+    private var creditPaidNow: () -> Double = { 0.0 }
+
+    /**
+     * Credit takes no money at the counter and is never split, so the tendered box,
+     * the change line and the part-payment panel all come down while it is chosen -
+     * and the split is switched off, so what was typed into it cannot ride along.
+     */
+    private fun applyCreditState(root: View) {
+        val credit = isCredit()
+        if (credit) root.findViewById<android.widget.CompoundButton>(R.id.swSplitPayment)?.isChecked = false
+        root.findViewById<View>(R.id.llSplitPayment)?.visibility = if (credit) View.GONE else View.VISIBLE
+        com.example.synergic_pos_offline.utils.CreditSale.showPanel(root, credit)
+        root.findViewById<View>(R.id.btnCoCustInfo)?.visibility =
+            if (credit || customer != "Walk-in") View.VISIBLE else View.GONE
+        if (credit) {
+            root.findViewById<View>(R.id.tilTendered)?.visibility = View.GONE
+            root.findViewById<View>(R.id.rowChangeDue)?.visibility = View.GONE
+        } else applySplitState(root)
+    }
+
+    /**
+     * Hands the paid table and how it was paid back to the Orders screen, which
+     * prints the receipt and settles the table. [creditPhone] is the account a credit
+     * settlement goes on, null for any other mode.
+     */
+    private fun sendPaid(etTendered: TextInputEditText, creditPhone: String?) {
+        run {
+            val credit = creditPhone != null
             parentFragmentManager.setFragmentResult(
                 RESULT_PAID, android.os.Bundle().apply {
                     // The order's own id: the table code alone would match the same
@@ -295,6 +353,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                     putString(ARG_TABLE, tableNo)
                     putString(ARG_SECTION, section)
                     putString(ARG_PAY_METHOD, payMethod)
+                    creditPhone?.let { putString(ARG_CUSTOMER_PHONE, it) }
                     // Cash tendered (0 when not entered) so the Orders screen can book
                     // the change and print the amount returned on the receipt.
                     //
@@ -304,7 +363,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                     // figure the existing settle path has always read.
                     putDouble(
                         ARG_TENDERED,
-                        if (splitActive()) {
+                        if (credit) creditPaidNow() else if (splitActive()) {
                             split?.parts()
                                 ?.firstOrNull { it.first == com.example.synergic_pos_offline.utils.SplitPayment.Part.CASH }
                                 ?.second ?: 0.0
@@ -314,16 +373,13 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
                     )
                     // The split itself, mode by mode. Empty on an ordinary settlement,
                     // which is what leaves the Orders screen on its existing path.
-                    val parts = if (splitActive()) split?.parts().orEmpty() else emptyList()
+                    val parts = if (!credit && splitActive()) split?.parts().orEmpty() else emptyList()
                     putStringArray(ARG_SPLIT_MODES, parts.map { it.first.mode }.toTypedArray())
                     putDoubleArray(ARG_SPLIT_AMOUNTS, parts.map { it.second }.toDoubleArray())
                 }
             )
             parentFragmentManager.popBackStack()
         }
-
-        // Re-apply our accents after MainActivity's global theme pass.
-        view.post { if (isAdded) restyle(view) }
     }
 
     override fun onResume() {
@@ -351,9 +407,25 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             billNumber = com.example.synergic_pos_offline.database.BillDao(ctx).nextBillNumber(),
             dateTime = java.text.SimpleDateFormat("dd-MM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date()),
             cashier = com.example.synergic_pos_offline.utils.SessionManager.cashierName,
-            customer = com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Customer(
-                phone = customer.takeIf { it != "Walk-in" && it.isNotBlank() }
-            ),
+            customer = run {
+                val phone = customer.takeIf { it != "Walk-in" && it.isNotBlank() }
+                val onFile = phone?.let {
+                    runCatching { com.example.synergic_pos_offline.database.CustomerDao(ctx).findByPhone(it) }.getOrNull()
+                }
+                com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Customer(
+                    name = onFile?.name?.takeIf { it.isNotBlank() },
+                    phone = phone,
+                    gstin = onFile?.gstin?.takeIf { it.isNotBlank() },
+                    address = onFile?.address?.takeIf { it.isNotBlank() },
+                    // On credit, what they will owe once this bill is booked - the
+                    // grocery preview's own figure.
+                    outstanding = if (isCredit()) {
+                        com.example.synergic_pos_offline.utils.CreditSale.outstandingAfter(
+                            ctx, phone, payableTotal, creditPaidNow()
+                        )
+                    } else null
+                )
+            },
             table = receiptTable,
             items = lines.mapIndexed { i, it ->
                 com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft.Item(
@@ -385,7 +457,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             chargeValues = charges.indices.map { chargeValues.getOrNull(it) ?: 0.0 },
             chargeApplicabilities = charges.map { "BOTH" },
             orderType = chargeOrderType,
-            returnAmount = run {
+            returnAmount = if (isCredit()) 0.0 else run {
                 val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
                     ?.text?.toString()?.toDoubleOrNull() ?: 0.0
                 (tendered - payableTotal).coerceAtLeast(0.0)
@@ -396,7 +468,8 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
             // did not carry it printed "CASH RECEIVED 0.00" whatever had been taken,
             // and PREVI BALANCE - worked back from that figure - was wrong by the same
             // amount.
-            amountPaid = run {
+            // On credit, what is handed over now - the slip's CASH RECEIVED.
+            amountPaid = if (isCredit()) creditPaidNow() else run {
                 val tendered = view?.findViewById<TextInputEditText>(R.id.etTendered)
                     ?.text?.toString()?.toDoubleOrNull() ?: 0.0
                 tendered.coerceIn(0.0, payableTotal)
@@ -589,8 +662,7 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvChangeDue).setTextColor(accent)
 
         // Payment method: selected filled, others outlined.
-        mapOf(R.id.btnPayCash to "Cash", R.id.btnPayCard to "Card", R.id.btnPayOnline to "Online")
-            .forEach { (id, name) -> if (name == payMethod) filled(id) else outlined(id) }
+        METHODS.forEach { (id, name) -> if (name == payMethod) filled(id) else outlined(id) }
     }
 
     private fun money(v: Double): String = String.format(java.util.Locale.US, "%,.2f", v)
@@ -604,6 +676,18 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
         const val ARG_SECTION = "section"
         const val ARG_PAY_METHOD = "pay_method"
         const val ARG_TENDERED = "tendered"
+
+        /** The phone of the account a credit settlement was billed to - see CreditSale. */
+        const val ARG_CUSTOMER_PHONE = "customer_phone"
+
+        /** The mode that puts the table's bill on the customer's account. */
+        private const val CREDIT = "Credit"
+
+        /** Every payment tile, and the mode each one stands for. */
+        private val METHODS = mapOf(
+            R.id.btnPayCash to "Cash", R.id.btnPayCard to "Card",
+            R.id.btnPayOnline to "Online", R.id.btnPayCredit to CREDIT
+        )
 
         /**
          * A part-paid settlement, as two parallel arrays: the modes it was taken in

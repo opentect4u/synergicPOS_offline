@@ -822,6 +822,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // second lookup afterwards would find nothing and the bill would never save
             // or print.
             val order = orders.firstOrNull { it.dbId == paidId } ?: return@setFragmentResultListener
+            // The account a credit settlement was billed to - named on the checkout
+            // screen, since a table usually has no customer until it is put on credit.
+            bundle.getString(RestaurantCheckoutFragment.ARG_CUSTOMER_PHONE)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { attachCustomer(order, it) }
             // NO STOCK IS MOVED HERE. It used to be, on the grounds that "Restaurant
             // checkout does not write a bill" - which stopped being true when
             // settlePaidOrder started persisting one. The result was every restaurant
@@ -1669,7 +1674,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * share this and differ in [setBillPrintEnabled] and [setSettlementEnabled] rather
      * than in two copies of the same opening.
      */
-    private fun openCounterOrder(type: String) {
+    /**
+     * [announce] is false when the order is started by tapping a dish - see
+     * [startCounterOrderForItem] - where the dish landing on it says more than a toast.
+     */
+    private fun openCounterOrder(type: String, announce: Boolean = true) {
         val root = view ?: return
         root.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.segOrderType)
             .check(segmentFor(type))
@@ -1726,7 +1735,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // has one counter and one pile of tokens on it, so a QSR order and a take-away
         // sharing a number would be two customers holding the same slip. The numbering
         // counts every order, so the codes stay unique across the two.
-        toast(
+        if (announce) toast(
             if (type.equals(TYPE_QSR, ignoreCase = true))
                 "QSR order started — add items, then Print Bill"
             else "Take-away order started — add items, then Settlement"
@@ -3895,11 +3904,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * straight-through add is exactly as it was.
      */
     private fun onProductPicked(picked: ProductEntryDialog.Product, onAdded: () -> Unit) {
-        val order = currentOrder()
-        when {
-            order == null -> { toast("Create or select a table order first"); return }
-            order.completed -> { toast("Table already billed — cannot add items"); return }
-        }
+        val order = currentOrder() ?: startCounterOrderForItem() ?: return
+        if (order.completed) { toast("Table already billed — cannot add items"); return }
         val weighHere = picked.allowFraction &&
             com.example.synergic_pos_offline.utils.UsbScaleManager.isEnabled(requireContext())
         if (directAddToCart && !weighHere) {
@@ -3910,7 +3916,47 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
     }
 
-    /** Re-reads the catalogue (stock levels move as orders settle) and redraws the grid. */
+    /**
+     * The order a dish tapped with NO order on screen goes onto, or null when there is
+     * none it can go onto without asking.
+     *
+     * A counter serves the customer in front of it, so a dish tapped at the counter is
+     * that customer's first item: the counter order starts on the tap and the dish
+     * goes on it. This used to refuse with "select a table order first", and on a till
+     * running QSR alone that was a dead end - the order-type bar hides itself when
+     * there is only one mode to choose, the table picker stays shut with Dine In off,
+     * and so nothing on the screen could start the order the refusal asked for. The
+     * same after every settled QSR sale, which leaves nothing selected.
+     *
+     * Which counter: the one the bar is on, if that mode is still served, else the
+     * first counter mode that is - Take Away, then QSR, as [fallbackCounterOrder]
+     * reads them. A table cannot be guessed, so a dine-in-only shop, or a bar left on
+     * Dine In, still asks for one and opens the picker to choose it.
+     */
+    private fun startCounterOrderForItem(): OrderCard? {
+        val s = com.example.synergic_pos_offline.database.AppSettingsDao(requireContext()).load()
+        val checked = view?.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(
+            R.id.segOrderType
+        )?.checkedButtonId
+        val type = when {
+            checked == R.id.btnQsr && s.modeQsr -> TYPE_QSR
+            checked == R.id.btnTakeAway && s.modeTakeaway -> TYPE_TAKE_AWAY
+            // On Dine In with table service on: that is a table order, and only the
+            // operator knows which table.
+            s.modeDineIn -> null
+            s.modeTakeaway -> TYPE_TAKE_AWAY
+            s.modeQsr -> TYPE_QSR
+            else -> null
+        }
+        if (type == null) {
+            toast("Choose a table first")
+            showChooseTableDialog()
+            return null
+        }
+        openCounterOrder(type, announce = false)
+        return currentOrder()
+    }
+
     /**
      * Re-reads the catalogue off the main thread, then redraws the tabs and grid.
      * A newer read supersedes one still running - see [loadProductsFromDbAsync].
@@ -5489,7 +5535,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // how much of the ORDER can be read at once, and that is the same question on
         // every device. The font scale is pinned by FixedFontScale, so a row is a known
         // height and this cap does not drift.
-        val scroll = root.findViewById<android.widget.ScrollView>(R.id.svQpItems) ?: return
+        val scroll = root.findViewById<View>(R.id.svQpItems) ?: return
         scroll.layoutParams = scroll.layoutParams.apply {
             height = quickPayListHeight(
                 order.items.size, scroll.resources.displayMetrics.density
@@ -5528,6 +5574,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val dialog = AlertDialog.Builder(ctx).setView(v).create()
             .also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        // The window shrinks above the keyboard rather than sitting under it, so the
+        // popup's own scroll view can bring the cash, UPI or credit box being typed in
+        // into view - see svQuickPay in the layout.
+        dialog.window?.setSoftInputMode(
+            android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN
+        )
 
         // Rounded here rather than at settlement, so what the operator reads, what
         // gets validated against the cash handed over, and what persistBill() later
@@ -5556,8 +5609,27 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         var payMethod = "Cash"
         val methods = mapOf(
-            R.id.btnQpCash to "Cash", R.id.btnQpCard to "Card", R.id.btnQpOnline to "Online"
+            R.id.btnQpCash to "Cash", R.id.btnQpCard to "Card", R.id.btnQpOnline to "Online",
+            R.id.btnQpCredit to CREDIT_LABEL
         )
+        // Credit's own panel - the amount handed over now and the balance left on the
+        // account - and the customer's details behind the info button, both the
+        // grocery checkout's. See CreditSale.
+        val creditPaidNow = com.example.synergic_pos_offline.utils.CreditSale.bindPanel(v, { total }, { "\u20b9 ${money(it)}" })
+        val btnCustInfo = v.findViewById<android.widget.ImageButton>(R.id.btnQpCustInfo)
+        btnCustInfo.setOnClickListener { com.example.synergic_pos_offline.utils.CreditSale.showCustomer(requireContext(), order.phone) }
+
+        // PART PAYMENT, under the Cash tile - the grocery checkout's own panel and
+        // rules: the operator types one of the two amounts and the other follows, the
+        // UPI code quotes the UPI part only, and Confirm waits until the parts cover
+        // the bill. While it is on, its CASH row is the cash being taken, so the
+        // tendered box and its change line come down. See SplitPayment.
+        val tilQpTendered = v.findViewById<View>(R.id.tilQpTendered)
+        val rowQpChange = tvChange.parent as View
+        val splitOffered = com.example.synergic_pos_offline.utils.PaymentModeSetting.asked(requireContext())
+        var applyQpSplit: () -> Unit = {}
+        val split = com.example.synergic_pos_offline.utils.SplitPayment(v, totalOf = { total }, onChanged = { applyQpSplit() })
+            .also { it.bind() }
         fun paintMethods() {
             methods.forEach { (id, name) ->
                 v.findViewById<com.google.android.material.button.MaterialButton>(id).apply {
@@ -5573,9 +5645,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // with only one answer. The QR appears on the same rule, in reverse: it is
             // for the one mode that is paid by scanning.
             llCash.visibility = if (payMethod == "Cash") View.VISIBLE else View.GONE
-            com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(
-                v, total, online = payMethod == "Online"
-            )
+            // Only where the till asks how a sale was paid: with Payment Mode off every
+            // sale is cash, and a Cash + UPI split would be a mode it does not take -
+            // the grocery checkout does not offer one then either.
+            v.findViewById<View>(R.id.llSplitPayment)?.visibility =
+                if (payMethod == "Cash" && splitOffered) View.VISIBLE else View.GONE
+            com.example.synergic_pos_offline.utils.CreditSale.showPanel(v, payMethod == CREDIT_LABEL)
+            // Shown whenever there is a customer to look at - always, on credit, which
+            // is billed to one - as the grocery checkout's customer strip is.
+            btnCustInfo.visibility =
+                if (order.phone.isNotBlank() || payMethod == CREDIT_LABEL) View.VISIBLE else View.GONE
+            applyQpSplit()
         }
         methods.forEach { (id, name) ->
             v.findViewById<com.google.android.material.button.MaterialButton>(id).setOnClickListener {
@@ -5591,7 +5671,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (!com.example.synergic_pos_offline.utils.PaymentModeSetting.asked(requireContext())) {
             payMethod = com.example.synergic_pos_offline.utils.PaymentModeSetting.CASH_LABEL
             com.example.synergic_pos_offline.utils.PaymentModeSetting.cashOnly(
-                v.findViewById(R.id.btnQpCard), v.findViewById(R.id.btnQpOnline)
+                v.findViewById(R.id.btnQpCard), v.findViewById(R.id.btnQpOnline),
+                v.findViewById(R.id.btnQpCredit)
             )
         }
 
@@ -5623,6 +5704,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val btnCancel = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormNegative)
         ThemeManager.applyTheme(v)
         ThemeManager.styleDialogButtons(btnConfirm, btnCancel)
+        applyQpSplit = {
+            val on = split.isActive()
+            tilQpTendered.visibility = if (on) View.GONE else View.VISIBLE
+            rowQpChange.visibility = if (on) View.GONE else View.VISIBLE
+            val ok = !on || split.balances()
+            btnConfirm.isEnabled = ok
+            btnConfirm.alpha = if (ok) 1f else 0.45f
+            // The part, not the bill: a customer paying 100 in notes scans for the
+            // 50 they still owe - a code for the whole bill would take the cash twice.
+            val upiPart = split.parts().firstOrNull { it.first == com.example.synergic_pos_offline.utils.SplitPayment.Part.ONLINE }?.second
+            if (on && upiPart != null) com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(v, upiPart, online = true)
+            else com.example.synergic_pos_offline.utils.CheckoutUpiQr.bind(v, total, online = payMethod == "Online")
+        }
         paintMethods()
 
         btnCancel.setOnClickListener { dialog.dismiss() }
@@ -5630,11 +5724,46 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // Cash short of the total is a mis-key, not a part payment: the counter
             // does not hand food over for less than the bill, and settling it here
             // would write a paid bill for money nobody received.
+            if (payMethod == "Cash" && split.isActive()) {
+                if (!split.balances()) {
+                    toast("The parts do not cover the bill yet")
+                    return@setOnClickListener
+                }
+                // A row per mode it was taken in, as the grocery till writes it - the
+                // bill becomes a CASH SPLIT with a td_payments row per part. The cash
+                // part goes as the tendered figure, which is the only part change can
+                // come out of.
+                val parts = split.parts().map { it.first.mode to it.second }
+                val cash = split.parts().firstOrNull { it.first == com.example.synergic_pos_offline.utils.SplitPayment.Part.CASH }?.second ?: 0.0
+                dialog.dismiss()
+                printThenSettle(order, "Cash", cash, parts)
+                view?.post { if (isAdded) showChooseTableDialog() }
+                return@setOnClickListener
+            }
             val tendered = if (payMethod == "Cash")
                 com.example.synergic_pos_offline.utils.Amounts.parse(etTendered.text?.toString()) ?: 0.0
             else 0.0
             if (payMethod == "Cash" && tendered < total) {
                 tilTendered.error = "Less than the amount due"
+                return@setOnClickListener
+            }
+            // ON THE ACCOUNT, once there is an account that can take it. The order's
+            // customer is used when they have credit terms; otherwise the account form
+            // comes up to name one or put them on credit, and the sale settles from its
+            // Save. Backing out of that leaves this popup open to choose another mode.
+            if (payMethod == CREDIT_LABEL) {
+                com.example.synergic_pos_offline.utils.CreditSale.ensure(
+                    requireContext(), order.phone, total, { "₹ ${money(it)}" }
+                ) { customer ->
+                    if (!isAdded) return@ensure
+                    attachCustomer(order, customer.phone)
+                    dialog.dismiss()
+                    // What the customer handed over now goes through as the tendered
+                    // figure: the slip states it as CASH RECEIVED, and the bill books it
+                    // against the account, leaving the rest owing.
+                    printThenSettle(order, CREDIT_LABEL, creditPaidNow())
+                    view?.post { if (isAdded) showChooseTableDialog() }
+                }
                 return@setOnClickListener
             }
             dialog.dismiss()
@@ -5678,11 +5807,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * and walked off with the food; a till that refused to record that because no
      * printer was configured would be holding an order open for a sale that is over.
      */
-    private fun printThenSettle(order: OrderCard, payMethod: String, tendered: Double) {
+    private fun printThenSettle(
+        order: OrderCard, payMethod: String, tendered: Double,
+        /** A part payment's modes and amounts; empty on an ordinary one-mode settlement. */
+        splitParts: List<Pair<String, Double>> = emptyList()
+    ) {
         val printers = com.example.synergic_pos_offline.database.OperatingPrinterDao(requireContext())
             .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
         val settle = {
-            settlePaidOrder(order, payMethod, tendered)
+            settlePaidOrder(order, payMethod, tendered, splitParts)
             reloadProductsAndRefresh()   // stock has moved
         }
         val default = printers.firstOrNull { it.isDefault }
@@ -5691,11 +5824,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 toast("No bill printer set up — payment saved without a printed bill")
                 settle()
             }
-            default != null -> { printSettledBill(order, default, payMethod, tendered); settle() }
+            default != null -> { printSettledBill(order, default, payMethod, tendered, splitParts); settle() }
             // Settling waits for the choice, so the printed slip and the saved bill
             // are the same sale rather than two things racing each other.
             else -> showPrinterChooser(printers, "Select bill printer") { p ->
-                printSettledBill(order, p, payMethod, tendered); settle()
+                printSettledBill(order, p, payMethod, tendered, splitParts); settle()
             }
         }
     }
@@ -5710,14 +5843,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         order: OrderCard,
         printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter,
         payMethod: String,
-        tendered: Double
+        tendered: Double,
+        splitParts: List<Pair<String, Double>> = emptyList()
     ) {
         // Reserved the same way the table bill reserves it. The settlement follows a
         // line later, so the window is small - but it is not zero, and a second till
         // ringing up at the same moment is exactly the case a counter has.
         val next = com.example.synergic_pos_offline.database.BillDao(requireContext()).nextNumber()
         roDao.setBillSeq(order.dbId, next.seq)
-        printGroceryStyleBill(order, printer, billNumber = next.number, payment = payMethod, tendered = tendered)
+        printGroceryStyleBill(
+            order, printer, billNumber = next.number, payment = payMethod, tendered = tendered,
+            splitParts = splitParts
+        )
     }
 
     private fun resolveBillPrinterThenPrint(order: OrderCard) {
@@ -5741,11 +5878,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun printGroceryStyleBill(
         order: OrderCard,
         printer: com.example.synergic_pos_offline.database.OperatingPrinterDao.OperatingPrinter,
-        billNumber: String, payment: String, tendered: Double = 0.0
+        billNumber: String, payment: String, tendered: Double = 0.0,
+        splitParts: List<Pair<String, Double>> = emptyList()
     ) {
         val config = com.example.synergic_pos_offline.utils.ThermalPrinter.configFor(printer)
             ?: run { toast("Bill printer '${printer.printerName}' is not fully configured"); return }
-        val draft = buildBillDraft(order, billNumber, payment, tendered)
+        val draft = buildBillDraft(order, billNumber, payment, tendered, splitParts)
         val renderer = com.example.synergic_pos_offline.utils.BillReceiptRenderer(requireContext())
         // One continuous bitmap even when the order mixes GST and VAT lines - see
         // BillReceiptRenderer.populate()'s own demarcation between them ("BILL NO:
@@ -5833,6 +5971,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }.getOrNull()
     }
 
+    /**
+     * Puts the customer behind [phone] on [order], in memory and on the running order,
+     * so the bill written from it carries them - the same two writes Add Customer makes.
+     */
+    private fun attachCustomer(order: OrderCard, phone: String) {
+        if (phone.isBlank() || phone == order.phone) return
+        order.phone = phone
+        roDao.setPhone(order.dbId, phone)
+        if (currentOrder() === order) showOrderDetail(order)
+    }
+
     private fun customerOutstanding(phone: String): Double? {
         if (phone.isBlank()) return null
         val db = com.example.synergic_pos_offline.database.DatabaseHelper
@@ -5845,7 +5994,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** Maps an order to a grocery-renderer Draft (per-item GST + a service-charge line). */
     private fun buildBillDraft(
-        order: OrderCard, billNumber: String, payment: String, tendered: Double = 0.0
+        order: OrderCard, billNumber: String, payment: String, tendered: Double = 0.0,
+        splitParts: List<Pair<String, Double>> = emptyList()
     ): com.example.synergic_pos_offline.utils.BillReceiptRenderer.Draft {
         val b = computeBill(order)
         val chargeOrderType = chargeModeOf(order.type)
@@ -5913,7 +6063,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 // it to print at all, so a take-away - where the address is part of the
                 // order, not a detail about the customer - went out without one.
                 address = who?.address?.takeIf { it.isNotBlank() },
-                outstanding = customerOutstanding(order.phone)
+                // On a credit sale, what they will owe once THIS bill is booked: the
+                // slip is cut a moment before the settlement writes it, and quoting the
+                // balance from before would hand the customer a figure already out of
+                // date - the same sum grocery's preview prints.
+                outstanding = if (payment.equals(CREDIT_LABEL, ignoreCase = true)) {
+                    com.example.synergic_pos_offline.utils.CreditSale.outstandingAfter(
+                        requireContext(), order.phone, payableTotal(b.total), tendered
+                    )
+                } else customerOutstanding(order.phone)
             ),
             table = billTable,
             items = items,
@@ -5922,7 +6080,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // against (see BillBreakdown.discount vs .discountDisplay).
             discount = b.discountDisplay, discountPercent = b.discountRateGiven,
             roundOff = roundOffAmount(b.total), netAmount = payableTotal(b.total),
-            paymentModes = if (payment.isNotBlank()) listOf(payment.uppercase(java.util.Locale.US)) else emptyList(),
+            // A line per part on a split, with what each took - the grocery slip's own
+            // CASH / UPI lines - so the customer's copy says how the bill was paid.
+            paymentModes = when {
+                splitParts.isNotEmpty() -> splitParts.map { it.first }
+                payment.isNotBlank() -> listOf(payment.uppercase(java.util.Locale.US))
+                else -> emptyList()
+            },
+            paymentAmounts = splitParts.map { it.second },
             serviceCharge = b.service,   // shown as its own totals line, not an item
             // The figures already quoted on the order panel, handed to the slip rather
             // than worked out again - so what prints is what the customer was told.
@@ -5932,7 +6097,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             chargeValues = b.charges.map { it.value },
             chargeApplicabilities = b.charges.map { it.applicability.store() },
             orderType = chargeOrderType,
-            returnAmount = (tendered - payableTotal(b.total)).coerceAtLeast(0.0)   // cash to hand back
+            // Cash to hand back - none on a credit sale, where anything over the bill
+            // goes against the account rather than back across the counter.
+            returnAmount = when {
+                payment.equals(CREDIT_LABEL, ignoreCase = true) -> 0.0
+                // Everything collected against the bill, not the cash alone - the
+                // same reading the settlement books the change by.
+                splitParts.isNotEmpty() ->
+                    (splitParts.sumOf { it.second } - payableTotal(b.total)).coerceAtLeast(0.0)
+                else -> (tendered - payableTotal(b.total)).coerceAtLeast(0.0)
+            },
+            // What was taken at the counter on a credit sale, printed as CASH RECEIVED
+            // - the grocery slip's own line. Other modes leave the renderer's default.
+            amountPaid = if (payment.equals(CREDIT_LABEL, ignoreCase = true)) tendered else 0.0
         )
     }
 
@@ -6028,13 +6205,20 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         // The parts this table was settled in, empty on an ordinary one-mode payment.
         // Read before the bill type below, which is decided by how many there are.
-        val split = splitParts.filter { it.second > 0.001 }
+        //
+        // A credit sale is never split: all of it goes on the customer's account.
+        val credit = payMethod.equals(CREDIT_LABEL, ignoreCase = true)
+        val split = if (credit) emptyList() else splitParts.filter { it.second > 0.001 }
 
         // A table settled ₹100 in cash and ₹50 over UPI is a CASH SPLIT, not the plain
         // CASH its first part would name it - see the note in
         // PosCheckoutFragment.generateBill. One part is not a split whatever the
         // checkout screen's switch was set to, and is booked as that part's own mode.
         val billType = when {
+            // CREDIT is what tells BillDao.createBill to post the sale to the
+            // customer's ledger, balance and limit - the same booking a grocery credit
+            // sale gets, so the accounting has one implementation.
+            credit -> "CREDIT"
             split.size > 1 -> "CASH SPLIT"
             split.size == 1 -> split.first().first
             else -> when (payMethod.lowercase(java.util.Locale.US)) {
@@ -6052,13 +6236,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // rather than the whole bill - the others follow it into extraPayments below,
         // a row each in td_payments. The change still hangs off the cash, which is the
         // first part whenever there is any cash in the split at all.
-        val change = if (split.isNotEmpty()) {
+        val change = when {
+            credit -> 0.0
             // Against everything collected, not the cash alone: a guest who hands over
             // ₹120 in notes on top of a ₹50 transfer against a ₹150 bill is ₹20 up, and
             // measuring only the cash against the whole bill would miss it.
-            (split.sumOf { it.second } - payable).coerceAtLeast(0.0)
-        } else (tendered - payable).coerceAtLeast(0.0)
+            split.isNotEmpty() -> (split.sumOf { it.second } - payable).coerceAtLeast(0.0)
+            else -> (tendered - payable).coerceAtLeast(0.0)
+        }
         val amountPaid = when {
+            // What was handed over at the counter against it, if anything - BillDao
+            // books it as a payment on the account and leaves the rest owing, and
+            // takes more than the bill as bringing an older balance down, as grocery.
+            credit -> tendered.coerceAtLeast(0.0)
             split.isNotEmpty() -> split.first().second
             tendered > payable -> tendered
             else -> payable
@@ -6623,6 +6813,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private companion object {
         /** How long the search box waits after a key before refiltering the grid. */
         const val SEARCH_REFILTER_DELAY_MS = 150L
+
+        /** The payment mode that puts the sale on the customer's account - see [CreditSale]. */
+        const val CREDIT_LABEL = "Credit"
 
         /** Chili icons a tile can show - "hot". See [bindSpice]. */
         const val MAX_CHILIES = 3

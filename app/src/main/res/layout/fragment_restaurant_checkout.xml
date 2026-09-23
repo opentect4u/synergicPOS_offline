@@ -34,6 +34,17 @@
             android:text="Table: T-05     Customer: Walk-in"
             android:textSize="14sp"
             android:textColor="@color/text_secondary" />
+
+        <!-- The customer's details - the grocery checkout's btnCustInfo. -->
+        <ImageButton
+            android:id="@+id/btnCoCustInfo"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="6dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Customer details"
+            android:src="@android:drawable/ic_dialog_info"
+            android:visibility="gone" />
     </LinearLayout>
 
     <!-- Content -->
@@ -324,6 +335,19 @@
                             android:insetBottom="0dp"
                             android:text="Online"
                             app:cornerRadius="10dp" />
+
+                        <!-- On the customer's account - see CreditSale. -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnPayCredit"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="46dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:text="Credit"
+                            app:cornerRadius="10dp" />
                     </LinearLayout>
 
                     <!-- Both this and the Change Due row below carry an id so the split
@@ -381,6 +405,9 @@
                          because the UPI part of a split is entered here and scanned
                          below - the order the counter works in. -->
                     <include layout="@layout/view_split_payment" />
+
+                    <!-- Credit only: what is handed over now, and what is left owing. -->
+                    <include layout="@layout/view_credit_payment" />
 
                     <include layout="@layout/view_checkout_upi_qr" />
                 </LinearLayout>
