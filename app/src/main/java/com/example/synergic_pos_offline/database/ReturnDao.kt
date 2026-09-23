@@ -325,12 +325,17 @@ class ReturnDao(private val context: Context) {
      * settings: it is the only information there is for them.
      */
     fun basisForBill(receiptNo: Long): PricingBasis {
-        val json = helper.readableDatabase.rawQuery(
-            "SELECT settings_snapshot FROM ${DatabaseHelper.Tables.TD_BILLS} WHERE receipt_no = ?",
+        // LEFT JOIN, not JOIN: a bill made before settings were recorded has no row to
+        // match, and that bill still has to come back - with a null snapshot, which is
+        // what sends it to liveBasis() below.
+        val snapshot = helper.readableDatabase.rawQuery(
+            "SELECT ${BillSettingsSnapshot.columns("s")} " +
+                "FROM ${DatabaseHelper.Tables.TD_BILLS} b " +
+                "LEFT JOIN ${DatabaseHelper.Tables.TD_BILL_SETTINGS} s ON s.id = b.settings_id " +
+                "WHERE b.receipt_no = ?",
             arrayOf(receiptNo.toString())
-        ).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        ).use { c -> if (c.moveToFirst()) BillSettingsSnapshot.fromCursor(c, 0) else null }
 
-        val snapshot = BillSettingsSnapshot.parse(json)
         return if (snapshot == null) liveBasis() else PricingBasis(
             taxEnabled = snapshot.taxEnabled,
             inclusive = snapshot.inclusive,

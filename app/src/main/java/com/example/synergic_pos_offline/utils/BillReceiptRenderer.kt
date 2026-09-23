@@ -836,7 +836,7 @@ class BillReceiptRenderer(context: Context) {
             var storedCharges = -1.0
             // Cash handed back to the customer when they tendered more than the payable.
             var returnAmount = 0.0
-            var settingsSnapshotJson: String? = null
+            var settingsId: Long? = null
             /** "TABLE : 5 (AC)" - blank on a bill with no table, i.e. every grocery one. */
             var tableLine: String? = null
             /** The order type this bill was actually billed under - see the reprint read below. */
@@ -875,7 +875,7 @@ class BillReceiptRenderer(context: Context) {
                 """
                 SELECT bill_number, bill_date_time, bill_date, customer_id,
                        tot_discount_amount, net_amount, operator_id, created_by, bill_type,
-                       tot_round_off_amount, amount_in_words, settings_snapshot,
+                       tot_round_off_amount, amount_in_words, settings_id,
                        COALESCE(service_charge_amount, 0),
                        COALESCE(tot_other_charges_amount, 0),
                        COALESCE(tot_cgst_amount, 0), COALESCE(tot_sgst_amount, 0),
@@ -911,7 +911,7 @@ class BillReceiptRenderer(context: Context) {
                 billType = c.getString(8)
                 roundOff = c.getDouble(9)
                 amountInWords = c.getString(10)
-                settingsSnapshotJson = c.getString(11)
+                settingsId = if (c.isNull(11)) null else c.getLong(11)
                 // Discounts are recorded per bill, not per line, so this one figure
                 // still has to come from the header; every other total is derived
                 // from the printed line items below.
@@ -973,7 +973,7 @@ class BillReceiptRenderer(context: Context) {
             // necessarily what is live now - so a reprint reads exactly as it did on
             // the day. Older bills saved before this existed fall back to today's
             // settings, the only information there is for them.
-            val snapshot = BillSettingsSnapshot.parse(settingsSnapshotJson)
+            val snapshot = BillSettingsSnapshot.byId(db, settingsId)
             val liveSettings by lazy { BillSettingsDao(ctx).load() }
             val hsnCode = snapshot?.hsnCode ?: liveSettings.hsnCode
             // Whether the lines are numbered. Off the bill's own snapshot first, so a
