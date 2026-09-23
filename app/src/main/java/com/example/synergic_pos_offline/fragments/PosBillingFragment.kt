@@ -1677,12 +1677,21 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // cart with its default rate - no popup. Each tap adds one more. Only for a
         // fresh add; editing an existing cart line still opens the dialog.
         //
-        // NO FRACTION EXCEPTION. A fractional unit used to force the popup open here
-        // too, so the one setting whose purpose is "do not stop and ask" stopped and
-        // asked - on exactly the products a busy till rings up most. A weighed item
-        // goes on as 1 and is corrected by tapping its cart line, where the quantity
-        // opens for a fractional unit whatever Enter Quantity says. That is also the
-        // order the work happens in: rung up first, weighed second.
+        // ONE EXCEPTION: A WEIGHED PRODUCT WITH A SCALE WIRED IN.
+        //
+        // A fractional unit used to force the popup open regardless, which made the one
+        // setting whose purpose is "do not stop and ask" stop and ask on exactly the
+        // products a busy till rings up most. So it was removed, and a weighed item went
+        // on as 1 to be corrected from its cart line afterwards.
+        //
+        // That reasoning holds only where the weight has to be typed. With a scale
+        // connected the popup is not a question - it is the READING, arriving on its own
+        // as the goods settle on the pan, and the tap that opened it is the operator
+        // saying they are about to weigh something. Adding 1 and making them find the
+        // cart line to correct it is more work than the popup, not less.
+        //
+        // Narrow deliberately: no scale, or a product not sold by weight, and the
+        // straight-through add is exactly as it was.
         //
         // Falls back to the setting's own default (see
         // AppSettingsDao.AppSettings.directAddToCart) only when the cache has never
@@ -1693,7 +1702,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val directAddOn = directAddCached?.let { it == "1" }
             ?: com.example.synergic_pos_offline.database.AppSettingsDao(requireContext())
                 .load().directAddToCart
-        if (!editing && directAddOn) {
+        val weighHere = p.allowFraction &&
+            com.example.synergic_pos_offline.utils.UsbScaleManager.isEnabled(requireContext())
+        if (!editing && directAddOn && !weighHere) {
             // No running-count toast here: Direct Add to Cart's whole point is a fast,
             // silent tap-to-add, and a snackbar on every one of them undoes that -
             // the cart list itself already shows what was added.

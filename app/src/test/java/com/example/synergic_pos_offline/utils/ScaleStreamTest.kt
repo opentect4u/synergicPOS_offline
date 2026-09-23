@@ -5,7 +5,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The raw scale stream shown at the foot of the product popup.
+ * The raw scale stream shown at the foot of General Settings' Weighing Scale section.
  *
  * It is a diagnostic display, so the thing that matters is that it shows what arrived -
  * including the parts that are invisible. A scale whose lines are not framed the way the
@@ -14,7 +14,31 @@ import org.junit.Test
 class ScaleStreamTest {
 
     private fun append(existing: String?, chunk: String) =
-        ProductEntryDialog.appendStream(existing, chunk)
+        ScaleStream.append(existing, chunk)
+
+    @Test
+    fun `the ruler numbers the positions the start and end points are counted in`() {
+        // Start and End are 1-based character positions, and counting them by eye across
+        // a run of digits and spaces is exactly where an operator slips by one.
+        assertEquals("....+....1", ScaleStream.ruler("ST,GS,+  1"))
+        // Every tenth position carries its own tens digit, so 20 reads as "2".
+        assertEquals("....+....1....+....2", ScaleStream.ruler("12345678901234567890"))
+    }
+
+    @Test
+    fun `the ruler is exactly as wide as the line it sits under`() {
+        // They are drawn in a monospaced face precisely so column n of one is column n
+        // of the other; a ruler of a different length would point at the wrong character.
+        listOf("", "a", "  1.250kg", "x".repeat(160)).forEach { line ->
+            assertEquals("for '${line.take(12)}'", line.length, ScaleStream.ruler(line).length)
+        }
+    }
+
+    @Test
+    fun `there is no ruler under an empty line`() {
+        assertEquals("", ScaleStream.ruler(null))
+        assertEquals("", ScaleStream.ruler(""))
+    }
 
     @Test
     fun `rolls chunks forward rather than replacing them`() {

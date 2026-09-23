@@ -3825,14 +3825,20 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * on, or the table is already billed; otherwise honours App Settings' Direct Add to
      * Cart - straight in at its default rate, or through the quantity popup.
      *
-     * NO FRACTION EXCEPTION. A fractional unit used to force the popup open even with
-     * Direct Add on, so the one setting whose whole purpose is "do not stop and ask"
-     * stopped and asked - on exactly the products a busy counter taps most.
+     * ONE EXCEPTION: A WEIGHED PRODUCT WITH A SCALE WIRED IN.
      *
-     * A weighed item goes on as 1 like anything else and is corrected by tapping its
-     * line in the cart, where the quantity box opens for a fractional unit whatever
-     * Enter Quantity says (see editCartLine). That is also the order the work happens
-     * in: the dish is rung up, then it is weighed.
+     * A fractional unit used to force the popup open regardless, so the one setting whose
+     * whole purpose is "do not stop and ask" stopped and asked on exactly the products a
+     * busy counter taps most. That was removed, and a weighed item went on as 1 to be
+     * corrected from its cart line (see editCartLine) afterwards.
+     *
+     * That holds only where the weight has to be TYPED. With a scale connected the popup
+     * is not a question but the reading itself, arriving as the goods settle on the pan -
+     * and the tap that opened it was the operator saying they are about to weigh
+     * something. Adding 1 and making them go back to the line is the longer road.
+     *
+     * Narrow deliberately: no scale, or a dish not sold by weight, and the
+     * straight-through add is exactly as it was.
      */
     private fun onProductPicked(picked: ProductEntryDialog.Product, onAdded: () -> Unit) {
         val order = currentOrder()
@@ -3840,7 +3846,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             order == null -> { toast("Create or select a table order first"); return }
             order.completed -> { toast("Table already billed — cannot add items"); return }
         }
-        if (directAddToCart) {
+        val weighHere = picked.allowFraction &&
+            com.example.synergic_pos_offline.utils.UsbScaleManager.isEnabled(requireContext())
+        if (directAddToCart && !weighHere) {
             addToCart(picked, 1.0, picked.price)
             onAdded()
         } else {

@@ -653,6 +653,72 @@
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
+
+                <!-- Live characters from the scale, at the foot of the section so it sits
+                     directly under the two fields it exists to help fill in.
+
+                     The Starting and Ending Points are a WINDOW onto this text, and they
+                     can only be chosen by someone who can see it: the parsed weight shows
+                     what the window produced, never what it was cut from, so a window set
+                     wrongly just leaves the quantity box empty with nothing to go on.
+
+                     Full width and below its own label rather than in the value column
+                     the rows above use - this is a line of characters to be counted, not
+                     a figure to be read, and it needs the whole width to be counted in. -->
+                <LinearLayout
+                    android:id="@+id/llWeighingScaleStream"
+                    style="@style/BillSettingRow"
+                    android:orientation="vertical">
+
+                    <!-- A plain vertical block, NOT @style/BillSettingText. That style is
+                         width=0dp with a weight, which is right in the horizontal rows
+                         above and wrong here: in a vertical parent the weight takes the
+                         height and the zero width collapses the text out of sight. -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+                        <TextView style="@style/BillSettingTitle" android:text="Scale Data" />
+                        <TextView
+                            android:id="@+id/tvWeighingScaleStreamSub"
+                            style="@style/BillSettingSub"
+                            android:text="What the scale is sending, as it arrives — count along it to set the points above" />
+                    </LinearLayout>
+
+                    <!-- Monospaced, and the ruler under it set the same way: the whole
+                         point is that character 8 on one line is character 8 on the
+                         other, which only a fixed-width face gives. -->
+                    <TextView
+                        android:id="@+id/tvWeighingScaleStream"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:paddingHorizontal="10dp"
+                        android:paddingTop="8dp"
+                        android:background="#F1F3F4"
+                        android:fontFamily="monospace"
+                        android:textSize="13sp"
+                        android:textColor="@color/text_main"
+                        android:maxLines="2"
+                        android:ellipsize="start"
+                        android:focusable="false"
+                        android:focusableInTouchMode="false"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvWeighingScaleRuler"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingHorizontal="10dp"
+                        android:paddingBottom="8dp"
+                        android:background="#F1F3F4"
+                        android:fontFamily="monospace"
+                        android:textSize="13sp"
+                        android:textColor="@color/text_secondary"
+                        android:maxLines="1"
+                        android:ellipsize="start"
+                        />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

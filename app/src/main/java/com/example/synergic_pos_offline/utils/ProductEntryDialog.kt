@@ -268,9 +268,6 @@ object ProductEntryDialog {
         val btnUseScaleWeight = view.findViewById<MaterialButton>(R.id.btnUseScaleWeight)
         val scaleEnabled = product.allowFraction && UsbScaleManager.isEnabled(context)
         llScaleWeight.visibility = if (scaleEnabled) android.view.View.VISIBLE else android.view.View.GONE
-        val llScaleStream = view.findViewById<android.view.View>(R.id.llScaleStream)
-        val tvScaleStream = view.findViewById<android.widget.TextView>(R.id.tvScaleStream)
-        llScaleStream.visibility = if (scaleEnabled) android.view.View.VISIBLE else android.view.View.GONE
         var lastWeight: Double? = null
         if (scaleEnabled) {
             // THE READING GOES STRAIGHT INTO QUANTITY, which is the whole point of
@@ -307,8 +304,7 @@ object ProductEntryDialog {
                 onError = { message ->
                     etScaleWeight.setText("")
                     etScaleWeight.hint = message
-                },
-                onRaw = { chunk -> tvScaleStream.text = appendStream(tvScaleStream.text, chunk) }
+                }
             )
             btnUseScaleWeight.setOnClickListener {
                 val weight = lastWeight
@@ -443,34 +439,6 @@ object ProductEntryDialog {
             return ""   // reject this edit, leave the field as it was
         }
     }
-
-    /**
-     * The scale's raw stream, rolled forward one chunk at a time.
-     *
-     * Appended rather than replaced, because a single chunk flashing past is not a
-     * stream - what tells you whether a scale is framing its lines properly is seeing
-     * several of them in a row. Held to [STREAM_TAIL] characters, oldest dropped, so a
-     * scale left running for an hour does not grow a string until the popup stutters.
-     *
-     * CR and LF are shown as `\r` and `\n` rather than being obeyed. A weighing scale's
-     * framing is exactly what is in question when somebody opens this, and a line break
-     * that is drawn as a line break is a character you cannot see - it is also what
-     * would make this two-line box lurch on every reading.
-     */
-    internal fun appendStream(existing: CharSequence?, chunk: String): String {
-        val shown = chunk
-            .replace("\r", "\\r")
-            .replace("\n", "\\n")
-            // Anything else unprintable becomes a dot, so a stray byte is visible as
-            // something being there without pushing the rest of the line out of shape.
-            .map { if (it.code < 0x20 || it.code == 0x7F) '.' else it }
-            .joinToString("")
-        val joined = (existing?.toString().orEmpty() + shown)
-        return if (joined.length <= STREAM_TAIL) joined else joined.takeLast(STREAM_TAIL)
-    }
-
-    /** About two lines of the monospaced box the stream is shown in. */
-    private const val STREAM_TAIL = 160
 
     private fun qtyText(v: Double): String = Quantity.text(v)
 

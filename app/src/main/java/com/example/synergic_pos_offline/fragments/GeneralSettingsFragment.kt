@@ -20,6 +20,7 @@ import com.example.synergic_pos_offline.utils.SettingsCache
 import com.example.synergic_pos_offline.utils.ThemeManager
 import android.widget.ArrayAdapter
 import android.widget.RadioGroup
+import android.widget.TextView
 import androidx.core.view.isVisible
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.ItemRate
 import com.example.synergic_pos_offline.database.GeneralSettingsDao.LandingScreen
@@ -82,6 +83,19 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
     private lateinit var etWeighingScaleStartPoint: TextInputEditText
     private lateinit var llWeighingScaleEndPoint: View
     private lateinit var etWeighingScaleEndPoint: TextInputEditText
+    private lateinit var llWeighingScaleStream: View
+    private lateinit var tvWeighingScaleStream: TextView
+    private lateinit var tvWeighingScaleRuler: TextView
+    private lateinit var tvWeighingScaleStreamSub: TextView
+
+    /**
+     * Whether this screen currently holds the scale open for the live preview.
+     *
+     * Tracked because the port is a single shared resource - [UsbScaleManager] is one
+     * connection - and this screen must give it back when it leaves, or the sale screen's
+     * quantity popup finds it taken.
+     */
+    private var scalePreviewOn = false
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -124,6 +138,10 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         etWeighingScaleStartPoint = view.findViewById(R.id.etWeighingScaleStartPoint)
         llWeighingScaleEndPoint = view.findViewById(R.id.llWeighingScaleEndPoint)
         etWeighingScaleEndPoint = view.findViewById(R.id.etWeighingScaleEndPoint)
+        llWeighingScaleStream = view.findViewById(R.id.llWeighingScaleStream)
+        tvWeighingScaleStream = view.findViewById(R.id.tvWeighingScaleStream)
+        tvWeighingScaleRuler = view.findViewById(R.id.tvWeighingScaleRuler)
+        tvWeighingScaleStreamSub = view.findViewById(R.id.tvWeighingScaleStreamSub)
 
         val s = dao.load()
         // Section access is an admin-only control: only an admin sees or sets it.
@@ -236,6 +254,10 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             etWeighingScaleStartPoint.isEnabled = on
             llWeighingScaleEndPoint.setRowEnabled(on)
             etWeighingScaleEndPoint.isEnabled = on
+            llWeighingScaleStream.setRowEnabled(on)
+            // The preview follows the switch: opening the port for a scale the shop has
+            // turned off would raise a USB permission dialog nobody asked for.
+            if (on) startScalePreview() else stopScalePreview()
         }
         applyWeighingScaleState()
 
@@ -384,7 +406,14 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         SettingsAutoSave.onChange(
             ::autoSave,
             swLastBillStatus, swQuantityStatus, /* swCustomerInfo, */ swNegativeStock,
-            rgItemRate, rgLandingScreen, actProductSort, actWeighingScaleBaud, actWeighingScalePort
+            rgItemRate, rgLandingScreen, actProductSort
+        )
+        // The port and the baud rate save like the rest AND reopen the preview, because
+        // both decide what arrives on it. Left on the old port it would sit showing the
+        // last thing it read, which looks exactly like a scale that has stopped sending.
+        SettingsAutoSave.onChange(
+            { autoSave(); if (swWeighingScale.isChecked) startScalePreview() },
+            actWeighingScaleBaud, actWeighingScalePort
         )
         SettingsAutoSave.onTyped(
             ::autoSave,
@@ -415,6 +444,82 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
         com.example.synergic_pos_offline.utils.SettingsHighlighter.apply(
             view, arguments?.getString(com.example.synergic_pos_offline.utils.SettingsHighlighter.ARG_SETTING)
         )
+    }
+
+    /**
+     * Opens the scale and streams what it sends into the preview at the foot of the
+     * Weighing Scale section.
+     *
+     * Only the RAW text is taken. This screen deliberately ignores the parsed weight:
+     * the whole reason to look here is that parsing is producing nothing, or the wrong
+     * thing, and a figure derived from the very settings under test would say nothing
+     * about why.
+     *
+     * Restarted rather than toggled whenever the port or the baud rate moves, because
+     * both decide what arrives - a preview left on the old port shows the last thing it
+     * read and looks like a scale that has stopped sending.
+     */
+    private fun startScalePreview() {
+        if (!isAdded) return
+        stopScalePreview()
+        scalePreviewOn = true
+        tvWeighingScaleStream.text = ""
+        tvWeighingScaleRuler.text = ""
+        tvWeighingScaleStreamSub.text = WAITING
+        com.example.synergic_pos_offline.utils.UsbScaleManager.connect(
+            requireContext(),
+            // The weight itself is not wanted here - see above.
+            onWeight = {},
+            onError = { message ->
+                if (isAdded) tvWeighingScaleStreamSub.text = message
+            },
+            onRaw = { chunk ->
+                if (!isAdded) return@connect
+                val text = com.example.synergic_pos_offline.utils.ScaleStream.append(
+                    tvWeighingScaleStream.text, chunk
+                )
+                tvWeighingScaleStream.text = text
+                // The ruler is rebuilt to the text's own width, so the columns line up.
+                tvWeighingScaleRuler.text =
+                    com.example.synergic_pos_offline.utils.ScaleStream.ruler(text)
+                tvWeighingScaleStreamSub.text = READING
+            }
+        )
+    }
+
+    private companion object {
+        /**
+         * What the line under "Scale Data" says, by state.
+         *
+         * The box is blank both when the scale has sent nothing yet and when it is not
+         * connected at all, and those need telling apart: one is "wait a moment", the
+         * other is "the port is wrong". So the caption carries the state and the box
+         * carries only the characters.
+         */
+        const val WAITING = "Connecting — put something on the pan"
+        const val READING = "Live from the scale — count along it to set the points above"
+        const val OFF = "Switch the scale on to see what it is sending"
+    }
+
+    /** Closes the scale and says so, leaving the port free for the sale screen. */
+    private fun stopScalePreview() {
+        if (!scalePreviewOn) return
+        scalePreviewOn = false
+        com.example.synergic_pos_offline.utils.UsbScaleManager.disconnect()
+        if (isAdded) tvWeighingScaleStreamSub.text = OFF
+    }
+
+    /**
+     * Gives the port back when this screen goes away.
+     *
+     * [UsbScaleManager] holds ONE connection for the whole app. Left open, the quantity
+     * popup on the sale screen would open a scale that is already open here - and the
+     * shop would report that weights stopped arriving, with nothing on screen to say
+     * that a settings page it had visited an hour ago was still holding the port.
+     */
+    override fun onDestroyView() {
+        stopScalePreview()
+        super.onDestroyView()
     }
 
     /**

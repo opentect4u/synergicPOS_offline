@@ -292,49 +292,10 @@
     </LinearLayout>
     </com.example.synergic_pos_offline.utils.MaxHeightScrollView>
 
-        <!-- The raw scale stream, shown alongside the weight box whenever the scale is
-             connected. Outside the scroll, like the buttons, so it stays put at the foot
-             of the popup while the reader is watching the pan settle rather than sliding
-             away under whatever the product details happen to be.
-
-             It is diagnostic: it says what the scale is ACTUALLY sending, which is the
-             one thing the parsed weight cannot tell you when the start/end points or the
-             baud rate are set wrongly and the quantity box stays empty. -->
-        <LinearLayout
-            android:id="@+id/llScaleStream"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingHorizontal="24dp"
-            android:paddingTop="4dp"
-            android:visibility="gone">
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="#E0E0E0"
-                android:layout_marginBottom="8dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Scale data"
-                android:textSize="11sp"
-                android:textColor="@color/text_secondary" />
-
-            <TextView
-                android:id="@+id/tvScaleStream"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:fontFamily="monospace"
-                android:textSize="12sp"
-                android:textColor="@color/text_main"
-                android:maxLines="2"
-                android:ellipsize="start"
-                android:focusable="false"
-                android:focusableInTouchMode="false" />
-        </LinearLayout>
+        <!-- The raw scale stream is NOT here any more. It is a setup aid - it exists to
+             help choose the Starting and Ending Points - so it belongs beside those
+             fields, at the foot of General Settings' Weighing Scale section, not in front
+             of the person selling. See ScaleStream. -->
 
         <!-- Buttons: fixed footer outside the scroll, so they never get clipped. -->
         <LinearLayout

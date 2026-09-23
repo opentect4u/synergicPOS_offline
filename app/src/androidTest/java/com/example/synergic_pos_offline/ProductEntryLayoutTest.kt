@@ -36,27 +36,26 @@ class ProductEntryLayoutTest {
             R.id.etQty, R.id.etRate, R.id.tvLineAmount, R.id.tvTaxable,
             R.id.tilRateSelect, R.id.actRateSelect, R.id.rowItemDiscount,
             R.id.btnDialogCancel, R.id.btnDialogAdd,
-            // The scale row, unchanged...
-            R.id.llScaleWeight, R.id.etScaleWeight, R.id.btnUseScaleWeight,
-            // ...and the raw stream added below it.
-            R.id.llScaleStream, R.id.tvScaleStream
+            // The scale row: the live weight and the button that moves it into the
+            // quantity. The raw stream that briefly sat below this has moved to General
+            // Settings, beside the Starting and Ending Points it exists to help set.
+            R.id.llScaleWeight, R.id.etScaleWeight, R.id.btnUseScaleWeight
         ).forEach {
             assertNotNull("a view the dialog binds is missing", view.findViewById<View>(it))
         }
     }
 
     @Test
-    fun theStreamStartsHiddenAndStaysOutOfTheWayOfTheQuantityBox() {
+    fun theScaleRowStartsHiddenAndStaysOutOfTheWayOfTheQuantityBox() {
         val view = inflate()
-        // Hidden until a scale is actually connected - the dialog turns it on alongside
-        // the weight row, and a till with no scale should see no trace of it.
-        assertEquals(View.GONE, view.findViewById<View>(R.id.llScaleStream).visibility)
+        // Hidden until a scale is actually connected, so a till with no scale sees no
+        // trace of it.
+        assertEquals(View.GONE, view.findViewById<View>(R.id.llScaleWeight).visibility)
 
-        // Not focusable, deliberately. A focusable view added to this dialog can take
-        // the focus on first layout and leave the quantity box without the keyboard,
-        // which would break the one flow this change was told to leave alone.
-        val stream = view.findViewById<View>(R.id.tvScaleStream)
-        assertEquals(false, stream.isFocusable)
+        // The weight box is a display, not an input. It must not take the focus on first
+        // layout, or the quantity box - the one field this popup exists to fill - opens
+        // without the keyboard.
+        assertEquals(false, view.findViewById<View>(R.id.etScaleWeight).isFocusable)
 
         // The quantity box is still the one that can take input.
         assertEquals(true, view.findViewById<View>(R.id.etQty).isFocusable)
