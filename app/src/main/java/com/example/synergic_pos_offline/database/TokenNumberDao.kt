@@ -87,15 +87,22 @@ class TokenNumberDao(context: Context) {
     ): Int? {
         // Dates are compared by prefix so the one expression works for a plain date
         // (bill_date) and a date-time (created_at) alike.
-        val period = when (s.tokenResetMode) {
-            BillSettingsDao.ResetMode.DAILY -> "substr($dateCol, 1, 10) = ?" to nowDate
-            BillSettingsDao.ResetMode.MONTHLY -> "substr($dateCol, 1, 7) = ?" to nowDate.take(7)
-            BillSettingsDao.ResetMode.YEARLY -> "substr($dateCol, 1, 4) = ?" to nowDate.take(4)
+        //
+        // As a range on the text ("2026-09" <= "2026-09-14 10:02:11" < "2026-09~")
+        // rather than substr(): the same rows, but td_bills can answer a range from
+        // its bill_date index instead of reading every bill ever written.
+        val prefix = when (s.tokenResetMode) {
+            BillSettingsDao.ResetMode.DAILY -> nowDate
+            BillSettingsDao.ResetMode.MONTHLY -> nowDate.take(7)
+            BillSettingsDao.ResetMode.YEARLY -> nowDate.take(4)
             BillSettingsDao.ResetMode.CONTINUE -> null
         }
         val where = StringBuilder("$codeCol LIKE '$MARKER%'")
         val args = mutableListOf<String>()
-        period?.let { where.append(" AND ").append(it.first); args.add(it.second) }
+        prefix?.let {
+            where.append(" AND $dateCol >= ? AND $dateCol < ?")
+            args.add(it); args.add("$it~")
+        }
         excludeId?.let { where.append(" AND id <> ?"); args.add(it.toString()) }
         return runCatching {
             db.rawQuery(

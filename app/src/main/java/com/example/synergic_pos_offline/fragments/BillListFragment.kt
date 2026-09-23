@@ -2,6 +2,8 @@ package com.example.synergic_pos_offline.fragments
 
 import android.content.res.ColorStateList
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.LayoutInflater
@@ -27,6 +29,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
 /**
  * Bill History - an item-wise list of past bills, sourced from the database via
@@ -55,8 +58,32 @@ class BillListFragment : Fragment(), TitledScreen {
     private lateinit var rv: RecyclerView
     private lateinit var tvEmpty: TextView
     private val dao by lazy { BillDao(requireContext()) }
-    private var allBills: List<BillDao.Bill> = emptyList()
     private var actItem: MaterialAutoCompleteTextView? = null
+
+    /**
+     * The bills on screen so far - [PAGE_SIZE] at a time, the next page read as the
+     * list nears its end. Never the whole book: a till with a lakh bills behind it
+     * used to read every one of them, and every line on every one, on the main
+     * thread each time this screen was shown - see [BillDao.page].
+     */
+    private val bills = mutableListOf<BillDao.Bill>()
+    private lateinit var adapter: BillAdapter
+    private var loading = false
+    private var endReached = false
+
+    /**
+     * Bumped by every fresh read. A page that comes back for an older generation -
+     * the filter moved on while it was being read - is dropped rather than shown
+     * under a filter it does not belong to.
+     */
+    private var generation = 0
+
+    /** One reader, so pages land in the order they were asked for. */
+    private var loadExecutor = Executors.newSingleThreadExecutor()
+
+    /** Typing re-reads once the operator pauses, not once per key. */
+    private val debounce = Handler(Looper.getMainLooper())
+    private val debouncedRefresh = Runnable { if (view != null) refresh() }
 
     private var query = ""
     private var itemQuery = ""
@@ -78,7 +105,8 @@ class BillListFragment : Fragment(), TitledScreen {
     private var customFrom: Calendar? = null
     private var customTo: Calendar? = null
     private val billDateFormat = SimpleDateFormat("dd-MM-yyyy", Locale.US)
-    private val billDateTimeFormat = SimpleDateFormat("dd-MM-yyyy HH:mm", Locale.US)
+    /** bill_date's own format, for the bounds [BillDao.page] compares it against. */
+    private val dbDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
 
     /** Sort options for the bill list. */
     private enum class Sort(val label: String) {
@@ -99,7 +127,7 @@ class BillListFragment : Fragment(), TitledScreen {
      * scrolling to the foot of a day's trading to reach the most recent sale.
      *
      * Ascending is the option directly beneath it, for reading the book as a run
-     * rather than reaching into it - see [byBillNo], which both share.
+     * rather than reaching into it - see [BillDao.page], whose ordering both share.
      *
      * First in the list as well as the default, so it is where the eye lands when the
      * sort is opened to come back to it.
@@ -121,7 +149,23 @@ class BillListFragment : Fragment(), TitledScreen {
         rv = view.findViewById(R.id.rvBills)
         tvEmpty = view.findViewById(R.id.tvEmpty)
 
+        loadExecutor = Executors.newSingleThreadExecutor()
         rv.layoutManager = LinearLayoutManager(requireContext())
+        adapter = BillAdapter(
+            bills,
+            onView = { if (pickingForReturn) openForReturn(it) else openBill(it) },
+            onPrint = { printBill(it) },
+            onCancel = { confirmCancelBill(it) },
+            showPrint = !pickingForReturn
+        )
+        rv.adapter = adapter
+        // The next page is read while a few rows are still below the fold, so a
+        // steady scroll does not hit the end of the list and wait.
+        rv.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (dy > 0) loadMoreIfNearEnd()
+            }
+        })
 
         // Status radio group: Active bills (default) vs Cancelled.
         val accent = ThemeManager.getThemeColor(requireContext())
@@ -177,7 +221,20 @@ class BillListFragment : Fragment(), TitledScreen {
             refresh()
         }
 
-        reload()
+        // Item suggestions are every name ever sold - a pass over every bill line - so
+        // they are read once per visit and off the main thread. The first page of
+        // bills is read by onResume, which always follows.
+        val ctx = requireContext().applicationContext
+        loadExecutor.execute {
+            val names = runCatching { BillDao(ctx).allItems() }
+                .onFailure { android.util.Log.e("BillListFragment", "Item names read failed", it) }
+                .getOrNull() ?: return@execute
+            view?.post {
+                if (isAdded) actItem?.setAdapter(
+                    ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, names)
+                )
+            }
+        }
     }
 
     override fun onResume() {
@@ -185,13 +242,74 @@ class BillListFragment : Fragment(), TitledScreen {
         reload()
     }
 
-    /** Loads bills from the database, refreshes item suggestions, then re-filters. */
+    override fun onDestroyView() {
+        debounce.removeCallbacks(debouncedRefresh)
+        loadExecutor.shutdownNow()
+        super.onDestroyView()
+    }
+
+    /**
+     * Re-reads what is on screen, keeping the place: as many bills as were already
+     * showing, and the scroll position over them. Coming back from a bill, or
+     * cancelling one, should not throw the operator back to the top of the list.
+     */
     private fun reload() {
-        allBills = dao.getAll()
-        actItem?.setAdapter(
-            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, dao.allItems())
+        load(
+            offset = 0, limit = maxOf(PAGE_SIZE, bills.size), replace = true,
+            scrollState = rv.layoutManager?.onSaveInstanceState()
         )
-        refresh()
+    }
+
+    /** A new filter or sort: back to the first page. */
+    private fun refresh() {
+        debounce.removeCallbacks(debouncedRefresh)
+        load(offset = 0, limit = PAGE_SIZE, replace = true)
+        rv.scrollToPosition(0)
+    }
+
+    private fun loadMoreIfNearEnd() {
+        if (loading || endReached) return
+        val lm = rv.layoutManager as? LinearLayoutManager ?: return
+        if (lm.findLastVisibleItemPosition() >= bills.size - PREFETCH_DISTANCE) {
+            load(offset = bills.size, limit = PAGE_SIZE, replace = false)
+        }
+    }
+
+    /**
+     * Reads [limit] bills from [offset] on [loadExecutor], then shows them: in place
+     * of the list when [replace], after it otherwise. The list on screen stays up
+     * until its replacement has arrived, so a new filter does not blank the screen
+     * while it is read.
+     */
+    private fun load(offset: Int, limit: Int, replace: Boolean, scrollState: android.os.Parcelable? = null) {
+        val gen = if (replace) ++generation else generation
+        loading = true
+        val filter = currentFilter()
+        val dao = dao   // resolved here, on the main thread, not first touched on the reader's
+        loadExecutor.execute {
+            val rows = runCatching { dao.page(filter, offset, limit) }
+                .onFailure { android.util.Log.e("BillListFragment", "Bill page read failed", it) }
+                .getOrDefault(emptyList())
+            view?.post {
+                if (!isAdded || gen != generation) return@post
+                loading = false
+                if (replace) {
+                    bills.clear()
+                    bills.addAll(rows)
+                    adapter.notifyDataSetChanged()
+                    scrollState?.let { rv.layoutManager?.onRestoreInstanceState(it) }
+                } else {
+                    val start = bills.size
+                    bills.addAll(rows)
+                    adapter.notifyItemRangeInserted(start, rows.size)
+                }
+                endReached = rows.size < limit
+                showEmptyState()
+                // A page that does not fill the screen gives nothing to scroll, so the
+                // next one would never be asked for.
+                rv.post { if (isAdded) loadMoreIfNearEnd() }
+            }
+        }
     }
 
     /** Opens a date picker for the From/To field, then re-filters. */
@@ -214,83 +332,59 @@ class BillListFragment : Fragment(), TitledScreen {
         ).show()
     }
 
-    private fun refresh() {
-        val q = query.trim()
+    /** Return Days for the picker, 0 for History or no limit - see [currentFilter]. */
+    private var returnDays = 0
 
-        // Preset windows use a rolling cutoff; custom range uses From/To bounds.
-        val cutoff = range.days?.let { d ->
-            Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -d) }.time
-        }
-        val today = Calendar.getInstance()
-        val from = when (range) {
-            Range.CUSTOM -> customFrom?.let { startOfDay(it) }
-            Range.TODAY -> startOfDay(today)
-            else -> null
-        }
-        val to = when (range) {
-            Range.CUSTOM -> customTo?.let { endOfDay(it) }
-            Range.TODAY -> endOfDay(today)
-            else -> null
-        }
-
-        // The return window only bounds the picker, and only when a limit is set.
-        // Read per refresh rather than held, so changing it in General Settings and
-        // coming back shows the new window.
-        val returnDays = if (pickingForReturn) {
+    /**
+     * The screen's filters as [BillDao.page] reads them. Every rule the list used to
+     * apply in memory is here as a bound on the query instead:
+     *
+     * - a preset window keeps bills dated after the day [Range.days] back - the
+     *   rolling cutoff it always was, read at day granularity;
+     * - Today and a custom range are inclusive dates;
+     * - the picker's Sale Return Days window keeps bills from that many days back,
+     *   so a bill past it is not offered at all rather than listed and then refused
+     *   when opened. Read per refresh rather than held, so changing it in General
+     *   Settings and coming back shows the new window;
+     * - History files a returned bill with the cancelled ones; the picker judges by
+     *   the bill's own status alone, or the rest of a part-return could never be taken.
+     *
+     * Bill-number order is prefix as text, counter as a number, receipt_no as the
+     * tie-break - so INV-9 sits above INV-10, and two bills called INV-0001 from
+     * either side of an erase keep a steady order. See [BillDao.page].
+     */
+    private fun currentFilter(): BillDao.HistoryFilter {
+        fun daysBack(n: Int): String =
+            dbDateFormat.format(Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -n) }.time)
+        val today = dbDateFormat.format(Date())
+        returnDays = if (pickingForReturn) {
             GeneralSettingsDao(requireContext()).load().saleReturnDays
         } else 0
-
-        val item = itemQuery.trim()
-        val filtered = allBills.filter { b ->
-            val matchesText = q.isEmpty() ||
-                b.billNo.contains(q, true) || b.name.contains(q, true) ||
-                b.date.contains(q, true) || b.time.contains(q, true) ||
-                b.total.contains(q, true)
-            val d = parseDate(b.date)
-            val matchesRange = when {
-                cutoff != null -> d != null && !d.before(cutoff)
-                from != null || to != null ->
-                    d != null && (from == null || !d.before(from)) && (to == null || !d.after(to))
-                else -> true
-            }
-            val matchesItem = item.isEmpty() || b.items.any { it.contains(item, true) }
-            val matchesAmount = (minAmount == null || b.amount >= minAmount!!) &&
-                (maxAmount == null || b.amount <= maxAmount!!)
-            // History files a returned bill with the cancelled ones - some or all of
-            // it has come back, so it is not a live sale any more. The picker keeps
-            // judging by the bill's own status alone: a partly-returned bill has to
-            // stay listed, or the rest of that return could never be taken.
-            val matchesStatus =
-                if (pickingForReturn) b.cancelled == showCancelled
-                else (b.cancelled || b.returned) == showCancelled
-            // A bill past the Sale Return Days limit is not offered for return at all,
-            // rather than being listed and then refused when it is opened.
-            val matchesReturnWindow = !pickingForReturn ||
-                ReturnDao.withinReturnWindow(d, returnDays)
-            matchesText && matchesRange && matchesItem && matchesAmount && matchesStatus &&
-                matchesReturnWindow
-        }
-
-        val sorted = when (sort) {
-            // Reversed rather than a comparator of its own, so the two directions can
-            // never disagree about what "by bill number" means - the prefix grouping
-            // and the receiptNo tie-break come along with it.
-            Sort.BILL_NO_DESC -> filtered.sortedWith(byBillNo.reversed())
-            Sort.BILL_NO_ASC -> filtered.sortedWith(byBillNo)
-            Sort.DATE_DESC -> filtered.sortedByDescending { sortMillis(it) }
-            Sort.DATE_ASC -> filtered.sortedBy { sortMillis(it) }
-            Sort.AMOUNT_DESC -> filtered.sortedByDescending { it.amount }
-            Sort.AMOUNT_ASC -> filtered.sortedBy { it.amount }
-        }
-
-        rv.adapter = BillAdapter(
-            sorted,
-            onView = { if (pickingForReturn) openForReturn(it) else openBill(it) },
-            onPrint = { printBill(it) },
-            onCancel = { confirmCancelBill(it) },
-            showPrint = !pickingForReturn
+        return BillDao.HistoryFilter(
+            text = query.trim(),
+            item = itemQuery.trim(),
+            minAmount = minAmount,
+            maxAmount = maxAmount,
+            after = range.days?.let { daysBack(it) },
+            from = when (range) {
+                Range.TODAY -> today
+                Range.CUSTOM -> customFrom?.let { dbDateFormat.format(it.time) }
+                else -> null
+            },
+            to = when (range) {
+                Range.TODAY -> today
+                Range.CUSTOM -> customTo?.let { dbDateFormat.format(it.time) }
+                else -> null
+            },
+            returnableFrom = if (pickingForReturn && returnDays > 0) daysBack(returnDays) else null,
+            showCancelled = showCancelled,
+            pickingForReturn = pickingForReturn,
+            sort = BillDao.HistorySort.valueOf(sort.name)
         )
-        tvEmpty.visibility = if (sorted.isEmpty()) View.VISIBLE else View.GONE
+    }
+
+    private fun showEmptyState() {
+        tvEmpty.visibility = if (bills.isEmpty()) View.VISIBLE else View.GONE
         // An empty picker is usually the return window rather than an empty till, and
         // "No bills found" would send the operator looking for a bill that is there.
         tvEmpty.text = if (pickingForReturn && returnDays > 0) {
@@ -300,55 +394,14 @@ class BillListFragment : Fragment(), TitledScreen {
         }
     }
 
-    /**
-     * Bills in bill-number order, the way a book reads.
-     *
-     * ## Why not a plain string sort
-     *
-     * A bill number is a prefix and a counter - "INV-9", "INV-10" - and comparing those
-     * as text puts 10 before 9, because "1" sorts before "9". The list would look
-     * ordered and be wrong exactly where a long day makes it matter, at the tens and
-     * hundreds boundaries.
-     *
-     * So the two parts are compared as what they are: the prefix as text, the counter
-     * as a number. A shop that changes its prefix mid-book gets its series grouped
-     * rather than interleaved, which is also what somebody looking for a bill expects.
-     *
-     * ## The tie-break
-     *
-     * [BillDao.Bill.receiptNo] settles two bills that read the same. Numbering restarts
-     * when the book is erased (see BillErase), so a till can genuinely hold two bills
-     * called INV-0001 from either side of that line - and a sort that left their order
-     * to chance would shuffle them between one opening of this screen and the next.
-     * receiptNo never restarts, so the older one stays above the newer.
-     */
-    private val byBillNo: Comparator<BillDao.Bill> =
-        compareBy<BillDao.Bill> { it.billNo.takeWhile { c -> !c.isDigit() } }
-            .thenBy { b -> b.billNo.filter { it.isDigit() }.toLongOrNull() ?: Long.MAX_VALUE }
-            .thenBy { it.receiptNo }
-
-    /** Sortable timestamp (date + time) for a bill; 0 if unparseable. */
-    private fun sortMillis(b: BillDao.Bill): Long =
-        try { billDateTimeFormat.parse("${b.date} ${b.time}")?.time ?: 0L } catch (_: Exception) { 0L }
-
-    private fun startOfDay(c: Calendar): Date = (c.clone() as Calendar).apply {
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }.time
-
-    private fun endOfDay(c: Calendar): Date = (c.clone() as Calendar).apply {
-        set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59); set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
-    }.time
-
-    private fun parseDate(text: String): Date? =
-        try { billDateFormat.parse(text) } catch (_: Exception) { null }
-
-    /** Runs [onText] with the trimmed text on every change, then re-filters. */
+    /** Runs [onText] with the trimmed text on every change, then re-filters once typing pauses. */
     private fun android.widget.EditText.onChange(onText: (String) -> Unit) {
         addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
                 onText(s?.toString()?.trim().orEmpty())
-                refresh()
+                debounce.removeCallbacks(debouncedRefresh)
+                debounce.postDelayed(debouncedRefresh, TYPING_PAUSE_MS)
             }
             override fun afterTextChanged(s: Editable?) {}
         })
@@ -550,6 +603,14 @@ class BillListFragment : Fragment(), TitledScreen {
 
     companion object {
         private const val ARG_PICK_FOR_RETURN = "pick_for_return"
+
+        /** Bills read per page. */
+        private const val PAGE_SIZE = 20
+
+        /** How many rows from the end the next page is asked for. */
+        private const val PREFETCH_DISTANCE = 5
+
+        private const val TYPING_PAUSE_MS = 250L
 
         /** The bill picker for a sale return - see [pickingForReturn]. */
         fun forReturn(): BillListFragment = BillListFragment().apply {

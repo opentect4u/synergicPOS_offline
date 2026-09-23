@@ -55,8 +55,14 @@ class DatabaseHelper private constructor(context: Context) :
         addColumnIfMissing(db, Tables.MD_PRODUCTS, "regional_name", "TEXT")
         runCatching { db.execSQL(SQL_CREATE_MD_PRODUCT_NAMES) }
         migrateRegionalNamesToTable(db)
-        // Bills saved before the restaurant path recorded VAT - see the function.
-        repairMissingBillVat(db)
+        // Bills saved before the restaurant path recorded VAT - see the function. Once,
+        // not on every open: it asks every bill without VAT whether its lines carry
+        // any, which on a book of a lakh bills is a noticeable wait at every start-up
+        // to find nothing. A restore brings old bills back, so it runs again there -
+        // see [afterRestore].
+        if (!maintenance.getBoolean(KEY_BILL_VAT_REPAIRED, false) && repairMissingBillVat(db)) {
+            maintenance.edit().putBoolean(KEY_BILL_VAT_REPAIRED, true).apply()
+        }
         // WHAT THE LINE WAS SOLD AS. A bill line recorded a product_id and nothing
         // else, and the name was fetched back by joining md_products at print time -
         // so the name on a reprint was never the bill's own, it was whatever the
@@ -349,6 +355,8 @@ class DatabaseHelper private constructor(context: Context) :
         // that is holding two stores back onto one, so the settings the DAOs read
         // are the settings that were saved.
         runCatching { repairDuplicateStores(db) }
+        // After every column above exists - the return index reads bill_seq_no.
+        createBillLookupIndexes(db)
     }
 
     /** Builds an AFTER INSERT trigger that fills a null store_id from md_registration. */
@@ -740,7 +748,7 @@ class DatabaseHelper private constructor(context: Context) :
      * not touched, and one already correct is left alone, so this can run on every
      * open without ever moving a figure twice.
      */
-    private fun repairMissingBillVat(db: SQLiteDatabase) {
+    private fun repairMissingBillVat(db: SQLiteDatabase): Boolean =
         runCatching {
             db.execSQL(
                 """
@@ -760,7 +768,39 @@ class DatabaseHelper private constructor(context: Context) :
                 """.trimIndent()
             )
         }.onFailure { android.util.Log.e("DBMigrate", "Could not repair bill VAT totals", it) }
+            .isSuccess
+
+    /** One-off repairs already done on this install - see [onOpen] and [afterRestore]. */
+    private val maintenance by lazy {
+        appContext.getSharedPreferences(MAINTENANCE_PREFS, Context.MODE_PRIVATE)
     }
+
+    /**
+     * The store every row on this device was last stamped with at login, or null
+     * when that has to be done again. See LoginFragment.alignMasterDataToStore.
+     */
+    fun alignedStoreId(): Int? =
+        maintenance.getInt(KEY_ALIGNED_STORE, 0).takeIf { it > 0 }
+
+    fun markAligned(storeId: Int) {
+        maintenance.edit().putInt(KEY_ALIGNED_STORE, storeId).apply()
+    }
+
+    /** The next login re-stamps every table - the device's rows have been replaced or re-homed. */
+    fun forgetAlignment() {
+        maintenance.edit().remove(KEY_ALIGNED_STORE).apply()
+    }
+
+    /**
+     * What a restore has to redo. The rows it brought in may be from an older build
+     * - bills written before VAT was recorded - or from another store, so the
+     * once-only repair runs again on them and the next login re-stamps them.
+     */
+    fun afterRestore(db: SQLiteDatabase) {
+        forgetAlignment()
+        if (repairMissingBillVat(db)) maintenance.edit().putBoolean(KEY_BILL_VAT_REPAIRED, true).apply()
+    }
+
     private fun migrateRegionalNamesToTable(db: SQLiteDatabase) {
         runCatching {
             val pending = db.rawQuery(
@@ -1692,6 +1732,33 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_td_customer_ledger_customer ON td_customer_ledger(customer_id)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_td_kot_bill ON td_kot(bill_id)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_td_kot_items_kot ON td_kot_items(kot_id)")
+        createBillLookupIndexes(db)
+    }
+
+    /**
+     * The indexes a long bill book needs to stay quick: Bill History pages through
+     * td_bills by date, the next bill number is a MAX(bill_seq_no) in the reset
+     * period, and every history row asks whether a return was taken against it.
+     * Without these each of those is a scan of every bill ever written - fine at a
+     * few thousand, seconds at a lakh.
+     *
+     * Also run from [onOpen], so a database created before they existed gets them
+     * too; IF NOT EXISTS makes that a no-op on every open after the first. One at a
+     * time and each allowed to fail, so a table an older schema lacks costs only
+     * its own index.
+     */
+    private fun createBillLookupIndexes(db: SQLiteDatabase) {
+        listOf(
+            "CREATE INDEX IF NOT EXISTS idx_td_bills_date_seq ON td_bills(bill_date, bill_seq_no)",
+            "CREATE INDEX IF NOT EXISTS idx_td_bills_seq ON td_bills(bill_seq_no)",
+            "CREATE INDEX IF NOT EXISTS idx_td_bills_delete_date ON td_bills_delete(bill_date)",
+            "CREATE INDEX IF NOT EXISTS idx_td_bill_items_delete_bill ON td_bill_items_delete(bill_id)",
+            "CREATE INDEX IF NOT EXISTS idx_td_sale_returns_original ON td_sale_returns(original_bill_id)",
+            "CREATE INDEX IF NOT EXISTS idx_td_sale_returns_date_seq ON td_sale_returns(return_date, bill_seq_no)"
+        ).forEach { sql ->
+            runCatching { db.execSQL(sql) }
+                .onFailure { android.util.Log.w("DBMigrate", "Index skipped: $sql", it) }
+        }
     }
 
     /**
@@ -1792,6 +1859,10 @@ class DatabaseHelper private constructor(context: Context) :
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
         private const val DATABASE_VERSION = 23
+
+        private const val MAINTENANCE_PREFS = "db_maintenance"
+        private const val KEY_BILL_VAT_REPAIRED = "bill_vat_repaired"
+        private const val KEY_ALIGNED_STORE = "aligned_store_id"
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of
