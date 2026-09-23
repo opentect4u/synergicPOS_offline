@@ -46,6 +46,111 @@ object BillSettingsSnapshot {
         val itemwiseDiscount: Boolean
     )
 
+    /**
+     * The twelve columns of `td_bill_settings`, in the order [fromCursor] reads them.
+     *
+     * One list, used by every query that joins the table, so a column added here cannot
+     * be added to four of the five readers and forgotten in the fifth. [alias] is the
+     * name the query gives the joined table.
+     */
+    fun columns(alias: String): String = COLUMN_NAMES.joinToString(", ") { "$alias.$it" }
+
+    private val COLUMN_NAMES = listOf(
+        "hsn_code", "product_serial_number", "time_on_bill", "customer_details",
+        "customer_address_printing", "total_amount_font_size", "round_off",
+        "amount_in_words", "tax_enabled", "discount_pre_tax", "inclusive",
+        "itemwise_discount"
+    )
+
+    /**
+     * The snapshot starting at column [from] of [c], as selected by [columns].
+     *
+     * Null when the bill has no settings row - a LEFT JOIN that matched nothing, which
+     * is a bill made before any of this was recorded. That is the same null [parse]
+     * returned for an empty snapshot, and the renderer has always handled it.
+     */
+    fun fromCursor(c: android.database.Cursor, from: Int): Snapshot? {
+        if (c.isNull(from)) return null
+        return Snapshot(
+            hsnCode = c.getInt(from) == 1,
+            productSerialNumber = c.getInt(from + 1) == 1,
+            timeOnBill = c.getInt(from + 2) == 1,
+            customerDetails = runCatching {
+                BillSettingsDao.CustomerDetails.valueOf(c.getString(from + 3))
+            }.getOrDefault(BillSettingsDao.CustomerDetails.ONLY_MOBILE),
+            customerAddressPrinting = c.getInt(from + 4) == 1,
+            totalAmountFontSize = runCatching {
+                BillSettingsDao.FontSize.valueOf(c.getString(from + 5))
+            }.getOrDefault(BillSettingsDao.FontSize.REGULAR),
+            roundOff = c.getInt(from + 6) == 1,
+            amountInWords = c.getInt(from + 7) == 1,
+            taxEnabled = c.getInt(from + 8) == 1,
+            discountPreTax = c.getInt(from + 9) == 1,
+            inclusive = c.getInt(from + 10) == 1,
+            itemwiseDiscount = c.getInt(from + 11) == 1
+        )
+    }
+
+    /**
+     * The id of the row describing these settings, adding one if this combination is new.
+     *
+     * INSERT OR IGNORE then SELECT, leaning on the table's UNIQUE constraint across every
+     * column: it is the constraint that decides whether this combination has been seen,
+     * so letting it decide avoids both a second query and the gap between checking and
+     * inserting. Two tills billing at once therefore cannot create a duplicate row.
+     */
+    fun idFor(
+        db: android.database.sqlite.SQLiteDatabase,
+        settings: BillSettingsDao.BillSettings,
+        taxEnabled: Boolean,
+        discountPreTax: Boolean,
+        inclusive: Boolean,
+        itemwiseDiscount: Boolean
+    ): Long? {
+        val values = arrayOf<Any>(
+            if (settings.hsnCode) 1 else 0,
+            if (settings.productSerialNumber) 1 else 0,
+            if (settings.timeOnBill) 1 else 0,
+            settings.customerDetails.name,
+            if (settings.customerAddressPrinting) 1 else 0,
+            settings.totalAmountFontSize.name,
+            if (settings.roundOff) 1 else 0,
+            if (settings.amountInWords) 1 else 0,
+            if (taxEnabled) 1 else 0,
+            if (discountPreTax) 1 else 0,
+            if (inclusive) 1 else 0,
+            if (itemwiseDiscount) 1 else 0
+        )
+        val names = COLUMN_NAMES.joinToString(", ")
+        val placeholders = COLUMN_NAMES.joinToString(", ") { "?" }
+        db.execSQL(
+            "INSERT OR IGNORE INTO $TABLE ($names) VALUES ($placeholders)", values
+        )
+        val where = COLUMN_NAMES.joinToString(" AND ") { "$it = ?" }
+        return db.rawQuery(
+            "SELECT id FROM $TABLE WHERE $where LIMIT 1",
+            values.map { it.toString() }.toTypedArray()
+        ).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
+    }
+
+    /**
+     * The settings row [id] names, or null for a bill that has none.
+     *
+     * A lookup of its own rather than a join, because its caller reads its bill by fixed
+     * column INDEX: widening that query from one column to twelve would renumber every
+     * column after it, and a reprint that silently reads the wrong ones is a worse fault
+     * than one extra keyed lookup per reprint.
+     */
+    fun byId(db: android.database.sqlite.SQLiteDatabase, id: Long?): Snapshot? {
+        if (id == null || id <= 0L) return null
+        return db.rawQuery(
+            "SELECT ${COLUMN_NAMES.joinToString(", ")} FROM $TABLE WHERE id = ?",
+            arrayOf(id.toString())
+        ).use { c -> if (c.moveToFirst()) fromCursor(c, 0) else null }
+    }
+
+    private const val TABLE = "td_bill_settings"
+
     fun serialize(
         settings: BillSettingsDao.BillSettings,
         taxEnabled: Boolean,

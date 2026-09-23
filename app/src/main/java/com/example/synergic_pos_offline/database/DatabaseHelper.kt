@@ -153,7 +153,11 @@ class DatabaseHelper private constructor(context: Context) :
         // constraint to an existing column, and the writers are the two screens below.
         addColumnIfMissing(db, Tables.TD_STOCK_TRANSACTIONS, "stock_flow", "TEXT")
         addColumnIfMissing(db, Tables.TD_BILLS, "bill_seq_no", "INTEGER")
-        addColumnIfMissing(db, Tables.TD_BILLS, "settings_snapshot", "TEXT")
+        // settings_id, NOT settings_snapshot. The snapshot column was moved out to
+        // td_bill_settings in v23 and dropped; re-adding it here would put it straight
+        // back on every open - empty, unread, and undoing the migration that removed it.
+        addColumnIfMissing(db, Tables.TD_BILLS, "settings_id", "INTEGER")
+        addColumnIfMissing(db, Tables.TD_BILLS_DELETE, "settings_id", "INTEGER")
         // Restaurant-mode bill fields: which table/section it was, dine-in vs take-away,
         // and the service charge kept separate from generic other-charges.
         addColumnIfMissing(db, Tables.TD_BILLS, "table_number", "TEXT")
@@ -895,6 +899,8 @@ class DatabaseHelper private constructor(context: Context) :
         db.execSQL(SQL_CREATE_TD_PURCHASE)
         db.execSQL(SQL_CREATE_TD_PURCHASE_RETURN)
         db.execSQL(SQL_CREATE_TD_WRITE_OFF)
+        // Before the bill tables: both reference it.
+        db.execSQL(SQL_CREATE_TD_BILL_SETTINGS)
         db.execSQL(SQL_CREATE_TD_BILLS)
         db.execSQL(SQL_CREATE_TD_BILL_ITEMS)
         db.execSQL(SQL_CREATE_TD_BILLS_DELETE)
@@ -949,6 +955,7 @@ class DatabaseHelper private constructor(context: Context) :
         }
         if (oldVersion < 21) migrateV21AllowSplitBillType(db)
         if (oldVersion < 22) migrateV22RenameOthersPrinterToBarcode(db)
+        if (oldVersion < 23) migrateV23ExtractBillSettings(db)
         // gst_rate is dropped in onOpen via a portable table rebuild (see
         // dropProductGstRateIfPresent), which works on every SQLite version.
     }
@@ -1481,6 +1488,128 @@ class DatabaseHelper private constructor(context: Context) :
      * BARCODE. Any row the shop already configured under OTHERS keeps its address and
      * its connection type and simply answers to the new name.
      */
+    /**
+     * Moves `td_bills.settings_snapshot` out into [Tables.TD_BILL_SETTINGS] and leaves a
+     * `settings_id` behind in its place.
+     *
+     * ## The order matters
+     *
+     * The snapshots have to be READ and mapped before the rebuild drops the column they
+     * live in. So: make the table, add the id columns, backfill, and only then rebuild
+     * the two bill tables into their new shape.
+     *
+     * ## The JSON is parsed here rather than by BillSettingsSnapshot
+     *
+     * Deliberately, and for the reason the frozen `SQL_CREATE_*_V21` constants exist: a
+     * migration describes a database as it was on the day it was written. Calling into
+     * app code would tie this to whatever that code becomes later - add a field to the
+     * snapshot in a year and this migration, running against a database saved before that
+     * field existed, would start behaving differently. What is inlined below cannot
+     * change under it.
+     *
+     * A row whose JSON will not parse - or was never written, on a bill older than the
+     * snapshot itself - keeps a NULL `settings_id`. That is the case the renderer has
+     * always had to handle, and it renders as it did before.
+     */
+    private fun migrateV23ExtractBillSettings(db: SQLiteDatabase) {
+        db.execSQL(SQL_CREATE_TD_BILL_SETTINGS)
+        addColumnIfMissing(db, Tables.TD_BILLS, "settings_id", "INTEGER")
+        addColumnIfMissing(db, Tables.TD_BILLS_DELETE, "settings_id", "INTEGER")
+
+        // Both tables, and only the snapshots that actually differ: a shop's whole
+        // history is usually a handful of distinct combinations.
+        listOf(Tables.TD_BILLS, Tables.TD_BILLS_DELETE).forEach { table ->
+            if (!columnExists(db, table, "settings_snapshot")) return@forEach
+            val snapshots = mutableListOf<String>()
+            db.rawQuery(
+                "SELECT DISTINCT settings_snapshot FROM $table " +
+                    "WHERE settings_snapshot IS NOT NULL AND TRIM(settings_snapshot) <> ''",
+                null
+            ).use { c -> while (c.moveToNext()) c.getString(0)?.let { snapshots.add(it) } }
+
+            snapshots.forEach { json ->
+                val id = billSettingsIdForJson(db, json) ?: return@forEach
+                db.execSQL(
+                    "UPDATE $table SET settings_id = ? WHERE settings_snapshot = ?",
+                    arrayOf<Any>(id, json)
+                )
+            }
+        }
+
+        // Now the column can go. Relies on foreign keys being off for the upgrade (see
+        // onConfigure): td_bill_items and td_payments reference td_bills.
+        rebuildPreservingColumns(db, Tables.TD_BILLS, "td_bills_v23", SQL_CREATE_TD_BILLS_V23)
+        rebuildPreservingColumns(
+            db, Tables.TD_BILLS_DELETE, "td_bills_delete_v23", SQL_CREATE_TD_BILLS_DELETE_V23
+        )
+        createIndexes(db)   // the old tables' indexes went with them
+    }
+
+    /**
+     * The id of the [Tables.TD_BILL_SETTINGS] row matching [json], inserting one if this
+     * combination has not been seen before. Null if [json] is not readable.
+     *
+     * INSERT OR IGNORE then SELECT, rather than checking first: the UNIQUE constraint
+     * across every column is what decides whether this is a new combination, so letting
+     * it decide is both shorter and free of the gap between a check and an insert.
+     */
+    private fun billSettingsIdForJson(db: SQLiteDatabase, json: String): Long? {
+        val o = runCatching { org.json.JSONObject(json) }.getOrNull() ?: return null
+        // EVERY DEFAULT BELOW MIRRORS BillSettingsSnapshot.parse EXACTLY.
+        //
+        // They are not "false unless stated": a field an older bill never wrote falls
+        // back to whatever was true before that field existed, and three of them fall
+        // back to ON. Get one wrong and the bill still migrates, still reprints, and
+        // quietly reprints DIFFERENTLY from the day it was sold - which is the one thing
+        // a snapshot exists to prevent. Read them together with parse() if either moves.
+        val values = arrayOf<Any>(
+            if (o.optBoolean("hsnCode")) 1 else 0,
+            // Bills made before this was a choice were all numbered.
+            if (o.optBoolean("productSerialNumber", true)) 1 else 0,
+            // ...and all printed with the time beside the date.
+            if (o.optBoolean("timeOnBill", true)) 1 else 0,
+            o.optString("customerDetails", "ONLY_MOBILE").ifBlank { "ONLY_MOBILE" },
+            if (o.optBoolean("customerAddressPrinting")) 1 else 0,
+            o.optString("totalAmountFontSize", "REGULAR").ifBlank { "REGULAR" },
+            if (o.optBoolean("roundOff")) 1 else 0,
+            if (o.optBoolean("amountInWords")) 1 else 0,
+            // An older bill carries no "taxEnabled" - only "taxRegime" (GST/VAT/NONE).
+            if (taxEnabledIn(o)) 1 else 0,
+            if (o.optBoolean("discountPreTax", true)) 1 else 0,
+            if (o.optBoolean("inclusive", false)) 1 else 0,
+            // Item-wise, matching TaxSettingsDao's own default - the choice most likely
+            // to have been active before this field existed to record it.
+            if (o.optBoolean("itemwiseDiscount", true)) 1 else 0
+        )
+        val columns = "hsn_code, product_serial_number, time_on_bill, customer_details, " +
+            "customer_address_printing, total_amount_font_size, round_off, amount_in_words, " +
+            "tax_enabled, discount_pre_tax, inclusive, itemwise_discount"
+        db.execSQL(
+            "INSERT OR IGNORE INTO ${Tables.TD_BILL_SETTINGS} ($columns) " +
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            values
+        )
+        val where = columns.split(", ").joinToString(" AND ") { "$it = ?" }
+        return db.rawQuery(
+            "SELECT id FROM ${Tables.TD_BILL_SETTINGS} WHERE $where LIMIT 1",
+            values.map { it.toString() }.toTypedArray()
+        ).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
+    }
+
+    /**
+     * Whether tax was on for the bill whose snapshot is [o] - the same reading
+     * `BillSettingsSnapshot.parse` makes.
+     *
+     * New bills write `taxEnabled` outright. One written before that field existed has
+     * only `taxRegime`, where NONE means off and anything else means on; and a bill with
+     * neither predates the whole question, when tax was always on.
+     */
+    private fun taxEnabledIn(o: org.json.JSONObject): Boolean {
+        if (o.has("taxEnabled")) return o.optBoolean("taxEnabled", true)
+        val regime = runCatching { o.getString("taxRegime") }.getOrNull() ?: return true
+        return !regime.equals("NONE", ignoreCase = true)
+    }
+
     private fun migrateV22RenameOthersPrinterToBarcode(db: SQLiteDatabase) {
         db.execSQL(
             "UPDATE ${Tables.MD_PRINTER} SET printer_purpose = 'BARCODE' " +
@@ -1632,6 +1761,7 @@ class DatabaseHelper private constructor(context: Context) :
         const val TD_PURCHASE_RETURN = "td_purchase_return"
         const val TD_WRITE_OFF = "td_write_off"
         const val TD_BILLS = "td_bills"
+        const val TD_BILL_SETTINGS = "td_bill_settings"
         const val TD_BILL_ITEMS = "td_bill_items"
 
         /**
@@ -1661,7 +1791,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 22
+        private const val DATABASE_VERSION = 23
 
         /**
          * The GST slabs a product may be taxed at. CGST and SGST are always half of
@@ -1689,7 +1819,8 @@ class DatabaseHelper private constructor(context: Context) :
             Tables.MD_QR,
             Tables.MD_APP_SETTINGS, Tables.MD_SUPPLIER, Tables.MD_BATCH_STOCK, Tables.MD_VERSION,
             Tables.MD_PRINTER, Tables.MD_OPERATING_PRINTER,
-            Tables.TD_PURCHASE, Tables.TD_PURCHASE_RETURN, Tables.TD_WRITE_OFF, Tables.TD_BILLS,
+            Tables.TD_PURCHASE, Tables.TD_PURCHASE_RETURN, Tables.TD_WRITE_OFF,
+            Tables.TD_BILL_SETTINGS, Tables.TD_BILLS,
             Tables.TD_BILL_ITEMS, Tables.TD_PAYMENTS, Tables.TD_SALE_RETURNS, Tables.TD_RETURN_ITEMS,
             Tables.TD_STOCK_TRANSACTIONS, Tables.TD_CUSTOMER_LEDGER, Tables.TD_ADVANCE_PAYMENTS,
             Tables.TD_KOT, Tables.TD_KOT_ITEMS, Tables.TD_BILL_PRINTS,
@@ -2352,6 +2483,56 @@ class DatabaseHelper private constructor(context: Context) :
             )
         """
 
+        /**
+         * The bill-display settings a bill was made under, one row per DISTINCT
+         * combination - see [Tables.TD_BILL_SETTINGS].
+         *
+         * ## Why this is not a column on the bill any more
+         *
+         * It was: `td_bills.settings_snapshot`, a JSON object of these twelve fields
+         * written out again for every bill. A shop changes these settings a handful of
+         * times in its life, so a year of trading wrote the same few hundred characters
+         * across every row of the busiest table in the database - and stored them in a
+         * form nothing could query, so "which bills were made with HSN on?" meant reading
+         * every bill and parsing each one.
+         *
+         * ## Why DISTINCT rather than one row per bill
+         *
+         * These rows are written once and never edited: a bill freezes the settings it
+         * was made under, and changing a setting afterwards creates a NEW combination
+         * rather than altering the old one. So two bills made under identical settings
+         * can share a row without either being able to affect the other, and a busy till
+         * ends up with a lookup table of a dozen rows instead of one per sale. The UNIQUE
+         * constraint across every column is what makes that sharing automatic: the writer
+         * inserts and takes whatever id comes back, new or existing.
+         *
+         * A bill with no row - `settings_id IS NULL` - is one made before any of this
+         * existed. That already had to be handled, and still reads as it always did.
+         */
+        private const val SQL_CREATE_TD_BILL_SETTINGS = """
+            CREATE TABLE IF NOT EXISTS td_bill_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hsn_code INTEGER NOT NULL DEFAULT 0,
+                product_serial_number INTEGER NOT NULL DEFAULT 1,
+                time_on_bill INTEGER NOT NULL DEFAULT 1,
+                customer_details TEXT NOT NULL DEFAULT 'ONLY_MOBILE',
+                customer_address_printing INTEGER NOT NULL DEFAULT 0,
+                total_amount_font_size TEXT NOT NULL DEFAULT 'REGULAR',
+                round_off INTEGER NOT NULL DEFAULT 0,
+                amount_in_words INTEGER NOT NULL DEFAULT 0,
+                tax_enabled INTEGER NOT NULL DEFAULT 1,
+                discount_pre_tax INTEGER NOT NULL DEFAULT 1,
+                inclusive INTEGER NOT NULL DEFAULT 0,
+                itemwise_discount INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(
+                    hsn_code, product_serial_number, time_on_bill, customer_details,
+                    customer_address_printing, total_amount_font_size, round_off,
+                    amount_in_words, tax_enabled, discount_pre_tax, inclusive,
+                    itemwise_discount
+                )
+            )
+        """
+
         private const val SQL_CREATE_TD_BILLS = """
             CREATE TABLE IF NOT EXISTS td_bills (
                 receipt_no INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2374,7 +2555,7 @@ class DatabaseHelper private constructor(context: Context) :
                 -- the modes and their amounts are the rows in td_payments, and this
                 -- column says to go and read them.
                 bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','CASH SPLIT','VOID')),
-                settings_snapshot TEXT,
+                settings_id INTEGER REFERENCES td_bill_settings(id),
                 tot_price REAL DEFAULT 0,
                 tot_discount_amount REAL DEFAULT 0,
                 tot_discount_percentage REAL DEFAULT 0,
@@ -2467,6 +2648,119 @@ class DatabaseHelper private constructor(context: Context) :
          * previous run left the temporary table behind, and
          * [rebuildPreservingColumns]'s caller recreates the indexes afterwards.
          */
+        /**
+         * Frozen copies naming the TEMP tables, deliberately not built from
+         * [SQL_CREATE_TD_BILLS] - the same rule the V21 pair follow. A migration has to
+         * keep describing the shape it moved the database TO, whatever that shape
+         * becomes afterwards. rebuildPreservingColumns executes this to create the temp
+         * table, so the name here must be the temp name, not the real one.
+         */
+        private const val SQL_CREATE_TD_BILLS_V23 = """
+            CREATE TABLE td_bills_v23 (
+                receipt_no INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                bill_number TEXT,
+                bill_seq_no INTEGER,
+                bill_date TEXT,
+                bill_date_time TEXT,
+                customer_id INTEGER,
+                operator_id INTEGER,
+                waiter_id INTEGER,
+                table_number TEXT,
+                table_section TEXT,
+                order_type TEXT,
+                service_charge_amount REAL DEFAULT 0,
+                -- SPLIT: settled across more than one mode, ₹100 in notes and ₹50 over
+                -- UPI against one ₹150 bill. Naming it after whichever part happened to
+                -- be entered first said the bill was a cash sale, which it was not -
+                -- the modes and their amounts are the rows in td_payments, and this
+                -- column says to go and read them.
+                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','CASH SPLIT','VOID')),
+                settings_id INTEGER REFERENCES td_bill_settings(id),
+                tot_price REAL DEFAULT 0,
+                tot_discount_amount REAL DEFAULT 0,
+                tot_discount_percentage REAL DEFAULT 0,
+                discount_flag INTEGER NOT NULL DEFAULT 0,
+                discount_type TEXT,
+                tot_cgst_amount REAL DEFAULT 0,
+                tot_sgst_amount REAL DEFAULT 0,
+                tot_igst_amount REAL DEFAULT 0,
+                tot_vat_amount REAL DEFAULT 0,
+                tot_other_charges_amount REAL DEFAULT 0,
+                parcel_charge_amount REAL DEFAULT 0,
+                tot_round_off_amount REAL DEFAULT 0,
+                net_amount REAL DEFAULT 0,
+                amount_in_words TEXT,
+                gst_flag INTEGER NOT NULL DEFAULT 0,
+                vat_flag INTEGER NOT NULL DEFAULT 0,
+                is_mrp_billing INTEGER NOT NULL DEFAULT 0,
+                is_return_bill INTEGER NOT NULL DEFAULT 0,
+                is_duplicate INTEGER NOT NULL DEFAULT 0,
+                is_voided INTEGER NOT NULL DEFAULT 0,
+                bill_status TEXT CHECK(bill_status IN ('DRAFT','COMPLETED','CANCELLED')) DEFAULT 'DRAFT',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT,
+                FOREIGN KEY(customer_id) REFERENCES md_customers(id),
+                FOREIGN KEY(operator_id) REFERENCES md_users(id),
+                FOREIGN KEY(waiter_id) REFERENCES md_waiters(id)
+            )
+        """
+
+
+        private const val SQL_CREATE_TD_BILLS_DELETE_V23 = """
+            CREATE TABLE td_bills_delete_v23 (
+                receipt_no INTEGER PRIMARY KEY,
+                store_id INTEGER,
+                outlet_id INTEGER,
+                bill_number TEXT,
+                bill_seq_no INTEGER,
+                bill_date TEXT,
+                bill_date_time TEXT,
+                customer_id INTEGER,
+                operator_id INTEGER,
+                waiter_id INTEGER,
+                table_number TEXT,
+                table_section TEXT,
+                order_type TEXT,
+                service_charge_amount REAL DEFAULT 0,
+                -- SPLIT: settled across more than one mode, ₹100 in notes and ₹50 over
+                -- UPI against one ₹150 bill. Naming it after whichever part happened to
+                -- be entered first said the bill was a cash sale, which it was not -
+                -- the modes and their amounts are the rows in td_payments, and this
+                -- column says to go and read them.
+                bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','CASH SPLIT','VOID')),
+                settings_id INTEGER REFERENCES td_bill_settings(id),
+                tot_price REAL DEFAULT 0,
+                tot_discount_amount REAL DEFAULT 0,
+                tot_discount_percentage REAL DEFAULT 0,
+                discount_flag INTEGER NOT NULL DEFAULT 0,
+                discount_type TEXT,
+                tot_cgst_amount REAL DEFAULT 0,
+                tot_sgst_amount REAL DEFAULT 0,
+                tot_igst_amount REAL DEFAULT 0,
+                tot_vat_amount REAL DEFAULT 0,
+                tot_other_charges_amount REAL DEFAULT 0,
+                parcel_charge_amount REAL DEFAULT 0,
+                tot_round_off_amount REAL DEFAULT 0,
+                net_amount REAL DEFAULT 0,
+                amount_in_words TEXT,
+                gst_flag INTEGER NOT NULL DEFAULT 0,
+                vat_flag INTEGER NOT NULL DEFAULT 0,
+                is_mrp_billing INTEGER NOT NULL DEFAULT 0,
+                is_return_bill INTEGER NOT NULL DEFAULT 0,
+                is_duplicate INTEGER NOT NULL DEFAULT 0,
+                is_voided INTEGER NOT NULL DEFAULT 0,
+                bill_status TEXT CHECK(bill_status IN ('DRAFT','COMPLETED','CANCELLED')) DEFAULT 'DRAFT',
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                modified_at TEXT,
+                created_by TEXT,
+                modified_by TEXT
+            )
+        """
+
         private const val SQL_CREATE_TD_BILLS_V21 = """
             CREATE TABLE td_bills_v21 (
                 receipt_no INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2584,7 +2878,7 @@ class DatabaseHelper private constructor(context: Context) :
                 -- the modes and their amounts are the rows in td_payments, and this
                 -- column says to go and read them.
                 bill_type TEXT CHECK(bill_type IN ('CASH','CREDIT','CARD','ONLINE','CASH SPLIT','VOID')),
-                settings_snapshot TEXT,
+                settings_id INTEGER REFERENCES td_bill_settings(id),
                 tot_price REAL DEFAULT 0,
                 tot_discount_amount REAL DEFAULT 0,
                 tot_discount_percentage REAL DEFAULT 0,

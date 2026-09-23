@@ -183,11 +183,12 @@ class BillDao(context: Context) {
                 if (operatorId != null) put("operator_id", operatorId)
                 put("bill_type", bill.billType)
                 // Frozen at creation time so a later reprint reads exactly as it did
-                // on the day, even after Bill/Tax Settings have since changed.
-                put(
-                    "settings_snapshot",
-                    BillSettingsSnapshot.serialize(settings, taxEnabled, discountPreTax, inclusive, itemwiseDiscount)
-                )
+                // on the day, even after Bill/Tax Settings have since changed. The
+                // settings themselves live in td_bill_settings, one row per distinct
+                // combination, and the bill keeps only the id of its own.
+                BillSettingsSnapshot.idFor(
+                    db, settings, taxEnabled, discountPreTax, inclusive, itemwiseDiscount
+                )?.let { put("settings_id", it) }
                 put("tot_price", bill.totalPrice)
                 put("tot_discount_amount", bill.discountAmount)
                 put("tot_discount_percentage", bill.discountPercentage)

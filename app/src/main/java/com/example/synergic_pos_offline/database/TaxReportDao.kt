@@ -134,8 +134,7 @@ class TaxReportDao(context: Context) {
                    COALESCE(i.discount_amount, 0),
                    COALESCE(i.cgst_amount, 0), COALESCE(i.sgst_amount, 0),
                    COALESCE(i.igst_amount, 0), COALESCE(i.vat_amount, 0),
-                   COALESCE(i.item_total, 0),
-                   b.settings_snapshot
+                   COALESCE(i.item_total, 0)
             FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
             JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id
             WHERE substr(
