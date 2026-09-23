@@ -374,6 +374,9 @@ object DatabaseBackup {
             runCatching { db.setForeignKeyConstraintsEnabled(true) }
         }
 
+        // Rows that came in from an older build or another store get the one-off
+        // repairs a login and a first open would otherwise skip as already done.
+        runCatching { DatabaseHelper.getInstance(context).afterRestore(db) }
         // The settings cache is a copy of rows that have just been replaced; left
         // alone it would answer for the old installation until the next login.
         runCatching { SettingsCache.storeFromDb(context, "database restore") }

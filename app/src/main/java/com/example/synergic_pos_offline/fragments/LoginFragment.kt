@@ -67,6 +67,19 @@ class LoginFragment : Fragment() {
         }
 
     private val ioExecutor = Executors.newSingleThreadExecutor()
+
+    /**
+     * Signing in, off the main thread - see [performLogin]. Its own thread rather than
+     * [ioExecutor], which carries the server's verification check: a login queued
+     * behind a slow network call would wait on it for no reason.
+     */
+    private val loginExecutor = Executors.newSingleThreadExecutor()
+
+    /** A sign-in is under way; a second tap on Login is ignored until it answers. */
+    private var signingIn = false
+
+    /** The button's own caption, put back when a sign-in is refused. */
+    private var loginLabel: CharSequence = ""
     private lateinit var networkMonitor: NetworkMonitor
 
     /** Guards against the connectivity callback stacking up retries - see
@@ -137,6 +150,7 @@ class LoginFragment : Fragment() {
     override fun onDestroy() {
         super.onDestroy()
         ioExecutor.shutdownNow()
+        loginExecutor.shutdownNow()
     }
 
     /**
@@ -478,6 +492,7 @@ class LoginFragment : Fragment() {
             // the only place a second store can be created, and it no longer leaves
             // one behind.
             DatabaseHelper.getInstance(context).consolidateStores(db, storeId.toLong())
+            DatabaseHelper.getInstance(context).forgetAlignment()
 
             val userId = str(record, "user_id")
             val user = ContentValues().apply {
@@ -507,10 +522,19 @@ class LoginFragment : Fragment() {
      * Sets every md_ table's store_id to the [storeId] the signed-in user belongs to,
      * so all local master data is owned by the logged-in store. No rows are removed.
      */
-    private fun alignMasterDataToStore(storeId: Int) {
+    private fun alignMasterDataToStore(context: Context, storeId: Int) {
         if (storeId <= 0) return
-        val helper = DatabaseHelper.getInstance(requireContext())
+        val helper = DatabaseHelper.getInstance(context)
         val db = helper.writableDatabase
+        // WHICH TABLES. Every one carrying a store_id, the first time this store signs
+        // in here, and again after anything that can bring in or re-home rows - a
+        // restore, a store verification (see [DatabaseHelper.forgetAlignment]). Every
+        // other login does only the md_ tables, which are small and are where defaults
+        // get seeded without a store: the transaction tables are written by the DAOs
+        // with the store already on them, and re-reading a lakh bills, their lines and
+        // their KOTs on every sign-in, to find nothing to change, was most of the
+        // seconds a login took.
+        val everything = helper.alignedStoreId() != storeId
         db.beginTransaction()
         try {
             // md_registration is not in this list, and must not be: there store_id is
@@ -518,8 +542,17 @@ class LoginFragment : Fragment() {
             // alongside everything else either collides with the row already holding
             // that id or renames the store out from under its own users - which is
             // why the two rows this used to leave behind never merged on their own.
+            //
+            // Only rows that are not this store's already. Writing the same value back
+            // over every row rewrote the whole database on every login.
             for (t in helper.tablesWithStoreId(db)) {
-                runCatching { db.execSQL("UPDATE $t SET store_id = ?", arrayOf<Any>(storeId)) }
+                if (!everything && !t.startsWith("md_")) continue
+                runCatching {
+                    db.execSQL(
+                        "UPDATE $t SET store_id = ? WHERE store_id IS NOT ?",
+                        arrayOf<Any>(storeId, storeId)
+                    )
+                }
             }
             // The signed-in user's store is the store: anything still registered
             // beside it is a superseded placeholder, and goes.
@@ -528,6 +561,7 @@ class LoginFragment : Fragment() {
         } finally {
             db.endTransaction()
         }
+        if (everything) helper.markAligned(storeId)
     }
 
     /** Returns a trimmed string field, or null when absent/blank/JSON null. */
@@ -577,12 +611,40 @@ class LoginFragment : Fragment() {
         return isValid
     }
 
+    /**
+     * Checks the password, then signs in.
+     *
+     * The check runs off the main thread. The stored password is a bcrypt hash - an
+     * admin's from the server at cost 12, 4096 rounds - and verifying it on a tablet
+     * takes a second or more, all of which the screen spent frozen with the Login
+     * button still up and the tap apparently ignored. Now the button says so while it
+     * works, and the answer comes back to the same checks as before.
+     */
     private fun performLogin() {
+        if (signingIn) return
         val username = etUsername.text.toString().trim()
         val password = etPassword.text.toString().trim()
+        val ctx = requireContext().applicationContext
+        setSigningIn(true)
+        loginExecutor.execute {
+            val user = runCatching { authenticateLocal(ctx, username, password) }.getOrNull()
+            view?.post {
+                if (!isAdded) return@post
+                if (user == null || user.isBlocked || offShift(user) != null) setSigningIn(false)
+                onPasswordChecked(user)
+            }
+        }
+    }
 
-        val user = authenticateLocal(username, password)
+    /** Shows that a sign-in is running, or puts the form back once it has answered. */
+    private fun setSigningIn(on: Boolean) {
+        signingIn = on
+        btnLogin.isEnabled = !on
+        if (on) loginLabel = btnLogin.text
+        btnLogin.text = if (on) "Signing in\u2026" else loginLabel
+    }
 
+    private fun onPasswordChecked(user: User?) {
         if (user == null) {
             tilUsername.error = " "
             tilPassword.error = "Invalid username or password"
@@ -619,11 +681,28 @@ class LoginFragment : Fragment() {
      */
     private fun signIn(user: User) {
         SessionManager.currentUser = user
-        // Put all local master data under the store this user just logged in to — every
-        // md_ table's store_id is set to the logged-in store id (not device-based).
-        alignMasterDataToStore(user.storeId)
-        // Cache md_app_settings to local storage, chunked by type (B / T / G / A).
-        SettingsCache.storeFromDb(requireContext())
+        signingIn = true
+        btnLogin.isEnabled = false
+        val ctx = requireContext().applicationContext
+        // The database work goes to the login thread and the screen change waits for
+        // it: the landing screen reads every table by store and the settings out of
+        // the cache, so both have to be in place first - but nothing makes the main
+        // thread hold still while they are done.
+        loginExecutor.execute {
+            runCatching {
+                // Put all local master data under the store this user just logged in
+                // to — every md_ table's store_id is set to the logged-in store id (not
+                // device-based).
+                alignMasterDataToStore(ctx, user.storeId)
+                // Cache md_app_settings to local storage, chunked by type (B / T / G / A).
+                SettingsCache.storeFromDb(ctx)
+            }.onFailure { android.util.Log.e("LoginFragment", "Sign-in housekeeping failed", it) }
+            view?.post { if (isAdded) enter(user) }
+        }
+    }
+
+    /** Opens the landing screen for [user], once [signIn]'s database work is done. */
+    private fun enter(user: User) {
         rollOverOldTransactions()
         val roleText = if (user.role == UserRole.ADMIN) "Admin" else "General User"
         Toast.makeText(requireContext(), "Welcome $roleText!", Toast.LENGTH_SHORT).show()
@@ -826,10 +905,10 @@ class LoginFragment : Fragment() {
             "You can sign in during your shift, or ask an admin."
     }
 
-    private fun authenticateLocal(userId: String, password: String): User? {
+    private fun authenticateLocal(context: Context, userId: String, password: String): User? {
         if (userId.isEmpty() || password.isEmpty()) return null
 
-        val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+        val db = DatabaseHelper.getInstance(context).readableDatabase
         val sql = """
             SELECT u.password, u.role, u.is_blocked, u.store_id, u.id, u.user_name
             FROM ${DatabaseHelper.Tables.MD_USERS} u

@@ -656,7 +656,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // (Add Item, a barcode scan, stepping up a restored line's quantity
         // against its stock ceiling) is behind a tap that comes well after this
         // screen has already drawn, not before it.
-        loadProductsFromDbAsync()
+        //
+        // The grid and its tabs are drawn when the read lands - see
+        // [onCatalogueLoaded]. [setupProductSection] below draws them from whatever is
+        // already in hand, and no longer reads the catalogue itself.
+        catalogueReadThisView = true
+        loadProductsFromDbAsync { onCatalogueLoaded?.invoke() }
 
         loadRunningOrders()          // restore open tables from the database
         // A split left finished-with by an earlier session is given back here, before
@@ -841,8 +846,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // Persists the bill (with the payment mode), closes & frees the table(s)
             // and refreshes the list. Nothing is printed.
             settlePaidOrder(order, payMethod, tendered, splitModes.zip(splitAmounts))
-            // Grid product counts have moved after the sale.
-            loadProductsFromDb()
+            // Grid product counts have moved after the sale - re-read off the main
+            // thread, so the next order is not kept waiting on the whole menu's photos.
+            reloadProductsAndRefresh()
         }
 
         // Bill & Pay → restaurant checkout with the selected order's items.
@@ -981,7 +987,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         view?.let { v -> v.post { if (isAdded) restyle(v, accent) } }
         // The menu is on the page now, so it has to be current whenever the page is:
         // a product edited, or stock moved by a settled bill, shows on the way back.
-        reloadProductsAndRefresh()
+        //
+        // Not on the resume that follows opening the screen: onViewCreated has just
+        // started that read, and a second one here - synchronous, as it used to be -
+        // was the few seconds the sale page took to appear, spent reading every
+        // product and its photo on the thread the screen draws on.
+        if (catalogueReadThisView) catalogueReadThisView = false
+        else reloadProductsAndRefresh()
 
         // The search box holds focus the moment this screen is reached, so a scan
         // is read the instant the operator turns to the menu rather than after a
@@ -3166,11 +3178,26 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * being a restaurant's own question, and the reason this mapping is not shared
      * with the grocery screen's.
      */
+    /**
+     * The whole menu as suggestion rows, built once per catalogue read rather than on
+     * every keystroke - see the search box's watcher. [suggestionPoolOf] is the
+     * catalogue it was built from, so a fresh read builds it again.
+     */
+    private var suggestionPool: List<com.example.synergic_pos_offline.utils.SearchSuggestions.Item> = emptyList()
+    private var suggestionPoolOf: List<GridProduct>? = null
+
+    private fun suggestionPool(): List<com.example.synergic_pos_offline.utils.SearchSuggestions.Item> {
+        if (suggestionPoolOf !== allProducts) {
+            suggestionPool = allProducts.map(::suggestionOf)
+            suggestionPoolOf = allProducts
+        }
+        return suggestionPool
+    }
+
     private fun suggestionOf(gp: GridProduct): com.example.synergic_pos_offline.utils.SearchSuggestions.Item {
-        val language = AppLanguage.of(requireContext())
         return com.example.synergic_pos_offline.utils.SearchSuggestions.Item(
             id = gp.product.id,
-            name = com.example.synergic_pos_offline.utils.RegionalName.forScreen(regionalNames, language, gp.product.name),
+            name = gp.displayName,
             meta = listOfNotNull(
             gp.product.category.takeIf { it.isNotBlank() },
             gp.prepTime.takeIf { it.isNotBlank() }?.let { t -> if (t.contains("min", true)) t else "$t min" },
@@ -3197,7 +3224,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         /** Preparation time from the master (e.g. "15" / "15 min"); shown on the tile. */
         val prepTime: String = "",
         /** Product image bytes from the master, or null; shown on the tile when present. */
-        val image: ByteArray? = null
+        val image: ByteArray? = null,
+        /**
+         * The name as the tile shows it - the shop's own regional name, or the app
+         * language's transliteration. Worked out once, with the catalogue read, rather
+         * than on every bind of every tile and every keystroke's suggestion list.
+         */
+        val displayName: String = product.name,
+        /**
+         * The photo's cache key: the product and a fingerprint of its bytes. A changed
+         * picture is a new key, so the cache never has to be cleared to stay right.
+         */
+        val imageKey: String = ""
     )
 
     /** What reading the catalogue off the main thread comes back with - see
@@ -3208,27 +3246,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val regionalNames: Map<String, String>
     )
 
-    /** Loads the current store's products (rate + tax split + category + food/spice), for the grid. */
-    private fun loadProductsFromDb(): List<GridProduct> {
-        val r = buildProductsFromDb(requireContext())
-        allProducts = r.products
-        stockTrackingOn = r.stockTrackingOn
-        regionalNames = r.regionalNames
-        return r.products
-    }
-
     /**
-     * Reads the catalogue OFF the main thread, then applies the result back on it -
-     * used only for the first read, when this screen opens; see [onViewCreated].
+     * Reads the catalogue OFF the main thread, then applies the result back on it.
+     * Every read of it goes through here - opening the screen, coming back to it,
+     * and after a settled sale has moved stock - see [onViewCreated] and
+     * [reloadProductsAndRefresh].
      *
-     * The other call sites of [loadProductsFromDb] run after a specific action has
-     * already moved stock or a rate (a settled sale, an edited quantity) and read
-     * again right where they are - they stay synchronous, on a database access
-     * cheap enough not to be the "opening the sale page" a shop actually feels.
-     * Opening the screen itself, on a catalogue of any real size, was: a dish grid
-     * with a photo behind most tiles, read with the same synchronous query this
-     * function still runs - just no longer on the thread the floor plan and every
-     * button on this screen are waiting on to draw.
+     * It used to be only the first, with the rest synchronous on the grounds that
+     * the read was cheap. It is not: it is every product with its photo, and done on
+     * the main thread - twice more on every open, once more after every sale - it
+     * was the few seconds the sale page took to appear, on the thread the floor plan
+     * and every button on this screen are waiting on to draw.
      */
     private fun loadProductsFromDbAsync(onLoaded: () -> Unit = {}) {
         val ctx = requireContext()
@@ -3243,10 +3271,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 // what that one is about to overwrite anyway.
                 if (!isAdded || generation != productCatalogGeneration) return@post
                 if (result != null) {
-                    // The cached tile photos belong to the catalogue being replaced: a
-                    // dish whose picture was changed would otherwise keep showing the
-                    // old one for as long as this screen stayed open.
-                    com.example.synergic_pos_offline.utils.ThumbnailCache.clear()
+                    // The cached tile photos are NOT thrown away here. Each is held
+                    // under its photo's own fingerprint - see [GridProduct.imageKey] -
+                    // so a dish whose picture was changed looks up a new key and is
+                    // decoded again, and every other one is still there. Clearing on
+                    // every read made each return to this screen decode the whole menu
+                    // again as it scrolled.
                     allProducts = result.products
                     stockTrackingOn = result.stockTrackingOn
                     regionalNames = result.regionalNames
@@ -3272,6 +3302,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val cats = com.example.synergic_pos_offline.database.CategoryDao(ctx)
             .getAll().associate { it.id to it.name }
         val multipleRates = SettingsCache.value(ctx, "G", "Item Rate") == "M"
+        val language = AppLanguage.of(ctx)
 
         // Read once for the whole grid, and only while stock is tracked - with the
         // flag off this screen never asks the stock tables anything, exactly as the
@@ -3333,7 +3364,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                             stockQty = level?.quantity ?: 0.0
                         ),
                         foodType = foodType, spice = spice, barcode = barcode,
-                        prepTime = prepTime, image = image
+                        prepTime = prepTime, image = image,
+                        displayName = com.example.synergic_pos_offline.utils.RegionalName.forScreen(
+                            regionalNames, language, name
+                        ),
+                        imageKey = image?.let { "restGrid:$id:${it.size}:${it.contentHashCode()}" }.orEmpty()
                     )
                 )
             }
@@ -3341,7 +3376,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         return ProductCatalogueResult(out, stockOn, regionalNames)
     }
 
-    /** One product's default rate row - the fields [loadProductsFromDb] used to
+    /** One product's default rate row - the fields [buildProductsFromDb] used to
      *  read with a per-product query. */
     private data class RateRow(
         val rate: Double, val cgst: Double, val sgst: Double, val vat: Double,
@@ -3435,6 +3470,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** Redraws the product grid for the current search text and category. */
     private var refreshProducts: (() -> Unit)? = null
+
+    /** Redraws the category tabs and the grid from [allProducts]; set up by [setupProductSection]. */
+    private var onCatalogueLoaded: (() -> Unit)? = null
+
+    /** onViewCreated has started this view's first catalogue read - see [onResume]. */
+    private var catalogueReadThisView = false
 
     // ---- The slide-over order list ------------------------------------------
 
@@ -3655,13 +3696,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Named, not a bare trailing lambda, so the gun's own key handling below
         // can detach it around the buffer-management clears it does internally -
         // see [ScanState.clearFieldQuietly].
+        // The grid follows the typing once it pauses, not on every key. Refiltering
+        // re-lays every tile on screen, and doing that between one key and the next is
+        // what held each letter back from appearing in the box.
+        val refilter = Runnable { if (view != null) refreshProducts?.invoke() }
         val watcher = etSearch.addTextChangedListener {
             query = it?.toString().orEmpty()
-            refreshProducts?.invoke()
+            etSearch.removeCallbacks(refilter)
+            etSearch.postDelayed(refilter, SEARCH_REFILTER_DELAY_MS)
             // Suggested from the WHOLE menu, not the open category: someone who types
             // a dish name has named the dish, and hiding it because a different course
-            // is selected would be answering a question they did not ask.
-            suggestions?.update(query, allProducts.map(::suggestionOf))
+            // is selected would be answering a question they did not ask. The rows are
+            // built once per menu read, not once per key - see [suggestionPool].
+            suggestions?.update(query, suggestionPool())
         }
         // FOCUS WITHOUT THE KEYBOARD, the same split the grocery sale screen's own
         // search box makes - see PosBillingFragment.attachScanner's own note. This
@@ -3701,7 +3748,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             done
         }
 
-        loadProductsFromDb()   // fills allProducts
+        // Drawn from the catalogue already in hand - none on a first open, the last
+        // one read when the screen comes back from the back stack - and redrawn when
+        // the read onViewCreated started comes in. Reading it here, on the main thread,
+        // is what used to hold the sale page up.
+        onCatalogueLoaded = {
+            rebuildTabs()
+            refreshProducts?.invoke()
+        }
         rebuildTabs()
         refreshProducts?.invoke()
     }
@@ -3857,10 +3911,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     /** Re-reads the catalogue (stock levels move as orders settle) and redraws the grid. */
+    /**
+     * Re-reads the catalogue off the main thread, then redraws the tabs and grid.
+     * A newer read supersedes one still running - see [loadProductsFromDbAsync].
+     */
     private fun reloadProductsAndRefresh() {
         if (view == null) return
-        loadProductsFromDb()
-        refreshProducts?.invoke()
+        loadProductsFromDbAsync { onCatalogueLoaded?.invoke() }
     }
 
     // ---- Choose Table: table-grid modal ------------------------------------
@@ -4730,11 +4787,38 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         private val items = mutableListOf<GridProduct>()
 
+        /**
+         * Shows [list]. When it is the current list with more on the end - the next
+         * page of the same menu, which is what [GridPager] hands over on a scroll -
+         * only the new tiles are added. Redrawing the whole grid for that rebound
+         * every tile already on screen, once per page, in the middle of the scroll.
+         */
         fun submit(list: List<GridProduct>) {
-            items.clear(); items.addAll(list); notifyDataSetChanged()
+            val appended = items.isNotEmpty() && list.size > items.size &&
+                items.indices.all { list[it] === items[it] }
+            if (appended) {
+                val start = items.size
+                items.addAll(list.subList(start, list.size))
+                notifyItemRangeInserted(start, list.size - start)
+            } else {
+                items.clear(); items.addAll(list); notifyDataSetChanged()
+            }
         }
 
-        inner class VH(v: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(v)
+        /** The tile's views, found once when it is made rather than on every bind. */
+        inner class VH(v: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(v) {
+            val name: TextView = v.findViewById(R.id.tvName)
+            val price: TextView = v.findViewById(R.id.tvPrice)
+            val sku: TextView = v.findViewById(R.id.tvSku)
+            val photo: android.widget.ImageView = v.findViewById(R.id.ivProductPhoto)
+            val foodType: android.widget.ImageView = v.findViewById(R.id.ivFoodType)
+            val spice: LinearLayout = v.findViewById(R.id.llSpice)
+            val prep: TextView = v.findViewById(R.id.tvPrepBadge)
+            val stock: TextView = v.findViewById(R.id.tvStock)
+            /** Which photo this tile is waiting on, so a late decode cannot land on
+             *  a tile that has since been recycled for another dish. */
+            var photoKey: String = ""
+        }
 
         // The grocery sale screen's own tile, so the menu here and the shelf there are
         // one design rather than two that drift apart. What is particular to a
@@ -4746,37 +4830,44 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         override fun onBindViewHolder(holder: VH, position: Int) {
             val gp = items[position]
             val p = gp.product
-            val language = AppLanguage.of(holder.itemView.context)
-            holder.itemView.findViewById<TextView>(R.id.tvName).text =
-                com.example.synergic_pos_offline.utils.RegionalName.forScreen(regionalNames, language, p.name)
-            holder.itemView.findViewById<TextView>(R.id.tvPrice).text = "₹ ${money(p.price)}"
-            holder.itemView.findViewById<TextView>(R.id.tvSku).text = p.sku
+            holder.name.text = gp.displayName
+            holder.price.text = "₹ ${money(p.price)}"
+            holder.sku.text = p.sku
 
             // Recycled tiles: a dish with no photo has to clear the one before it rather
             // than inherit it - the "no photo" caption behind shows through instead.
-            holder.itemView.findViewById<android.widget.ImageView>(R.id.ivProductPhoto).apply {
-                // THROUGH THE CACHE, AND SAMPLED DOWN.
-                //
-                // This decoded the photo at FULL RESOLUTION on every bind. A 1600px
-                // product picture is about ten megabytes of bitmap, built from scratch
-                // each time the tile crossed the screen and thrown away again - to be
-                // drawn into a tile a couple of hundred pixels wide. That is what made
-                // the restaurant grid stutter, and on a catalogue of photographed dishes
-                // it is also how it ran out of memory.
-                val bmp = com.example.synergic_pos_offline.utils.ThumbnailCache.bitmap(
-                    // Scoped to this grid - see DataTableFragment.thumbKey for why a
-                    // bare id is not enough in a cache several screens share.
-                    key = "restGrid:${p.id}",
-                    bytes = gp.image,
-                    targetPx = com.example.synergic_pos_offline.utils.ThumbnailCache.TILE_PX
-                )
-                if (bmp != null) { setImageBitmap(bmp); visibility = View.VISIBLE }
-                else { setImageDrawable(null); visibility = View.GONE }
+            //
+            // THROUGH THE CACHE, SAMPLED DOWN, AND OFF THE MAIN THREAD. A photo already
+            // decoded goes straight on; one that is not is decoded in the background
+            // and set when it lands, if this tile is still showing that dish. Decoding
+            // it here, in the bind, cost a frame or more per tile - on an eight-across
+            // grid, a whole row of them at a time - and that was the scroll's stutter.
+            val key = gp.imageKey
+            holder.photoKey = key
+            val tile = com.example.synergic_pos_offline.utils.ThumbnailCache.TILE_PX
+            val image = gp.image
+            val held = if (key.isEmpty()) null
+                else com.example.synergic_pos_offline.utils.ThumbnailCache.cached(key, tile)
+            when {
+                image == null || image.isEmpty() -> {
+                    holder.photo.setImageDrawable(null); holder.photo.visibility = View.GONE
+                }
+                held != null -> {
+                    holder.photo.setImageBitmap(held); holder.photo.visibility = View.VISIBLE
+                }
+                else -> {
+                    holder.photo.setImageDrawable(null); holder.photo.visibility = View.VISIBLE
+                    com.example.synergic_pos_offline.utils.ThumbnailCache.load(key, image, tile) { bmp ->
+                        if (holder.photoKey != key) return@load
+                        if (bmp != null) holder.photo.setImageBitmap(bmp)
+                        else holder.photo.visibility = View.GONE
+                    }
+                }
             }
 
-            bindFoodType(holder.itemView.findViewById(R.id.ivFoodType), gp.foodType)
-            bindSpice(holder.itemView.findViewById(R.id.llSpice), gp.spice)
-            holder.itemView.findViewById<TextView>(R.id.tvPrepBadge).apply {
+            bindFoodType(holder.foodType, gp.foodType)
+            bindSpice(holder.spice, gp.spice)
+            holder.prep.apply {
                 val value = gp.prepTime.trim()
                 if (value.isEmpty()) visibility = View.GONE
                 else {
@@ -4785,9 +4876,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 }
             }
 
-            com.example.synergic_pos_offline.utils.StockBadge.apply(
-                holder.itemView.findViewById(R.id.tvStock), p.stock, p.stockQty
-            )
+            com.example.synergic_pos_offline.utils.StockBadge.apply(holder.stock, p.stock, p.stockQty)
             holder.itemView.alpha =
                 if (p.stock == com.example.synergic_pos_offline.utils.StockBadge.OUT) 0.5f else 1f
             holder.itemView.setOnClickListener { onPick(p) }
@@ -4808,22 +4897,33 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         else { iv.visibility = View.VISIBLE; iv.setImageResource(res) }
     }
 
-    /** Spice level as 1–3 chili icons (Mild / Medium / Hot). */
+    /**
+     * Spice level as 1–3 chili icons (Mild / Medium / Hot).
+     *
+     * A tile's three chilies are made the first time it needs them and only shown or
+     * hidden after that. They used to be taken down and built again on every bind,
+     * which is three new views per tile per scroll for no change in what is drawn.
+     */
     private fun bindSpice(container: LinearLayout, spice: String) {
-        container.removeAllViews()
         val count = when (spice.lowercase()) { "mild" -> 1; "medium" -> 2; "hot" -> 3; else -> 0 }
         // The badge is a chip on the photo now, so an unspiced dish has to take it off
         // the tile rather than leave an empty white square sitting there.
         container.visibility = if (count > 0) View.VISIBLE else View.GONE
+        if (count == 0) return
         // Sized for the seven-across tile - three of these and their chip have to sit
         // in a corner of a photo barely 100dp wide.
-        val size = dp(9)
-        repeat(count) { i ->
-            val iv = android.widget.ImageView(requireContext()).apply {
-                layoutParams = LinearLayout.LayoutParams(size, size).also { it.marginStart = if (i == 0) 0 else dp(1) }
-                setImageResource(R.drawable.ic_chili)
+        if (container.childCount != MAX_CHILIES) {
+            container.removeAllViews()
+            val size = dp(9)
+            repeat(MAX_CHILIES) { i ->
+                container.addView(android.widget.ImageView(container.context).apply {
+                    layoutParams = LinearLayout.LayoutParams(size, size).also { it.marginStart = if (i == 0) 0 else dp(1) }
+                    setImageResource(R.drawable.ic_chili)
+                })
             }
-            container.addView(iv)
+        }
+        for (i in 0 until MAX_CHILIES) {
+            container.getChildAt(i).visibility = if (i < count) View.VISIBLE else View.GONE
         }
     }
 
@@ -5583,7 +5683,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
         val settle = {
             settlePaidOrder(order, payMethod, tendered)
-            loadProductsFromDb()   // stock has moved
+            reloadProductsAndRefresh()   // stock has moved
         }
         val default = printers.firstOrNull { it.isDefault }
         when {
@@ -6521,6 +6621,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     private companion object {
+        /** How long the search box waits after a key before refiltering the grid. */
+        const val SEARCH_REFILTER_DELAY_MS = 150L
+
+        /** Chili icons a tile can show - "hot". See [bindSpice]. */
+        const val MAX_CHILIES = 3
+
         /**
          * The three order types, as they are written into `td_running_order.order_type`
          * and read back everywhere.
