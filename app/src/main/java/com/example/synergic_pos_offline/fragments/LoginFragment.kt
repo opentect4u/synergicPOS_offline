@@ -350,10 +350,7 @@ class LoginFragment : Fragment() {
                     "\n\n${result.skipped} record(s) were for tables this version does not " +
                         "have, and were skipped."
                 } else ""
-                val failed = if (result.failed > 0) {
-                    "\n\n${result.failed} record(s) in the file could not be read back and " +
-                        "were left out. The rest of the backup restored normally."
-                } else ""
+                val failed = DatabaseBackup.failureDetail(result)
                 // Said plainly when the server has not been told - and said as
                 // something already in hand, because it is: the move is queued and
                 // goes out by itself on the next connection. A tablet being set up

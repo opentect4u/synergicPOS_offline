@@ -311,7 +311,13 @@ object DatabaseBackup {
          * restore: a bulk restore is tens or hundreds of thousands of these rows, and
          * one bad one should not cost every good one alongside it.
          */
-        val failed: Int = 0
+        val failed: Int = 0,
+        /** How [failed] splits by table, so a run with a lot of them says which
+         *  table took the loss instead of leaving that to a logcat search. */
+        val failedByTable: Map<String, Int> = emptyMap(),
+        /** The first failure's own message, one example being worth more than the
+         *  count alone when the count is in the thousands. */
+        val firstFailure: String? = null
     ) {
         val ok: Boolean get() = error == null
     }
@@ -344,6 +350,8 @@ object DatabaseBackup {
         var rows = 0
         var skipped = 0
         var failed = 0
+        val failedByTable = LinkedHashMap<String, Int>()
+        var firstFailure: String? = null
         val cleared = LinkedHashSet<String>()
 
         // Everything, including turning foreign keys off and opening the
@@ -379,10 +387,15 @@ object DatabaseBackup {
                             "DatabaseBackup", "Could not restore a row for $table", e
                         )
                         failed++
+                        failedByTable[table] = (failedByTable[table] ?: 0) + 1
+                        if (firstFailure == null) firstFailure = "$table: ${e.message}"
                     }
                 }
                 if (rows == 0) {
-                    return Result(0, 0, skipped, schemaVersion, "That file holds no data to restore", failed)
+                    return Result(
+                        0, 0, skipped, schemaVersion, "That file holds no data to restore",
+                        failed, failedByTable, firstFailure
+                    )
                 }
                 db.setTransactionSuccessful()
             } finally {
@@ -401,7 +414,26 @@ object DatabaseBackup {
         // The settings cache is a copy of rows that have just been replaced; left
         // alone it would answer for the old installation until the next login.
         runCatching { SettingsCache.storeFromDb(context, "database restore") }
-        return Result(cleared.size, rows, skipped, schemaVersion, failed = failed)
+        return Result(
+            cleared.size, rows, skipped, schemaVersion,
+            failed = failed, failedByTable = failedByTable, firstFailure = firstFailure
+        )
+    }
+
+    /**
+     * A line naming which table(s) [result.failed] rows came from, for a restore
+     * dialog that would otherwise show a bare count with nowhere to go next - the
+     * question "why are my bills missing" needs "td_bills, 40,212 of them" to
+     * answer, not "153,773 records, somewhere".
+     */
+    fun failureDetail(result: Result): String {
+        if (result.failed <= 0) return ""
+        val byTable = result.failedByTable.entries
+            .sortedByDescending { it.value }
+            .joinToString(", ") { "${it.key} (${it.value})" }
+        val sample = result.firstFailure?.let { "\nFirst one: $it" } ?: ""
+        return "\n\n${result.failed} record(s) in the file could not be read back and were " +
+            "left out - $byTable.$sample\n\nThe rest of the backup restored normally."
     }
 
     /** The table an `INSERT INTO <name> (...)` statement writes to. */
