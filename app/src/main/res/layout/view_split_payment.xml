@@ -14,11 +14,9 @@
     permanently, and a row left blank simply took none of the money. Entering the split
     IS choosing the modes.
 
-    TWO ROWS, CASH AND UPI, because that is what a part payment actually is at these
-    counters: the customer empties what notes they have and sends the rest from their
-    phone. A card is not split against - it is handed over for the whole bill or not at
-    all, and the Card tile above already settles that sale. A third row for it would be
-    a permanently empty box on every split, and one more thing to read past.
+    THREE ROWS - CASH, UPI AND CARD. Most part payments are notes plus a phone, but a
+    customer also pays some in notes and swipes a card for the rest, or splits between
+    a card and UPI. A row left blank simply took none of the money.
 
     THE CASH ROW IS THE CASH TAKEN, not the cash handed over. Change is worked out
     against it and shown in [rowSplitChange], which stays hidden on the ordinary split
@@ -66,7 +64,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="1dp"
-                android:text="Part cash, part UPI"
+                android:text="Cash, UPI and card"
                 android:textSize="11.5sp"
                 android:textColor="@color/text_secondary" />
         </LinearLayout>
@@ -185,6 +183,51 @@
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etSplitOnline"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="numberDecimal"
+                    android:hint="0.00"
+                    android:maxLines="1"
+                    android:textSize="16sp"
+                    android:textColor="@color/text_main"
+                    android:textColorHint="@color/text_secondary" />
+            </com.google.android.material.textfield.TextInputLayout>
+        </LinearLayout>
+
+        <!-- CARD. Stored as CARD, the same mode the Card tile settles a whole bill as.
+             Taken to the penny by the machine, so it can never be over-collected - only
+             the cash row gives change. See SplitPayment. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:baselineAligned="false"
+            android:layout_marginTop="6dp">
+
+            <TextView
+                android:layout_width="76dp"
+                android:layout_height="wrap_content"
+                android:text="CARD"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.04"
+                android:textColor="@color/text_main" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilSplitCard"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                app:prefixText="₹ "
+                app:boxCornerRadiusTopStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusBottomEnd="12dp">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSplitCard"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:inputType="numberDecimal"
