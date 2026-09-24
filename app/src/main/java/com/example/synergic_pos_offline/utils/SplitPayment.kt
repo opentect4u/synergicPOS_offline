@@ -14,54 +14,49 @@ import com.example.synergic_pos_offline.R
  * the dine-in till behave identically rather than each growing its own reading of what
  * a split means.
  *
- * ## The operator types ONE number
+ * ## The operator types the parts they know; one row takes the balance
  *
  * The whole point of a split is that the customer says "here's a hundred, I'll send the
  * rest". The counter knows the hundred. The rest is the bill minus the hundred, and
  * making the operator work that out - in front of a queue, against a total on the other
  * side of the screen - is the arithmetic this exists to remove. So typing into any row
- * fills the companion row with the balance, immediately, as the digits land.
+ * fills ONE other row, the [follower], with the balance, immediately, as the digits land.
  *
- * ## Whichever row is being typed in leads; the other follows
+ * ## Which row follows
  *
- * [driver] is simply the row the operator touched last. The other one is always
- * `total - driver`, rewritten on every keystroke. Type in cash and UPI follows; move to
- * the UPI box and type there and cash starts following instead, from that first
- * keystroke.
+ * The one the operator has typed in least recently - never-typed rows counting as the
+ * oldest, and between those the panel's own order (Cash, UPI, Card) deciding. So:
  *
- * BOTH BOXES STAY EDITABLE THROUGHOUT. Neither is ever locked, greyed or spent: there
- * is no state the panel can get into where a row refuses to be corrected, because
- * "which row is being corrected" is the only state there is, and typing is what sets
- * it. An earlier version made a row STICKY once typed in, so setting both by hand left
- * nothing to absorb the balance and the split could sit not adding up, needing a button
- * to rescue it. The button is gone because the situation it rescued cannot arise.
+ * - type cash and UPI takes the rest - the ordinary notes-plus-phone split, exactly as
+ *   the panel behaved when it had only those two rows;
+ * - type UPI or card first and cash takes the rest;
+ * - type cash, then card, and UPI takes what the two leave;
+ * - go back and correct any row and the follower is always one the operator is NOT
+ *   working in, so a figure is never rewritten under their fingers.
  *
- * A consequence worth stating: the split always covers the bill. The follower is
- * derived from the leader, so the two add up by construction and [remaining] is only
+ * [history] is that order - the rows typed in, most recent last - and is the whole of
+ * the flow's state.
+ *
+ * ALL BOXES STAY EDITABLE THROUGHOUT. None is ever locked, greyed or spent: there is no
+ * state the panel can get into where a row refuses to be corrected. The follower is
+ * derived from the others, so the parts add up by construction and [remaining] is only
  * ever non-zero before the first keystroke.
- *
- * ## Cash and UPI, and nothing else
- *
- * A card is not split against. It is handed over for the whole bill or not at all, and
- * the Card tile on the panel above already settles that sale - so a card row here would
- * be an empty box on every split for a case that does not arise. A part payment at
- * these counters is notes plus a phone.
- *
- * Two rows is also what makes the follow rule unambiguous: "the other one" is a single
- * row, so there is never a question of which of several the balance should land in.
  *
  * ## Nothing typed means nothing entered
  *
- * Before the first keystroke both rows stay blank rather than one of them holding the
+ * Before the first keystroke every row stays blank rather than one of them holding the
  * whole bill: turning the switch on says the customer is paying more than one way, not
- * how it divides. Clearing the leader back to empty reads as zero in that mode, so the
- * follower takes the whole bill - which is the honest reading of "no cash".
+ * how it divides. Clearing a row back to empty reads as zero, so the follower takes
+ * what it left - which is the honest reading of "no cash".
  *
- * ## Over-collection is change, not an over-payment
+ * ## Only cash gives change
  *
- * [remaining] floors at zero and the excess surfaces as [change] - the customer handed
- * a 500 note for their 100 of cash. That is the same reading the single-mode cash path
- * has always taken, and it is why the strip has a Change due row at all.
+ * Over-collection in the cash row is change - the customer handed a 500 note for their
+ * 100 of cash - and surfaces as [change], the same reading the single-mode cash path has
+ * always taken. A UPI transfer or a card swipe is taken to the penny by the machine, so
+ * those two together exceeding the bill is a mis-key, not money to hand back: [overpaid]
+ * reports it and [balances] refuses the sale until it is corrected. Letting it through
+ * would book the excess as change against the cash drawer that never received it.
  */
 class SplitPayment(
     private val root: View,
@@ -82,23 +77,27 @@ class SplitPayment(
          * scan-to-pay code. Writing it under a second name would split one mode across
          * two rows of every payment-wise report for no gain.
          */
-        ONLINE("ONLINE", "UPI")
+        ONLINE("ONLINE", "UPI"),
+
+        /** Stored as CARD, the same mode the Card tile settles a whole bill as. */
+        CARD("CARD", "Card")
     }
 
     private data class Row(val part: Part, val fieldId: Int)
 
     private val rows = listOf(
         Row(Part.CASH, R.id.etSplitCash),
-        Row(Part.ONLINE, R.id.etSplitOnline)
+        Row(Part.ONLINE, R.id.etSplitOnline),
+        Row(Part.CARD, R.id.etSplitCard)
     )
 
     /**
-     * The row the operator last typed in - the one that leads. The other follows it.
+     * The rows the operator has typed in, most recent last - see [follower].
      *
-     * Null until the first keystroke, which is what keeps both rows blank on a split
+     * Empty until the first keystroke, which is what keeps every row blank on a split
      * that has only just been switched on.
      */
-    private var driver: Part? = null
+    private val history = mutableListOf<Part>()
 
     /** True while this class is writing a field, so its own write is not read as typing. */
     private var writing = false
@@ -123,14 +122,27 @@ class SplitPayment(
     /** What the bill still has outstanding. Floors at zero - see [change]. */
     fun remaining(): Double = BillRounding.toPaise((totalOf() - entered()).coerceAtLeast(0.0))
 
-    /** Cash handed over above the bill, which goes back across the counter. */
-    fun change(): Double = BillRounding.toPaise((entered() - totalOf()).coerceAtLeast(0.0))
-
-    /** Whether the parts add up to the bill, so the sale can be completed. */
-    fun balances(): Boolean = remaining() <= 0.001
+    /** Everything collected above the bill, whichever rows it is in. */
+    private fun excess(): Double = BillRounding.toPaise((entered() - totalOf()).coerceAtLeast(0.0))
 
     /**
-     * Wires the switch and the two amount rows.
+     * Cash handed over above the bill, which goes back across the counter.
+     *
+     * Capped at the cash part: only notes can come back - see [overpaid].
+     */
+    fun change(): Double = BillRounding.toPaise(minOf(excess(), amount(Part.CASH)))
+
+    /**
+     * What the UPI and card parts took above the bill on their own - money no drawer
+     * can hand back, so a mis-key the sale cannot be completed with.
+     */
+    fun overpaid(): Double = BillRounding.toPaise((excess() - amount(Part.CASH)).coerceAtLeast(0.0))
+
+    /** Whether the parts add up to the bill, so the sale can be completed. */
+    fun balances(): Boolean = remaining() <= 0.001 && overpaid() <= 0.001
+
+    /**
+     * Wires the switch and the amount rows.
      *
      * Called once, from the host screen's own view setup.
      */
@@ -141,7 +153,7 @@ class SplitPayment(
             // Turning it off throws the parts away rather than leaving them to be
             // re-applied the next time it is switched on against a different bill.
             if (!on) {
-                driver = null
+                history.clear()
                 writeAll("")
             }
             recompute()
@@ -163,12 +175,13 @@ class SplitPayment(
             field.addTextChangedListener(
                 watcher {
                     // Our own write into the follower, not a person typing. Letting it
-                    // through would hand the lead straight back to the row we had just
-                    // filled, and the two would chase each other.
+                    // through would mark the row we had just filled as typed in, and
+                    // the balance would chase the operator round the panel.
                     if (writing) return@watcher
-                    // Typing here makes this the row that leads, whether it was leading
-                    // a moment ago or not. This is the whole of the flow's state.
-                    driver = row.part
+                    // Typing here makes this the most recently typed row, whether it
+                    // was a moment ago or not.
+                    history.remove(row.part)
+                    history.add(row.part)
                     recompute()
                     onChanged()
                 }
@@ -187,7 +200,7 @@ class SplitPayment(
 
     /** Puts the panel back to untouched, for a screen starting a fresh sale. */
     fun reset() {
-        driver = null
+        history.clear()
         writeAll("")
         root.findViewById<SwitchMaterial>(R.id.swSplitPayment).isChecked = false
         root.findViewById<View>(R.id.llSplitBody).visibility = View.GONE
@@ -196,20 +209,33 @@ class SplitPayment(
 
     // ---- The arithmetic ----------------------------------------------------
 
+    /**
+     * The row that takes the balance: the one typed in least recently, rows never
+     * typed in counting as older than any that were, the panel's order breaking ties.
+     * Never the row just typed in. Null before the first keystroke.
+     */
+    private fun follower(): Part? {
+        val latest = history.lastOrNull() ?: return null
+        return rows.map { it.part }
+            .filter { it != latest }
+            .minByOrNull { history.indexOf(it) }   // -1 for never typed: oldest of all
+    }
+
     private fun recompute() {
         val total = totalOf()
-        val lead = driver
+        val follower = follower()
 
-        if (lead == null) {
+        if (follower == null) {
             // Nothing typed yet: a bill on its own implies no division of itself, and a
             // row pre-filled with the whole total would be claiming one.
             writeAll("")
         } else {
-            // The follower is whatever is left of the bill. Cleared to nothing where
-            // the leader already covers it - a customer paying the lot in notes has no
-            // UPI part, and "0.00" sitting in the box would read as one that failed.
-            val follower = rows.first { it.part != lead }.part
-            val rest = BillRounding.toPaise(total - amount(lead))
+            // The follower is whatever the other rows leave of the bill. Cleared to
+            // nothing where they already cover it - a customer paying the lot in notes
+            // has no UPI part, and "0.00" sitting in the box would read as one that
+            // failed.
+            val others = rows.filter { it.part != follower }.sumOf { amount(it.part) }
+            val rest = BillRounding.toPaise(total - others)
             write(follower, if (rest > 0.005) Amounts.editable(rest) else "")
         }
 
@@ -220,6 +246,7 @@ class SplitPayment(
         val entered = entered()
         val remaining = remaining()
         val change = change()
+        val overpaid = overpaid()
 
         root.findViewById<TextView>(R.id.tvSplitBillTotal)?.text = money(total)
         root.findViewById<TextView>(R.id.tvSplitEntered)?.text = money(entered)
@@ -237,6 +264,7 @@ class SplitPayment(
         root.findViewById<TextView>(R.id.tvSplitNote)?.text = when {
             entered <= 0.001 -> "Enter the amount taken in each mode."
             remaining > 0.001 -> "${money(remaining)} still to collect."
+            overpaid > 0.001 -> "UPI and card are ${money(overpaid)} over the bill - only cash can be handed back."
             change > 0.001 -> "${money(change)} to hand back."
             else -> "The split covers the bill."
         }

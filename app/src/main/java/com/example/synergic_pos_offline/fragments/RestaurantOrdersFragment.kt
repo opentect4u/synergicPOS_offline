@@ -1315,7 +1315,6 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val root = view ?: return
         showDiscountFor(order)
         val accent = ThemeManager.getThemeColor(requireContext())
-        val takeAway = order.takeAway
         val counter = order.counter
         // A counter order has no table - show it as what it is, not "Table: …".
         root.findViewById<TextView>(R.id.tvDetailTableLabel).visibility = if (counter) View.GONE else View.VISIBLE
@@ -1323,11 +1322,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             text = if (counter) order.type else tableDisplayName(order); setTextColor(accent)
         }
         root.findViewById<TextView>(R.id.tvDetailCustomer).text = order.phone.ifBlank { "Walk-in" }
-        // THE ONLY WAY A TAKE-AWAY GETS A CUSTOMER, and it is optional. Beside the tag
-        // it edits, because reading "Walk-in" is what prompts the change.
+        // HOW AN ORDER GETS A CUSTOMER, and it is optional. Beside the tag it edits,
+        // because reading "Walk-in" is what prompts the change.
         //
-        // Take-away only: a table order is identified by its table, and only a counter
-        // order's bill carries a name and number.
+        // Every order type - dine-in, take-away and QSR. A table is still identified by
+        // its table, but the guest at it may want the bill in their name, or to put it
+        // on their credit account, and the bill, settlement and ledger all read the
+        // order's phone whatever its type.
         //
         // One button, two states. "Add Customer" while the tag reads Walk-in, "Edit"
         // once somebody is on the order, so a number taken down wrongly at the counter
@@ -1343,7 +1344,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // with nothing on either screen connecting the two.
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAddCustomer)
             .apply {
-                visibility = if (takeAway) View.VISIBLE else View.GONE
+                visibility = View.VISIBLE
                 val none = order.phone.isBlank()
                 text = if (none) "Add Customer" else "Edit"
                 setIconResource(if (none) R.drawable.ic_plus else R.drawable.ic_edit)
@@ -1508,8 +1509,6 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private fun onAddCustomer() {
         val order = currentOrder() ?: return toast("Select an order first")
-        if (!order.takeAway)
-            return toast("Only a take-away carries a customer — a table order is its table")
         // A printed bill already carries the customer it was printed with. Changing it
         // now would leave the slip in the customer's hand naming somebody else.
         if (order.completed) return toast("Order already billed — the customer cannot be changed")
@@ -5243,6 +5242,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // empty space, so a short list under a busy table never reads as lost items.
         root.findViewById<TextView>(R.id.tvOrderItemsHeader).text =
             if (sentOnly > 0) "ORDER ITEMS  ·  $sentOnly SENT" else "ORDER ITEMS"
+
+        // Same reading as the grocery cart's header: distinct products and total
+        // quantity, over the WHOLE order - what the bill will carry - not just the
+        // unsent lines the list below is narrowed to.
+        val totalQty = all.sumOf { it.qty }
+        val productCount = all.map { it.productId }.distinct().size
+        root.findViewById<TextView>(R.id.tvOrderItemCount).text =
+            ("$productCount product${if (productCount != 1) "s" else ""}, " +
+                "${qtyText(totalQty)} count${if (totalQty != 1.0) "s" else ""}").uppercase()
         root.findViewById<TextView>(R.id.tvCartAllSent).visibility =
             if (cart.isEmpty() && all.isNotEmpty() && !locked) View.VISIBLE else View.GONE
 
@@ -5620,7 +5628,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         btnCustInfo.setOnClickListener { com.example.synergic_pos_offline.utils.CreditSale.showCustomer(requireContext(), order.phone) }
 
         // PART PAYMENT, under the Cash tile - the grocery checkout's own panel and
-        // rules: the operator types one of the two amounts and the other follows, the
+        // rules: the operator types the cash/UPI/card parts they know and one row takes the balance, the
         // UPI code quotes the UPI part only, and Confirm waits until the parts cover
         // the bill. While it is on, its CASH row is the cash being taken, so the
         // tendered box and its change line come down. See SplitPayment.
@@ -5726,7 +5734,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // would write a paid bill for money nobody received.
             if (payMethod == "Cash" && split.isActive()) {
                 if (!split.balances()) {
-                    toast("The parts do not cover the bill yet")
+                    toast(
+                        if (split.overpaid() > 0.001) "UPI and card are more than the bill"
+                        else "The parts do not cover the bill yet"
+                    )
                     return@setOnClickListener
                 }
                 // A row per mode it was taken in, as the grocery till writes it - the
