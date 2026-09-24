@@ -193,7 +193,7 @@
                      A take-away's customer could only be entered as the token was
                      opened, or refused at Print Bill; a counter that took a name after
                      the order had started had nowhere to put it.
-                     Shown for take-away only - a table's customer is the table. -->
+                     Shown for every order type - dine-in, take-away and QSR. -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnAddCustomer"
                     style="@style/Widget.MaterialComponents.Button.TextButton"
@@ -487,14 +487,30 @@
                              operator to wonder where it went. -->
                         <TextView
                             android:id="@+id/tvOrderItemsHeader"
-                            android:layout_width="0dp"
+                            android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
                             android:text="ORDER ITEMS"
                             android:textSize="11sp"
                             android:letterSpacing="0.08"
                             android:textStyle="bold"
                             android:textColor="@color/text_secondary" />
+
+                        <!-- The product/item count, as the grocery cart header carries
+                             it (tvItemCount) - takes the space between the header and
+                             More so it sits centred between the two. Counts the whole
+                             order, not just the unsent lines this list is showing. -->
+                        <TextView
+                            android:id="@+id/tvOrderItemCount"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:gravity="center"
+                            android:maxLines="1"
+                            android:ellipsize="end"
+                            android:text="0 PRODUCTS, 0 COUNTS"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/primary_blue" />
 
                         <!-- Opens the whole order in a roomy popup - this panel is
                              narrow, so a long order is easier read there. -->
