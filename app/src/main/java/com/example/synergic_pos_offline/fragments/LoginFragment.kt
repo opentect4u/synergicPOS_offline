@@ -350,6 +350,10 @@ class LoginFragment : Fragment() {
                     "\n\n${result.skipped} record(s) were for tables this version does not " +
                         "have, and were skipped."
                 } else ""
+                val failed = if (result.failed > 0) {
+                    "\n\n${result.failed} record(s) in the file could not be read back and " +
+                        "were left out. The rest of the backup restored normally."
+                } else ""
                 // Said plainly when the server has not been told - and said as
                 // something already in hand, because it is: the move is queued and
                 // goes out by itself on the next connection. A tablet being set up
@@ -369,7 +373,7 @@ class LoginFragment : Fragment() {
                     context = requireContext(),
                     title = "Restored",
                     message = "${result.rows} record(s) into ${result.tables} table(s)." +
-                        skipped + moved +
+                        skipped + failed + moved +
                         "\n\nSign in with the login from the device the backup came from.",
                     onDismiss = { afterRestore() }
                 )

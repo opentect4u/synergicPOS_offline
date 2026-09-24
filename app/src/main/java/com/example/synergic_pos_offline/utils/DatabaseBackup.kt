@@ -303,7 +303,15 @@ object DatabaseBackup {
         val rows: Int,
         val skipped: Int,
         val schemaVersion: Int?,
-        val error: String? = null
+        val error: String? = null,
+        /**
+         * Statements for a table this restore IS writing that still could not be run -
+         * a row a corrupted or hand-edited file mangled, not a row for a table this
+         * build lacks (that is [skipped]). Counted rather than let abort the whole
+         * restore: a bulk restore is tens or hundreds of thousands of these rows, and
+         * one bad one should not cost every good one alongside it.
+         */
+        val failed: Int = 0
     ) {
         val ok: Boolean get() = error == null
     }
@@ -335,6 +343,7 @@ object DatabaseBackup {
 
         var rows = 0
         var skipped = 0
+        var failed = 0
         val cleared = LinkedHashSet<String>()
 
         // Everything, including turning foreign keys off and opening the
@@ -357,11 +366,23 @@ object DatabaseBackup {
                     // once from start to end rather than twice - a whole shop's
                     // database does not fit in memory as a list of statements.
                     if (cleared.add(table)) db.execSQL("DELETE FROM $table")
-                    db.execSQL(statement)
-                    rows++
+                    // One statement's own failure - a row a corrupted or hand-edited
+                    // file mangled - stays with that row. Letting it escape would
+                    // abort the transaction and roll back every row already restored,
+                    // which on a hundred-thousand-row backup turns one bad line into
+                    // the whole restore doing nothing at all.
+                    try {
+                        db.execSQL(statement)
+                        rows++
+                    } catch (e: Exception) {
+                        android.util.Log.e(
+                            "DatabaseBackup", "Could not restore a row for $table", e
+                        )
+                        failed++
+                    }
                 }
                 if (rows == 0) {
-                    return Result(0, 0, skipped, schemaVersion, "That file holds no data to restore")
+                    return Result(0, 0, skipped, schemaVersion, "That file holds no data to restore", failed)
                 }
                 db.setTransactionSuccessful()
             } finally {
@@ -380,7 +401,7 @@ object DatabaseBackup {
         // The settings cache is a copy of rows that have just been replaced; left
         // alone it would answer for the old installation until the next login.
         runCatching { SettingsCache.storeFromDb(context, "database restore") }
-        return Result(cleared.size, rows, skipped, schemaVersion)
+        return Result(cleared.size, rows, skipped, schemaVersion, failed = failed)
     }
 
     /** The table an `INSERT INTO <name> (...)` statement writes to. */
