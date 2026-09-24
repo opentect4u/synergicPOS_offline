@@ -1509,20 +1509,21 @@ class BillReceiptRenderer(context: Context) {
 
             // The account block printed under the totals. On a CREDIT bill it is the
             // running-account breakdown from the customer's side - what they had, this
-            // bill, what they paid now, and where that leaves them (positive = in credit,
-            // negative = owing), so TOTAL BALANCE = PREVI - BILL + CASH. On any other
-            // bill it is just the change given back and the outstanding, when there is
-            // any. cust.outstanding is md_customers.balance_amount (positive = owes),
-            // which is why it is negated for the customer-side figures.
+            // bill, what they paid now, and where that leaves them, so TOTAL BALANCE =
+            // PREVI + BILL - CASH. cust.outstanding is md_customers.balance_amount
+            // (positive = owes, negative = in credit) and is printed as-is here, the
+            // same sign the OUTSTANDING line below and the Customer Ledger use - a
+            // customer who owes 500 reads "500.00" on every one of them, not "-500.00"
+            // on this slip and "500.00" everywhere else. On any other bill it is just
+            // the change given back and the outstanding, when there is any.
             val trailer: List<Pair<String, String>> = if (creditSale) {
                 val current = cust.outstanding ?: 0.0
-                val totalBalance = -current
-                val previBalance = totalBalance + payable - cashReceived
+                val previBalance = current - payable + cashReceived
                 listOf(
                     t("PREVI BALANCE") to money(previBalance),
                     t("BILL AMOUNT") to money(payable),
                     t("CASH RECEIVED") to money(cashReceived),
-                    t("TOTAL BALANCE") to money(totalBalance)
+                    t("TOTAL BALANCE") to money(current)
                 )
             } else buildList {
                 if (returnAmount > 0.005) add(t("CHANGE DUE") to money(returnAmount))

@@ -402,8 +402,20 @@ object KotPrinter {
                     // belongs rather than padded into one string. The alignment is set
                     // per draw because the paints are shared between lines.
                     canvas?.drawText(line.text, padX, y, line.paint.apply { textAlign = Paint.Align.LEFT })
-                    line.mid?.let {
-                        canvas?.drawText(it, width / 2f, y, line.paint.apply { textAlign = Paint.Align.CENTER })
+                    line.mid?.let { mid ->
+                        // Centred by default, but never closer to the left piece than a
+                        // gap: a translated "KOT NO" can run wider than the English one
+                        // did, and a mid column centred without checking would print the
+                        // date on top of it instead of beside it.
+                        val leftEnd = padX + line.paint.measureText(line.text)
+                        val midWidth = line.paint.measureText(mid)
+                        val rightStart = line.right?.let {
+                            width - (line.rightInset ?: padX) - line.paint.measureText(it) - gap
+                        } ?: (width - padX)
+                        val start = (width / 2f - midWidth / 2f)
+                            .coerceAtLeast(leftEnd + gap)
+                            .coerceAtMost(rightStart - midWidth)
+                        canvas?.drawText(mid, start, y, line.paint.apply { textAlign = Paint.Align.LEFT })
                     }
                     line.right?.let {
                         canvas?.drawText(
