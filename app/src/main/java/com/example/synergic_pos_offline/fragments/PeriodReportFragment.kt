@@ -22,6 +22,7 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.CalendarGrain
 import com.example.synergic_pos_offline.utils.PeriodReportPrinter
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
@@ -367,15 +368,24 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
             return
         }
 
-        val result = load(from, to)
-        report = result.takeUnless { isEmpty(it) }
+        // [load] reads td_bills/td_bill_items over the whole period - fine on a
+        // shop with a few thousand bills, but on one with hundreds of thousands
+        // that is real work, and doing it on the click meant freezing the till
+        // for as long as it took, with Android offering to close the app - what
+        // an operator reports as a crash. See BusyDialog.
+        BusyDialog.run(this, "Generating report…") {
+            val result = load(from, to)
+            BusyDialog.onMain(this) {
+                report = result.takeUnless { isEmpty(it) }
 
-        if (isEmpty(result)) {
-            val (title, hint) = emptyMessage(result, from, to)
-            showEmpty(title, hint)
-            return
+                if (isEmpty(result)) {
+                    val (title, hint) = emptyMessage(result, from, to)
+                    showEmpty(title, hint)
+                    return@onMain
+                }
+                bind(result)
+            }
         }
-        bind(result)
     }
 
     private fun bind(r: T) {

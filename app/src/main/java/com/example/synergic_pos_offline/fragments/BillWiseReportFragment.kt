@@ -17,6 +17,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillWiseReportDao
+import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.PeriodReportPrinter
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
 import com.example.synergic_pos_offline.utils.ReportDownloads
@@ -137,17 +138,25 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
             return
         }
 
-        val result = dao.between(from, to)
-        report = result.takeUnless { it.isEmpty }
-
-        if (result.isEmpty) {
-            showEmpty(
-                "No bills in this period",
-                "Nothing was billed between ${pretty(from)} and ${pretty(to)}."
-            )
-            return
+        // A report over a large date range is a full read of td_bills/td_bill_items,
+        // not main-thread work - see BusyDialog. Run synchronously here on a shop
+        // with a few thousand bills and it never shows; run it on one with
+        // hundreds of thousands and it freezes the till long enough for Android
+        // to offer to close the app, which is what an operator reports as a crash.
+        BusyDialog.run(this, "Generating report…") {
+            val result = dao.between(from, to)
+            BusyDialog.onMain(this) {
+                report = result.takeUnless { it.isEmpty }
+                if (result.isEmpty) {
+                    showEmpty(
+                        "No bills in this period",
+                        "Nothing was billed between ${pretty(from)} and ${pretty(to)}."
+                    )
+                    return@onMain
+                }
+                bind(result)
+            }
         }
-        bind(result)
     }
 
     private fun bind(r: BillWiseReportDao.Report) {

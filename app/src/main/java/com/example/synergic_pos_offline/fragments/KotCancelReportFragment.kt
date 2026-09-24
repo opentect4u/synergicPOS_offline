@@ -17,6 +17,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.KotCancelReportDao
+import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.PeriodReportPrinter
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
 import com.example.synergic_pos_offline.utils.ReportDownloads
@@ -100,13 +101,17 @@ class KotCancelReportFragment : Fragment(), TitledScreen {
         if (from.isEmpty() || to.isEmpty()) { toast("Pick both dates"); return }
         if (from > to) { toast("The From date is after the To date"); return }
 
-        val result = dao.between(from, to)
-        report = result.takeUnless { it.isEmpty }
-        if (result.isEmpty) {
-            showEmpty("No cancelled KOTs", "No KOT was cancelled between ${pretty(from)} and ${pretty(to)}.")
-            return
+        BusyDialog.run(this, "Generating report…") {
+            val result = dao.between(from, to)
+            BusyDialog.onMain(this) {
+                report = result.takeUnless { it.isEmpty }
+                if (result.isEmpty) {
+                    showEmpty("No cancelled KOTs", "No KOT was cancelled between ${pretty(from)} and ${pretty(to)}.")
+                    return@onMain
+                }
+                bind(result)
+            }
         }
-        bind(result)
     }
 
     private fun bind(r: KotCancelReportDao.Report) {

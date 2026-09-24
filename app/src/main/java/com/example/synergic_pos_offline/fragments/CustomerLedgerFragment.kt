@@ -15,6 +15,7 @@ import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.CustomerDao
 import com.example.synergic_pos_offline.database.CustomerLedgerDao
+import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.CustomerLedgerView
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
@@ -124,15 +125,19 @@ class CustomerLedgerFragment : Fragment(), TitledScreen {
         }
         tilPhone.error = null
 
-        val result = dao.forPhone(phone, from, to)
-        if (result == null) {
-            ledger = null
-            showEmpty("No customer on $phone", "Check the number, or add them under Master → Customers.")
-            return
-        }
+        BusyDialog.run(this, "Generating statement…") {
+            val result = dao.forPhone(phone, from, to)
+            BusyDialog.onMain(this) {
+                if (result == null) {
+                    ledger = null
+                    showEmpty("No customer on $phone", "Check the number, or add them under Master → Customers.")
+                    return@onMain
+                }
 
-        ledger = result
-        bind(result)
+                ledger = result
+                bind(result)
+            }
+        }
     }
 
     private fun bind(led: CustomerLedgerDao.Ledger) {

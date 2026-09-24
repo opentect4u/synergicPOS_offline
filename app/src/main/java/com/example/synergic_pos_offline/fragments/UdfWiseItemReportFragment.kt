@@ -15,6 +15,7 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.UdfWiseItemReportDao
+import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.PrinterSetup
 import com.example.synergic_pos_offline.utils.ReportDownloads
 import com.example.synergic_pos_offline.utils.ReportExport
@@ -89,13 +90,17 @@ class UdfWiseItemReportFragment : Fragment(), TitledScreen {
         if (from.isEmpty() || to.isEmpty()) { toast("Pick both dates"); return }
         if (from > to) { toast("The From date is after the To date"); return }
 
-        val result = dao.between(from, to)
-        report = result.takeUnless { it.isEmpty }
-        if (result.isEmpty) {
-            showEmpty("No items in this period", "No restaurant item was billed between ${pretty(from)} and ${pretty(to)}.")
-            return
+        BusyDialog.run(this, "Generating report…") {
+            val result = dao.between(from, to)
+            BusyDialog.onMain(this) {
+                report = result.takeUnless { it.isEmpty }
+                if (result.isEmpty) {
+                    showEmpty("No items in this period", "No restaurant item was billed between ${pretty(from)} and ${pretty(to)}.")
+                    return@onMain
+                }
+                bind(result)
+            }
         }
-        bind(result)
     }
 
     private fun bind(r: UdfWiseItemReportDao.Report) {
