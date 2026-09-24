@@ -62,7 +62,7 @@ class DashboardDao(context: Context) {
             """
             SELECT COALESCE(SUM(p.amount_paid), 0) FROM ${DatabaseHelper.Tables.TD_PAYMENTS} p
             JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = p.bill_id
-            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$today'
+            WHERE ${dayIs(today, "b")}
               AND ${BillDao.countableBillClause("b")}
             """.trimIndent()
         )
@@ -78,7 +78,7 @@ class DashboardDao(context: Context) {
             "SELECT COUNT(DISTINCT customer_id) FROM ${DatabaseHelper.Tables.TD_BILLS} " +
                 "WHERE ${dayIs(today)} AND customer_id IS NOT NULL AND ${BillDao.countableBillClause()} " +
                 "AND customer_id IN (SELECT customer_id FROM ${DatabaseHelper.Tables.TD_BILLS} " +
-                "WHERE date(COALESCE(bill_date_time, bill_date)) < '$today' AND customer_id IS NOT NULL " +
+                "WHERE ${dayBefore(today)} AND customer_id IS NOT NULL " +
                 "AND ${BillDao.countableBillClause()})"
         ).toInt()
 
@@ -166,7 +166,7 @@ class DashboardDao(context: Context) {
             SELECT UPPER(COALESCE(p.payment_mode, b.bill_type, '')), COALESCE(SUM(p.amount_paid), 0)
             FROM ${DatabaseHelper.Tables.TD_PAYMENTS} p
             JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = p.bill_id
-            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$day'
+            WHERE ${dayIs(day, "b")}
               AND ${BillDao.countableBillClause("b")}
             GROUP BY 1
             """.trimIndent()
@@ -196,7 +196,7 @@ class DashboardDao(context: Context) {
         JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id
         LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCTS} p ON p.id = i.product_id
         LEFT JOIN ${DatabaseHelper.Tables.MD_CATEGORY} c ON c.id = p.category_id
-        WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$day'
+        WHERE ${dayIs(day, "b")}
           AND ${BillDao.countableBillClause("b")}
         GROUP BY 1 ORDER BY 2 DESC
         """.trimIndent()
@@ -237,7 +237,7 @@ class DashboardDao(context: Context) {
             SELECT i.product_id, COALESCE(SUM(i.quantity), 0)
             FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i
             JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id
-            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) BETWEEN '$from' AND '$to'
+            WHERE ${dayBetween(from, to, "b")}
               AND ${BillDao.countableBillClause("b")}
             GROUP BY i.product_id
             """.trimIndent()
@@ -322,7 +322,7 @@ class DashboardDao(context: Context) {
             """
             SELECT date(COALESCE(bill_date_time, bill_date)), COALESCE(SUM(net_amount), 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS}
-            WHERE date(COALESCE(bill_date_time, bill_date)) BETWEEN '${dayOffset(-6)}' AND '${dayOffset(0)}'
+            WHERE ${dayBetween(dayOffset(-6), dayOffset(0))}
               AND ${BillDao.countableBillClause()}
             GROUP BY 1
             """.trimIndent()
@@ -420,7 +420,7 @@ class DashboardDao(context: Context) {
             "EXISTS(SELECT 1 FROM ${DatabaseHelper.Tables.TD_BILL_ITEMS} i " +
                 "JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = i.bill_id " +
                 "WHERE i.product_id = p.id " +
-                "AND date(COALESCE(b.bill_date_time, b.bill_date)) BETWEEN '$from' AND '$to' " +
+                "AND ${dayBetween(from, to, "b")} " +
                 "AND ${BillDao.countableBillClause("b")})"
 
         // Products nobody has bought in a month. Counted over the whole catalogue, not
@@ -486,14 +486,14 @@ class DashboardDao(context: Context) {
             SELECT COALESCE(SUM(COALESCE(p.amount_paid, 0) - COALESCE(p.change_amount, 0)), 0)
             FROM ${DatabaseHelper.Tables.TD_PAYMENTS} p
             JOIN ${DatabaseHelper.Tables.TD_BILLS} b ON b.receipt_no = p.bill_id
-            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$today'
+            WHERE ${dayIs(today, "b")}
               AND UPPER(COALESCE(p.payment_mode, b.bill_type, '')) = 'CASH'
               AND ${BillDao.countableBillClause("b")}
             """.trimIndent()
         )
         val takings = query1(
             "SELECT COALESCE(SUM(b.net_amount), 0) FROM ${DatabaseHelper.Tables.TD_BILLS} b " +
-                "WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$today' " +
+                "WHERE ${dayIs(today, "b")} " +
                 "AND ${BillDao.countableBillClause("b")}"
         )
 
@@ -509,7 +509,7 @@ class DashboardDao(context: Context) {
             """
             SELECT COUNT(*), COALESCE(SUM(b.net_amount), 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
-            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$today'
+            WHERE ${dayIs(today, "b")}
               AND $modeOf = 'CREDIT'
               AND ${BillDao.countableBillClause("b")}
             """.trimIndent()
@@ -543,7 +543,7 @@ class DashboardDao(context: Context) {
             .put("creditValue", creditValue)
             .put("bills", query1(
                 "SELECT COUNT(*) FROM ${DatabaseHelper.Tables.TD_BILLS} b " +
-                    "WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$today' " +
+                    "WHERE ${dayIs(today, "b")} " +
                     "AND ${BillDao.countableBillClause("b")}"
             ).toInt())
             .put("owed", owed)
@@ -613,7 +613,7 @@ class DashboardDao(context: Context) {
             """
             SELECT COALESCE(b.order_type, ''), COALESCE(SUM(b.net_amount), 0)
             FROM ${DatabaseHelper.Tables.TD_BILLS} b
-            WHERE date(COALESCE(b.bill_date_time, b.bill_date)) = '$today'
+            WHERE ${dayIs(today, "b")}
               AND ${BillDao.countableBillClause("b")}
             GROUP BY COALESCE(b.order_type, '')
             """.trimIndent()
@@ -667,12 +667,42 @@ class DashboardDao(context: Context) {
 
     private fun countBetween(from: String, to: String) =
         "SELECT COUNT(*) FROM ${DatabaseHelper.Tables.TD_BILLS} " +
-            "WHERE date(COALESCE(bill_date_time, bill_date)) BETWEEN '$from' AND '$to' " +
+            "WHERE ${dayBetween(from, to)} " +
             "AND ${BillDao.countableBillClause()}"
 
+    /**
+     * Exactly the day this always meant - `date(COALESCE(bill_date_time, bill_date))
+     * = day` - but with a plain, unwrapped range on `bill_date` ANDed in front of it.
+     *
+     * `bill_date` alone is what [DatabaseHelper]'s `idx_td_bills_date_seq` index is
+     * built on; wrapped in `date(COALESCE(...))` as the exact check has to be, SQLite
+     * cannot use that index at all, and every one of this dashboard's date-scoped
+     * figures was walking the *whole* bills table - fine at a few thousand rows,
+     * a multi-second stall at a few hundred thousand. The plain range is sargable, so
+     * the planner narrows to the one day's rows (±1, for a bill_date_time that crosses
+     * midnight against a bill_date that has not) through the index before the exact
+     * expression - now checked against a handful of rows rather than the whole table
+     * - decides which of them actually belong to [day].
+     */
     private fun dayIs(day: String, alias: String = "") = alias.let { a ->
         val p = if (a.isEmpty()) "" else "$a."
-        "date(COALESCE(${p}bill_date_time, ${p}bill_date)) = '$day'"
+        "${p}bill_date BETWEEN date('$day', '-1 day') AND date('$day', '+1 day') " +
+            "AND date(COALESCE(${p}bill_date_time, ${p}bill_date)) = '$day'"
+    }
+
+    /** [dayIs], over a range rather than one day - see [countBetween], [movement]. */
+    private fun dayBetween(from: String, to: String, alias: String = "") = alias.let { a ->
+        val p = if (a.isEmpty()) "" else "$a."
+        "${p}bill_date BETWEEN date('$from', '-1 day') AND date('$to', '+1 day') " +
+            "AND date(COALESCE(${p}bill_date_time, ${p}bill_date)) BETWEEN '$from' AND '$to'"
+    }
+
+    /** [dayIs], for "before this day" rather than "on it" - see the repeat-customer
+     *  check in [snapshot], the one open-ended date filter this dashboard runs. */
+    private fun dayBefore(day: String, alias: String = "") = alias.let { a ->
+        val p = if (a.isEmpty()) "" else "$a."
+        "${p}bill_date < date('$day', '+1 day') " +
+            "AND date(COALESCE(${p}bill_date_time, ${p}bill_date)) < '$day'"
     }
 
     /**

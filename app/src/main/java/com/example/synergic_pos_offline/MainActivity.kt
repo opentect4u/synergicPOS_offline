@@ -66,6 +66,8 @@ class MainActivity : AppCompatActivity() {
         private const val NORMAL_ICON_DP = 44
         private const val COMPACT_ICON_DP = 34
         private const val NORMAL_BACK_DP = 40
+        private const val NORMAL_LOGO_DP = 36
+        private const val COMPACT_LOGO_DP = 28
         private const val NORMAL_VERTICAL_PADDING_DP = 10
         private const val COMPACT_VERTICAL_PADDING_DP = 4
 
@@ -286,10 +288,15 @@ class MainActivity : AppCompatActivity() {
 
         tvHeaderTitle.textSize = if (compact) COMPACT_TITLE_SP else NORMAL_TITLE_SP
         tvHeaderSubtitle.visibility = if (compact) View.GONE else View.VISIBLE
-        // Off on the sale screen along with the subtitle - a brand mark is the
-        // one thing in this bar that costs space without telling the operator
-        // anything the title does not already say.
-        ivHeaderLogo.visibility = if (compact) View.GONE else View.VISIBLE
+        // Stays on screen everywhere, including the compact sale header - unlike
+        // the subtitle, this is the one mark that says which app this is at a
+        // glance, on the one screen an operator has open all day. It shrinks
+        // with the rest of the bar's icons rather than taking the subtitle's
+        // full GONE treatment.
+        ivHeaderLogo.layoutParams = ivHeaderLogo.layoutParams.also {
+            val logo = dp(if (compact) COMPACT_LOGO_DP else NORMAL_LOGO_DP)
+            it.width = logo; it.height = logo
+        }
 
         val icon = dp(if (compact) COMPACT_ICON_DP else NORMAL_ICON_DP)
         listOf(R.id.btnMenu, R.id.btnSale, R.id.btnHome, R.id.btnTheme, R.id.btnLogout).forEach { id ->
