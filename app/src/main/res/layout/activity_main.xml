@@ -95,11 +95,22 @@
                 app:tint="@color/primary_blue"
                 android:contentDescription="Sale" />
 
+            <ImageView
+                android:id="@+id/ivHeaderLogo"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_toEndOf="@id/btnBack"
+                android:layout_centerVertical="true"
+                android:layout_marginStart="4dp"
+                android:src="@drawable/synergic_pos_logo"
+                android:scaleType="fitCenter"
+                android:contentDescription="Synergic POS" />
+
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_centerVertical="true"
-                android:layout_toEndOf="@id/btnBack"
+                android:layout_toEndOf="@id/ivHeaderLogo"
                 android:layout_toStartOf="@id/btnSale"
                 android:layout_marginStart="8dp"
                 android:orientation="vertical">

@@ -85,6 +85,7 @@ class MainActivity : AppCompatActivity() {
     // Global header
     private lateinit var headerBar: View
     private lateinit var btnBack: ImageButton
+    private lateinit var ivHeaderLogo: View
     private lateinit var tvHeaderTitle: TextView
     private lateinit var tvHeaderSubtitle: TextView
 
@@ -118,6 +119,7 @@ class MainActivity : AppCompatActivity() {
 
         headerBar = findViewById(R.id.headerBar)
         btnBack = findViewById(R.id.btnBack)
+        ivHeaderLogo = findViewById(R.id.ivHeaderLogo)
         tvHeaderTitle = findViewById(R.id.tvHeaderTitle)
         tvHeaderSubtitle = findViewById(R.id.tvHeaderSubtitle)
 
@@ -284,6 +286,10 @@ class MainActivity : AppCompatActivity() {
 
         tvHeaderTitle.textSize = if (compact) COMPACT_TITLE_SP else NORMAL_TITLE_SP
         tvHeaderSubtitle.visibility = if (compact) View.GONE else View.VISIBLE
+        // Off on the sale screen along with the subtitle - a brand mark is the
+        // one thing in this bar that costs space without telling the operator
+        // anything the title does not already say.
+        ivHeaderLogo.visibility = if (compact) View.GONE else View.VISIBLE
 
         val icon = dp(if (compact) COMPACT_ICON_DP else NORMAL_ICON_DP)
         listOf(R.id.btnMenu, R.id.btnSale, R.id.btnHome, R.id.btnTheme, R.id.btnLogout).forEach { id ->
