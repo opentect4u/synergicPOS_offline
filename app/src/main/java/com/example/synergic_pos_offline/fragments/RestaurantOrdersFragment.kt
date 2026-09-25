@@ -3220,7 +3220,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             gp.barcode.takeIf { it.isNotBlank() }
         ),
         barcode = gp.barcode,
-        image = gp.image
+        // Whatever the grid has already decoded; a dish not yet scrolled past shows its
+        // initial rather than a database read per keystroke.
+        bitmap = gp.product.id.toLongOrNull()?.let {
+            com.example.synergic_pos_offline.utils.ThumbnailCache.cachedProduct(
+                it, gp.imageKey, com.example.synergic_pos_offline.utils.ThumbnailCache.TILE_PX
+            )
+        }
         )
     }
 
@@ -3231,8 +3237,6 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val barcode: String = "",
         /** Preparation time from the master (e.g. "15" / "15 min"); shown on the tile. */
         val prepTime: String = "",
-        /** Product image bytes from the master, or null; shown on the tile when present. */
-        val image: ByteArray? = null,
         /**
          * The name as the tile shows it - the shop's own regional name, or the app
          * language's transliteration. Worked out once, with the catalogue read, rather
@@ -3240,8 +3244,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
          */
         val displayName: String = product.name,
         /**
-         * The photo's cache key: the product and a fingerprint of its bytes. A changed
-         * picture is a new key, so the cache never has to be cleared to stay right.
+         * The photo's stamp - its size and last edit, "" for a dish without one; see
+         * [ThumbnailCache.productStamp]. A changed picture is a new stamp, so the cache
+         * never has to be cleared to stay right.
+         *
+         * The catalogue used to carry every dish's image BYTES, and fingerprint them by
+         * hashing the whole of each - at 5,000 dishes, ~700 MB read into memory and
+         * hashed on every catalogue load. The tile now reads its own photo when shown.
          */
         val imageKey: String = ""
     )
@@ -3334,7 +3343,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val out = mutableListOf<GridProduct>()
         db.query(
             "md_products",
-            arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id", "food_type", "spice_level", "availability", "prep_time", "product_image"),
+            // The photo's size and last edit, never the photo - see GridProduct.imageKey.
+            arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id", "food_type", "spice_level", "availability", "prep_time",
+                "COALESCE(length(product_image), 0)", "modified_at"),
             (if (store != null) "store_id = ?" else null),
             store?.let { arrayOf(it.toString()) },
             null, null, productSort.orderBy
@@ -3354,7 +3365,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 val foodType = c.getString(5).orEmpty()
                 val spice = c.getString(6).orEmpty()
                 val prepTime = c.getString(8).orEmpty()
-                val image = if (c.isNull(9)) null else c.getBlob(9)
+                val photoStamp = com.example.synergic_pos_offline.utils.ThumbnailCache
+                    .productStamp(c.getLong(9), c.getString(10))
 
                 val rate = defaultRates[idLong]
                 val (unitSymbol, allowFraction) = unitCache[rate?.unitId] ?: ("" to false)
@@ -3372,11 +3384,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                             stockQty = level?.quantity ?: 0.0
                         ),
                         foodType = foodType, spice = spice, barcode = barcode,
-                        prepTime = prepTime, image = image,
+                        prepTime = prepTime,
                         displayName = com.example.synergic_pos_offline.utils.RegionalName.forScreen(
                             regionalNames, language, name
                         ),
-                        imageKey = image?.let { "restGrid:$id:${it.size}:${it.contentHashCode()}" }.orEmpty()
+                        imageKey = photoStamp
                     )
                 )
             }
@@ -4862,7 +4874,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val stock: TextView = v.findViewById(R.id.tvStock)
             /** Which photo this tile is waiting on, so a late decode cannot land on
              *  a tile that has since been recycled for another dish. */
-            var photoKey: String = ""
+            // Read by the photo decoder thread too, to skip a tile scrolled away.
+            @Volatile var photoKey: String = ""
         }
 
         // The grocery sale screen's own tile, so the menu here and the shelf there are
@@ -4887,14 +4900,19 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // and set when it lands, if this tile is still showing that dish. Decoding
             // it here, in the bind, cost a frame or more per tile - on an eight-across
             // grid, a whole row of them at a time - and that was the scroll's stutter.
-            val key = gp.imageKey
+            //
+            // Read FOR THIS DISH ALONE, when its tile is on screen - the catalogue no
+            // longer carries any photo bytes. A tile flung past before its turn is
+            // skipped unread - see ThumbnailCache.loadProduct.
+            val stamp = gp.imageKey
+            val idLong = p.id.toLongOrNull()
+            val key = "${p.id}:$stamp"
             holder.photoKey = key
             val tile = com.example.synergic_pos_offline.utils.ThumbnailCache.TILE_PX
-            val image = gp.image
-            val held = if (key.isEmpty()) null
-                else com.example.synergic_pos_offline.utils.ThumbnailCache.cached(key, tile)
+            val held = if (stamp.isEmpty() || idLong == null) null
+                else com.example.synergic_pos_offline.utils.ThumbnailCache.cachedProduct(idLong, stamp, tile)
             when {
-                image == null || image.isEmpty() -> {
+                stamp.isEmpty() || idLong == null -> {
                     holder.photo.setImageDrawable(null); holder.photo.visibility = View.GONE
                 }
                 held != null -> {
@@ -4902,8 +4920,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 }
                 else -> {
                     holder.photo.setImageDrawable(null); holder.photo.visibility = View.VISIBLE
-                    com.example.synergic_pos_offline.utils.ThumbnailCache.load(key, image, tile) { bmp ->
-                        if (holder.photoKey != key) return@load
+                    com.example.synergic_pos_offline.utils.ThumbnailCache.loadProduct(
+                        holder.itemView.context, idLong, stamp, tile,
+                        wanted = { holder.photoKey == key }
+                    ) { bmp ->
+                        if (holder.photoKey != key) return@loadProduct
                         if (bmp != null) holder.photo.setImageBitmap(bmp)
                         else holder.photo.visibility = View.GONE
                     }

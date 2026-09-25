@@ -39,6 +39,7 @@ import com.example.synergic_pos_offline.utils.DialogUtils
 import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.ImageUtils
+import com.example.synergic_pos_offline.utils.ThumbnailCache
 import com.example.synergic_pos_offline.utils.SearchSuggestions
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.SettingsCache
@@ -140,7 +141,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
          *  [discType] is "P"/"A" (percent/amount) or null when none is configured. */
         val discValue: Double = 0.0, val discType: String? = null,
         /** Every sellable rate (only populated in Multiple item-rate mode). */
-        val rates: List<ProductEntryDialog.Rate> = emptyList()
+        val rates: List<ProductEntryDialog.Rate> = emptyList(),
+        /**
+         * The photo's fingerprint, "" for a product without one - see
+         * [ThumbnailCache.productStamp]. The photo itself is read only when its tile
+         * is on screen; the catalogue never carries the bytes.
+         */
+        val photoStamp: String = ""
     ) {
         /** Combined rate, for display only. */
         val gst: Double get() = cgst + sgst
@@ -193,7 +200,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
             else -> ""
         },
         badgeColor = if (p.stock == "out") 0xFFDC2626.toInt() else 0xFFF59E0B.toInt(),
-        bitmap = photoCache[p.id]
+        // Whatever the grid has already decoded; a product not yet scrolled past shows
+        // its initial here rather than a database read per keystroke.
+        bitmap = cachedPhoto(p)
         )
     }
 
@@ -251,12 +260,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
      */
     private var stockTrackingOn = false
 
-    /** Product photos, decoded once per catalogue load and keyed by product id. */
-    private val photoCache = mutableMapOf<String, android.graphics.Bitmap>()
+    /**
+     * The photo already decoded for [p]'s tile, or null - never does any work. Photos
+     * are loaded per tile as the grid shows them; see [ThumbnailCache.loadProduct].
+     */
+    private fun cachedPhoto(p: Product): Bitmap? =
+        p.id.toLongOrNull()?.let { ThumbnailCache.cachedProduct(it, p.photoStamp, PHOTO_PX) }
 
     /**
-     * Reads the catalogue - every product's rate/stock and its photo, decoded -
-     * off the main thread. See [loadProductsAsync]. One thread, so a second load
+     * Reads the catalogue - every product's rate and stock, and a stamp for its
+     * photo (never the photo itself) - off the main thread. See [loadProductsAsync]. One thread, so a second load
      * queues behind a first still running rather than the two racing the
      * database or [menu] itself.
      *
@@ -857,7 +870,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
      *  [loadProductsAsync] and [buildCatalogue]. */
     private data class CatalogueResult(
         val products: List<Product>,
-        val photos: Map<String, Bitmap>,
         val regionalNames: Map<String, String>,
         val stockTrackingOn: Boolean
     )
@@ -897,10 +909,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 // overwrite anyway.
                 if (!isAdded || generation != catalogLoadGeneration) return@post
                 if (result != null) {
+                    // Decoded photos are NOT thrown away: each is cached under its
+                    // stamp, so a changed photo is simply a new key.
                     menu.clear()
                     menu.addAll(result.products)
-                    photoCache.clear()
-                    photoCache.putAll(result.photos)
                     regionalNames = result.regionalNames
                     stockTrackingOn = result.stockTrackingOn
                 }
@@ -918,7 +930,6 @@ class PosBillingFragment : Fragment(), TitledScreen {
      */
     private fun buildCatalogue(ctx: Context, categoryItems: List<CategoryItem>): CatalogueResult {
         val menu = mutableListOf<Product>()
-        val photoCache = mutableMapOf<String, Bitmap>()
         val helper = DatabaseHelper.getInstance(ctx)
         val db = helper.readableDatabase
         // Multiple item-rate mode: the product popup offers a rate dropdown.
@@ -950,19 +961,21 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // categories was turning this into products × categories comparisons.
         val categoryById = categoryItems.associateBy { it.id }
 
-        // The cursor is read in one single-threaded pass - a Cursor is not safe to
-        // share across threads - and every row's own photo bytes are kept raw
-        // rather than decoded here. See the parallel decode step below for why.
+        // NO PHOTO BYTES IN THIS READ. It used to select product_image and decode every
+        // photo before the grid could show - at 5,000 products that was ~700 MB of
+        // JPEG read into memory plus a bitmap per product, and the app stopped
+        // responding. Only each photo's size and last edit are read, as the stamp its
+        // tile looks it up by; the tile reads its own photo when it is on screen.
         data class RawRow(
             val idLong: Long, val productId: String, val productName: String,
             val barcode: String, val hsn: String, val categoryId: Long,
-            val imageBytes: ByteArray?
+            val photoStamp: String
         )
         val rawRows = mutableListOf<RawRow>()
         db.query(
             "md_products",
             arrayOf("id", "product_name", "bar_code", "hsn_code", "category_id",
-                "product_image"),
+                "COALESCE(length(product_image), 0)", "modified_at"),
             (if (store != null) "store_id = ?" else null),
             store?.let { arrayOf(it.toString()) },
             null, null, productSort.orderBy
@@ -976,34 +989,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
                         barcode = cursor.getString(2) ?: "",
                         hsn = cursor.getString(3) ?: "0000",
                         categoryId = cursor.getLong(4),
-                        imageBytes = if (cursor.isNull(5)) null else cursor.getBlob(5)?.takeIf { it.isNotEmpty() }
+                        photoStamp = ThumbnailCache.productStamp(cursor.getLong(5), cursor.getString(6))
                     )
                 )
-            }
-        }
-
-        // Every photo decoded across a small pool of threads rather than one at a
-        // time on this single background thread. decodeThumb is pure CPU (two
-        // BitmapFactory passes per photo, bounds then sampled decode) with nothing
-        // in it that touches the database or this fragment, so it is safe to run
-        // spread across cores - a couple of thousand photos serialised onto one
-        // core was most of what "opening the sale page" was still waiting on even
-        // after the read itself moved off the main thread. Bounded rather than one
-        // thread per photo: a two-thousand-photo catalogue should not start two
-        // thousand threads to decode it.
-        val toDecode = rawRows.filter { it.imageBytes != null }
-        if (toDecode.isNotEmpty()) {
-            val decodePool = Executors.newFixedThreadPool(
-                minOf(4, maxOf(2, Runtime.getRuntime().availableProcessors()))
-            )
-            try {
-                decodePool.invokeAll(toDecode.map { row ->
-                    Callable { ImageUtils.decodeThumb(row.imageBytes!!, PHOTO_PX)?.let { row.productId to it } }
-                }).forEach { future ->
-                    future.get()?.let { (id, bitmap) -> photoCache[id] = bitmap }
-                }
-            } finally {
-                decodePool.shutdown()
             }
         }
 
@@ -1041,11 +1029,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 allowFraction = allowFraction,
                 discValue = rate?.discValue ?: 0.0,
                 discType = rate?.discType,
-                rates = rates
+                rates = rates,
+                photoStamp = row.photoStamp
             )
             menu.add(product)
         }
-        return CatalogueResult(menu, photoCache, regionalNames, stockOn)
+        return CatalogueResult(menu, regionalNames, stockOn)
     }
 
     /** One product's default rate row - the fields [buildCatalogue] used
@@ -1755,11 +1744,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
         }
     }
 
-    // The photo comes from the grid's own cache, already decoded for the tile, so
-    // opening the dialog costs nothing beyond the lookup.
+    // The photo comes from the grid's own cache when the tile has already decoded it,
+    // and is otherwise read for this one product - a single photo, not the shop's.
     private fun Product.toDialogProduct() = ProductEntryDialog.Product(
         id = id, name = name, sku = sku, category = category,
-        price = price, hsn = hsn, unit = unit, allowFraction = allowFraction, photo = photoCache[id],
+        price = price, hsn = hsn, unit = unit, allowFraction = allowFraction,
+        photo = id.toLongOrNull()?.let {
+            ThumbnailCache.productBitmap(requireContext(), it, photoStamp, PHOTO_PX)
+        },
         cgst = cgst, sgst = sgst, vat = vat, igst = igst,
         discValue = discValue, discType = discType, rates = rates,
         stock = stock, stockQty = stockQty
@@ -2940,6 +2932,8 @@ class PosBillingFragment : Fragment(), TitledScreen {
             val sku: TextView = view.findViewById(R.id.tvSku)
             val stock: TextView = view.findViewById(R.id.tvStock)
             val photo: android.widget.ImageView = view.findViewById(R.id.ivProductPhoto)
+            /** Which product's photo this tile is waiting on - see onBindViewHolder. */
+            @Volatile var photoFor: String = ""
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -2956,13 +2950,37 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
             // Views are recycled, so a product without a photo must clear the tile
             // rather than inherit the previous one's.
-            val photo = photoCache[p.id]
-            if (photo != null) {
-                holder.photo.setImageBitmap(photo)
-                holder.photo.visibility = View.VISIBLE
-            } else {
-                holder.photo.setImageDrawable(null)
-                holder.photo.visibility = View.GONE
+            //
+            // READ AND DECODED OFF THE MAIN THREAD, ONE TILE AT A TIME. A photo already
+            // decoded goes straight on; otherwise the slot is kept (so the tile does not
+            // change height when it lands) and the photo is read for this product alone,
+            // then set if the tile is still showing it. A tile flung past before its
+            // turn is skipped unread - see ThumbnailCache.loadProduct.
+            val want = "${p.id}:${p.photoStamp}"
+            holder.photoFor = want
+            val idLong = p.id.toLongOrNull()
+            val held = cachedPhoto(p)
+            when {
+                p.photoStamp.isEmpty() || idLong == null -> {
+                    holder.photo.setImageDrawable(null)
+                    holder.photo.visibility = View.GONE
+                }
+                held != null -> {
+                    holder.photo.setImageBitmap(held)
+                    holder.photo.visibility = View.VISIBLE
+                }
+                else -> {
+                    holder.photo.setImageDrawable(null)
+                    holder.photo.visibility = View.VISIBLE
+                    ThumbnailCache.loadProduct(
+                        holder.itemView.context, idLong, p.photoStamp, PHOTO_PX,
+                        wanted = { holder.photoFor == want }
+                    ) { bmp ->
+                        if (holder.photoFor != want) return@loadProduct
+                        if (bmp != null) holder.photo.setImageBitmap(bmp)
+                        else holder.photo.visibility = View.GONE
+                    }
+                }
             }
 
             StockBadge.apply(holder.stock, p.stock, p.stockQty)
