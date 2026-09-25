@@ -40,12 +40,6 @@ private const val CARD_PADDING_DP = 20
 private const val REFERENCE_PAPER_DOTS = PrintType.REFERENCE_PAPER_DOTS
 
 /**
- * Below this, the statement's four columns are set a point smaller and the year is
- * shortened. 58mm (384 dots) falls under it; 80mm (576) and up keep the full size.
- */
-private const val NARROW_PAPER_DOTS = 450
-
-/**
  * Renders a [CustomerLedgerDao.Ledger] onto receipt paper.
  *
  * A ledger is a statement rather than a receipt, so it is laid out as a statement:
@@ -145,8 +139,8 @@ class LedgerReceiptRenderer(context: Context) {
     /**
      * Fills an already-inflated [R.layout.receipt_ledger] in place.
      *
-     * [paperDots] only chooses how tightly the four columns are set - see
-     * [NARROW_PAPER_DOTS]; the content is the same on every width.
+     * [paperDots] only chooses how tightly the five columns are set; the content is
+     * the same on every width.
      */
     fun populate(
         view: View,
@@ -194,10 +188,11 @@ class LedgerReceiptRenderer(context: Context) {
 
             val rows = view.findViewById<LinearLayout>(R.id.llLedgerRows)
             rows.removeAllViews()
-            val narrow = paperDots < NARROW_PAPER_DOTS
 
             // The BALANCE column is a running figure, so the statement has to say
             // what it starts from or the first row's balance comes out of nowhere.
+            // This stays the statement's own first line, same as before - only the
+            // entry rows below it gained a column.
             rows.addView(amountRow(t("OPENING BALANCE"), money(ledger.opening), bold = true))
             rows.addView(divider())
 
@@ -209,13 +204,17 @@ class LedgerReceiptRenderer(context: Context) {
                 // one column each, a dash in the one that did not.
                 val lines = ledger.entries.map { entry ->
                     TableLine(
-                        date = pretty(entry.date, narrow),
+                        // Day and month only - a table row has no room for the year,
+                        // and the statement's own heading already says which period
+                        // (and so which year) this is.
+                        date = tableDate(entry.date),
+                        billNo = billNoOf(entry.reference),
                         paid = if (entry.`in` > 0.0) money(entry.`in`) else "-",
                         due = if (entry.out > 0.0) money(entry.out) else "-",
                         balance = money(entry.balance)
                     )
                 }
-                val header = TableLine(t("DATE"), t("PAID"), t("DUE"), t("BALANCE"))
+                val header = TableLine(t("DATE"), t("BILL NO"), t("PAID AMT"), t("DUE AMOUNT"), t("BALANCE"))
                 val metrics = measureTable(listOf(header) + lines, paperDots)
 
                 rows.addView(tableRow(header, metrics, bold = true))
@@ -238,18 +237,20 @@ class LedgerReceiptRenderer(context: Context) {
 
     // ---- Row builders ------------------------------------------------------
 
-    /** The four cells of one statement line, header row included. */
+    /** The five cells of one statement line, header row included. */
     private data class TableLine(
         val date: String,
+        val billNo: String,
         val paid: String,
         val due: String,
         val balance: String
     )
 
-    /** Type size, gutter and money-column widths the whole table is set at. */
+    /** Type size, gutter and fixed-column widths the whole table is set at. */
     private data class TableMetrics(
         val textSize: Float,
         val gutterPx: Int,
+        val billNoPx: Int,
         val paidPx: Int,
         val duePx: Int,
         val balancePx: Int
@@ -260,10 +261,11 @@ class LedgerReceiptRenderer(context: Context) {
      *
      * A weighted column cannot be trusted with a number: give it less width than the
      * figure in it and Android hard-wraps mid-number ("125000." over "00"), which on
-     * a statement is not a cosmetic problem. So each money column is measured to its
-     * own widest value and given exactly that width, and the type steps down through
-     * [SIZES] until the three of them plus a readable date column fit the roll. The
-     * date takes whatever is left, being the one value that can be shortened.
+     * a statement is not a cosmetic problem. So the bill number and each money column
+     * are measured to their own widest value and given exactly that width, and the
+     * type steps down through [SIZES] until all four of them plus a readable date
+     * column fit the roll. The date takes whatever is left, being the one value that
+     * is already as short as it goes (day/month only - see [tableDate]).
      */
     private fun measureTable(lines: List<TableLine>, paperDots: Int): TableMetrics {
         val metrics = ctx.resources.displayMetrics
@@ -272,6 +274,7 @@ class LedgerReceiptRenderer(context: Context) {
 
         val widest = { pick: (TableLine) -> String -> lines.maxOf { pick(it).length } }
         val dateChars = widest { it.date }
+        val billNoChars = widest { it.billNo }
         val paidChars = widest { it.paid }
         val dueChars = widest { it.due }
         val balanceChars = widest { it.balance }
@@ -284,7 +287,7 @@ class LedgerReceiptRenderer(context: Context) {
             paint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, size, metrics)
             val cw = paint.measureText("0")
             val gutter = (if (size <= 10f) 3f else 6f) * metrics.density
-            val needed = (dateChars + paidChars + dueChars + balanceChars) * cw + gutter * 3
+            val needed = (dateChars + billNoChars + paidChars + dueChars + balanceChars) * cw + gutter * 4
             if (needed <= contentPx) {
                 chosen = size
                 charPx = cw
@@ -299,6 +302,7 @@ class LedgerReceiptRenderer(context: Context) {
         return TableMetrics(
             textSize = chosen,
             gutterPx = gutterPx.toInt(),
+            billNoPx = (billNoChars * charPx).toInt() + 1,
             paidPx = (paidChars * charPx).toInt() + 1,
             duePx = (dueChars * charPx).toInt() + 1,
             balancePx = (balanceChars * charPx).toInt() + 1
@@ -306,11 +310,12 @@ class LedgerReceiptRenderer(context: Context) {
     }
 
     /**
-     * One "DATE  PAID  DUE  BALANCE" line.
+     * One "DATE  BILL NO  PAID AMT  DUE AMOUNT  BALANCE" line.
      *
-     * The date is left-aligned and takes the slack; the three money columns are
-     * right-aligned at the fixed widths [metrics] measured, so their digits line up
-     * down the page and none of them can be squeezed into wrapping.
+     * The date is left-aligned and takes the slack; the bill number and the three
+     * money columns are right-aligned at the fixed widths [metrics] measured, so
+     * their digits line up down the page and none of them can be squeezed into
+     * wrapping.
      */
     private fun tableRow(line: TableLine, metrics: TableMetrics, bold: Boolean = false): View {
         val density = ctx.resources.displayMetrics.density
@@ -318,7 +323,7 @@ class LedgerReceiptRenderer(context: Context) {
             text = value
             textSize = metrics.textSize
             gravity = if (alignEnd) Gravity.END else Gravity.START
-            // A gutter before each money column: a right-aligned value would
+            // A gutter before each right-aligned column: a right-aligned value would
             // otherwise touch the column before it, and a "-" sitting against the
             // next figure reads as a minus sign.
             if (alignEnd) setPadding(metrics.gutterPx, 0, 0, 0)
@@ -333,6 +338,7 @@ class LedgerReceiptRenderer(context: Context) {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, (2 * density).toInt(), 0, (2 * density).toInt())
             addView(cell(line.date, null, alignEnd = false))
+            addView(cell(line.billNo, metrics.billNoPx, alignEnd = true))
             addView(cell(line.paid, metrics.paidPx, alignEnd = true))
             addView(cell(line.due, metrics.duePx, alignEnd = true))
             addView(cell(line.balance, metrics.balancePx, alignEnd = true))
@@ -465,16 +471,32 @@ class LedgerReceiptRenderer(context: Context) {
 
     private fun money(v: Double) = String.format(Locale.US, "%.2f", BillRounding.toPaise(v))
 
-    /**
-     * "yyyy-MM-dd" or "yyyy-MM-dd HH:mm:ss" as "dd-MM-yyyy", or "dd-MM-yy" on
-     * [narrow] paper - two characters that a 58mm roll would rather spend on the
-     * figures than on a century nobody is in any doubt about.
-     */
-    private fun pretty(value: String, narrow: Boolean = false): String = runCatching {
-        val pattern = if (narrow) "dd-MM-yy" else "dd-MM-yyyy"
-        SimpleDateFormat(pattern, Locale.US)
+    /** "yyyy-MM-dd" or "yyyy-MM-dd HH:mm:ss" as "dd-MM-yyyy" - the statement's own heading. */
+    private fun pretty(value: String): String = runCatching {
+        SimpleDateFormat("dd-MM-yyyy", Locale.US)
             .format(SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value.take(10))!!)
     }.getOrDefault(value)
+
+    /**
+     * "DD/MM" - a table row's own compact date, day and month only. The year is left
+     * off on every width, not only a narrow roll: the statement's own heading already
+     * says which period (and so which year) the rows below it belong to, and the
+     * room saved is what lets the BILL NO column sit in the same row.
+     */
+    private fun tableDate(value: String): String = runCatching {
+        SimpleDateFormat("dd/MM", Locale.US)
+            .format(SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value.take(10))!!)
+    }.getOrDefault(value)
+
+    /**
+     * The bill number alone, off a reference like "Bill 1023" or "Bill #45" - the
+     * table's own DATE/PAID AMT/DUE AMOUNT/BALANCE columns are all bare figures, and
+     * "Bill " repeated down the column would say nothing the heading does not
+     * already say. A payment with no bill behind it (an on-account payment) has no
+     * reference at all, and prints a dash like every other empty cell here.
+     */
+    private fun billNoOf(reference: String): String =
+        reference.removePrefix("Bill #").removePrefix("Bill ").trim().ifBlank { "-" }
 
     private companion object {
         const val TAG = "LedgerReceiptRenderer"
@@ -485,7 +507,7 @@ class LedgerReceiptRenderer(context: Context) {
         /**
          * Type sizes the statement table is tried at, largest first.
          *
-         * Starts at the bill's own body size and only steps down when four columns
+         * Starts at the bill's own body size and only steps down when five columns
          * genuinely will not fit the roll, so on 80mm the statement is set like the
          * bill and a narrow roll is the only thing that makes it smaller.
          */
