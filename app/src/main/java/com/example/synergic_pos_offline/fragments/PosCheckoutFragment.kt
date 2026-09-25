@@ -36,7 +36,6 @@ import com.example.synergic_pos_offline.utils.GstCalculator
 import com.example.synergic_pos_offline.utils.PaymentModeSetting
 import com.example.synergic_pos_offline.utils.PrinterSetup
 import com.example.synergic_pos_offline.utils.ReceiptContext
-import com.example.synergic_pos_offline.utils.ProductEntryDialog
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.example.synergic_pos_offline.utils.ThermalPrinter
@@ -432,21 +431,33 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         }
     }
 
-    /**
-     * Catalog behind the "Add item" box. Loaded once on first use rather than at
-     * screen start, since most checkouts never add a line.
-     */
-    private val catalog: List<ProductEntryDialog.Product> by lazy { loadCatalog() }
+    /** HSN code and unit for one product, as [hsnAndUnitOf] looks them up. */
+    private data class HsnUnit(val hsn: String, val unit: String)
 
-    private fun loadCatalog(): List<ProductEntryDialog.Product> {
-        val list = mutableListOf<ProductEntryDialog.Product>()
+    /**
+     * HSN code and unit for exactly the products on this bill, keyed by product id.
+     *
+     * This checkout screen has no "Add item" box of its own - the cart is built on
+     * the billing screen before checkout - so the only reason the receipt preview
+     * ever needs a product's master record is these two fields, for the handful of
+     * products actually in [lines]. This used to load and hold the WHOLE catalog
+     * (every product, its category, its default rate, its unit) just to pick two
+     * strings off it per cart line, and did so synchronously the moment the receipt
+     * preview first rendered - on every single checkout. At a shop with a few
+     * thousand products that query and the cursor walk over it were enough work,
+     * done on the main thread, to trip Android's ANR watchdog on opening the
+     * checkout screen at all. Querying only the products actually being billed
+     * scales with the size of the CART, not the size of the CATALOGUE.
+     */
+    private fun hsnAndUnitOf(productIds: Set<Long>): Map<Long, HsnUnit> {
+        if (productIds.isEmpty()) return emptyMap()
+        val result = mutableMapOf<Long, HsnUnit>()
         try {
             val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
+            val placeholders = productIds.joinToString(",") { "?" }
             db.rawQuery(
                 """
-                SELECT p.id, p.product_name, p.bar_code, p.hsn_code,
-                       c.category_name, r.rate, r.cgst_rate, r.sgst_rate, r.vat_rate,
-                       r.discount, r.discount_type, r.igst_rate,
+                SELECT p.id, p.hsn_code,
                        -- The unit as it prints: its short name, or the first three
                        -- characters of its name where the shop left the short one
                        -- blank - see UnitDao.shortNameOf. Blank when the rate carries
@@ -454,40 +465,26 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                        -- fabricated one.
                        COALESCE(NULLIF(TRIM(u.unit_symbol), ''), SUBSTR(TRIM(u.unit_name), 1, 3))
                 FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
-                LEFT JOIN ${DatabaseHelper.Tables.MD_CATEGORY} c ON c.id = p.category_id
                 LEFT JOIN ${DatabaseHelper.Tables.MD_PRODUCT_RATES} r ON r.id = (
                     SELECT id FROM ${DatabaseHelper.Tables.MD_PRODUCT_RATES}
                     WHERE product_id = p.id ORDER BY "default" DESC, id ASC LIMIT 1
                 )
                 LEFT JOIN ${DatabaseHelper.Tables.MD_UNITS} u ON u.id = r.unit_id
-                ORDER BY p.product_name COLLATE NOCASE
+                WHERE p.id IN ($placeholders)
                 """.trimIndent(),
-                null
+                productIds.map { it.toString() }.toTypedArray()
             ).use { c ->
                 while (c.moveToNext()) {
-                    list.add(
-                        ProductEntryDialog.Product(
-                            id = c.getLong(0).toString(),
-                            name = c.getString(1)?.takeIf { it.isNotBlank() } ?: "Item",
-                            sku = c.getString(2).orEmpty(),
-                            category = c.getString(4).orEmpty(),
-                            price = if (c.isNull(5)) 0.0 else c.getDouble(5),
-                            hsn = c.getString(3)?.takeIf { it.isNotBlank() } ?: "0000",
-                            cgst = if (c.isNull(6)) 0.0 else c.getDouble(6),
-                            sgst = if (c.isNull(7)) 0.0 else c.getDouble(7),
-                            vat = if (c.isNull(8)) 0.0 else c.getDouble(8),
-                            discValue = if (c.isNull(9)) 0.0 else c.getDouble(9),
-                            discType = c.getString(10),
-                            igst = if (c.isNull(11)) 0.0 else c.getDouble(11),
-                            unit = c.getString(12).orEmpty()
-                        )
+                    result[c.getLong(0)] = HsnUnit(
+                        hsn = c.getString(1)?.takeIf { it.isNotBlank() } ?: "0000",
+                        unit = c.getString(2).orEmpty()
                     )
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("PosCheckoutFragment", "Could not load the product catalog", e)
+            android.util.Log.e("PosCheckoutFragment", "Could not look up HSN/unit for the bill", e)
         }
-        return list
+        return result
     }
 
     // ---- Customer ----------------------------------------------------------
@@ -1285,6 +1282,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
         val outstanding = onFile?.takeIf { method == Method.CREDIT }?.let { customer ->
             BillRounding.toPaise(customer.balance + total() - paidNow)
         }
+        // Looked up for exactly this bill's products - see [hsnAndUnitOf].
+        val hsnUnit = hsnAndUnitOf(lines.mapNotNull { it.productId }.toSet())
         return BillReceiptRenderer.Draft(
             billNumber = BillDao(requireContext()).nextBillNumber(),
             dateTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()),
@@ -1307,8 +1306,8 @@ class PosCheckoutFragment : Fragment(), TitledScreen {
                     vatRate = line.vatRate,
                     igstRate = line.igstRate,
                     discountAmount = lineDiscountForBill(line),
-                    hsn = catalog.firstOrNull { it.id.toLongOrNull() == line.productId }?.hsn,
-                    unit = catalog.firstOrNull { it.id.toLongOrNull() == line.productId }?.unit
+                    hsn = line.productId?.let { hsnUnit[it]?.hsn },
+                    unit = line.productId?.let { hsnUnit[it]?.unit }
                 )
             },
             discount = discountAmtForReport(),

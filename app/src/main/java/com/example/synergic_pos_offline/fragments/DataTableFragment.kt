@@ -23,6 +23,7 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -38,6 +39,7 @@ import com.example.synergic_pos_offline.utils.ThermalPrinter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
@@ -275,9 +277,24 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     private lateinit var rvTable: RecyclerView
     private lateinit var tvEmpty: TextView
+    private lateinit var pbLoading: ProgressBar
     private lateinit var adapter: DataTableAdapter
     private lateinit var cbSelectAll: CheckBox
     private var suppressSelectAll = false
+
+    /**
+     * A fresh single-thread executor per view - same pattern as
+     * PosBillingFragment.catalogExecutor and for the same reason: reusing one shut
+     * down in a previous onDestroyView would reject the task and crash the screen.
+     */
+    private var loadExecutor = Executors.newSingleThreadExecutor()
+
+    /**
+     * Bumped on every [loadRowsAsync] call, so a slow load a newer one has already
+     * superseded (a refresh right after another refresh) drops its result instead
+     * of overwriting the fresher one.
+     */
+    private var loadGeneration = 0
 
     // Selection UI
     private lateinit var tvSelectionCount: TextView
@@ -300,6 +317,10 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     override fun onDestroyView() {
         super.onDestroyView()
         com.example.synergic_pos_offline.utils.ThumbnailCache.clear()
+        // A load already queued or running has nothing left to apply its result
+        // to; shutdownNow() drops what is queued and interrupts what is running
+        // rather than leaving either to finish into a torn-down screen.
+        loadExecutor.shutdownNow()
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -314,6 +335,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
         rvTable = view.findViewById(R.id.rvTable)
         tvEmpty = view.findViewById(R.id.tvEmpty)
+        pbLoading = view.findViewById(R.id.pbTableLoading)
 
         columnOrder.clear()
         columnOrder.addAll(columns.indices)
@@ -357,9 +379,11 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
         buildHeader(view.findViewById(R.id.llTableHeader))
 
-        allRows.clear()
-        allRows.addAll(loadRows())
-        applyFilter("")
+        // A fresh executor for this view - see [loadExecutor]. The one from a
+        // previous view on this same fragment instance, if any, was already shut
+        // down in onDestroyView and cannot take more work.
+        loadExecutor = Executors.newSingleThreadExecutor()
+        loadRowsAsync()
 
         val etSearch = view.findViewById<TextInputEditText>(R.id.etSearch)
         etSearch.addTextChangedListener(object : TextWatcher {
@@ -662,14 +686,43 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         // The cached thumbnails are a snapshot of the rows being replaced: edit a
         // product's photo and its old one would still be held under the same id.
         com.example.synergic_pos_offline.utils.ThumbnailCache.clear()
-        allRows.clear()
-        allRows.addAll(loadRows())
-        selectedIds.clear()
-        // The dropdown lists the values the rows actually hold, so it is rebuilt
-        // with them - a product added under a brand-new category would otherwise
-        // leave that category unofferable until the screen was reopened.
-        view?.let { setUpColumnFilter(it) }
-        applyFilter(query, resetWindow = false)
+        loadRowsAsync()
+    }
+
+    /**
+     * Runs [loadRows] off the main thread and applies the result back on it - the
+     * same shape PosBillingFragment.loadProductsAsync uses for the same reason.
+     * A catalogue of a few thousand rows - the query, the cursor walk, and (on
+     * some screens) a translation pass per row - is enough work that doing it
+     * synchronously here, on opening the screen or on every edit's refresh,
+     * tripped Android's ANR watchdog outright rather than merely feeling slow.
+     */
+    private fun loadRowsAsync() {
+        val generation = ++loadGeneration
+        pbLoading.visibility = View.VISIBLE
+        tvEmpty.visibility = View.GONE
+        loadExecutor.execute {
+            val rows = runCatching { loadRows() }
+                .onFailure { android.util.Log.e("DataTableFragment", "loadRows failed", it) }
+                .getOrElse { mutableListOf() }
+            view?.post {
+                // Dropped rather than applied: either this screen is gone, or a
+                // newer load (another refresh, most likely) has already started
+                // and this one's result is exactly what that one is about to
+                // overwrite anyway.
+                if (!isAdded || generation != loadGeneration) return@post
+                pbLoading.visibility = View.GONE
+                allRows.clear()
+                allRows.addAll(rows)
+                selectedIds.clear()
+                // The dropdown lists the values the rows actually hold, so it is
+                // rebuilt with them - a product added under a brand-new category
+                // would otherwise leave that category unofferable until the
+                // screen was reopened.
+                view?.let { setUpColumnFilter(it) }
+                applyFilter(query, resetWindow = false)
+            }
+        }
     }
 
     // ---- Actions -----------------------------------------------------------
