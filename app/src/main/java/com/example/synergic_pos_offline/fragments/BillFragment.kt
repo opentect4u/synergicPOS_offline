@@ -270,6 +270,7 @@ class BillFragment : Fragment(), TitledScreen {
         val billNumber = (view?.findViewById<TextView>(R.id.tvBillNo)?.text ?: "")
             .toString().removePrefix("BILL NO:").trim().ifEmpty { "receipt" }
         ReceiptPrinter.print(requireContext(), card, billNumber) {
+            if (!isAdded) return@print
             if (receiptNo > 0) BillReceiptRenderer.recordPrint(requireContext(), receiptNo, duplicate)
         }
     }

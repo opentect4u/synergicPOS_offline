@@ -5942,7 +5942,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         com.example.synergic_pos_offline.utils.ThermalPrinter
             .printSequence(requireContext(), copies, config) { result ->
-                toast(when (result) {
+                if (isAdded) toast(when (result) {
                     is com.example.synergic_pos_offline.utils.ThermalPrinter.Result.Success -> "Bill printed at ${printer.printerName}"
                     is com.example.synergic_pos_offline.utils.ThermalPrinter.Result.Sent -> "Bill sent to ${printer.printerName}"
                     is com.example.synergic_pos_offline.utils.ThermalPrinter.Result.Failure -> "Bill print failed: ${result.message}"
@@ -6574,7 +6574,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         reloadItems(order)
         renderCart()
-        com.example.synergic_pos_offline.utils.KotPrinter.print(requireContext(), batch, printer) { msg -> toast(msg) }
+        com.example.synergic_pos_offline.utils.KotPrinter.print(requireContext(), batch, printer) { msg -> if (isAdded) toast(msg) }
 
         // The order is with the kitchen, so this table is finished with for now - back
         // to the floor plan, ready for the next one.
