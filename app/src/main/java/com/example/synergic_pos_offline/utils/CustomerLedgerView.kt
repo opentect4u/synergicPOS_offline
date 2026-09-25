@@ -105,7 +105,10 @@ object CustomerLedgerView {
         override fun onBindViewHolder(holder: Holder, position: Int) {
             val entry = entries[position]
             holder.particulars.text = entry.particulars
-            holder.meta.text = listOf(pretty(entry.date), entry.reference)
+            // Day/month, then the bill number alone - the same compact shape the
+            // printed statement's table row uses (see LedgerReceiptRenderer), so a
+            // row reads the same whether it is being looked at on screen or on paper.
+            holder.meta.text = listOf(smallDate(entry.date), "Bill No: ${billNoOf(entry.reference)}")
                 .filter { it.isNotBlank() }.joinToString("  ·  ")
             // A dash rather than 0.00 in the column this line did not move, so the
             // eye runs down the one that did.
@@ -126,4 +129,22 @@ object CustomerLedgerView {
         SimpleDateFormat("dd-MM-yyyy", Locale.US)
             .format(SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value.take(10))!!)
     }.getOrDefault(value)
+
+    /**
+     * "DD/MM" - a row's own compact date, day and month only. Matches the printed
+     * statement's table row (see LedgerReceiptRenderer.tableDate); the subheading
+     * above already says which period, and so which year, these rows belong to.
+     */
+    private fun smallDate(value: String): String = runCatching {
+        SimpleDateFormat("dd/MM", Locale.US)
+            .format(SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value.take(10))!!)
+    }.getOrDefault(value)
+
+    /**
+     * The bill number alone, off a reference like "Bill 1023" or "Bill #45" - see
+     * LedgerReceiptRenderer.billNoOf, which this mirrors so a row reads the same
+     * number on screen as it does on the printed statement.
+     */
+    private fun billNoOf(reference: String): String =
+        reference.removePrefix("Bill #").removePrefix("Bill ").trim().ifBlank { "-" }
 }
