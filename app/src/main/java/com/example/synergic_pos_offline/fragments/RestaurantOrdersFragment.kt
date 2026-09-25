@@ -5249,8 +5249,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val totalQty = all.sumOf { it.qty }
         val productCount = all.map { it.productId }.distinct().size
         root.findViewById<TextView>(R.id.tvOrderItemCount).text =
-            ("$productCount product${if (productCount != 1) "s" else ""}, " +
-                "${qtyText(totalQty)} count${if (totalQty != 1.0) "s" else ""}").uppercase()
+            "ITEM :- $productCount   QTY :- ${qtyText(totalQty)}"
         root.findViewById<TextView>(R.id.tvCartAllSent).visibility =
             if (cart.isEmpty() && all.isNotEmpty() && !locked) View.VISIBLE else View.GONE
 
