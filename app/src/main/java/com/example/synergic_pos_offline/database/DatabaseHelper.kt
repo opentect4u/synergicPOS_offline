@@ -1751,6 +1751,11 @@ class DatabaseHelper private constructor(context: Context) :
         listOf(
             "CREATE INDEX IF NOT EXISTS idx_td_bills_date_seq ON td_bills(bill_date, bill_seq_no)",
             "CREATE INDEX IF NOT EXISTS idx_td_bills_seq ON td_bills(bill_seq_no)",
+            // The next take-away token is the highest token in the reset period - a
+            // range on bill_date reading table_number. Covering both lets that be read
+            // from this index alone, never the bill rows; see TokenNumberDao. Without it
+            // a month of a busy counter was every bill row read on each Take Away tap.
+            "CREATE INDEX IF NOT EXISTS idx_td_bills_date_table ON td_bills(bill_date, table_number)",
             "CREATE INDEX IF NOT EXISTS idx_td_bills_delete_date ON td_bills_delete(bill_date)",
             "CREATE INDEX IF NOT EXISTS idx_td_bill_items_delete_bill ON td_bill_items_delete(bill_id)",
             "CREATE INDEX IF NOT EXISTS idx_td_sale_returns_original ON td_sale_returns(original_bill_id)",

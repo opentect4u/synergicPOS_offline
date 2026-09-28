@@ -160,7 +160,21 @@ class ProductsFragment : DataTableFragment() {
 
     // ---- Table ---------------------------------------------------------------
 
-    override fun loadRows(): MutableList<DataRow> {
+    override fun loadRows(): MutableList<DataRow> = readRows(productId = null)
+
+    /** One product's row as the table shows it, freshly read - for an in-place update. */
+    private fun loadRow(productId: Long): DataRow? = readRows(productId).firstOrNull()
+
+    /**
+     * The table's rows - every product, or just [productId].
+     *
+     * NO IMAGE BYTES. It used to select product_image for the whole catalogue: at
+     * 5,000 products with a photo each that was ~700 MB read in one go, which ran out
+     * of memory part way and left the table showing "No data found". Only the photo's
+     * size and last edit are read, as the stamp each row fetches its own photo by -
+     * see [DataRow.photoProductId].
+     */
+    private fun readRows(productId: Long?): MutableList<DataRow> {
         val rows = mutableListOf<DataRow>()
         val db = DatabaseHelper.getInstance(requireContext()).readableDatabase
         val language = AppLanguage.of(requireContext())
@@ -171,16 +185,19 @@ class ProductsFragment : DataTableFragment() {
         // The count is summed in the query rather than read per row: the master lists
         // the whole catalogue, and a lookup per product would be a query per tile.
         val sql = """
-            SELECT p.id, p.product_name, p.hsn_code, p.bar_code, c.category_name, p.product_image,
+            SELECT p.id, p.product_name, p.hsn_code, p.bar_code, c.category_name,
+                   COALESCE(length(p.product_image), 0),
                    COALESCE((SELECT SUM(s.current_quantity) FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} s
-                             WHERE s.product_id = p.id), 0)
+                             WHERE s.product_id = p.id), 0),
+                   p.modified_at
             FROM ${DatabaseHelper.Tables.MD_PRODUCTS} p
             LEFT JOIN ${DatabaseHelper.Tables.MD_CATEGORY} c ON c.id = p.category_id
-            WHERE p.store_id = ?
+            WHERE p.store_id = ?${if (productId != null) " AND p.id = ?" else ""}
             ORDER BY p.id DESC
         """.trimIndent()
+        val args = listOfNotNull(storeId().toString(), productId?.toString()).toTypedArray()
 
-        db.rawQuery(sql, arrayOf(storeId().toString())).use { cursor ->
+        db.rawQuery(sql, args).use { cursor ->
             while (cursor.moveToNext()) {
                 val name = cursor.getString(1).orEmpty()
                 val cells = listOf(
@@ -204,7 +221,9 @@ class ProductsFragment : DataTableFragment() {
                     DataRow(
                         id = cursor.getInt(0).toString(),
                         cells = if (stockTracked) cells + StockDao.trim(cursor.getDouble(6)) else cells,
-                        thumbnail = if (cursor.isNull(5)) null else cursor.getBlob(5)
+                        photoProductId = cursor.getLong(0),
+                        photoStamp = com.example.synergic_pos_offline.utils.ThumbnailCache
+                            .productStamp(cursor.getLong(5), cursor.getString(7))
                     )
                 )
             }
@@ -344,7 +363,8 @@ class ProductsFragment : DataTableFragment() {
             destructive = true
         ) {
             if (deleteProducts(ids)) {
-                refreshRows()
+                // Only those rows come out - the rest of the list is untouched.
+                removeRows(ids)
                 toast("Deleted ${ids.size} product(s)")
             } else {
                 // A product still referenced by bills/stock can't be removed - name
@@ -563,7 +583,7 @@ class ProductsFragment : DataTableFragment() {
                 availability = view.findViewById<TextView>(R.id.actAvailability).text?.toString()?.trim().orEmpty(),
                 rates = rateRows
             )
-            saveProduct(productId, form, capturesOpeningStock)
+            val savedId = saveProduct(productId, form, capturesOpeningStock)
             // Received after the product is saved, and through the Stock In write
             // itself: it joins the batch the product last moved in and leaves its own
             // line in the stock history, exactly as a delivery booked from Stock In.
@@ -576,7 +596,13 @@ class ProductsFragment : DataTableFragment() {
             }
             dialog.dismiss()
             dialogImageView = null
-            refreshRows()
+            // ONLY THIS PRODUCT'S ROW. Re-read and put in place (or at the top, for a
+            // new one) - the rest of the list, its scroll and its search are left as
+            // they were. Re-reading the whole catalogue for one edit was the pause, and
+            // the "No data found" after it. Falls back to a full refresh only if the
+            // saved row cannot be read back.
+            val fresh = savedId?.let { loadRow(it) }
+            if (fresh != null) replaceRow(fresh) else refreshRows()
             toast(
                 when {
                     productId == null -> "Product added"
@@ -1390,7 +1416,8 @@ class ProductsFragment : DataTableFragment() {
         return if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
     }
 
-    private fun saveProduct(productId: Int?, form: ProductForm, withStock: Boolean = false) {
+    /** Saves the product; returns its id, or null if nothing was written. */
+    private fun saveProduct(productId: Int?, form: ProductForm, withStock: Boolean = false): Long? {
         val db = DatabaseHelper.getInstance(requireContext()).writableDatabase
         // store_id and outlet_id both come from md_registration.
         val (storeId, outletId) = storeAndOutlet()
@@ -1435,7 +1462,7 @@ class ProductsFragment : DataTableFragment() {
                 )
                 productId.toLong()
             }
-            if (id == -1L) return
+            if (id == -1L) return null
 
             // THIS LANGUAGE'S NAME ONLY. Written against the language the Products
             // master is on, so switching the master to another one and typing there
@@ -1489,6 +1516,7 @@ class ProductsFragment : DataTableFragment() {
             if (withStock) saveOpeningBatch(db, id, storeId, outletId, form)
 
             db.setTransactionSuccessful()
+            return id
         } finally {
             db.endTransaction()
         }

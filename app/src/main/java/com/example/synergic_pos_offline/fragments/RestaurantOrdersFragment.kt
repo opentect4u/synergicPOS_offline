@@ -234,6 +234,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      *  other than the current one is a stale load a newer one has overtaken. */
     private var productCatalogGeneration = 0
 
+    /**
+     * What the catalogue in [allProducts] was read from - see [catalogueSignature].
+     * Null until the first read lands. Kept on the fragment, not the view, so coming
+     * back to this screen from the back stack can tell the menu is unchanged too.
+     */
+    private var catalogueSignatureRead: String? = null
+
     private val tableDao by lazy { com.example.synergic_pos_offline.database.TableDao(requireContext()) }
     private val subTableDao by lazy { com.example.synergic_pos_offline.database.SubTableDao(requireContext()) }
     private var suppressNoteWatcher = false   // guards programmatic note-field updates
@@ -660,8 +667,40 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // The grid and its tabs are drawn when the read lands - see
         // [onCatalogueLoaded]. [setupProductSection] below draws them from whatever is
         // already in hand, and no longer reads the catalogue itself.
+        //
+        // ONCE PER PAGE, NOT ONCE PER VIEW. Coming back from Checkout builds this view
+        // again on the same fragment, which still holds the menu it read - so that is
+        // drawn at once and only re-read if it has changed since (see
+        // [reloadProductsIfChanged]). It used to re-read the whole catalogue on every
+        // return, seconds of work on 5,000 products.
+        //
+        // AND ONCE PER LOGIN, NOT ONCE PER SCREEN. The header's Sale button opens a
+        // brand-new screen every time, which used to mean the whole catalogue read
+        // again from nothing. The catalogue last read this session is kept in [Shared]
+        // and a new screen starts from it - checked, and the stock counts refreshed, in
+        // the background (see [reloadProductsIfChanged], [refreshStockOnly]).
         catalogueReadThisView = true
-        loadProductsFromDbAsync { onCatalogueLoaded?.invoke() }
+        if (allProducts.isEmpty() || catalogueSignatureRead == null) Shared.take()?.let { held ->
+            allProducts = held.products
+            stockTrackingOn = held.stockTrackingOn
+            regionalNames = held.regionalNames
+            catalogueSignatureRead = held.signature
+        }
+        if (allProducts.isEmpty() || catalogueSignatureRead == null) {
+            loadProductsFromDbAsync { onCatalogueLoaded?.invoke() }
+        } else {
+            view.post { if (isAdded) { reloadProductsIfChanged(); refreshStockOnly() } }
+        }
+
+        // The next token's lookup, done once now in the background so no mode switch
+        // waits on it. Under Monthly or Continue token reset it is a pass over every
+        // bill in the period - a lakh and more on a busy counter - and it used to run
+        // on the first Take Away / QSR tap. After this, TokenNumberDao remembers it and
+        // each switch only looks at bills written since. See TokenNumberDao.maxBillToken.
+        val appCtx = requireContext().applicationContext
+        productCatalogExecutor.execute {
+            runCatching { com.example.synergic_pos_offline.database.TokenNumberDao(appCtx).nextSequence() }
+        }
 
         loadRunningOrders()          // restore open tables from the database
         // A split left finished-with by an earlier session is given back here, before
@@ -851,9 +890,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // Persists the bill (with the payment mode), closes & frees the table(s)
             // and refreshes the list. Nothing is printed.
             settlePaidOrder(order, payMethod, tendered, splitModes.zip(splitAmounts))
-            // Grid product counts have moved after the sale - re-read off the main
-            // thread, so the next order is not kept waiting on the whole menu's photos.
-            reloadProductsAndRefresh()
+            // Grid product counts have moved after the sale - only they are re-read,
+            // not the whole menu. See [refreshStockOnly].
+            refreshStockOnly()
         }
 
         // Bill & Pay → restaurant checkout with the selected order's items.
@@ -993,12 +1032,18 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // The menu is on the page now, so it has to be current whenever the page is:
         // a product edited, or stock moved by a settled bill, shows on the way back.
         //
+        // LOADED ONCE, THEN ONLY WHEN IT CHANGED. A cheap fingerprint of the menu is
+        // compared with the one it was read from, and the full read happens only if
+        // they differ - see [reloadProductsIfChanged]. Every return used to re-read
+        // the whole catalogue, which on 5,000 products is seconds of work behind the
+        // next tap.
+        //
         // Not on the resume that follows opening the screen: onViewCreated has just
         // started that read, and a second one here - synchronous, as it used to be -
         // was the few seconds the sale page took to appear, spent reading every
         // product and its photo on the thread the screen draws on.
         if (catalogueReadThisView) catalogueReadThisView = false
-        else reloadProductsAndRefresh()
+        else reloadProductsIfChanged()
 
         // The search box holds focus the moment this screen is reached, so a scan
         // is read the instant the operator turns to the menu rather than after a
@@ -3222,11 +3267,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         barcode = gp.barcode,
         // Whatever the grid has already decoded; a dish not yet scrolled past shows its
         // initial rather than a database read per keystroke.
-        bitmap = gp.product.id.toLongOrNull()?.let {
-            com.example.synergic_pos_offline.utils.ThumbnailCache.cachedProduct(
-                it, gp.imageKey, com.example.synergic_pos_offline.utils.ThumbnailCache.TILE_PX
-            )
-        }
+        photoProductId = gp.product.id.toLongOrNull(),
+        photoStamp = gp.imageKey
         )
     }
 
@@ -3255,6 +3297,33 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val imageKey: String = ""
     )
 
+    /**
+     * The catalogue this login last read, kept past the screen that read it.
+     *
+     * Every trip to this screen by the header's Sale button, the menu or Home builds
+     * a new one, and each used to read all 5,000 products again before its grid could
+     * fill. Held here, the next screen draws at once from what the last one read and
+     * only reads again if [CatalogueSignature] says the masters changed. Plain data -
+     * no views, no photos (tiles fetch those by id) - so holding it costs little.
+     * Only reused within the login that read it - see [CatalogueSignature.session].
+     */
+    private object Shared {
+        class Held(
+            val products: List<GridProduct>, val stockTrackingOn: Boolean,
+            val regionalNames: Map<String, String>, val signature: String?, val session: Int
+        )
+        @Volatile private var held: Held? = null
+
+        fun store(products: List<GridProduct>, stockOn: Boolean, names: Map<String, String>, signature: String?) {
+            held = if (signature == null) null
+            else Held(products, stockOn, names, signature, com.example.synergic_pos_offline.utils.CatalogueSignature.session)
+        }
+
+        fun take(): Held? = held?.takeIf {
+            it.session == com.example.synergic_pos_offline.utils.CatalogueSignature.session
+        }
+    }
+
     /** What reading the catalogue off the main thread comes back with - see
      *  [buildProductsFromDb] and [loadProductsFromDbAsync]. */
     private data class ProductCatalogueResult(
@@ -3279,6 +3348,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val ctx = requireContext()
         val generation = ++productCatalogGeneration
         productCatalogExecutor.execute {
+            // Taken BEFORE the read, so an edit landing mid-read makes the next check
+            // see a difference rather than being folded into a signature it missed.
+            val signature = runCatching { catalogueSignature(ctx) }.getOrNull()
             val result = runCatching { buildProductsFromDb(ctx) }
                 .onFailure { android.util.Log.e("RestaurantOrdersFragment", "Catalogue read failed", it) }
                 .getOrNull()
@@ -3297,8 +3369,82 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     allProducts = result.products
                     stockTrackingOn = result.stockTrackingOn
                     regionalNames = result.regionalNames
+                    catalogueSignatureRead = signature
+                    // Kept for the next sale screen this session opens - see [Shared].
+                    Shared.store(result.products, result.stockTrackingOn, result.regionalNames, signature)
                 }
                 onLoaded()
+            }
+        }
+    }
+
+    /**
+     * A fingerprint of everything the menu grid is built from - the products, their
+     * rates, categories, units and regional names, and the settings that change how
+     * they are read. Any edit to any of them moves it.
+     *
+     * One aggregate query per table: counts, highest ids, last edits and running
+     * totals of the fields a screen shows, never a row. Microseconds against a full
+     * read, which on 5,000 products is a second or more - so it can be asked every
+     * time the screen comes back, and the menu re-read only when this says it moved.
+     */
+    private fun catalogueSignature(ctx: Context): String =
+        com.example.synergic_pos_offline.utils.CatalogueSignature.of(ctx)
+
+    /**
+     * Re-reads the menu only if something it is built from has changed since it was
+     * last read - see [catalogueSignature]. The check runs off the main thread; when
+     * nothing moved, the grid is left exactly as it is, photos and scroll included.
+     *
+     * For coming back to this screen. A trip to Products or Settings is the only way
+     * the menu changes, and most returns are from Checkout or a report, where it has
+     * not - and re-reading 5,000 products on each of those was the pause on return.
+     */
+    private fun reloadProductsIfChanged() {
+        if (view == null) return
+        val ctx = requireContext()
+        val before = catalogueSignatureRead
+        productCatalogExecutor.execute {
+            val now = runCatching { catalogueSignature(ctx) }.getOrNull()
+            if (now != null && now == before) return@execute
+            view?.post { if (isAdded) reloadProductsAndRefresh() }
+        }
+    }
+
+    /**
+     * After a sale: the stock counts on the tiles are the only thing a sale changes,
+     * so only they are re-read - one query - and laid onto the menu already in hand.
+     * Nothing at all when stock is not tracked, since then a sale changes nothing on
+     * the grid. It used to re-read the whole catalogue after every settled order.
+     */
+    private fun refreshStockOnly() {
+        if (view == null || !stockTrackingOn) return
+        val ctx = requireContext()
+        val menu = allProducts
+        productCatalogExecutor.execute {
+            val levels = runCatching {
+                val db = com.example.synergic_pos_offline.database.DatabaseHelper.getInstance(ctx).readableDatabase
+                com.example.synergic_pos_offline.database.StockDao(ctx).levels(currentStoreId(db)?.toInt() ?: 0)
+            }.getOrNull() ?: return@execute
+            val updated = menu.map { gp ->
+                val level = gp.product.id.toLongOrNull()?.let { levels[it] }
+                val state = com.example.synergic_pos_offline.utils.StockBadge.stateOf(level)
+                val qty = level?.quantity ?: 0.0
+                if (state == gp.product.stock && qty == gp.product.stockQty) gp
+                else gp.copy(product = gp.product.copy(stock = state, stockQty = qty))
+            }
+            // Nothing on the grid moved - leave it, scroll position and all.
+            if (updated.indices.none { updated[it] !== menu[it] }) return@execute
+            view?.post {
+                // Only onto the menu it was worked out from: a full read that landed in
+                // the meantime already carries the new counts.
+                if (!isAdded || allProducts !== menu) return@post
+                allProducts = updated
+                Shared.store(updated, stockTrackingOn, regionalNames, catalogueSignatureRead)
+                refreshProducts?.invoke()
+                // New counts are new suggestion rows (the Low/Out badge) - built now,
+                // not on the next key typed.
+                view?.post { if (isAdded) suggestions?.prepare(suggestionPool()) }
             }
         }
     }
@@ -3656,12 +3802,31 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             catAdapter.notifyDataSetChanged()
         }
 
+        // The whole menu in tab order - see the note on "All" below - worked out once per
+        // menu read and per tab order, not on every refilter. Filtering it keeps that
+        // order, so a search under All never has to sort its matches again.
+        var sortedAllOf: List<GridProduct>? = null
+        var sortedAllTabs: List<String> = emptyList()
+        var sortedAllCache: List<GridProduct> = emptyList()
+        fun sortedAll(): List<GridProduct> {
+            if (sortedAllOf !== allProducts || sortedAllTabs != catNames) {
+                val rank = catNames.withIndex().associate { (i, name) -> name to i }
+                sortedAllCache = allProducts.sortedBy { rank[it.product.category] ?: Int.MAX_VALUE }
+                sortedAllOf = allProducts
+                sortedAllTabs = catNames.toList()
+            }
+            return sortedAllCache
+        }
+
         refreshProducts = {
             val q = query.trim().lowercase()
-            val matching = allProducts.filter {
+            val source = if (selectedCat == "All") sortedAll() else allProducts
+            val matching = if (q.isEmpty() && selectedCat == "All") source else source.filter {
                 (selectedCat == "All" || it.product.category == selectedCat) &&
                     // Name, SKU (serial number), and barcode only - no HSN.
-                    (q.isEmpty() || it.product.name.lowercase().contains(q) ||
+                    // ignoreCase rather than a lower-cased copy of every name on every
+                    // refilter - 5,000 new strings a pass on a big menu.
+                    (q.isEmpty() || it.product.name.contains(q, ignoreCase = true) ||
                         it.product.sku.contains(q) || it.barcode.contains(q))
             }
             // UNDER "ALL", THE MENU IS GROUPED BY COURSE - in the tab order.
@@ -3679,14 +3844,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             //
             // A dish whose category is blank, or names one no tab does, sorts last -
             // it belongs to no block, and putting it at the end is the one place it
-            // does not break one.
-            pager.set(
-                if (selectedCat != "All") matching
-                else {
-                    val rank = catNames.withIndex().associate { (i, name) -> name to i }
-                    matching.sortedBy { rank[it.product.category] ?: Int.MAX_VALUE }
-                }
-            )
+            // does not break one. (Already so: [matching] came from [sortedAll].)
+            pager.set(matching)
         }
 
         // Typing does two things at once: it narrows the menu behind, as it always
@@ -3772,12 +3931,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // one read when the screen comes back from the back stack - and redrawn when
         // the read onViewCreated started comes in. Reading it here, on the main thread,
         // is what used to hold the sale page up.
+        // The search box's pool and index are built a moment after the menu is drawn,
+        // not on the first key typed - see SearchSuggestions.prepare.
+        val prepareSearch = { rv.post { if (isAdded) suggestions?.prepare(suggestionPool()) } }
         onCatalogueLoaded = {
             rebuildTabs()
             refreshProducts?.invoke()
+            prepareSearch()
         }
         rebuildTabs()
         refreshProducts?.invoke()
+        if (allProducts.isNotEmpty()) prepareSearch()
     }
 
     /** Shared clock for the search box's flush timer - see [ScanState]. */
@@ -4913,7 +5077,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 else com.example.synergic_pos_offline.utils.ThumbnailCache.cachedProduct(idLong, stamp, tile)
             when {
                 stamp.isEmpty() || idLong == null -> {
-                    holder.photo.setImageDrawable(null); holder.photo.visibility = View.GONE
+                    holder.photo.setImageDrawable(null); holder.photo.visibility = View.INVISIBLE
                 }
                 held != null -> {
                     holder.photo.setImageBitmap(held); holder.photo.visibility = View.VISIBLE
@@ -4926,7 +5090,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     ) { bmp ->
                         if (holder.photoKey != key) return@loadProduct
                         if (bmp != null) holder.photo.setImageBitmap(bmp)
-                        else holder.photo.visibility = View.GONE
+                        else holder.photo.visibility = View.INVISIBLE
                     }
                 }
             }
@@ -5847,7 +6011,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             .getAll().filter { it.printFlag.equals("B", ignoreCase = true) }
         val settle = {
             settlePaidOrder(order, payMethod, tendered, splitParts)
-            reloadProductsAndRefresh()   // stock has moved
+            refreshStockOnly()   // stock has moved - only the counts, not the whole menu
         }
         val default = printers.firstOrNull { it.isDefault }
         when {
@@ -6843,7 +7007,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     private companion object {
         /** How long the search box waits after a key before refiltering the grid. */
-        const val SEARCH_REFILTER_DELAY_MS = 150L
+        // Longer than a pause between letters: the suggestion list answers first
+        // (SearchSuggestions.SHOW_DELAY_MS) and the grid redraws once typing stops.
+        // At 150ms it redrew between every pair of letters and held the next one back.
+        const val SEARCH_REFILTER_DELAY_MS = 350L
 
         /** The payment mode that puts the sale on the customer's account - see [CreditSale]. */
         const val CREDIT_LABEL = "Credit"
