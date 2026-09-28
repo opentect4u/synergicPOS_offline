@@ -193,6 +193,16 @@
                         android:textColor="@color/text_secondary"
                         android:textSize="17sp"
                         android:visibility="gone" />
+
+                    <!-- Shown while DataTableFragment.loadRowsAsync() reads the table
+                         off the main thread - a catalogue of a few thousand rows is
+                         worth a spinner, not a frozen screen. -->
+                    <ProgressBar
+                        android:id="@+id/pbTableLoading"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center"
+                        android:visibility="gone" />
                 </FrameLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
