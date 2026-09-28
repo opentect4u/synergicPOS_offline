@@ -99,14 +99,15 @@ object ThumbnailCache {
     }
 
     /**
-     * One decoder per spare core, two to four: a category switch asks for a whole
-     * screen of photos at once, and two threads on an eight-core tablet left most of
-     * it idle while they queued. One core is always left for the UI, and the threads
-     * run at the lowest priority so a tap never waits behind a decode.
+     * Two decoders, three on a tablet with six cores or more. TWO CORES ARE ALWAYS
+     * LEFT for the screen - the UI thread and the render thread - because on a
+     * four-core till a third decoder was competing with the search box itself: the
+     * letters typed arrived late while photos decoded. The threads also run at the
+     * lowest priority, so a tap never waits behind a decode.
      * Newest request first - see the class notes on a fling.
      */
     private val decoderThreads =
-        (Runtime.getRuntime().availableProcessors() - 1).coerceIn(2, 4)
+        (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 3)
     private val decoder = ThreadPoolExecutor(
         decoderThreads, decoderThreads, 0L, TimeUnit.MILLISECONDS, LifoQueue()
     ) { r -> Thread(r, "thumb-decode").apply { priority = Thread.MIN_PRIORITY; isDaemon = true } }

@@ -3802,9 +3802,26 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             catAdapter.notifyDataSetChanged()
         }
 
+        // The whole menu in tab order - see the note on "All" below - worked out once per
+        // menu read and per tab order, not on every refilter. Filtering it keeps that
+        // order, so a search under All never has to sort its matches again.
+        var sortedAllOf: List<GridProduct>? = null
+        var sortedAllTabs: List<String> = emptyList()
+        var sortedAllCache: List<GridProduct> = emptyList()
+        fun sortedAll(): List<GridProduct> {
+            if (sortedAllOf !== allProducts || sortedAllTabs != catNames) {
+                val rank = catNames.withIndex().associate { (i, name) -> name to i }
+                sortedAllCache = allProducts.sortedBy { rank[it.product.category] ?: Int.MAX_VALUE }
+                sortedAllOf = allProducts
+                sortedAllTabs = catNames.toList()
+            }
+            return sortedAllCache
+        }
+
         refreshProducts = {
             val q = query.trim().lowercase()
-            val matching = allProducts.filter {
+            val source = if (selectedCat == "All") sortedAll() else allProducts
+            val matching = if (q.isEmpty() && selectedCat == "All") source else source.filter {
                 (selectedCat == "All" || it.product.category == selectedCat) &&
                     // Name, SKU (serial number), and barcode only - no HSN.
                     // ignoreCase rather than a lower-cased copy of every name on every
@@ -3827,14 +3844,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             //
             // A dish whose category is blank, or names one no tab does, sorts last -
             // it belongs to no block, and putting it at the end is the one place it
-            // does not break one.
-            pager.set(
-                if (selectedCat != "All") matching
-                else {
-                    val rank = catNames.withIndex().associate { (i, name) -> name to i }
-                    matching.sortedBy { rank[it.product.category] ?: Int.MAX_VALUE }
-                }
-            )
+            // does not break one. (Already so: [matching] came from [sortedAll].)
+            pager.set(matching)
         }
 
         // Typing does two things at once: it narrows the menu behind, as it always
@@ -6996,7 +7007,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     private companion object {
         /** How long the search box waits after a key before refiltering the grid. */
-        const val SEARCH_REFILTER_DELAY_MS = 150L
+        // Longer than a pause between letters: the suggestion list answers first
+        // (SearchSuggestions.SHOW_DELAY_MS) and the grid redraws once typing stops.
+        // At 150ms it redrew between every pair of letters and held the next one back.
+        const val SEARCH_REFILTER_DELAY_MS = 350L
 
         /** The payment mode that puts the sale on the customer's account - see [CreditSale]. */
         const val CREDIT_LABEL = "Credit"

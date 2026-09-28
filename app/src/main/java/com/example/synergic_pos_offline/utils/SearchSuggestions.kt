@@ -262,11 +262,19 @@ class SearchSuggestions(
     /** Ranks [pool] against the current query and puts the best few under the box. */
     private fun showMatches(pool: List<Item>) {
         val q = query.lowercase()
-        val matches = indexOf(pool).entries
-            .mapNotNull { e -> rank(e, q)?.let { it to e.item } }
-            .sortedWith(compareBy({ it.first }, { it.second.name.length }, { it.second.name }))
-            .map { it.second }
-            .take(MAX_ROWS)
+        // THE BEST [MAX_ROWS], NOT THE WHOLE LIST SORTED. A letter or two matches most
+        // of a 5,000-product shelf, and sorting every match to keep thirty was most of
+        // the wait before the list opened. A bounded heap keeps the thirty best seen
+        // so far - worst on top, so a better one simply replaces it - in one pass.
+        val order = compareBy<Pair<Int, Item>>({ it.first }, { it.second.name.length }, { it.second.name })
+        val best = java.util.PriorityQueue(MAX_ROWS + 1, order.reversed())
+        for (e in indexOf(pool).entries) {
+            val r = rank(e, q) ?: continue
+            val candidate = r to e.item
+            if (best.size < MAX_ROWS) best.add(candidate)
+            else if (order.compare(candidate, best.peek()) < 0) { best.poll(); best.add(candidate) }
+        }
+        val matches = best.sortedWith(order).map { it.second }
 
         if (matches.isEmpty()) { dismiss(); return }
 
@@ -507,11 +515,15 @@ class SearchSuggestions(
          * How long the box must be still before the list opens.
          *
          * Sized to sit between the two things that type into a search box. A barcode
-         * gun puts characters out a few milliseconds apart, so it never reaches this
-         * and the list never opens for a scan. A person types at 100ms a character at
-         * their fastest and pauses far longer than this when they stop to read, so
-         * the list still feels like it was already there.
+         * gun puts characters out 5-20ms apart, so it never reaches this and the list
+         * never opens for a scan. A person's next key comes 150ms or more after the
+         * last, so the list is open and ranked before it - it keeps up with the typing
+         * rather than trailing it. It was 180ms, which at an ordinary typing pace put
+         * the list's work in the same moment as the next key and lagged both.
+         *
+         * The sale grids refilter well after this (see their own delays), so the list
+         * - what the eye is on while typing - is never queued behind a grid redraw.
          */
-        const val SHOW_DELAY_MS = 180L
+        const val SHOW_DELAY_MS = 90L
     }
 }

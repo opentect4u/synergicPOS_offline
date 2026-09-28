@@ -49,6 +49,13 @@ object ProductGrid {
     fun attach(rv: RecyclerView) {
         val lm = GridLayoutManager(rv.context, MIN_SPANS)
         rv.layoutManager = lm
+        // THE GRID'S SIZE IS THE SCREEN'S, NEVER ITS CONTENT'S - it fills the space it
+        // is given, whatever it holds. Saying so is what keeps a change of content
+        // inside the grid: without it, every refilter (each pause in the search box,
+        // each category tap) and every page appended on a scroll asked the WHOLE sale
+        // screen - order panel, totals, buttons - to lay itself out again, and that was
+        // most of the lag between a key and the grid answering it.
+        rv.setHasFixedSize(true)
         keepSpareTiles(rv, MIN_SPANS)
         rv.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
             val width = right - left

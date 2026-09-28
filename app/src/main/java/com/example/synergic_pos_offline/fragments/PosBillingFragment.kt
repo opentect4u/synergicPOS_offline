@@ -63,10 +63,15 @@ private const val PHOTO_PX = 320
 
 /**
  * How long the search boxes wait after the last key before the shelf refilters - the
- * restaurant menu's own figure. Short enough to read as live, long enough that a word
- * typed at speed refilters once rather than once per letter.
+ * restaurant menu's own figure.
+ *
+ * Longer than a pause between letters, on purpose. While a word is being typed the
+ * eye is on the box and the suggestion list under it (which answers first - see
+ * SearchSuggestions.SHOW_DELAY_MS); the shelf behind is redrawn once the typing
+ * actually stops. At 150ms it redrew between every pair of letters - "c", "ch",
+ * "chi" - and each redraw held the next letter back from appearing.
  */
-private const val SEARCH_REFILTER_DELAY_MS = 150L
+private const val SEARCH_REFILTER_DELAY_MS = 350L
 
 /**
  * How many item lines the "restore held bill?" confirmation previews. The card it
@@ -529,9 +534,21 @@ class PosBillingFragment : Fragment(), TitledScreen {
         productAdapter = ProductAdapter()
         rvProducts.adapter = productAdapter
         productPager = com.example.synergic_pos_offline.utils.GridPager(rvProducts) { page ->
-            shownProducts.clear()
-            shownProducts.addAll(page)
-            productAdapter.notifyDataSetChanged()
+            // The next page of the same list only ADDS its tiles - the restaurant menu's
+            // own rule. Redrawing the whole grid for it rebound every tile already on
+            // screen, once per page: while a search result filled the screen, and again
+            // at every page boundary on a scroll.
+            val appended = shownProducts.isNotEmpty() && page.size > shownProducts.size &&
+                shownProducts.indices.all { page[it] === shownProducts[it] }
+            if (appended) {
+                val start = shownProducts.size
+                shownProducts.addAll(page.subList(start, page.size))
+                productAdapter.notifyItemRangeInserted(start, page.size - start)
+            } else {
+                shownProducts.clear()
+                shownProducts.addAll(page)
+                productAdapter.notifyDataSetChanged()
+            }
         }
 
         // Cart
@@ -1244,6 +1261,24 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * catalogue lands - posted, so the grid draws first - rather than on the first
      * key typed into either box.
      */
+    private val tileNames = HashMap<String, String>()
+    private var tileNamesVersion = -1
+
+    /**
+     * The name a tile shows - the shop's regional name, or the app language's
+     * respelling - worked out once per product per catalogue rather than on every
+     * bind. A transliteration per tile per bind was paid again for every visible tile
+     * on every refilter, which is each pause in the search box.
+     */
+    private fun tileName(p: Product): String {
+        if (tileNamesVersion != menuVersion) { tileNames.clear(); tileNamesVersion = menuVersion }
+        return tileNames.getOrPut(p.id) {
+            com.example.synergic_pos_offline.utils.RegionalName.forScreen(
+                regionalNames, AppLanguage.of(requireContext()), p.name
+            )
+        }
+    }
+
     private fun prepareSearchSoon() {
         view?.post {
             if (!isAdded) return@post
@@ -1267,7 +1302,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
         if (activeCategory == "All" && queryId.isEmpty() && queryName.isEmpty()) {
             filteredProducts.addAll(allSorted)
         } else {
-            val matching = menu.filter { p ->
+            // Filtered FROM [allSorted] under All: it is already in tab order, and a
+            // filter keeps the order it is given - so the sort below, over the whole
+            // match on every refilter, is no longer needed there.
+            val matching = (if (activeCategory == "All") allSorted else menu).filter { p ->
                 (activeCategory == "All" || p.categoryId == activeCategoryId) &&
                     // The two boxes narrow the shelf TOGETHER rather than as
                     // alternatives: each only constrains anything while it holds
@@ -1291,16 +1329,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
             //
             // Uncategorised products sort last - they belong to no block, and the end is
             // the one place they do not break one.
-            filteredProducts.addAll(
-                if (activeCategory != "All") matching
-                else {
-                    // Ranked on the product's own category NAME - it carries one already,
-                    // and the tab strip is a list of names, so the two line up without
-                    // going back through ids. See CategoryOrder for what sets that order.
-                    val rank = categories.withIndex().associate { (i, name) -> name to i }
-                    matching.sortedBy { rank[it.category] ?: Int.MAX_VALUE }
-                }
-            )
+            // Already in tab order under All - it was filtered from [allSorted], which
+            // [rebuildAllSorted] keeps ranked on the category NAME in the order the
+            // shop dragged its tabs into (see CategoryOrder).
+            filteredProducts.addAll(matching)
         }
         // Only the first page reaches the adapter; the rest arrives as the grid is
         // scrolled. The empty state still asks the WHOLE filtered result, so "no
@@ -3084,8 +3116,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
         override fun onBindViewHolder(holder: VH, position: Int) {
             val p = shownProducts[position]
-            val language = AppLanguage.of(holder.itemView.context)
-            holder.name.text = com.example.synergic_pos_offline.utils.RegionalName.forScreen(regionalNames, language, p.name)
+            holder.name.text = tileName(p)
             holder.price.text = money(p.price)
             holder.sku.text = p.sku
 
