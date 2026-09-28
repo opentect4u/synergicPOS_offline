@@ -680,6 +680,16 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             view.post { if (isAdded) reloadProductsIfChanged() }
         }
 
+        // The next token's lookup, done once now in the background so no mode switch
+        // waits on it. Under Monthly or Continue token reset it is a pass over every
+        // bill in the period - a lakh and more on a busy counter - and it used to run
+        // on the first Take Away / QSR tap. After this, TokenNumberDao remembers it and
+        // each switch only looks at bills written since. See TokenNumberDao.maxBillToken.
+        val appCtx = requireContext().applicationContext
+        productCatalogExecutor.execute {
+            runCatching { com.example.synergic_pos_offline.database.TokenNumberDao(appCtx).nextSequence() }
+        }
+
         loadRunningOrders()          // restore open tables from the database
         // A split left finished-with by an earlier session is given back here, before
         // the screen is drawn from it - otherwise a table stuck as 1 A and 1 B survives
