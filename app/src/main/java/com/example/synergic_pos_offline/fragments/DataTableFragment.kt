@@ -23,6 +23,7 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -38,6 +39,7 @@ import com.example.synergic_pos_offline.utils.ThermalPrinter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.switchmaterial.SwitchMaterial
@@ -287,9 +289,24 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
     private lateinit var rvTable: RecyclerView
     private lateinit var tvEmpty: TextView
+    private lateinit var pbLoading: ProgressBar
     private lateinit var adapter: DataTableAdapter
     private lateinit var cbSelectAll: CheckBox
     private var suppressSelectAll = false
+
+    /**
+     * A fresh single-thread executor per view - same pattern as
+     * PosBillingFragment.catalogExecutor and for the same reason: reusing one shut
+     * down in a previous onDestroyView would reject the task and crash the screen.
+     */
+    private var loadExecutor = Executors.newSingleThreadExecutor()
+
+    /**
+     * Bumped on every [loadRowsAsync] call, so a slow load a newer one has already
+     * superseded (a refresh right after another refresh) drops its result instead
+     * of overwriting the fresher one.
+     */
+    private var loadGeneration = 0
 
     // Selection UI
     private lateinit var tvSelectionCount: TextView
@@ -326,6 +343,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
         rvTable = view.findViewById(R.id.rvTable)
         tvEmpty = view.findViewById(R.id.tvEmpty)
+        pbLoading = view.findViewById(R.id.pbTableLoading)
 
         columnOrder.clear()
         columnOrder.addAll(columns.indices)
@@ -369,9 +387,11 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
         buildHeader(view.findViewById(R.id.llTableHeader))
 
-        allRows.clear()
-        allRows.addAll(loadRows())
-        applyFilter("")
+        // A fresh executor for this view - see [loadExecutor]. The one from a
+        // previous view on this same fragment instance, if any, was already shut
+        // down in onDestroyView and cannot take more work.
+        loadExecutor = Executors.newSingleThreadExecutor()
+        loadRowsAsync()
 
         val etSearch = view.findViewById<TextInputEditText>(R.id.etSearch)
         etSearch.addTextChangedListener(object : TextWatcher {
