@@ -203,7 +203,7 @@ object ThumbnailCache {
      * One product's photo bytes. Null for none, and for one that cannot be read - a
      * BLOB too large for a cursor window is a blank tile, not a crashed sale screen.
      */
-    private fun productImageBytes(context: Context, productId: Long): ByteArray? = runCatching {
+    fun productImageBytes(context: Context, productId: Long): ByteArray? = runCatching {
         DatabaseHelper.getInstance(context).readableDatabase.rawQuery(
             "SELECT product_image FROM md_products WHERE id = ?", arrayOf(productId.toString())
         ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getBlob(0) else null }

@@ -142,6 +142,7 @@ class MainActivity : AppCompatActivity() {
 
         rvSidebar.layoutManager = LinearLayoutManager(this)
         refreshSidebar()
+        smoothDrawerSlide()
 
         applyThemeEverywhere()
 
@@ -171,6 +172,14 @@ class MainActivity : AppCompatActivity() {
                         // sidebar item (and expand its group) the next time it opens.
                         activeLeafTitle = titleFor(f)
                         applyThemeEverywhere()
+                        // The menu is rebuilt HERE, while the drawer is shut and off
+                        // screen, rather than on the tap that opens it - see openDrawer.
+                        // Only a change of page moves the highlight, so this is the one
+                        // moment it can be stale, and a swipe open now shows it right too.
+                        if (!drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                            updateSidebarUser()
+                            refreshSidebar()
+                        }
                     }
                 }
             }, false
@@ -392,15 +401,75 @@ class MainActivity : AppCompatActivity() {
 
     // ---- Drawer control, called from any fragment's hamburger button --------
 
+    /**
+     * Opens the drawer - and does nothing else first.
+     *
+     * It used to rebuild the whole menu tree, hand the list a new adapter and redraw
+     * every row on this tap, all before the slide could start: the pause between the
+     * hamburger and the drawer moving. The menu is now kept current as pages change
+     * (see the fragment callback in onCreate) and on a theme change (see
+     * [applyThemeEverywhere]), which are the only things that change it - a change of
+     * app mode signs out, and the next page after signing in rebuilds it.
+     */
     fun openDrawer() {
+        drawerLayout.openDrawer(GravityCompat.START)
+    }
+
+    private fun updateSidebarUser() {
         val user = SessionManager.currentUser
         tvSidebarUser.text = if (user != null) "Active User: ${user.userId}" else "Main Menu"
-        
-        // Refresh the menu tree in case the app mode (Grocery/Restaurant) changed.
-        refreshSidebar()
+    }
 
-        refreshSidebarTheme()
-        drawerLayout.openDrawer(GravityCompat.START)
+    /**
+     * Makes the drawer's slide cheap to draw, however it is opened - hamburger or swipe.
+     *
+     * While the drawer moves, every frame redraws the whole screen under it: the sale
+     * grid's cards and their shadows, the dashboard tiles, the order panel. On these
+     * tablets that is what made the slide stutter on every screen. So for as long as
+     * the drawer is moving, the page and the drawer are each drawn once into a GPU
+     * layer and each frame only moves those two images; the layers are dropped the
+     * moment it settles, so nothing is held while the drawer is at rest.
+     */
+    /** What a menu tap asked for, run once the drawer has finished closing. */
+    private var afterClose: (() -> Unit)? = null
+
+    /**
+     * Closes the drawer, then runs [action] - the page a menu row opens.
+     *
+     * Opening the page on the same frame the drawer began to close meant building it
+     * (a grid, a table, its database reads) in the middle of the closing slide, which
+     * is what made that slide stutter. Waiting the quarter-second for it to settle is
+     * what the platform's own navigation drawers do.
+     */
+    private fun afterDrawerCloses(action: () -> Unit) {
+        if (!drawerLayout.isDrawerOpen(GravityCompat.START) &&
+            !drawerLayout.isDrawerVisible(GravityCompat.START)
+        ) { action(); return }
+        afterClose = action
+        drawerLayout.closeDrawer(GravityCompat.START)
+    }
+
+    private fun smoothDrawerSlide() {
+        val content = drawerLayout.getChildAt(0)
+        val panel = drawerLayout.getChildAt(1)
+        drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
+            override fun onDrawerClosed(drawerView: View) {
+                afterClose?.let { afterClose = null; it() }
+            }
+
+            override fun onDrawerOpened(drawerView: View) {
+                // Reopened before it finished closing: that tap was taken back.
+                afterClose = null
+            }
+
+            override fun onDrawerStateChanged(newState: Int) {
+                val type = if (newState == DrawerLayout.STATE_IDLE) View.LAYER_TYPE_NONE
+                else View.LAYER_TYPE_HARDWARE
+                listOfNotNull(content, panel).forEach {
+                    if (it.layerType != type) it.setLayerType(type, null)
+                }
+            }
+        })
     }
 
     /**
@@ -414,7 +483,7 @@ class MainActivity : AppCompatActivity() {
         // current while it is on screen - the tree has no node called "Dashboard".
         val active = if (activeLeafTitle == "Dashboard") HOME else activeLeafTitle
         active?.let { expandToActive(tree, it) }
-        rvSidebar.adapter = SidebarAdapter(tree, active) { leafTitle -> handleLeaf(leafTitle) }
+        rvSidebar.adapter = SidebarAdapter(tree, active) { leafTitle -> afterDrawerCloses { handleLeaf(leafTitle) } }
     }
 
     /**

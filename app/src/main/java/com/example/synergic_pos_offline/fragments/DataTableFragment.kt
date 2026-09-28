@@ -80,8 +80,20 @@ private fun decodeSampledBitmap(bytes: ByteArray, targetPx: Int): Bitmap? = try 
  * A single table row: a stable [id] plus one string per data column.
  * [thumbnail] is optional encoded image bytes shown as a round preview before the
  * first cell (only when the screen sets [DataTableFragment.showsThumbnails]).
+ *
+ * A PRODUCT'S photo is named rather than carried: [photoProductId] and [photoStamp]
+ * (see [com.example.synergic_pos_offline.utils.ThumbnailCache.productStamp]), and the
+ * row reads its own photo when it is on screen. Carrying the bytes meant the Products
+ * master read every image in the shop to open - ~700 MB at 5,000 products, which ran
+ * out of memory and left the table empty ("No data found").
  */
-data class DataRow(val id: String, val cells: List<String>, val thumbnail: ByteArray? = null)
+data class DataRow(
+    val id: String,
+    val cells: List<String>,
+    val thumbnail: ByteArray? = null,
+    val photoProductId: Long? = null,
+    val photoStamp: String = ""
+)
 
 /** Lets a fragment supply its own title to the global header. */
 interface TitledScreen {
@@ -580,17 +592,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
      */
     private fun applyFilter(q: String, resetWindow: Boolean = true) {
         query = q.trim()
-        val index = filterColumnIndex
         shownRows.clear()
-        shownRows.addAll(
-            allRows.filter { row ->
-                val matchesFilter = index == null || filterValue == allFilterValues ||
-                    row.cells.getOrNull(index).equals(filterValue, ignoreCase = true)
-                val matchesQuery = query.isEmpty() ||
-                    row.cells.any { it.contains(query, ignoreCase = true) }
-                matchesFilter && matchesQuery
-            }
-        )
+        shownRows.addAll(allRows.filter(::matchesView))
         // Show the first page (or keep the current depth on an in-place refresh).
         val keep = if (resetWindow) PAGE_SIZE else maxOf(PAGE_SIZE, visibleRows.size)
         visibleRows.clear()
@@ -599,6 +602,16 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         if (resetWindow && ::rvTable.isInitialized) rvTable.scrollToPosition(0)
         tvEmpty.visibility = if (shownRows.isEmpty()) View.VISIBLE else View.GONE
         if (::cbSelectAll.isInitialized) updateSelectionUI()
+    }
+
+    /** Whether [row] passes the current search and column filter. */
+    private fun matchesView(row: DataRow): Boolean {
+        val index = filterColumnIndex
+        val matchesFilter = index == null || filterValue == allFilterValues ||
+            row.cells.getOrNull(index).equals(filterValue, ignoreCase = true)
+        val matchesQuery = query.isEmpty() ||
+            row.cells.any { it.contains(query, ignoreCase = true) }
+        return matchesFilter && matchesQuery
     }
 
     /** Appends the next [PAGE_SIZE] filtered rows to the visible window, if any remain. */
@@ -624,13 +637,65 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         applyFilter(query, resetWindow = false)
     }
 
-    /** Replaces the cells of the row identified by [id], if it still exists. */
+    /**
+     * Replaces the cells of the row identified by [id], if it still exists - keeping
+     * its picture, which rebuilding it from the cells alone used to throw away.
+     */
     protected fun updateRow(id: String, cells: List<String>) {
-        val idx = allRows.indexOfFirst { it.id == id }
-        if (idx >= 0) {
-            allRows[idx] = DataRow(id, cells)
-            applyFilter(query, resetWindow = false)
+        val old = allRows.firstOrNull { it.id == id } ?: return
+        replaceRow(old.copy(cells = cells))
+    }
+
+    // ---- Single-row changes, without rebuilding the list ------------------------
+    //
+    // An edit changes one record, so it repaints one row. Re-reading the whole table
+    // and re-binding every row on screen for it was seconds on a 5,000-product master,
+    // and left the list jumping under the operator. These keep the scroll position,
+    // the search and the other rows exactly as they were.
+
+    /**
+     * Puts [row] in place of the row with the same id and repaints only that row.
+     * Kept on screen even if the edit means it no longer matches the search: the
+     * operator has just edited it and expects to see it, not have it vanish.
+     * A row not in the table yet is added at the top instead.
+     */
+    protected fun replaceRow(row: DataRow) {
+        val i = allRows.indexOfFirst { it.id == row.id }
+        if (i < 0) { insertRowAtTop(row); return }
+        allRows[i] = row
+        shownRows.indexOfFirst { it.id == row.id }.takeIf { it >= 0 }?.let { shownRows[it] = row }
+        val v = visibleRows.indexOfFirst { it.id == row.id }
+        if (v >= 0) { visibleRows[v] = row; adapter.notifyItemChanged(v) }
+        // A new category, say, has to be offerable in the column filter.
+        view?.let { setUpColumnFilter(it) }
+    }
+
+    /** Adds [row] as the first row - where a list sorted newest first shows it. */
+    protected fun insertRowAtTop(row: DataRow) {
+        allRows.add(0, row)
+        if (matchesView(row)) {
+            shownRows.add(0, row)
+            visibleRows.add(0, row)
+            adapter.notifyItemInserted(0)
+            if (::rvTable.isInitialized) rvTable.scrollToPosition(0)
         }
+        tvEmpty.visibility = if (shownRows.isEmpty()) View.VISIBLE else View.GONE
+        view?.let { setUpColumnFilter(it) }
+        if (::cbSelectAll.isInitialized) updateSelectionUI()
+    }
+
+    /** Takes the rows with [ids] out of the table, repainting only where they were. */
+    protected fun removeRows(ids: Collection<String>) {
+        val gone = ids.toSet()
+        allRows.removeAll { it.id in gone }
+        shownRows.removeAll { it.id in gone }
+        for (v in visibleRows.indices.reversed()) {
+            if (visibleRows[v].id in gone) { visibleRows.removeAt(v); adapter.notifyItemRemoved(v) }
+        }
+        selectedIds.removeAll(gone)
+        tvEmpty.visibility = if (shownRows.isEmpty()) View.VISIBLE else View.GONE
+        view?.let { setUpColumnFilter(it) }
+        if (::cbSelectAll.isInitialized) updateSelectionUI()
     }
 
     /** Re-reads the backing data via [loadRows] and refreshes the table. */
@@ -639,7 +704,11 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     }
     /** Opens the row's image full size. Called when a row thumbnail is tapped. */
     private fun showImagePreview(row: DataRow) {
-        val bitmap = row.thumbnail?.let { decodeSampledBitmap(it, PREVIEW_PX) } ?: return
+        // A product row names its photo rather than carrying it - read just this one.
+        val bytes = row.thumbnail ?: row.photoProductId?.let {
+            com.example.synergic_pos_offline.utils.ThumbnailCache.productImageBytes(requireContext(), it)
+        }
+        val bitmap = bytes?.let { decodeSampledBitmap(it, PREVIEW_PX) } ?: return
         val view = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_image_preview, null)
         val dialog = AlertDialog.Builder(requireContext()).setView(view).create().also { it.setCanceledOnTouchOutside(false) }
         dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
@@ -914,6 +983,9 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
 
             /** Which column layout [cellViews] was built for; -1 until it has been. */
             var cellsVersion = -1
+
+            /** The photo this row is waiting on - read by the decoder thread too. */
+            @Volatile var thumbFor: String = ""
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -1135,27 +1207,51 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
             }
             holder.ivThumb.visibility = View.VISIBLE
 
+            // A PRODUCT PHOTO, NAMED BY ID: read and decoded off the main thread for this
+            // row alone, and set if the row is still showing that product when it lands.
+            // A row scrolled past before its turn is skipped unread.
+            val productId = row.photoProductId
+            if (productId != null && row.photoStamp.isNotEmpty()) {
+                val want = "$productId:${row.photoStamp}"
+                holder.thumbFor = want
+                val held = com.example.synergic_pos_offline.utils.ThumbnailCache
+                    .cachedProduct(productId, row.photoStamp, THUMB_PX)
+                if (held != null) { showThumb(holder, row, held, ctx); return }
+                showNoThumb(holder)
+                com.example.synergic_pos_offline.utils.ThumbnailCache.loadProduct(
+                    ctx, productId, row.photoStamp, THUMB_PX, wanted = { holder.thumbFor == want }
+                ) { bmp ->
+                    if (holder.thumbFor == want && bmp != null) showThumb(holder, row, bmp, ctx)
+                }
+                return
+            }
+            holder.thumbFor = ""
+
             // Through the cache: this runs on every pass of a row across the screen, and
             // decoding the same JPEG each time was the bulk of what made a long product
             // list stutter. See ThumbnailCache.
             val bitmap = com.example.synergic_pos_offline.utils.ThumbnailCache.bitmap(
                 thumbKey(row), row.thumbnail, THUMB_PX
             )
-            if (bitmap == null) {
-                holder.ivThumb.setImageDrawable(null)
-                holder.ivThumb.setBackgroundResource(R.drawable.bg_thumb_placeholder)
-                holder.ivThumb.isClickable = false
-                holder.ivThumb.setOnClickListener(null)
-            } else {
-                holder.ivThumb.background = null
-                holder.ivThumb.setImageDrawable(
-                    RoundedBitmapDrawableFactory.create(ctx.resources, bitmap).apply {
-                        isCircular = true
-                    }
-                )
-                // Only rows that actually have an image open the preview.
-                holder.ivThumb.setOnClickListener { onThumbClick(row) }
-            }
+            if (bitmap == null) showNoThumb(holder) else showThumb(holder, row, bitmap, ctx)
+        }
+
+        private fun showNoThumb(holder: ViewHolder) {
+            holder.ivThumb.setImageDrawable(null)
+            holder.ivThumb.setBackgroundResource(R.drawable.bg_thumb_placeholder)
+            holder.ivThumb.isClickable = false
+            holder.ivThumb.setOnClickListener(null)
+        }
+
+        private fun showThumb(holder: ViewHolder, row: DataRow, bitmap: Bitmap, ctx: android.content.Context) {
+            holder.ivThumb.background = null
+            holder.ivThumb.setImageDrawable(
+                RoundedBitmapDrawableFactory.create(ctx.resources, bitmap).apply {
+                    isCircular = true
+                }
+            )
+            // Only rows that actually have an image open the preview.
+            holder.ivThumb.setOnClickListener { onThumbClick(row) }
         }
 
         override fun getItemCount() = rows.size
