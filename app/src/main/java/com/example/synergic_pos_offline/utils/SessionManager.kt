@@ -43,5 +43,7 @@ object SessionManager {
 
     fun logout() {
         currentUser = null
+        // The sale screens' kept catalogues belong to this login - see CatalogueSignature.
+        CatalogueSignature.newSession()
     }
 }

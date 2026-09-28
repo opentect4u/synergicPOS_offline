@@ -118,7 +118,15 @@ class SearchSuggestions(
          * [bitmap] wins when both are set.
          */
         val bitmap: android.graphics.Bitmap? = null,
-        val image: ByteArray? = null
+        val image: ByteArray? = null,
+        /**
+         * A sale-grid photo, named rather than carried: looked up in the tile cache
+         * each time the row is drawn, so a photo that loaded after the pool was built
+         * - the pool is built once per catalogue now - still shows. See
+         * [ThumbnailCache.cachedProduct].
+         */
+        val photoProductId: Long? = null,
+        val photoStamp: String = ""
     )
 
     /**
@@ -179,9 +187,10 @@ class SearchSuggestions(
         // guessing which was meant would put the wrong thing in the cart silently. In
         // that case it falls through and lists them to be chosen from.
         val typed = normalizeCode(query)
-        val scanned = if (typed.length < SCAN_MIN) null else pool.singleOrNull {
-            it.barcode.isNotBlank() && normalizeCode(it.barcode) == typed
-        }
+        // One lookup in the pool's barcode map - see [indexOf] - rather than cleaning
+        // up every product's barcode again on every keystroke.
+        val scanned = if (typed.length < SCAN_MIN) null
+            else indexOf(pool).byBarcode[typed]?.singleOrNull()
         if (scanned != null) {
             dismiss()
             onExactCode?.invoke(scanned)
@@ -194,11 +203,67 @@ class SearchSuggestions(
         handler.postDelayed(pending, SHOW_DELAY_MS)
     }
 
+    /**
+     * One item's search keys, worked out once: the lower-cased name, its words, its
+     * codes and the barcode both as typed and as a scanner reads it.
+     *
+     * Ranking used to work these out afresh for every product on every keystroke -
+     * a lower-case copy of each name, a split into words, a clean-up of each barcode.
+     * At 5,000 products that was tens of thousands of new strings per key, on the
+     * main thread, and the box lagged behind the typing.
+     */
+    private class Entry(
+        val item: Item,
+        val name: String,
+        val words: List<String>,
+        val codes: List<String>,
+        val barcode: String?,
+        val meta: String
+    )
+
+    /** A pool's entries, plus its barcodes by their scanner-normal form. */
+    private class Index(val entries: List<Entry>, val byBarcode: Map<String, List<Item>>)
+
+    private var indexedPool: List<Item>? = null
+    private var index = Index(emptyList(), emptyMap())
+
+    /**
+     * The index for [pool], built the first time that pool is searched and reused
+     * for every keystroke after. Keyed by the list itself, so the screens hand the
+     * same list back until their catalogue changes - both do.
+     */
+    private fun indexOf(pool: List<Item>): Index {
+        if (pool === indexedPool) return index
+        val entries = pool.map { item ->
+            val name = item.name.lowercase()
+            Entry(
+                item = item,
+                name = name,
+                words = name.split(' ', '-', '/'),
+                codes = item.codes.map { it.lowercase() },
+                barcode = item.barcode.takeIf { it.isNotBlank() }?.lowercase(),
+                meta = item.meta.lowercase()
+            )
+        }
+        val byBarcode = pool.filter { it.barcode.isNotBlank() }
+            .groupBy { normalizeCode(it.barcode) }
+        index = Index(entries, byBarcode)
+        indexedPool = pool
+        return index
+    }
+
+    /**
+     * Builds [pool]'s search index now, so the first keystroke against a freshly
+     * loaded catalogue does not pay for it. Called by the sale screens once their
+     * catalogue has landed, while nobody is typing.
+     */
+    fun prepare(pool: List<Item>) { indexOf(pool) }
+
     /** Ranks [pool] against the current query and puts the best few under the box. */
     private fun showMatches(pool: List<Item>) {
         val q = query.lowercase()
-        val matches = pool
-            .mapNotNull { item -> rank(item, q)?.let { it to item } }
+        val matches = indexOf(pool).entries
+            .mapNotNull { e -> rank(e, q)?.let { it to e.item } }
             .sortedWith(compareBy({ it.first }, { it.second.name.length }, { it.second.name }))
             .map { it.second }
             .take(MAX_ROWS)
@@ -225,8 +290,8 @@ class SearchSuggestions(
      * still find "Paneer Tikka Masala", but it is kept last because that is a guess
      * where the others are not.
      */
-    private fun rank(item: Item, q: String): Int? {
-        val name = item.name.lowercase()
+    private fun rank(e: Entry, q: String): Int? {
+        val name = e.name
         val byName = mode != Mode.CODES_ONLY
         val byCodes = mode != Mode.NAME_ONLY
         // The barcode alone, checked whichever mode this is - see the note on
@@ -234,22 +299,24 @@ class SearchSuggestions(
         // apart from the [byCodes] clauses below rather than inside them: a
         // NAME_ONLY box drops those clauses entirely (they would let its SKU
         // back in), and still needs its barcode to work.
-        val barcode = item.barcode.takeIf { it.isNotBlank() }
+        //
+        // Everything here is already lower case - see [Entry] - as is [q].
+        val barcode = e.barcode
         return when {
-            byCodes && item.codes.any { it.equals(q, ignoreCase = true) } -> 0
-            barcode != null && barcode.equals(q, ignoreCase = true) -> 0
+            byCodes && e.codes.any { it == q } -> 0
+            barcode != null && barcode == q -> 0
             byName && name == q -> 1
             byName && name.startsWith(q) -> 2
-            byName && name.split(' ', '-', '/').any { it.startsWith(q) } -> 3
+            byName && e.words.any { it.startsWith(q) } -> 3
             byName && name.contains(q) -> 4
-            byCodes && item.codes.any { it.contains(q, ignoreCase = true) } -> 5
-            barcode != null && barcode.contains(q, ignoreCase = true) -> 5
+            byCodes && e.codes.any { it.contains(q) } -> 5
+            barcode != null && barcode.contains(q) -> 5
             // NAME_AND_CODES only, not just byName: meta is a context line that
             // itself carries an id ("Dairy  ·  #19") for the one combined box that
             // is allowed to match on either - letting it through under byName
             // alone would hand a NAME_ONLY box back the very id match it exists
             // to keep out.
-            mode == Mode.NAME_AND_CODES && item.meta.contains(q, ignoreCase = true) -> 6
+            mode == Mode.NAME_AND_CODES && e.meta.contains(q) -> 6
             else -> null
         }
     }
@@ -354,7 +421,9 @@ class SearchSuggestions(
             // Sampled and cached rather than decoded at full size on every bind. A
             // suggestion list is short, but it is rebuilt on each keystroke, so the same
             // photographs were being decoded from scratch as fast as the operator types.
-            val bmp = item.bitmap ?: ThumbnailCache.bitmap(
+            val bmp = item.bitmap ?: item.photoProductId?.let {
+                ThumbnailCache.cachedProduct(it, item.photoStamp, ThumbnailCache.TILE_PX)
+            } ?: ThumbnailCache.bitmap(
                 key = "suggest:${item.id}",
                 bytes = item.image,
                 targetPx = ThumbnailCache.THUMB_PX

@@ -62,6 +62,13 @@ import com.example.synergic_pos_offline.utils.Quantity
 private const val PHOTO_PX = 320
 
 /**
+ * How long the search boxes wait after the last key before the shelf refilters - the
+ * restaurant menu's own figure. Short enough to read as live, long enough that a word
+ * typed at speed refilters once rather than once per letter.
+ */
+private const val SEARCH_REFILTER_DELAY_MS = 150L
+
+/**
  * How many item lines the "restore held bill?" confirmation previews. The card it
  * is drawn in does not scroll, so a long bill is summarised rather than listed in
  * full and pushing the buttons off the screen.
@@ -200,9 +207,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
             else -> ""
         },
         badgeColor = if (p.stock == "out") 0xFFDC2626.toInt() else 0xFFF59E0B.toInt(),
-        // Whatever the grid has already decoded; a product not yet scrolled past shows
-        // its initial here rather than a database read per keystroke.
-        bitmap = cachedPhoto(p)
+        // Whatever the grid has already decoded, looked up as the row is drawn; a
+        // product not yet scrolled past shows its initial rather than a database read
+        // per keystroke.
+        photoProductId = p.id.toLongOrNull(),
+        photoStamp = p.photoStamp
         )
     }
 
@@ -866,6 +875,41 @@ class PosBillingFragment : Fragment(), TitledScreen {
         allSorted = menu.sortedBy { rank[it.category] ?: Int.MAX_VALUE }
     }
 
+    /**
+     * The catalogue this login last read, kept past the screen that read it - so a new
+     * sale screen, a new sale or a Hold starts from it instead of from nothing. Plain
+     * data, no photos (tiles fetch those by id). Only reused within the login that read
+     * it - see [com.example.synergic_pos_offline.utils.CatalogueSignature.session].
+     */
+    private object SessionCatalogue {
+        class Held(val result: CatalogueResult, val signature: String, val stockSig: String, val session: Int)
+        @Volatile private var held: Held? = null
+
+        fun store(result: CatalogueResult, signature: String, stockSig: String) {
+            held = Held(result, signature, stockSig, com.example.synergic_pos_offline.utils.CatalogueSignature.session)
+        }
+
+        fun take(): Held? = held?.takeIf {
+            it.session == com.example.synergic_pos_offline.utils.CatalogueSignature.session
+        }
+    }
+
+    /**
+     * [held] with its stock counts read afresh - one query - for when a sale has moved
+     * stock but nothing in the masters changed.
+     */
+    private fun restock(ctx: Context, held: CatalogueResult): CatalogueResult {
+        if (!held.stockTrackingOn) return held
+        val db = DatabaseHelper.getInstance(ctx).readableDatabase
+        val levels = StockDao(ctx).levels(currentStoreId(db)?.toInt() ?: 0)
+        return held.copy(products = held.products.map { p ->
+            val level = p.id.toLongOrNull()?.let { levels[it] }
+            val state = StockBadge.stateOf(level)
+            val qty = level?.quantity ?: 0.0
+            if (state == p.stock && qty == p.stockQty) p else p.copy(stock = state, stockQty = qty)
+        })
+    }
+
     /** What reading the catalogue off the main thread comes back with - see
      *  [loadProductsAsync] and [buildCatalogue]. */
     private data class CatalogueResult(
@@ -898,8 +942,39 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val ctx = requireContext()
         val generation = ++catalogLoadGeneration
         val categoriesSnapshot = categoryItems.toList()
+        // A fresh screen with this login's catalogue already in hand draws it NOW, on
+        // this frame, rather than showing an empty grid until the check below comes
+        // back. The check still runs; it redraws only if it finds something moved.
+        val shownNow = if (menu.isEmpty()) SessionCatalogue.take()?.result else null
+        shownNow?.let {
+            appliedCatalogue = it
+            menu.addAll(it.products)
+            regionalNames = it.regionalNames
+            stockTrackingOn = it.stockTrackingOn
+            menuVersion++
+            rebuildAllSorted()
+            onLoaded()
+            prepareSearchSoon()
+        }
         catalogExecutor.execute {
-            val result = runCatching { buildCatalogue(ctx, categoriesSnapshot) }
+            // READ ONCE PER LOGIN, THEN ONLY WHAT MOVED. This runs on every opening of
+            // the sale screen (the header's Sale button builds a new one each time),
+            // every Start New Sale and every Hold - and each used to read the whole
+            // catalogue again. Now the one this login last read is reused as long as
+            // the masters are unchanged, and after a sale only the stock counts are
+            // re-read. See [SessionCatalogue] and CatalogueSignature.
+            val result = runCatching {
+                val signature = com.example.synergic_pos_offline.utils.CatalogueSignature.of(ctx)
+                val stockSig = com.example.synergic_pos_offline.utils.CatalogueSignature.stock(ctx)
+                val held = SessionCatalogue.take()
+                val fresh = when {
+                    held != null && held.signature == signature && held.stockSig == stockSig -> held.result
+                    held != null && held.signature == signature -> restock(ctx, held.result)
+                    else -> buildCatalogue(ctx, categoriesSnapshot)
+                }
+                SessionCatalogue.store(fresh, signature, stockSig)
+                fresh
+            }
                 .onFailure { android.util.Log.e("PosBillingFragment", "Catalogue read failed", it) }
                 .getOrNull()
             view?.post {
@@ -908,6 +983,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
                 // and this one's result is exactly what that one is about to
                 // overwrite anyway.
                 if (!isAdded || generation != catalogLoadGeneration) return@post
+                // Exactly what was drawn a moment ago: leave the grid, and the
+                // operator's scroll and search, alone.
+                if (result != null && result === shownNow) return@post
+                // The catalogue already on this screen (Start New Sale, a Hold, with
+                // nothing edited): nothing to swap in, and no reason to rebuild the
+                // suggestion pool and search indexes over it - just refilter.
+                if (result != null && result === appliedCatalogue) { onLoaded(); return@post }
                 if (result != null) {
                     // Decoded photos are NOT thrown away: each is cached under its
                     // stamp, so a changed photo is simply a new key.
@@ -915,9 +997,12 @@ class PosBillingFragment : Fragment(), TitledScreen {
                     menu.addAll(result.products)
                     regionalNames = result.regionalNames
                     stockTrackingOn = result.stockTrackingOn
+                    appliedCatalogue = result
+                    menuVersion++
                 }
                 rebuildAllSorted()
                 onLoaded()
+                prepareSearchSoon()
             }
         }
     }
@@ -1117,7 +1202,59 @@ class PosBillingFragment : Fragment(), TitledScreen {
         return out
     }
 
+    /** Runs [applyFilter] once typing pauses - see the search boxes' watcher. */
+    private val refilter = Runnable { if (view != null) applyFilter() }
+    private val refilterHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    private fun refilterSoon() {
+        refilterHandler.removeCallbacks(refilter)
+        refilterHandler.postDelayed(refilter, SEARCH_REFILTER_DELAY_MS)
+    }
+
+    /**
+     * Bumped whenever [menu], [regionalNames] or the stock state change - anything a
+     * suggestion row shows. [suggestionPool] rebuilds only when this has moved.
+     */
+    private var menuVersion = 0
+
+    /** The catalogue [menu] was last filled from - see [loadProductsAsync]. */
+    private var appliedCatalogue: CatalogueResult? = null
+    private var suggestionPoolVersion = -1
+    private var suggestionPoolCache: List<SearchSuggestions.Item> = emptyList()
+
+    /**
+     * Every product as a suggestion row, built once per catalogue and handed back
+     * as the SAME list until the catalogue changes.
+     *
+     * It used to be built afresh on every keystroke - 5,000 rows, each formatting
+     * its price, working out its regional name and reading the app language - which
+     * was most of why typing in the search box lagged. The same list also lets
+     * [SearchSuggestions] keep its own search index between keystrokes.
+     */
+    private fun suggestionPool(): List<SearchSuggestions.Item> {
+        if (suggestionPoolVersion != menuVersion) {
+            suggestionPoolCache = menu.map(::suggestionOf)
+            suggestionPoolVersion = menuVersion
+        }
+        return suggestionPoolCache
+    }
+
+    /**
+     * Builds the suggestion pool and both search boxes' indexes a moment after the
+     * catalogue lands - posted, so the grid draws first - rather than on the first
+     * key typed into either box.
+     */
+    private fun prepareSearchSoon() {
+        view?.post {
+            if (!isAdded) return@post
+            val pool = suggestionPool()
+            suggestionsId?.prepare(pool)
+            suggestionsName?.prepare(pool)
+        }
+    }
+
     private fun applyFilter() {
+        refilterHandler.removeCallbacks(refilter)
         filteredProducts.clear()
         // THE PLAIN "ALL, NOTHING TYPED" CASE IS THE COMMON ONE, AND THE CHEAP PATH.
         //
@@ -1258,12 +1395,16 @@ class PosBillingFragment : Fragment(), TitledScreen {
         }
         val watcher = simpleWatcher {
             onQueryChanged(it)
-            applyFilter()
+            // The shelf follows the typing once it pauses, not on every key: each
+            // refilter re-sorts the whole catalogue and re-lays the grid, and doing
+            // that between one letter and the next is what held the letters back
+            // from appearing in the box. The same pause the restaurant menu uses.
+            refilterSoon()
             // Suggested from the WHOLE shelf, not the open category: someone who
             // types a product name has named the product, and hiding it because a
             // different category is selected would answer a question they did not
-            // ask.
-            box.update(it, menu.map(::suggestionOf))
+            // ask. From the pool built once per catalogue - see [suggestionPool].
+            box.update(it, suggestionPool())
         }
         field.addTextChangedListener(watcher)
         // The gun, read before the field: see attachScanner/ScanState. Everything
@@ -2963,7 +3104,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             when {
                 p.photoStamp.isEmpty() || idLong == null -> {
                     holder.photo.setImageDrawable(null)
-                    holder.photo.visibility = View.GONE
+                    holder.photo.visibility = View.INVISIBLE
                 }
                 held != null -> {
                     holder.photo.setImageBitmap(held)
@@ -2978,7 +3119,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
                     ) { bmp ->
                         if (holder.photoFor != want) return@loadProduct
                         if (bmp != null) holder.photo.setImageBitmap(bmp)
-                        else holder.photo.visibility = View.GONE
+                        else holder.photo.visibility = View.INVISIBLE
                     }
                 }
             }
@@ -3048,6 +3189,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
     /** Refresh product names when app language changes, without affecting other UI. */
     fun refreshProductDisplay() {
         regionalNames = com.example.synergic_pos_offline.utils.RegionalName.map(requireContext())
+        menuVersion++   // the suggestion rows show the regional name
         view?.let { root ->
             root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProducts)?.adapter?.notifyDataSetChanged()
             root.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvCart)?.adapter?.notifyDataSetChanged()

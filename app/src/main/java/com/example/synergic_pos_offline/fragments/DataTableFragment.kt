@@ -311,7 +311,7 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
      */
     override fun onDestroyView() {
         super.onDestroyView()
-        com.example.synergic_pos_offline.utils.ThumbnailCache.clear()
+        com.example.synergic_pos_offline.utils.ThumbnailCache.clearExceptProductPhotos()
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -730,7 +730,8 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     protected fun refreshRows() {
         // The cached thumbnails are a snapshot of the rows being replaced: edit a
         // product's photo and its old one would still be held under the same id.
-        com.example.synergic_pos_offline.utils.ThumbnailCache.clear()
+        // (Product photos are keyed by stamp and cannot go stale - kept.)
+        com.example.synergic_pos_offline.utils.ThumbnailCache.clearExceptProductPhotos()
         allRows.clear()
         allRows.addAll(loadRows())
         selectedIds.clear()

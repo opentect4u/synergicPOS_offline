@@ -673,11 +673,23 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // drawn at once and only re-read if it has changed since (see
         // [reloadProductsIfChanged]). It used to re-read the whole catalogue on every
         // return, seconds of work on 5,000 products.
+        //
+        // AND ONCE PER LOGIN, NOT ONCE PER SCREEN. The header's Sale button opens a
+        // brand-new screen every time, which used to mean the whole catalogue read
+        // again from nothing. The catalogue last read this session is kept in [Shared]
+        // and a new screen starts from it - checked, and the stock counts refreshed, in
+        // the background (see [reloadProductsIfChanged], [refreshStockOnly]).
         catalogueReadThisView = true
+        if (allProducts.isEmpty() || catalogueSignatureRead == null) Shared.take()?.let { held ->
+            allProducts = held.products
+            stockTrackingOn = held.stockTrackingOn
+            regionalNames = held.regionalNames
+            catalogueSignatureRead = held.signature
+        }
         if (allProducts.isEmpty() || catalogueSignatureRead == null) {
             loadProductsFromDbAsync { onCatalogueLoaded?.invoke() }
         } else {
-            view.post { if (isAdded) reloadProductsIfChanged() }
+            view.post { if (isAdded) { reloadProductsIfChanged(); refreshStockOnly() } }
         }
 
         // The next token's lookup, done once now in the background so no mode switch
@@ -3255,11 +3267,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         barcode = gp.barcode,
         // Whatever the grid has already decoded; a dish not yet scrolled past shows its
         // initial rather than a database read per keystroke.
-        bitmap = gp.product.id.toLongOrNull()?.let {
-            com.example.synergic_pos_offline.utils.ThumbnailCache.cachedProduct(
-                it, gp.imageKey, com.example.synergic_pos_offline.utils.ThumbnailCache.TILE_PX
-            )
-        }
+        photoProductId = gp.product.id.toLongOrNull(),
+        photoStamp = gp.imageKey
         )
     }
 
@@ -3287,6 +3296,33 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
          */
         val imageKey: String = ""
     )
+
+    /**
+     * The catalogue this login last read, kept past the screen that read it.
+     *
+     * Every trip to this screen by the header's Sale button, the menu or Home builds
+     * a new one, and each used to read all 5,000 products again before its grid could
+     * fill. Held here, the next screen draws at once from what the last one read and
+     * only reads again if [CatalogueSignature] says the masters changed. Plain data -
+     * no views, no photos (tiles fetch those by id) - so holding it costs little.
+     * Only reused within the login that read it - see [CatalogueSignature.session].
+     */
+    private object Shared {
+        class Held(
+            val products: List<GridProduct>, val stockTrackingOn: Boolean,
+            val regionalNames: Map<String, String>, val signature: String?, val session: Int
+        )
+        @Volatile private var held: Held? = null
+
+        fun store(products: List<GridProduct>, stockOn: Boolean, names: Map<String, String>, signature: String?) {
+            held = if (signature == null) null
+            else Held(products, stockOn, names, signature, com.example.synergic_pos_offline.utils.CatalogueSignature.session)
+        }
+
+        fun take(): Held? = held?.takeIf {
+            it.session == com.example.synergic_pos_offline.utils.CatalogueSignature.session
+        }
+    }
 
     /** What reading the catalogue off the main thread comes back with - see
      *  [buildProductsFromDb] and [loadProductsFromDbAsync]. */
@@ -3334,6 +3370,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     stockTrackingOn = result.stockTrackingOn
                     regionalNames = result.regionalNames
                     catalogueSignatureRead = signature
+                    // Kept for the next sale screen this session opens - see [Shared].
+                    Shared.store(result.products, result.stockTrackingOn, result.regionalNames, signature)
                 }
                 onLoaded()
             }
@@ -3350,28 +3388,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * read, which on 5,000 products is a second or more - so it can be asked every
      * time the screen comes back, and the menu re-read only when this says it moved.
      */
-    private fun catalogueSignature(ctx: Context): String {
-        val db = com.example.synergic_pos_offline.database.DatabaseHelper.getInstance(ctx).readableDatabase
-        fun one(sql: String): String = db.rawQuery(sql, null).use { c ->
-            if (!c.moveToFirst()) "" else (0 until c.columnCount).joinToString(",") { c.getString(it).orEmpty() }
-        }
-        return listOf(
-            one("SELECT count(*), max(id), max(modified_at), max(created_at), " +
-                "total(length(product_name)), total(category_id), " +
-                "total(COALESCE(length(product_image), 0)), " +
-                "group_concat(DISTINCT availability) FROM md_products"),
-            one("SELECT count(*), max(id), max(modified_at), total(rate), total(unit_id), " +
-                "total(cgst_rate + sgst_rate + igst_rate + vat_rate), total(discount), " +
-                "total(\"default\") FROM md_product_rates"),
-            one("SELECT count(*), max(id), max(modified_at), total(length(category_name)) FROM md_category"),
-            one("SELECT count(*), max(id), max(modified_at), total(fraction_flag) FROM md_units"),
-            one("SELECT count(*), max(id), max(modified_at), total(length(regional_name)) FROM md_product_names"),
-            SettingsCache.value(ctx, "G", "Item Rate").orEmpty(),
-            com.example.synergic_pos_offline.database.GeneralSettingsDao.productSort(ctx).toString(),
-            com.example.synergic_pos_offline.database.GeneralSettingsDao.isStockEnabled(ctx).toString(),
-            AppLanguage.of(ctx).toString()
-        ).joinToString("|")
-    }
+    private fun catalogueSignature(ctx: Context): String =
+        com.example.synergic_pos_offline.utils.CatalogueSignature.of(ctx)
 
     /**
      * Re-reads the menu only if something it is built from has changed since it was
@@ -3422,7 +3440,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 // the meantime already carries the new counts.
                 if (!isAdded || allProducts !== menu) return@post
                 allProducts = updated
+                Shared.store(updated, stockTrackingOn, regionalNames, catalogueSignatureRead)
                 refreshProducts?.invoke()
+                // New counts are new suggestion rows (the Low/Out badge) - built now,
+                // not on the next key typed.
+                view?.post { if (isAdded) suggestions?.prepare(suggestionPool()) }
             }
         }
     }
@@ -3785,7 +3807,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             val matching = allProducts.filter {
                 (selectedCat == "All" || it.product.category == selectedCat) &&
                     // Name, SKU (serial number), and barcode only - no HSN.
-                    (q.isEmpty() || it.product.name.lowercase().contains(q) ||
+                    // ignoreCase rather than a lower-cased copy of every name on every
+                    // refilter - 5,000 new strings a pass on a big menu.
+                    (q.isEmpty() || it.product.name.contains(q, ignoreCase = true) ||
                         it.product.sku.contains(q) || it.barcode.contains(q))
             }
             // UNDER "ALL", THE MENU IS GROUPED BY COURSE - in the tab order.
@@ -3896,12 +3920,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // one read when the screen comes back from the back stack - and redrawn when
         // the read onViewCreated started comes in. Reading it here, on the main thread,
         // is what used to hold the sale page up.
+        // The search box's pool and index are built a moment after the menu is drawn,
+        // not on the first key typed - see SearchSuggestions.prepare.
+        val prepareSearch = { rv.post { if (isAdded) suggestions?.prepare(suggestionPool()) } }
         onCatalogueLoaded = {
             rebuildTabs()
             refreshProducts?.invoke()
+            prepareSearch()
         }
         rebuildTabs()
         refreshProducts?.invoke()
+        if (allProducts.isNotEmpty()) prepareSearch()
     }
 
     /** Shared clock for the search box's flush timer - see [ScanState]. */
@@ -5037,7 +5066,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 else com.example.synergic_pos_offline.utils.ThumbnailCache.cachedProduct(idLong, stamp, tile)
             when {
                 stamp.isEmpty() || idLong == null -> {
-                    holder.photo.setImageDrawable(null); holder.photo.visibility = View.GONE
+                    holder.photo.setImageDrawable(null); holder.photo.visibility = View.INVISIBLE
                 }
                 held != null -> {
                     holder.photo.setImageBitmap(held); holder.photo.visibility = View.VISIBLE
@@ -5050,7 +5079,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                     ) { bmp ->
                         if (holder.photoKey != key) return@loadProduct
                         if (bmp != null) holder.photo.setImageBitmap(bmp)
-                        else holder.photo.visibility = View.GONE
+                        else holder.photo.visibility = View.INVISIBLE
                     }
                 }
             }

@@ -85,8 +85,13 @@ object ThumbnailCache {
      * a cache that never hit. Still bounded, and still the first thing to give memory
      * back - everything in it can be rebuilt from the BLOB it came from.
      */
+    //
+    // Ceiling raised from 48 to 96 MB. At ~410KB a tile, 48 held about 117 photos -
+    // less than two categories of a 5,000-product shelf - so switching to a category
+    // and back decoded every one of its photos again. The app runs with largeHeap, so
+    // a quarter of what it may allocate is comfortably more than this on the tills.
     private fun maxBytes(): Int =
-        (Runtime.getRuntime().maxMemory() / 4).coerceIn(4L * 1024 * 1024, 48L * 1024 * 1024).toInt()
+        (Runtime.getRuntime().maxMemory() / 4).coerceIn(4L * 1024 * 1024, 96L * 1024 * 1024).toInt()
 
     /** A queue that hands out the most recently added task first - see the class notes. */
     private class LifoQueue : LinkedBlockingDeque<Runnable>() {
@@ -94,11 +99,16 @@ object ThumbnailCache {
     }
 
     /**
-     * Two decoders: enough to keep ahead of a scroll, not so many they starve the UI.
+     * One decoder per spare core, two to four: a category switch asks for a whole
+     * screen of photos at once, and two threads on an eight-core tablet left most of
+     * it idle while they queued. One core is always left for the UI, and the threads
+     * run at the lowest priority so a tap never waits behind a decode.
      * Newest request first - see the class notes on a fling.
      */
+    private val decoderThreads =
+        (Runtime.getRuntime().availableProcessors() - 1).coerceIn(2, 4)
     private val decoder = ThreadPoolExecutor(
-        2, 2, 0L, TimeUnit.MILLISECONDS, LifoQueue()
+        decoderThreads, decoderThreads, 0L, TimeUnit.MILLISECONDS, LifoQueue()
     ) { r -> Thread(r, "thumb-decode").apply { priority = Thread.MIN_PRIORITY; isDaemon = true } }
     private val main = Handler(Looper.getMainLooper())
 
@@ -250,6 +260,18 @@ object ThumbnailCache {
 
     /** Drops everything held. Called whenever a list reloads its rows. */
     fun clear() = cache.evictAll()
+
+    /**
+     * Drops everything EXCEPT the product photos fetched by id.
+     *
+     * For the masters' tables, whose thumbnails are keyed by row id and so can go
+     * stale on an edit. Product photos are keyed by their stamp (see [productStamp]),
+     * which a changed photo changes, so they are never stale - and clearing them sent
+     * the sale grid back to decoding every photo again after any visit to a master.
+     */
+    fun clearExceptProductPhotos() {
+        cache.snapshot().keys.filterNot { it.startsWith("product:") }.forEach { cache.remove(it) }
+    }
 
     /**
      * Decodes only as many pixels as are needed, then scales to [targetPx] exactly.
