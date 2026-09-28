@@ -329,6 +329,10 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
     override fun onDestroyView() {
         super.onDestroyView()
         com.example.synergic_pos_offline.utils.ThumbnailCache.clearExceptProductPhotos()
+        // A load already queued or running has nothing left to apply its result
+        // to; shutdownNow() drops what is queued and interrupts what is running
+        // rather than leaving either to finish into a torn-down screen.
+        loadExecutor.shutdownNow()
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -752,14 +756,43 @@ abstract class DataTableFragment : Fragment(), TitledScreen {
         // product's photo and its old one would still be held under the same id.
         // (Product photos are keyed by stamp and cannot go stale - kept.)
         com.example.synergic_pos_offline.utils.ThumbnailCache.clearExceptProductPhotos()
-        allRows.clear()
-        allRows.addAll(loadRows())
-        selectedIds.clear()
-        // The dropdown lists the values the rows actually hold, so it is rebuilt
-        // with them - a product added under a brand-new category would otherwise
-        // leave that category unofferable until the screen was reopened.
-        view?.let { setUpColumnFilter(it) }
-        applyFilter(query, resetWindow = false)
+        loadRowsAsync()
+    }
+
+    /**
+     * Runs [loadRows] off the main thread and applies the result back on it - the
+     * same shape PosBillingFragment.loadProductsAsync uses for the same reason.
+     * A catalogue of a few thousand rows - the query, the cursor walk, and (on
+     * some screens) a translation pass per row - is enough work that doing it
+     * synchronously here, on opening the screen or on every edit's refresh,
+     * tripped Android's ANR watchdog outright rather than merely feeling slow.
+     */
+    private fun loadRowsAsync() {
+        val generation = ++loadGeneration
+        pbLoading.visibility = View.VISIBLE
+        tvEmpty.visibility = View.GONE
+        loadExecutor.execute {
+            val rows = runCatching { loadRows() }
+                .onFailure { android.util.Log.e("DataTableFragment", "loadRows failed", it) }
+                .getOrElse { mutableListOf() }
+            view?.post {
+                // Dropped rather than applied: either this screen is gone, or a
+                // newer load (another refresh, most likely) has already started
+                // and this one's result is exactly what that one is about to
+                // overwrite anyway.
+                if (!isAdded || generation != loadGeneration) return@post
+                pbLoading.visibility = View.GONE
+                allRows.clear()
+                allRows.addAll(rows)
+                selectedIds.clear()
+                // The dropdown lists the values the rows actually hold, so it is
+                // rebuilt with them - a product added under a brand-new category
+                // would otherwise leave that category unofferable until the
+                // screen was reopened.
+                view?.let { setUpColumnFilter(it) }
+                applyFilter(query, resetWindow = false)
+            }
+        }
     }
 
     // ---- Actions -----------------------------------------------------------
