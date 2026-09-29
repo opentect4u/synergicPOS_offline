@@ -345,6 +345,50 @@ class StockDao(context: Context) {
         )
     }
 
+    /**
+     * Brings an EXISTING product's count to exactly [target], writing the difference
+     * as an ADJUSTMENT movement - nothing already on the books is edited or deleted.
+     *
+     * For the bulk upload's overwrite: the sheet's stock is what the product should
+     * hold now. Setting the batches straight to it would leave the history adding up
+     * to a different number than the shelf; wiping the history and re-opening would
+     * throw away the sale movements behind the bills. A movement for the difference
+     * does neither - every past sale, purchase and return stays, and the latest line
+     * says why the count moved.
+     *
+     * More wanted: added to the batch the product last moved in (an unnumbered one if
+     * it has none), as a Stock In would. Fewer: drawn earliest-expiry-first, as stock
+     * leaves a shelf (see [drain]).
+     *
+     * Runs on the caller's [db] and opens no transaction: it lands with the upload
+     * that asked for it, or not at all.
+     */
+    fun setCount(
+        db: android.database.sqlite.SQLiteDatabase,
+        productId: Long,
+        target: Double,
+        note: String
+    ) {
+        val id = productId.toInt()
+        val current = db.rawQuery(
+            "SELECT COALESCE(SUM(current_quantity),0) FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} " +
+                "WHERE product_id = ?",
+            arrayOf(id.toString())
+        ).use { c -> if (c.moveToFirst()) c.getDouble(0) else 0.0 }
+        val diff = target - current
+        if (kotlin.math.abs(diff) < 0.0005) return
+
+        val now = now()
+        val user = currentUser()
+        if (diff > 0) {
+            val batchId = latestBatch(id) ?: ensureUnnumberedBatch(db, id, now, user) ?: return
+            addToBatch(db, batchId, diff, now, user)
+            recordMovement(db, id, batchId, "ADJUSTMENT", Flow.IN, diff, "", note, now, user)
+        } else {
+            drain(db, id, -diff, "ADJUSTMENT", "", note, now, user)
+        }
+    }
+
     /** One line of a completed sale, for [recordSale]. */
     data class SaleLine(val productId: Int, val quantity: Double)
 

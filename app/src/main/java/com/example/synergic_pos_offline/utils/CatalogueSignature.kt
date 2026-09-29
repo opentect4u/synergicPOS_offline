@@ -56,7 +56,8 @@ object CatalogueSignature {
                 "group_concat(DISTINCT availability) FROM md_products"),
             one("SELECT count(*), max(id), max(modified_at), total(rate), total(unit_id), " +
                 "total(cgst_rate + sgst_rate + igst_rate + vat_rate), total(discount), " +
-                "total(\"default\") FROM md_product_rates"),
+                // Which rate name each row is filed under - what a section prices by.
+                "total(\"default\"), total(COALESCE(rate_name_id, 0)) FROM md_product_rates"),
             one("SELECT count(*), max(id), max(modified_at), total(length(category_name)) FROM md_category"),
             one("SELECT count(*), max(id), max(modified_at), total(fraction_flag) FROM md_units"),
             one("SELECT count(*), max(id), max(modified_at), total(length(regional_name)) FROM md_product_names"),

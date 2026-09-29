@@ -146,6 +146,40 @@ object BillErase {
     }
 
     /**
+     * Clears the running table orders - and ONLY them - returning (open orders
+     * cleared, tables freed). Every bill and everything behind it stays.
+     *
+     * For the product upload, which redraws the menu that open orders were rung up
+     * against. A running order is food not yet billed: its lines name dishes and
+     * prices the upload may just have changed, so it is cleared and the tables come
+     * back Available. What has already been BILLED is history and is untouched - the
+     * bills, their items, payments, returns, ledger entries and prints, and the KOTs
+     * that belong to a bill.
+     *
+     * The KOTs cleared are the ones of the open orders themselves (no bill yet): the
+     * kitchen tickets for orders that no longer exist. Left behind they would stand
+     * in the KOT reports as tickets nobody billed or cancelled. Taken first, items
+     * before tickets, so nothing is left pointing at a row that has gone - see the
+     * ordering note in [clearFloor].
+     */
+    fun clearOpenOrders(context: Context): Pair<Int, Int> {
+        val db = DatabaseHelper.getInstance(context).writableDatabase
+        val t = DatabaseHelper.Tables
+        val openKots = "SELECT id FROM ${t.TD_KOT} WHERE bill_id IS NULL AND " +
+            "running_order_id IN (SELECT id FROM ${t.TD_RUNNING_ORDER})"
+        db.beginTransaction()
+        try {
+            db.execSQL("DELETE FROM ${t.TD_KOT_ITEMS} WHERE kot_id IN ($openKots)")
+            db.execSQL("DELETE FROM ${t.TD_KOT} WHERE id IN ($openKots)")
+            val cleared = clearFloor(context)
+            db.setTransactionSuccessful()
+            return cleared
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /**
      * Puts the floor back to empty, and returns (open tables cleared, tables freed).
      *
      * The bills going is only half of it. A running order is a bill that has not been

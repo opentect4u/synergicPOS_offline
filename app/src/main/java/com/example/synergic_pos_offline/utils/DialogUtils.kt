@@ -72,7 +72,12 @@ object DialogUtils {
     fun showConfirm(
         context: Context,
         title: String,
-        message: String,
+        /**
+         * Plain text, or styled text (a SpannableString) where part of the message
+         * has to stand out - the product upload marks the reports an overwrite changes
+         * in red. A String is a CharSequence, so every existing caller is unchanged.
+         */
+        message: CharSequence,
         positiveText: String = "Confirm",
         negativeText: String = "Cancel",
         iconRes: Int? = null,

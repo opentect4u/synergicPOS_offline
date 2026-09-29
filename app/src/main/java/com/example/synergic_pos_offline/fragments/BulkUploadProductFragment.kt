@@ -43,24 +43,24 @@ import com.google.android.material.button.MaterialButton
  * deleted just for being absent from the file. See
  * [ProductBulkImporter.Mode.APPEND].
  *
- * ## An upload ERASES THE BOOKS
+ * ## An upload NEVER TOUCHES THE TRANSACTIONS
  *
- * The catalogue merges; the bills do not survive at all. Every bill on the till
- * goes - active and cancelled alike, with its items, payments, prints, kitchen
- * orders, returns and ledger entries - and the floor is cleared with them, exactly
- * as Erase Bills does it. A backup is taken first, and if it cannot be written
- * nothing is uploaded.
+ * Overwrite and append work on a till that already has sales on it, and nothing
+ * has to be cleared first. Every bill - active and cancelled - with its items,
+ * payments, prints, kitchen orders, returns and ledger entries, the running orders
+ * on the floor, and every past stock movement and batch stay exactly as they were.
+ * A bill line carries its own item name, quantity, rate, taxes and discount, so old
+ * bills go on reading and reprinting as they were sold.
  *
- * It used to take only the bills naming an id the sheet replaced. That sounds
- * narrower and safer and is neither: a sheet moves prices, tax rates, units and
- * categories on products it does not replace, and every report reads the old bills
- * THROUGH the catalogue as it stands now - so what survived was a set of books that
- * only looked intact, reporting under figures that were never what was sold.
+ * An overwritten product takes everything on its row, stock included - its count is
+ * SET to the sheet's by a movement for the difference (see StockDao.setCount).
  *
- * What is not touched: what customers owe (a debt is held on the customer, not
- * summed from the ledger), the stock movements, and the shop's Tax Settings - which
- * Erase Bills resets and an upload has no business deciding. The count is named in
- * the confirmation before the upload runs, and again in the summary after.
+ * OVERWRITING IS CONFIRMED FIRST. When a sheet names products this till already
+ * has, an alert lists them and nothing is written until the operator confirms -
+ * see [confirmMerge].
+ *
+ * This upload used to erase every bill on the till first - a whole-books wipe the
+ * shop had to agree to before any product file could go in. That is gone.
  *
  * This used to be a hard Replace: the whole catalogue cleared first and put back
  * from the sheet, wiping the link between every existing product and its bills
@@ -570,43 +570,39 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
 
 
     /**
-     * Asks once before the upload, stating what it will actually do to *this*
-     * till - which products it updates, and which it adds.
+     * THE OVERWRITE ALERT: when the sheet would overwrite products this till already
+     * has, says so - by name - and runs the upload only on Confirm. Cancel writes
+     * nothing at all.
      *
-     * No catalogue is lost - nothing is removed for being absent from the sheet -
-     * but two things here can still surprise an operator: a product's fields and
-     * rates being overwritten by the row that shares its id, and the BILLS that
-     * product was rung up against going with it. Both are named before it runs, and
-     * the dialog turns destructive once the second one applies.
+     * Overwriting is the one thing here that changes what is already on the till: a
+     * product's fields, rates and stock become the row's that shares its id. No
+     * transaction is touched either way, and nothing is removed for being absent
+     * from the sheet.
      *
-     * Skipped when nothing would be updated: a sheet of entirely new products
-     * has nothing on this till to overwrite, and a confirmation that never says
-     * anything but "N new product(s)" trains people to tap through the one that
-     * matters.
+     * Skipped when nothing would be overwritten: a sheet of entirely new products
+     * only appends, and a confirmation that never says anything but "N new
+     * product(s)" trains people to tap through the one that matters.
      */
     private fun confirmMerge(
         ctx: android.content.Context, rows: List<Map<String, String>>, onConfirm: () -> Unit
     ) {
         val counts = ProductBulkImporter.mergeCounts(ctx, rows)
-        // ASKED WHENEVER THERE ARE BILLS, not only when a product is being replaced.
-        //
-        // This skipped straight through on a sheet of entirely new products, on the
-        // reasoning that such a sheet has nothing on this till to overwrite. That
-        // stopped being true when the upload began erasing the books: a sheet adding
-        // ten products would have taken a year of sales with it without ever putting
-        // a dialog on screen.
-        if (counts.toUpdate == 0 && counts.billsToDelete == 0) { onConfirm(); return }
+        val words = ModeWords.of(ctx)
+        // Open table orders are cleared by every upload (see runImport), so they are
+        // a reason to ask even when nothing is overwritten.
+        val openOrders = openOrderCount(ctx)
+        if (counts.toUpdate == 0 && openOrders == 0) { onConfirm(); return }
 
         DialogUtils.showConfirm(
             context = ctx,
-            title = if (counts.billsToDelete > 0) "This upload will erase every bill"
-                    else "These products will be updated",
-            message = mergeReport(counts),
-            positiveText = "Confirm & Upload",
+            title = if (counts.toUpdate > 0) "Overwrite ${counts.toUpdate} existing ${words.items}?"
+                    else "Clear $openOrders open table order(s)?",
+            message = withReportWarning(ctx, mergeReport(counts, words, openOrders), counts, words),
+            // Red button too once reports will shift - the operator is agreeing to
+            // more than a catalogue edit.
+            destructive = counts.toUpdate > 0,
+            positiveText = "Confirm",
             negativeText = "Cancel",
-            // Red once bills are going with it - the dialog is no longer just
-            // reporting an overwrite, it is asking to delete sales.
-            destructive = counts.billsToDelete > 0,
             // A column of product names, not a sentence - see [DialogUtils.showConfirm].
             messageStart = true,
             onConfirm = onConfirm
@@ -622,44 +618,171 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
      * the remainder counted, so a long sheet still produces a message that can be
      * read.
      */
-    private fun mergeReport(counts: ProductBulkImporter.MergeCounts): String {
+    private fun mergeReport(
+        counts: ProductBulkImporter.MergeCounts, words: ModeWords, openOrders: Int
+    ): String {
         val shown = counts.toUpdateNames.take(ProductBulkImporter.NAMES_LISTED)
         val more = counts.toUpdate - shown.size
         return buildString {
-            append(
-                "${counts.toUpdate} product(s) already on this till will be updated with " +
-                    "the sheet's values - their fields and rates, replaced:\n"
-            )
-            append(shown.joinToString("\n") { "  • $it" })
-            if (more > 0) append("\n  • …and $more more")
+            if (counts.toUpdate > 0) {
+                append(
+                    "${counts.toUpdate} ${words.items} already on this till will be OVERWRITTEN " +
+                        "with the sheet's values - fields, rates and stock:\n"
+                )
+                append(shown.joinToString("\n") { "  • $it" })
+                if (more > 0) append("\n  • …and $more more")
+            }
             if (counts.toAdd > 0) {
-                append("\n\n${counts.toAdd} new product(s) will be added.")
+                if (isNotEmpty()) append("\n\n")
+                append("${counts.toAdd} new ${words.items} will be added.")
             }
-            // THE PART THAT CANNOT BE UNDONE, stated before it happens.
-            //
-            // Replacing a product replaces what its old bills were FOR, so those
-            // bills go - see ProductBulkImporter.deleteBillsFor. An operator agreeing
-            // to "update 12 products" is not agreeing to lose a day's sales unless
-            // this says so, in the number it will actually cost them.
-            if (counts.billsToDelete > 0) {
-                // THE WHOLE BOOKS, not merely the bills naming a replaced product.
-                // An operator agreeing to "update 12 products" is not agreeing to
-                // lose a year of sales unless this says so, in the number it will
-                // actually cost them.
-                if (counts.toUpdate > 0) append("\n")
-                append("\nEVERY bill on this till will be DELETED - all ")
-                append("${counts.billsToDelete} of them, active and cancelled alike, with ")
-                append("their items, payments, returns, kitchen orders and ledger entries. ")
-                append("An upload redraws the catalogue the books were written against, so ")
-                append("bills left behind would report under prices and tax rates that were ")
-                append("not what was sold.")
-                append("\n\nA backup is taken first, into Downloads/backup.")
-                append("\n\nWhat customers owe is NOT written off - a debt is held on the ")
-                append("customer, not worked out from the ledger, so it survives its history.")
-                append("\n\nThe stock they moved is left as it is: the goods did leave ")
-                append("the shelf, whatever the catalogue says now.")
-                append("\n\nThis cannot be undone.")
+            // The one thing besides the menu that an upload changes, said before it does.
+            if (openOrders > 0) {
+                if (isNotEmpty()) append("\n\n")
+                append(
+                    "$openOrders open table order(s) not yet billed will be CLEARED, " +
+                        "and their tables set back to Available."
+                )
             }
+            // Said, because it is what a shop with sales on the machine needs to know
+            // before it agrees: the books do not move - named in this mode's terms.
+            append("\n\n${words.keptBeforeUpload}")
+            append("\n\nTap Confirm to upload, or Cancel to change nothing.")
+        }
+    }
+
+    /**
+     * [report] with the REPORTS WARNING added in red, where the upload overwrites
+     * products ([overwriting]).
+     *
+     * The bills keep their own amounts, but four reports read part of each line back
+     * through the product master as it is NOW - so overwriting a product re-labels
+     * its past sales there: Item-wise shows the new name, Category-wise moves old sales
+     * to the new category, Profit & Loss recomputes old margins against the new rate,
+     * and KOT Cancel shows the new name. That is the one consequence of an overwrite
+     * that is easy to miss and hard to undo, so it is set apart in the destructive red
+     * rather than left as one more line of grey.
+     */
+    private fun withReportWarning(
+        ctx: android.content.Context,
+        report: String,
+        counts: ProductBulkImporter.MergeCounts,
+        words: ModeWords
+    ): CharSequence {
+        if (counts.toUpdate == 0) return report
+        // MODE-WISE: only the affected reports THIS till's Reports screen actually
+        // shows - asked of ReportsFragment.isVisible, the one rule the Reports grid
+        // and the sidebar use. KOT Cancel is a restaurant report, so a grocery alert
+        // does not name it; Profit & Loss is hidden in both modes today and so named
+        // in neither, and comes back here by itself the day it is shown again.
+        val affected = REPORT_EFFECTS.filter { (title, _) -> ReportsFragment.isVisible(ctx, title) }
+        val warning = buildString {
+            if (affected.isNotEmpty()) {
+                append("\n\n⚠ REPORTS WILL BE AFFECTED for the overwritten ${words.items}:\n")
+                append(affected.joinToString("\n") { (title, effect) -> "  • $title - $effect" })
+                append("\nBill amounts, taxes and all other reports are not changed.")
+            }
+            // STOCK, where the sheet actually moves a count. Each is set to the sheet's
+            // figure by an adjustment for the difference - past movements stay - but
+            // the count on the shelf changes, and the Stock report with it.
+            if (counts.stockChanges > 0) {
+                append("\n\n⚠ STOCK WILL BE CHANGED for ${counts.stockChanges} ${words.items} - ")
+                append("set to the sheet's quantity:\n")
+                append(counts.stockChangeList.joinToString("\n") {
+                    "  • ${it.name}: ${com.example.synergic_pos_offline.database.StockDao.trim(it.from)}" +
+                        " → ${com.example.synergic_pos_offline.database.StockDao.trim(it.to)}"
+                })
+                val more = counts.stockChanges - counts.stockChangeList.size
+                if (more > 0) append("\n  • …and $more more")
+                append("\nThe difference is recorded as a stock adjustment; past stock history is kept.")
+            }
+        }
+        // Placed just above the closing "Tap Confirm…" line, so it is read before the
+        // decision rather than after it.
+        // Nothing on this till that the overwrite reaches - no affected report shown
+        // in this mode and no count to move - so no red section at all.
+        if (warning.isEmpty()) return report
+        val tail = "\n\nTap Confirm"
+        val at = report.lastIndexOf(tail).takeIf { it >= 0 } ?: report.length
+        val out = android.text.SpannableStringBuilder(report.substring(0, at))
+        val start = out.length
+        out.append(warning)
+        val red = android.graphics.Color.parseColor(DialogUtils.DESTRUCTIVE_COLOR)
+        out.setSpan(
+            android.text.style.ForegroundColorSpan(red), start, out.length,
+            android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        // Each "⚠" heading line bold - reports, and stock where there is one - so the
+        // warning reads as sections at a glance.
+        var from = warning.indexOf('⚠')
+        while (from >= 0) {
+            val lineEnd = warning.indexOf('\n', from).let { if (it < 0) warning.length else it }
+            out.setSpan(
+                android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
+                start + from, start + lineEnd, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            from = warning.indexOf('⚠', lineEnd)
+        }
+        out.append(report.substring(at))
+        return out
+    }
+
+    /** Running table orders on the floor now - the ones an upload clears. */
+    private fun openOrderCount(ctx: android.content.Context): Int = runCatching {
+        com.example.synergic_pos_offline.database.DatabaseHelper.getInstance(ctx).readableDatabase
+            .rawQuery(
+                "SELECT COUNT(*) FROM ${com.example.synergic_pos_offline.database.DatabaseHelper.Tables.TD_RUNNING_ORDER}",
+                null
+            ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+    }.getOrDefault(0)
+
+    /**
+     * The upload's alert and summary in the words of the till's own mode.
+     *
+     * A restaurant keeps KOTs and running table orders that a grocery till never has,
+     * and a grocery keeps sale returns and customer credit where a restaurant speaks
+     * of its menu. One wording for both named things the operator's till does not
+     * even have - "KOTs" on a grocery counter - which reads like the message was not
+     * about their shop. Calculator mode has no product screen of its own and reads as
+     * grocery.
+     */
+    /**
+     * The reports an overwrite changes, and how - each by the exact title the Reports
+     * screen lists it under, so [ReportsFragment.isVisible] can say whether this till's
+     * mode shows it (see [withReportWarning]). These read part of a past sale back
+     * through the product master; every other report reads the bill line alone.
+     */
+    private val REPORT_EFFECTS = listOf(
+        "Item Wise Report" to "past sales show under the NEW name",
+        "Category/Dept Wise Bill Report" to "past sales move to the NEW category",
+        "Profit & Loss Report" to "past profit is recalculated at the NEW rate",
+        "KOT Cancel Report" to "shows the NEW name"
+    )
+
+    private data class ModeWords(
+        /** What a row of the sheet is, plural: "menu item(s)" / "product(s)". */
+        val items: String,
+        /** What the alert promises is kept, before the upload runs. */
+        val keptBeforeUpload: String,
+        /** What the summary confirms was not touched, after it ran. */
+        val keptAfterUpload: String
+    ) {
+        companion object {
+            fun of(ctx: android.content.Context): ModeWords =
+                if (com.example.synergic_pos_offline.utils.SettingsCache.value(ctx, "G", "Mode") == "R")
+                    ModeWords(
+                        items = "menu item(s)",
+                        keptBeforeUpload = "Bill history is kept as it is - every bill with its " +
+                            "items, payments, returns and KOTs, and the stock history.",
+                        keptAfterUpload = "Bill history was not changed."
+                    )
+                else
+                    ModeWords(
+                        items = "product(s)",
+                        keptBeforeUpload = "Existing bills, payments, sale returns, customer credit " +
+                            "and stock history are kept as they are.",
+                        keptAfterUpload = "Existing bills, returns and payments were not changed."
+                    )
         }
     }
 
@@ -671,43 +794,40 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
     ) {
         preview.dismiss()
         val app = ctx.applicationContext
-        // OFF THE MAIN THREAD. The import writes the whole catalogue and now erases
-        // the whole books, and it takes a full backup before either - none of which
-        // belongs where the screen is drawn. It ran here synchronously before, and
-        // adding a database-sized backup to that would have read as a frozen till.
-        com.example.synergic_pos_offline.utils.BusyDialog.run(this, "Backing up, then uploading…") {
-            // A PRECONDITION, not a courtesy - the same contract Erase Bills keeps.
-            // This upload throws the books away, so if the copy cannot be written,
-            // nothing is uploaded and nothing is erased.
-            val backup = try {
-                if (ProductBulkImporter.mergeCounts(app, rows).billsToDelete > 0) {
-                    com.example.synergic_pos_offline.utils.AutoBackup.backupBefore(app, "upload products")
-                } else null
+        // The summary speaks this till's mode - see [ModeWords].
+        val words = ModeWords.of(ctx)
+        // OFF THE MAIN THREAD. The import writes the whole catalogue, which does not
+        // belong where the screen is drawn. It never erases the bills or clears the
+        // floor, so there is no whole-database backup to take first either -
+        // transactions on the machine are left exactly as they are.
+        com.example.synergic_pos_offline.utils.BusyDialog.run(this, "Uploading…") {
+            // One transaction inside - a sheet that fails part way changes nothing.
+            val result = try {
+                ProductBulkImporter.import(app, rows, ProductBulkImporter.Mode.APPEND)
             } catch (e: Exception) {
+                android.util.Log.e("BulkUpload", "Product upload failed", e)
                 com.example.synergic_pos_offline.utils.BusyDialog.onMain(this) {
                     if (!isAdded) return@onMain
                     DialogUtils.showSuccess(
                         context = requireContext(),
                         title = "Nothing was uploaded",
-                        message = "A full backup is taken before an upload erases the books, " +
-                            "and this one could not be written: ${e.message ?: e.javaClass.simpleName}." +
-                            "\n\nSo nothing was changed. Check there is room on the device and " +
-                            "try again."
+                        message = "The product file could not be imported: " +
+                            "${e.message ?: e.javaClass.simpleName}.\n\nNothing was changed - " +
+                            "products, bills and stock are as they were."
                     )
                 }
                 return@run
             }
 
-            val result = ProductBulkImporter.import(app, rows, ProductBulkImporter.Mode.APPEND)
-
-            // THE FLOOR GOES WITH THE BILLS, exactly as it does in Erase Bills. A
-            // running order is a bill that has not been written yet; leaving those
-            // behind would strand tables mid-service on orders whose kitchen tickets
-            // this has just deleted underneath them.
-            val floor = if (result.billsDeleted > 0) {
-                runCatching { com.example.synergic_pos_offline.utils.BillErase.clearFloor(app) }
-                    .getOrNull()
-            } else null
+            // THE OPEN TABLE ORDERS ARE CLEARED - and only they. A running order is food
+            // not yet billed, rung up against the menu this upload has just redrawn, so
+            // it goes and its table comes back Available. What was BILLED is history
+            // and stays: bills, items, payments, returns and the KOTs of billed orders.
+            // After the import, so a sheet that fails leaves the floor as it was too.
+            // See BillErase.clearOpenOrders.
+            val floor = runCatching { com.example.synergic_pos_offline.utils.BillErase.clearOpenOrders(app) }
+                .onFailure { android.util.Log.e("BulkUpload", "Could not clear open orders", it) }
+                .getOrNull()
 
             com.example.synergic_pos_offline.utils.BusyDialog.onMain(this) {
                 if (!isAdded) return@onMain
@@ -715,15 +835,8 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
                     context = requireContext(),
                     title = "Upload Complete",
                     message = buildString {
-                        append("${result.imported} new product(s) added.")
-                        if (result.replaced > 0) append("\n${result.replaced} existing product(s) updated.")
-                        // Said plainly. The upload takes the books with it, and an
-                        // operator who is not told here finds them missing from a
-                        // report later with nothing to connect the two.
-                        if (result.billsDeleted > 0) {
-                            append("\n${result.billsDeleted} bill(s) erased - the whole books, ")
-                            append("cancelled bills included.")
-                        }
+                        append("${result.imported} new ${words.items} added.")
+                        if (result.replaced > 0) append("\n${result.replaced} existing ${words.items} overwritten.")
                         floor?.let { (open, freed) ->
                             if (open > 0 || freed > 0) {
                                 append("\n$open open table order(s) cleared, ")
@@ -734,9 +847,7 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
                         append("\nApp language set to ${result.languageApplied}.")
                         result.languageWarning?.let { append("\n$it") }
                         result.referenceWarning?.let { append("\n$it") }
-                        backup?.let {
-                            append("\n\nThe till as it was is saved to $it.")
-                        }
+                        append("\n\n${words.keptAfterUpload}")
                     }
                 )
             }

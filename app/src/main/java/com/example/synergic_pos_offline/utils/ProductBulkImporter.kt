@@ -86,11 +86,6 @@ object ProductBulkImporter {
         val skipped: Int,
         val removed: Int = 0,
         val replaced: Int = 0,
-        /**
-         * Bills thrown away because the products they were rung up against have been
-         * erased by this upload - see [clearEveryBill]. Active and cancelled alike.
-         */
-        val billsDeleted: Int = 0,
         val languageApplied: String = PrintLanguage.Language.ENGLISH.englishName,
         val languageWarning: String? = null,
         /** Codes or rate ids the sheet named that this till has no row for. */
@@ -224,40 +219,31 @@ object ProductBulkImporter {
         val toAdd: Int,
         val toUpdateNames: List<String> = emptyList(),
         /**
-         * How many bills the upload would take with it - EVERY bill on the till.
-         *
-         * Counted BEFORE the upload runs, so the confirmation can name the number
-         * rather than the operator meeting it in the summary afterwards.
-         *
-         * This used to count only the bills naming a product the sheet replaced. It
-         * counts the lot now, live and cancelled, because that is what the upload
-         * does - see the note on [clearEveryBill].
+         * How many overwritten products will have their stock count CHANGED - their
+         * sheet stock differs from what they hold now. Zero while stock is not tracked
+         * (the column is then ignored) and for a row whose stock cell is blank.
          */
-        val billsToDelete: Int = 0
+        val stockChanges: Int = 0,
+        /** Up to [NAMES_LISTED] of them, as they will move - see [StockChange]. */
+        val stockChangeList: List<StockChange> = emptyList()
     )
 
+    /** One overwritten product whose count the upload will set from [from] to [to]. */
+    data class StockChange(val name: String, val from: Double, val to: Double)
 
-    /**
-     * Every bill on the till, cancelled ones included - what the upload will take.
-     *
-     * Read on its own so the confirmation can state the number BEFORE the upload
-     * runs, and counted from the same two tables the erase empties, so the figure
-     * the operator agrees to is the figure that goes.
-     */
-    private fun countEveryBill(db: SQLiteDatabase): Int {
-        fun count(table: String): Int = runCatching {
-            db.rawQuery("SELECT COUNT(*) FROM $table", null)
-                .use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
-        }.getOrDefault(0)
-        return count(DatabaseHelper.Tables.TD_BILLS) + count(DatabaseHelper.Tables.TD_BILLS_DELETE)
-    }
     /** What an Append (see [Mode.APPEND]) would do to THIS till, before it runs. */
     fun mergeCounts(context: Context, rows: List<Map<String, String>>): MergeCounts {
         val db = DatabaseHelper.getInstance(context).readableDatabase
+        // Read exactly as the import reads it (see [import]): the same setting, and
+        // the same stock cell through [openingStockOf], so what the alert says the
+        // counts will become is what the upload then sets them to.
+        val stockOn = GeneralSettingsDao.isStockEnabled(context)
         var validRows = 0
         var toUpdate = 0
         val toUpdateNames = mutableListOf<String>()
         val updatedIds = LinkedHashSet<Long>()
+        var stockChanges = 0
+        val stockChangeList = mutableListOf<StockChange>()
         for (r in rows) {
             val name = (r["product_name"] ?: r["item_name"]).orEmpty().trim()
             if (name.isBlank()) continue
@@ -268,11 +254,24 @@ object ProductBulkImporter {
                 toUpdate++
                 updatedIds.add(wantedId)
                 if (toUpdateNames.size < NAMES_LISTED) toUpdateNames.add(name)
+                if (stockOn) openingStockOf(r)?.let { sheetQty ->
+                    val current = db.rawQuery(
+                        "SELECT COALESCE(SUM(current_quantity), 0) FROM ${DatabaseHelper.Tables.MD_BATCH_STOCK} " +
+                            "WHERE product_id = ?",
+                        arrayOf(wantedId.toString())
+                    ).use { c -> if (c.moveToFirst()) c.getDouble(0) else 0.0 }
+                    if (kotlin.math.abs(sheetQty - current) >= 0.0005) {
+                        stockChanges++
+                        if (stockChangeList.size < NAMES_LISTED) {
+                            stockChangeList.add(StockChange(name, current, sheetQty))
+                        }
+                    }
+                }
             }
         }
         return MergeCounts(
             validRows, toUpdate, validRows - toUpdate, toUpdateNames,
-            billsToDelete = countEveryBill(db)
+            stockChanges, stockChangeList
         )
     }
 
@@ -436,7 +435,6 @@ object ProductBulkImporter {
         // Every product the sheet took over an existing id for. Collected as the rows go
         // in and acted on once at the end.
         val replacedIds = LinkedHashSet<Long>()
-        var billsDeleted = 0
 
         val languageMatch = regionalLanguageOf(rows)
         // The sheet's regional names are filed under the language the sheet named, and
@@ -536,25 +534,17 @@ object ProductBulkImporter {
                         DatabaseHelper.Tables.MD_PRODUCT_RATES,
                         "product_id = ?", arrayOf(existingId.toString())
                     )
-                    // THE OLD PRODUCT'S STOCK GOES WITH ITS NAME.
+                    // THE PRODUCT'S STOCK HISTORY IS KEPT.
                     //
-                    // Fifty Paneer Tikka on the shelf are not fifty Paneer Chilly. The
-                    // count and the movements behind it belong to the product that
-                    // held this id, and leaving them made the new product open with a
-                    // quantity nobody had ever counted and a history it had no part
-                    // in - which the stock report then showed as fact.
-                    //
-                    // Movements before batches: td_stock_transactions keys onto both
-                    // the product and its batch, so clearing the batches first is
-                    // refused by the constraint.
-                    db.delete(
-                        DatabaseHelper.Tables.TD_STOCK_TRANSACTIONS,
-                        "product_id = ?", arrayOf(existingId.toString())
-                    )
-                    db.delete(
-                        DatabaseHelper.Tables.MD_BATCH_STOCK,
-                        "product_id = ?", arrayOf(existingId.toString())
-                    )
+                    // An overwrite updates what the product IS - its name, codes,
+                    // category, rates, taxes and stock - and leaves what HAPPENED to it
+                    // alone. Its stock movements include the sales on the bills rung up
+                    // against it, and its batches are what those bill lines point at;
+                    // both are transactions, and a product upload must never touch a
+                    // transaction. (Deleting them used to be paired with erasing every
+                    // bill on the till, which a shop with sales on the machine cannot
+                    // allow.) The sheet's stock is still applied: the count is SET to
+                    // it by a movement for the difference - see below.
                     productId = existingId
                     isNewProduct = false
                     replacedIds.add(existingId)
@@ -656,18 +646,19 @@ object ProductBulkImporter {
                 // as the Add Product form's own opening stock is, and on the same
                 // transaction the product itself went in on.
                 //
-                // EVERY ROW THE SHEET OPENS A COUNT FOR, replaced or new.
-                //
-                // This was new products only, to stop a re-upload crediting the same
-                // opening quantity again on top of what a product's own trading had
-                // left it at. That reasoning held while an upload EDITED a product;
-                // it does not now that a common id replaces one - the stock this
-                // product would have been credited on top of has just been cleared
-                // with the product that owned it, so the sheet's figure is the only
-                // count there is, and withholding it would leave the new product at
-                // zero however many the shop typed in.
+                // A NEW product opens at the sheet's figure. An OVERWRITTEN one is SET
+                // to it - the sheet is the product as it should be now, stock included
+                // - by writing the difference from what it holds as an ADJUSTMENT
+                // movement (see StockDao.setCount). Its past movements, and the bills
+                // behind the sales among them, are left exactly as they were; only a
+                // new line is added saying the upload set the count. A blank stock
+                // cell leaves an overwritten product's count as it is: the sheet said
+                // nothing about it.
                 stockDao?.let { dao ->
-                    openingStockOf(r)?.let { dao.recordOpening(db, productId, it, storeId, outletId) }
+                    openingStockOf(r)?.let { qty ->
+                        if (isNewProduct) dao.recordOpening(db, productId, qty, storeId, outletId)
+                        else dao.setCount(db, productId, qty, "Set from product upload")
+                    }
                 }
                 // The shop's own name for this product, in the language the sheet
                 // named - through the same DAO the Add/Edit form writes through, so a
@@ -692,23 +683,14 @@ object ProductBulkImporter {
                 }
                 if (isNewProduct) imported++
             }
-            // THE BOOKS OF EVERY PRODUCT THE SHEET TOOK OVER.
-            //
-            // EVERY BILL, not only the ones naming a replaced product.
-            //
-            // A bulk upload redraws the catalogue the books were written against. It
-            // used to take just the bills naming an id the sheet replaced, on the
-            // reasoning that those were the only ones the till could no longer
-            // describe - but a sheet also moves prices, tax rates, units and
-            // categories on products it does not replace, and every report over the
-            // old bills reads them through the catalogue as it is NOW. What was left
-            // was a set of books that only looked intact.
-            //
-            // So the upload clears them the way Erase Bills does, cancelled ones
-            // included - see [clearEveryBill]. The count is named in the
-            // confirmation before the operator agrees to it, and a backup is taken
-            // first by the caller.
-            billsDeleted = clearEveryBill(db)
+            // THE BOOKS ARE NOT TOUCHED. An upload changes the catalogue - products,
+            // rates, names, stock counts - and nothing else: every bill, cancelled or
+            // live, with its items, payments, returns, KOTs and ledger entries, stays
+            // exactly as it was, and so do the running orders on the floor. A bill
+            // line carries its own item name, quantity, rate, taxes and discount, so it
+            // goes on reading and reprinting as it was sold whatever the catalogue now
+            // says. (This upload used to erase every bill on the till first, which a
+            // shop with transactions on the machine cannot allow.)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -760,7 +742,7 @@ object ProductBulkImporter {
             else -> null
         }
         return Result(
-            imported, skipped, removed, replaced, billsDeleted,
+            imported, skipped, removed, replaced,
             languageMatch.language.englishName, languageWarning, referenceWarning
         )
     }
@@ -792,93 +774,6 @@ object ProductBulkImporter {
     }
 
 
-    /**
-     * Throws away every bill on the till - the same thing Erase Bills does.
-     *
-     * ## Why an upload takes ALL of them
-     *
-     * A bulk upload redraws the catalogue the books were written against, and every
-     * report on this till reads its bills THROUGH that catalogue as it stands now.
-     *
-     * It used to take only the bills naming an id the sheet replaced, which sounds
-     * narrower and safer and is neither: a sheet moves prices, tax rates, units and
-     * categories on products it does not replace, so the bills left behind reported
-     * under figures that were not what was sold. What survived was a set of books
-     * that only LOOKED intact - worse than no books, because it reads like a record.
-     *
-     * Cancelled bills go with them, out of td_bills_delete, for the same reason they
-     * go in Erase Bills: a cancelled bill is still a record of a sale, and one that
-     * can no longer be read correctly is not worth keeping.
-     *
-     * ## What is NOT touched
-     *
-     * **What customers owe.** `md_customers.balance_amount` is a figure on the
-     * customer, not a sum over the ledger, so clearing the ledger's rows takes the
-     * history of a debt and leaves the debt.
-     *
-     * **Stock movements.** They record what physically left the shelf, which happened
-     * whatever the catalogue now says, and they name the product rather than the
-     * bill - so they stay readable and stay true.
-     *
-     * The one exception is a product the sheet REPLACES: its movements go with it,
-     * because they are the previous product's trading and this id is not that
-     * product any more. That happens where the row is written, not here.
-     *
-     * **Products, customers and every setting**, this upload's own changes aside. In
-     * particular the shop's Tax Settings, which Erase Bills resets and this must not:
-     * see the `resetTaxSettings` flag on BillErase.erase.
-     *
-     * Runs inside the caller's transaction: these deletions and the import that
-     * caused them land together or not at all.
-     *
-     * @return how many bills there were to erase, live and cancelled together
-     */
-    private fun clearEveryBill(db: SQLiteDatabase): Int {
-        val t = DatabaseHelper.Tables
-
-        fun count(table: String): Int = runCatching {
-            db.rawQuery("SELECT COUNT(*) FROM $table", null)
-                .use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
-        }.getOrDefault(0)
-
-        // COUNTED FIRST. Every table below is about to be emptied, so anything read
-        // afterwards would report nothing went.
-        val erased = count(t.TD_BILLS) + count(t.TD_BILLS_DELETE)
-        if (erased == 0) return 0
-
-        // CHILDREN BEFORE PARENTS, all the way down, with foreign keys left enforced.
-        //
-        // Six tables carry a key onto td_bills, so the order is not a tidiness
-        // preference - a table missed here does not orphan a row, it fails the
-        // statement and rolls the whole upload back with it.
-        //
-        // The RETURN and LEDGER rows go too, which is the one place this parts
-        // company with BillSettingsDao.clearAllBills. That leaves them standing, and
-        // on a till that has ever taken a sale return it therefore cannot delete the
-        // bills at all - the key refuses it. Nothing is written off by taking them:
-        // what a customer owes is `md_customers.balance_amount`, a figure on the
-        // customer, not a sum over the ledger, so the debt survives its history.
-        db.execSQL(
-            "DELETE FROM ${t.TD_RETURN_ITEMS} WHERE return_id IN " +
-                "(SELECT id FROM ${t.TD_SALE_RETURNS})"
-        )
-        db.execSQL("DELETE FROM ${t.TD_RETURN_ITEMS}")
-        db.execSQL("DELETE FROM ${t.TD_SALE_RETURNS}")
-        db.execSQL("DELETE FROM ${t.TD_CUSTOMER_LEDGER}")
-        db.execSQL("DELETE FROM ${t.TD_BILL_PRINTS}")
-        db.execSQL("DELETE FROM ${t.TD_PAYMENTS}")
-        db.execSQL("DELETE FROM ${t.TD_KOT_ITEMS}")
-        db.execSQL("DELETE FROM ${t.TD_KOT}")
-        db.execSQL("DELETE FROM ${t.TD_BILL_ITEMS}")
-        db.execSQL("DELETE FROM ${t.TD_BILLS}")
-
-        // The cancelled bills, in their own pair of tables. Neither carries a foreign
-        // key - a cancelled bill's row has already left td_bills - so they can go
-        // last without anything above them having to know.
-        db.execSQL("DELETE FROM ${t.TD_BILL_ITEMS_DELETE}")
-        db.execSQL("DELETE FROM ${t.TD_BILLS_DELETE}")
-        return erased
-    }
     /**
      * [raw] as the sheet wrote it on the row that decided it, matched to
      * [language] - exactly if [exact]. [conflicting] is true where some other row

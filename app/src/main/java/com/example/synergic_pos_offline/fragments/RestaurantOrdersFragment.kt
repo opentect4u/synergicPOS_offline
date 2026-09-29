@@ -928,9 +928,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                         allProducts.firstOrNull { it.product.id == line.productId.toString() }
                             ?.product?.hsn.orEmpty()
                     })
+                    // The unit of the RATE each line went on at - a section's Rate 2 may
+                    // be a half plate where the default is a full one. See [unitForLine].
                     val units = ArrayList(order.items.map { line ->
-                        allProducts.firstOrNull { it.product.id == line.productId.toString() }
-                            ?.product?.unit.orEmpty()
+                        unitForLine(line)
                     })
                     // The shop's own extra charges - Parcel Charge among them - worked
                     // out and filtered by this order's type right here, the same call
@@ -1358,6 +1359,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /** Updates the detail-panel header for the given order. */
     private fun showOrderDetail(order: OrderCard) {
         val root = view ?: return
+        // The menu is priced at THIS order's section's rate - see [sectionPriced].
+        applySectionPricing(order)
         showDiscountFor(order)
         val accent = ThemeManager.getThemeColor(requireContext())
         val counter = order.counter
@@ -2377,6 +2380,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     /** Neutral detail panel when no order is selected: empty cart + zeroed totals. */
     private fun clearDetail(root: View) {
+        // No order, no section: the menu shows its default prices.
+        applySectionPricing(null)
         root.findViewById<TextView>(R.id.tvDetailTableLabel).visibility = View.VISIBLE
         root.findViewById<TextView>(R.id.tvDetailTable).text = "—"
         root.findViewById<TextView>(R.id.tvDetailCustomer).text = "Walk-in"
@@ -3259,7 +3264,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // meta too, so anything printed here is also searchable by it. Search is
             // name / serial no. / barcode only, the same as grocery - see [codes].
         ).joinToString("  ·  "),
-        price = "₹ ${money(gp.product.price)}",
+        // At the selected order's section rate - the pool is rebuilt when that changes.
+        price = "₹ ${money(sectionPriced(gp).price)}",
         codes = listOfNotNull(
             gp.product.sku.takeIf { it.isNotBlank() },
             gp.barcode.takeIf { it.isNotBlank() }
@@ -3294,7 +3300,20 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
          * hashing the whole of each - at 5,000 dishes, ~700 MB read into memory and
          * hashed on every catalogue load. The tile now reads its own photo when shown.
          */
-        val imageKey: String = ""
+        val imageKey: String = "",
+        /**
+         * The dish's price under each Rate Name master row, keyed by its id - Rate 1,
+         * Rate 2, Rate 3 - so a section billing at one of them can price the dish at
+         * it (see [sectionPriced]). [product] itself stays priced at the default rate,
+         * which is what an order with no section, or no price list, uses.
+         */
+        val ratesByName: Map<Long, PricedRate> = emptyMap()
+    )
+
+    /** One of a dish's rates, whole - price, taxes, discount and unit - see [GridProduct.ratesByName]. */
+    private data class PricedRate(
+        val rate: Double, val cgst: Double, val sgst: Double, val vat: Double, val igst: Double,
+        val discValue: Double, val discType: String?, val unit: String, val allowFraction: Boolean
     )
 
     /**
@@ -3483,7 +3502,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // this screen into a few hundred extra round trips to SQLite; reading both
         // tables whole, up front, is what actually keeps this screen opening at
         // once regardless of how large the menu has grown.
-        val (defaultRates, ratesByProduct) = loadRateMaps(db, multipleRates)
+        val nameRates = HashMap<Long, MutableMap<Long, RateRow>>()
+        val (defaultRates, ratesByProduct) = loadRateMaps(db, multipleRates, nameRates)
         val unitCache = loadUnitCache(db)
 
         val out = mutableListOf<GridProduct>()
@@ -3534,7 +3554,14 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                         displayName = com.example.synergic_pos_offline.utils.RegionalName.forScreen(
                             regionalNames, language, name
                         ),
-                        imageKey = photoStamp
+                        imageKey = photoStamp,
+                        ratesByName = nameRates[idLong].orEmpty().mapValues { (_, r) ->
+                            val (sym, frac) = unitCache[r.unitId] ?: (unitSymbol to allowFraction)
+                            PricedRate(
+                                r.rate, r.cgst, r.sgst, r.vat, r.igst,
+                                r.discValue, r.discType, sym, frac
+                            )
+                        }
                     )
                 )
             }
@@ -3561,15 +3588,36 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private fun loadRateMaps(
         db: android.database.sqlite.SQLiteDatabase,
-        multipleRates: Boolean
+        multipleRates: Boolean,
+        /**
+         * Filled with every product's rate under each Rate Name master id - the first
+         * row per (product, rate name) in the same default-first order. What a
+         * section's price list prices a dish at; see [sectionPriced].
+         */
+        nameRates: MutableMap<Long, MutableMap<Long, RateRow>> = HashMap()
     ): Pair<Map<Long, RateRow>, Map<Long, List<ProductEntryDialog.Rate>>> {
         val defaults = linkedMapOf<Long, RateRow>()
         val allByProduct = if (multipleRates) linkedMapOf<Long, MutableList<ProductEntryDialog.Rate>>() else null
+        // A rate carrying only its NAME as text (an older upload) is matched to the
+        // master row of that name, ignoring case, spaces and underscores - "Rate 2",
+        // "rate2", "RATE_2" - so it prices by section like a linked one.
+        val masterIdByName = HashMap<String, Long>()
+        runCatching {
+            db.rawQuery(
+                "SELECT id, rate_name FROM ${com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_RATE_NAME} " +
+                    "ORDER BY is_active DESC, id ASC", null
+            ).use { m ->
+                while (m.moveToNext()) {
+                    val key = normalizedRateName(m.getString(1))
+                    if (key.isNotEmpty()) masterIdByName.putIfAbsent(key, m.getLong(0))
+                }
+            }
+        }
         db.query(
             "md_product_rates",
             arrayOf(
                 "product_id", "rate_name", "rate", "cgst_rate", "sgst_rate",
-                "vat_rate", "discount", "discount_type", "unit_id", "igst_rate"
+                "vat_rate", "discount", "discount_type", "unit_id", "igst_rate", "rate_name_id"
             ),
             null, null, null, null, "product_id ASC, \"default\" DESC, id ASC"
         ).use { c ->
@@ -3585,9 +3633,11 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 val unitId = if (c.isNull(8)) null else c.getLong(8)
                 val igst = if (c.isNull(9)) 0.0 else c.getDouble(9)
 
-                if (!defaults.containsKey(pid)) {
-                    defaults[pid] = RateRow(rate, cgst, sgst, vat, discValue, discType, unitId, igst)
-                }
+                val row = RateRow(rate, cgst, sgst, vat, discValue, discType, unitId, igst)
+                if (!defaults.containsKey(pid)) defaults[pid] = row
+                val rateNameId = if (!c.isNull(10)) c.getLong(10)
+                    else masterIdByName[normalizedRateName(c.getString(1))]
+                if (rateNameId != null) nameRates.getOrPut(pid) { HashMap() }.putIfAbsent(rateNameId, row)
                 if (allByProduct != null) {
                     val list = allByProduct.getOrPut(pid) { mutableListOf() }
                     list.add(
@@ -3602,6 +3652,99 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
         return defaults to (allByProduct ?: emptyMap())
     }
+
+    /** A rate name reduced to what "Rate 2", "rate2" and "RATE_2" share. */
+    private fun normalizedRateName(name: String?): String =
+        name.orEmpty().lowercase().replace(" ", "").replace("_", "")
+
+    // ---- Section price lists -----------------------------------------------------
+    //
+    // A section bills at the rate its Price List names (Section master): AC at Rate 2,
+    // Cabin at Rate 3. So the menu on screen, and what a tap puts on the order, follow
+    // the SELECTED order's section. A dish with no price under that rate falls back to
+    // its Rate 1 price, and one with neither keeps its default. An order with no
+    // section - Take Away, QSR - or a section with no price list bills at the default,
+    // exactly as before. Lines already on an order keep the price they went on at.
+
+    /** The Rate Name master id the selected order's section bills at, or null. */
+    private var activeRateNameId: Long? = null
+
+    /** This store's "Rate 1" - where a dish without the section's rate falls back to. */
+    private var rate1RateNameId: Long? = null
+
+    /**
+     * [gp] priced for the selected order's section - see the note above. The whole
+     * rate comes with the price: its taxes, discount and unit, so the order line, the
+     * KOT and the bill all carry that rate rather than the default one's figures.
+     */
+    private fun sectionPriced(gp: GridProduct): ProductEntryDialog.Product {
+        val want = activeRateNameId ?: return gp.product
+        // A rate at ZERO counts as BLANK. A Rate 2 left empty in the product form is
+        // saved as 0, and so is a sheet's RATE_2 cell of "0" - and pricing the dish at
+        // that put it on the tile, and on the order, at ₹0. So the section's rate is
+        // used only when it has a real price; otherwise Rate 1's, and where that is
+        // blank too, the dish's default price.
+        fun priced(id: Long?) = id?.let { gp.ratesByName[it] }?.takeIf { it.rate > 0.0 }
+        val r = priced(want) ?: priced(rate1RateNameId) ?: return gp.product
+        return gp.product.copy(
+            price = r.rate, cgst = r.cgst, sgst = r.sgst, vat = r.vat, igst = r.igst,
+            discValue = r.discValue, discType = r.discType,
+            unit = r.unit.ifBlank { gp.product.unit }, allowFraction = r.allowFraction
+        )
+    }
+
+    /**
+     * Points the menu at [order]'s section's price list, redrawing the tiles and the
+     * search pool only when that actually changes the rate - switching between two
+     * tables of one section costs nothing.
+     *
+     * The section master is read here, not with the catalogue, so a price list changed
+     * in the Section master applies the next time an order is opened.
+     */
+    private fun applySectionPricing(order: OrderCard?) {
+        val ctx = context ?: return
+        val section = order?.section?.trim().orEmpty()
+        val wanted = if (section.isEmpty()) null else runCatching {
+            com.example.synergic_pos_offline.database.SectionDao(ctx).getAll()
+                .firstOrNull { it.name.trim().equals(section, ignoreCase = true) }?.priceListId
+        }.getOrNull()
+        if (wanted != null && rate1RateNameId == null) rate1RateNameId = findRate1Id()
+        if (wanted == activeRateNameId) return
+        activeRateNameId = wanted
+        // The tiles print the price, and the suggestion rows carry it - both redrawn.
+        suggestionPoolOf = null
+        view?.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvProductGrid)
+            ?.adapter?.notifyDataSetChanged()
+    }
+
+    /**
+     * The unit of the rate [line] was put on the order at.
+     *
+     * An order line keeps its price and taxes but not its unit, which the checkout
+     * and the bill read off the dish. The dish's default unit is right for a line
+     * added at the default rate, and wrong for one added at a section's Rate 2 when
+     * that rate is a half plate. So the dish's rates are searched for the one priced
+     * as this line is - the rate it can only have come from - and its unit used; with
+     * no such rate (a price typed by hand, or a rate since edited) the default unit.
+     */
+    private fun unitForLine(line: CartItem): String {
+        val gp = allProducts.firstOrNull { it.product.id == line.productId.toString() } ?: return ""
+        val match = gp.ratesByName.values.firstOrNull {
+            kotlin.math.abs(it.rate - line.rate) < 0.005 && it.unit.isNotBlank()
+        }
+        return match?.unit ?: gp.product.unit
+    }
+
+    /** This store's "Rate 1" master row, matched as [normalizedRateName] matches. */
+    private fun findRate1Id(): Long? = runCatching {
+        val db = com.example.synergic_pos_offline.database.DatabaseHelper
+            .getInstance(requireContext()).readableDatabase
+        db.rawQuery(
+            "SELECT id FROM ${com.example.synergic_pos_offline.database.DatabaseHelper.Tables.MD_RATE_NAME} " +
+                "WHERE replace(replace(lower(rate_name), ' ', ''), '_', '') = 'rate1' " +
+                "ORDER BY is_active DESC, id ASC LIMIT 1", null
+        ).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
+    }.getOrNull()
 
     /** Every unit's symbol and fraction flag, read once rather than a query per
      *  product - md_units is a short master list, not something worth asking
@@ -3730,7 +3873,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 it.product.sku.isNotBlank() &&
                     com.example.synergic_pos_offline.utils.SearchSuggestions.normalizeCode(it.product.sku) == q
             } ?: return false
-            onProductPicked(hit.product) { clearSearchIfAny() }
+            onProductPicked(sectionPriced(hit)) { clearSearchIfAny() }
             return true
         }
 
@@ -3859,7 +4002,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             // Direct Add to Cart rule, the same quantity popup when it is off - so an
             // item cannot come onto the order by a different route than the grid's.
             allProducts.firstOrNull { it.product.id == picked.id }?.let { gp ->
-                onProductPicked(gp.product) { clearSearchIfAny() }
+                onProductPicked(sectionPriced(gp)) { clearSearchIfAny() }
             }
         }
 
@@ -3869,7 +4012,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // inside the search box's own watcher and empties that box as its first act.
         suggestions?.onExactCode = { scanned ->
             allProducts.firstOrNull { it.product.id == scanned.id }?.let { gp ->
-                etSearch.post { onProductPicked(gp.product) { clearSearchIfAny() } }
+                etSearch.post { onProductPicked(sectionPriced(gp)) { clearSearchIfAny() } }
             }
         }
         // Named, not a bare trailing lambda, so the gun's own key handling below
@@ -5061,7 +5204,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
         override fun onBindViewHolder(holder: VH, position: Int) {
             val gp = items[position]
-            val p = gp.product
+            // Priced at the selected order's section rate (Rate 1 where the dish has no
+            // price under it) - the same product a tap then puts on the order.
+            val p = sectionPriced(gp)
             holder.name.text = gp.displayName
             holder.price.text = "₹ ${money(p.price)}"
             holder.sku.text = p.sku
@@ -6237,7 +6382,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 // menu is loaded. The draft never carried one, so the table bill
                 // printed a bare quantity while the same sale reprinted from Bill
                 // History (which reads the unit off the database) showed it.
-                unit = product?.unit
+                // The unit of the rate THIS line went on at - see [unitForLine].
+                unit = unitForLine(line).ifBlank { null }
             )
         }
         // The table as the bill's own field - see Draft.table. Carries its section,
