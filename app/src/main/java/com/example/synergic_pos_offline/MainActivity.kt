@@ -56,6 +56,10 @@ class MainActivity : AppCompatActivity() {
         /** Named once: the drawer lists this leaf by it and [handleLeaf] opens it by it. */
         private const val CALCULATOR = "Calculator"
 
+        /** How long a first back press on a root screen stays "armed" for the second
+         *  press that actually exits - see [registerExitOnDoubleBack]. */
+        private const val EXIT_CONFIRM_WINDOW_MS = 2000L
+
         /**
          * Header sizes, roomy and tight. Between them they take the bar from about
          * 64dp to about 42dp - a third of it back, which on the sale screen is
@@ -94,6 +98,12 @@ class MainActivity : AppCompatActivity() {
     /** Title of the page currently open, used to highlight its sidebar item and keep
      *  its parent group expanded so the drawer reflects where the user is. */
     private var activeLeafTitle: String? = null
+
+    // ---- Exit-on-double-back --------------------------------------------------
+
+    /** True for the [EXIT_CONFIRM_WINDOW_MS] after a first back press on a root screen. */
+    private var exitArmed = false
+    private val exitHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         android.util.Log.e("SynergicPOS", "!!! MainActivity onCreate START !!!")
@@ -185,12 +195,65 @@ class MainActivity : AppCompatActivity() {
             }, false
         )
 
+        registerExitOnDoubleBack()
+
         if (savedInstanceState == null) {
+            // A killed-and-relaunched process, not a fresh sign-in: restore() re-reads
+            // the operator from md_users rather than trusting a stale copy, so a
+            // session that is still good picks up where it left off instead of
+            // making the operator log in again over a back press.
+            val restoredUser = SessionManager.restore(this)
+            val start: Fragment = restoredUser?.let { landingFragmentFor(it) } ?: LoginFragment()
             supportFragmentManager.beginTransaction()
-                .replace(R.id.fragment_container, LoginFragment())
+                .replace(R.id.fragment_container, start)
                 .commit()
         }
         android.util.Log.e("SynergicPOS", "!!! MainActivity onCreate FINISHED !!!")
+    }
+
+    /** Where a restored session lands - the same choice [LoginFragment.enter] makes
+     *  for a fresh sign-in, minus the toast and the once-per-login housekeeping. */
+    private fun landingFragmentFor(user: com.example.synergic_pos_offline.models.User): Fragment {
+        val settings = GeneralSettingsDao(this).load()
+        return when {
+            settings.mode == GeneralSettingsDao.Mode.CALCULATOR -> CalculatorFragment()
+            settings.landingScreen == GeneralSettingsDao.LandingScreen.HOME -> DashboardFragment()
+            settings.mode == GeneralSettingsDao.Mode.RESTAURANT ->
+                com.example.synergic_pos_offline.fragments.RestaurantOrdersFragment()
+            else -> PosBillingFragment()
+        }
+    }
+
+    /**
+     * Replaces the default "back with nothing to pop finishes the activity" with a
+     * confirm-to-exit: a screen still pushed on the back stack pops as before, but on
+     * a root screen the first press only warns, and the second within
+     * [EXIT_CONFIRM_WINDOW_MS] actually leaves.
+     *
+     * What used to happen instead was a single stray back press - one tap too many
+     * out of a settings page, say - quietly closing the whole app from underneath the
+     * operator.
+     */
+    private fun registerExitOnDoubleBack() {
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    val fm = supportFragmentManager
+                    if (fm.backStackEntryCount > 0) {
+                        fm.popBackStack()
+                        return
+                    }
+                    if (exitArmed) {
+                        finish()
+                        return
+                    }
+                    exitArmed = true
+                    Toast.makeText(this@MainActivity, "Press back again to exit", Toast.LENGTH_SHORT).show()
+                    exitHandler.postDelayed({ exitArmed = false }, EXIT_CONFIRM_WINDOW_MS)
+                }
+            }
+        )
     }
 
     // ---- Automatic backup ---------------------------------------------------
@@ -248,6 +311,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         autoBackupHandler.removeCallbacksAndMessages(null)
+        exitHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 
@@ -388,7 +452,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun logout() {
-        SessionManager.logout()
+        SessionManager.logout(this)
         // Clear the whole back stack and put the login form back up. Shown outright
         // rather than popped back to: the screen logged into is the root of the stack,
         // so there is nothing underneath to pop to.

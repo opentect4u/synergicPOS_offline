@@ -3914,7 +3914,17 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val scanState = ScanState(etSearch, watcher, { q -> query = q }, ::resolveScannedCode)
         etSearch.setOnKeyListener { _, keyCode, event ->
             if (event.action != android.view.KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-            scanState.onKeyDown(keyCode, event)
+            // Up/down steers the dropdown instead of moving the cursor through
+            // empty air - see PosBillingFragment.attachScanner's own note. Enter
+            // picks whatever row that left highlighted first, and only falls
+            // through to the gun's own Enter handling when nothing is highlighted.
+            when (keyCode) {
+                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> suggestions?.moveSelection(1) == true
+                android.view.KeyEvent.KEYCODE_DPAD_UP -> suggestions?.moveSelection(-1) == true
+                android.view.KeyEvent.KEYCODE_ENTER, android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ->
+                    suggestions?.confirmSelection() == true || scanState.onKeyDown(keyCode, event)
+                else -> scanState.onKeyDown(keyCode, event)
+            }
         }
         // The keyboard's Search key, and the Enter a hardware scanner sends after a
         // barcode: the query is finished either way, so the keyboard goes and the menu
