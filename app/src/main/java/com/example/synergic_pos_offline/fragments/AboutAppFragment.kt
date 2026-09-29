@@ -1112,7 +1112,7 @@ class AboutAppFragment : Fragment(), TitledScreen {
             return
         }
         if (!BackupFiles.looksLikeBackup(head)) {
-            toast("That file is not a Synergic POS export")
+            toast("That file is not a Balaji Synergy POS export")
             return
         }
         // A whole-database backup can be loaded here - only its four master tables
@@ -1343,7 +1343,7 @@ class AboutAppFragment : Fragment(), TitledScreen {
             return
         }
         if (!BackupFiles.looksLikeBackup(head)) {
-            toast("That file is not a Synergic POS backup")
+            toast("That file is not a Balaji Synergy POS backup")
             return
         }
 

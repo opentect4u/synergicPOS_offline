@@ -33,7 +33,7 @@
                 android:src="@drawable/synergic_pos_logo"
                 android:scaleType="fitCenter"
                 android:layout_marginBottom="32dp"
-                android:contentDescription="Synergic POS Logo" />
+                android:contentDescription="Balaji Synergy POS Logo" />
 
             <View
                 android:layout_width="60dp"

@@ -37,7 +37,7 @@ object LegalDocuments {
     const val VERSION = "2026-08-18"
 
     /** What the app calls itself in its own legal text. */
-    private const val PRODUCT = "Synergic POS"
+    private const val PRODUCT = "Balaji Synergy POS"
 
     /** Who publishes it. Replace along with the text below. */
     private const val PUBLISHER = "Opentect4u"

@@ -164,7 +164,7 @@ object BiometricLogin {
         )
         prompt.authenticate(
             BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Sign in to Synergic POS")
+                .setTitle("Sign in to Balaji Synergy POS")
                 // Named, so nobody presses the reader expecting to become somebody
                 // else - the fingerprint says "this tablet's owner", and this line is
                 // the only thing saying whose session it opens.
