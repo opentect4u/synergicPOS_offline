@@ -285,7 +285,7 @@ class LoginFragment : Fragment() {
             return
         }
         if (!BackupFiles.looksLikeBackup(head)) {
-            toast("That file is not a Synergic POS backup")
+            toast("That file is not a Balaji Synergy POS backup")
             return
         }
 
