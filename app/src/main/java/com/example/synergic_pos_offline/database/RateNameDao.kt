@@ -14,16 +14,93 @@ import java.util.Locale
  */
 class RateNameDao(context: Context) {
 
+    private val appContext = context.applicationContext
     private val helper = DatabaseHelper.getInstance(context)
     private val table = DatabaseHelper.Tables.MD_RATE_NAME
 
     data class RateName(val id: Long, val name: String)
 
+    /**
+     * Puts the default rate names - [DEFAULTS] - on this store's list.
+     *
+     * Called by everything that lists rate names (this master, the product form's
+     * rate dropdown, the Section form's Price List), so whichever the shop opens first
+     * already shows them. It used to happen only when the product form opened, which
+     * left the Rate Name master and the Section dropdown empty until then.
+     *
+     * - A store with NO rate names gets all of them - on a fresh till, and again after
+     *   the masters are wiped.
+     * - A store that already has some gets whichever defaults it lacks, ONCE (a mark
+     *   per store is kept in preferences). After that the list is the shop's: a
+     *   default deleted from the master stays deleted.
+     *
+     * Matched ignoring case and spaces, so a store that already has "rate1" or
+     * "RATE 1" is not given a second "Rate 1".
+     */
+    fun ensureDefaults() {
+        val store = currentStoreId() ?: return
+        runCatching {
+            val db = helper.writableDatabase
+            val have = mutableSetOf<String>()
+            db.rawQuery(
+                "SELECT rate_name FROM $table WHERE store_id = ?", arrayOf(store.toString())
+            ).use { c -> while (c.moveToNext()) have.add(normalized(c.getString(0).orEmpty())) }
+
+            val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val markKey = "$KEY_DEFAULTS_ADDED$store"
+            if (have.isNotEmpty() && prefs.getBoolean(markKey, false)) return
+
+            DEFAULTS.filter { normalized(it) !in have }.forEach { name ->
+                db.insert(table, null, ContentValues().apply {
+                    put("store_id", store)
+                    put("rate_name", name)
+                    put("is_active", 1)
+                    put("created_at", now())
+                    put("created_by", currentUser())
+                })
+            }
+            prefs.edit().putBoolean(markKey, true).apply()
+        }.onFailure { android.util.Log.w("RateNameDao", "Could not add default rate names", it) }
+    }
+
+    private fun normalized(name: String) = name.replace(" ", "").lowercase()
+
+    /**
+     * The master row a product sheet's RATE_[slot] column belongs to - this store's
+     * "Rate [slot]" - with its id and its own spelling of the name.
+     *
+     * Matched ignoring case, spaces and underscores, so "Rate 1", "rate1" and "RATE_1"
+     * are one row. Created when the store has none - the sheet is pricing products
+     * under that rate, and a rate linked to nothing would appear in no dropdown.
+     *
+     * Runs on [db], the importer's own transaction, so the row is written with the
+     * products or not at all.
+     */
+    fun forSlot(
+        db: android.database.sqlite.SQLiteDatabase, slot: Int, storeId: Int?
+    ): Pair<Long, String>? {
+        val name = "Rate $slot"
+        // A bound argument cannot be null, so an unknown store is matched as IS NULL.
+        val storeClause = if (storeId != null) "store_id = ?" else "store_id IS NULL"
+        val args = listOfNotNull("rate$slot", storeId?.toString()).toTypedArray()
+        db.rawQuery(
+            "SELECT id, rate_name FROM $table " +
+                "WHERE replace(replace(lower(rate_name), ' ', ''), '_', '') = ? AND $storeClause " +
+                "ORDER BY is_active DESC, id ASC LIMIT 1",
+            args
+        ).use { c -> if (c.moveToFirst()) return c.getLong(0) to (c.getString(1) ?: name) }
+        val id = db.insert(table, null, ContentValues().apply {
+            if (storeId != null) put("store_id", storeId) else putNull("store_id")
+            put("rate_name", name)
+            put("is_active", 1)
+            put("created_at", now())
+            put("created_by", currentUser())
+        })
+        return if (id == -1L) null else id to name
+    }
+
     fun getAll(): List<RateName> {
-        // Rate names that arrived on product rates without a master row - a bulk
-        // upload's `rate_name` text, most often - are adopted first, so the list this
-        // returns (the Rate Name master, the product form's dropdown) shows them.
-        adoptLooseRateNames()
+        ensureDefaults()
         val list = mutableListOf<RateName>()
         val store = currentStoreId()
         helper.readableDatabase.query(
@@ -67,93 +144,6 @@ class RateNameDao(context: Context) {
         )
     }
 
-    /**
-     * Gives every rate name that product rates carry as loose text a row in the
-     * master, and links those rates to it.
-     *
-     * A product rate names its tier two ways: `rate_name_id`, the master row, and
-     * `rate_name`, the text. A rate uploaded in bulk under the sheet's `rate_name`
-     * heading carried the text alone - so "Regular" or "Party" was on hundreds of
-     * product rates and in neither the Rate Name master nor the Section form's Price
-     * List dropdown, which both read the master. The importer now creates the master
-     * row as it goes (see ProductBulkImporter); this catches everything uploaded
-     * before that, and anything else that wrote the text without the id.
-     *
-     * Matched on the name ignoring case and surrounding spaces, within the rate's own
-     * store, so "regular " and "Regular" land on one row rather than two. A name the
-     * master already has - active or retired - is linked to, never duplicated; a name
-     * the shop retired stays retired.
-     *
-     * Two statements, and cheap to repeat: with nothing loose left, both match no row.
-     */
-    fun adoptLooseRateNames() {
-        val db = helper.writableDatabase
-        val rates = DatabaseHelper.Tables.MD_PRODUCT_RATES
-        val loose = "rate_name_id IS NULL AND trim(COALESCE(rate_name, '')) <> ''"
-        runCatching {
-            db.beginTransaction()
-            try {
-                db.execSQL(
-                    """
-                    INSERT INTO $table (store_id, rate_name, is_active, created_at, created_by)
-                    SELECT r.store_id, trim(r.rate_name), 1, ?, ?
-                    FROM $rates r
-                    WHERE r.$loose
-                      AND NOT EXISTS (
-                          SELECT 1 FROM $table n
-                          WHERE n.rate_name = trim(r.rate_name) COLLATE NOCASE
-                            AND n.store_id IS r.store_id
-                      )
-                    GROUP BY r.store_id, lower(trim(r.rate_name))
-                    """.trimIndent(),
-                    arrayOf<Any?>(now(), currentUser())
-                )
-                db.execSQL(
-                    """
-                    UPDATE $rates SET rate_name_id = (
-                        SELECT n.id FROM $table n
-                        WHERE n.rate_name = trim($rates.rate_name) COLLATE NOCASE
-                          AND n.store_id IS $rates.store_id
-                        ORDER BY n.is_active DESC, n.id ASC LIMIT 1
-                    )
-                    WHERE $loose
-                    """.trimIndent()
-                )
-                db.setTransactionSuccessful()
-            } finally {
-                db.endTransaction()
-            }
-        }.onFailure { android.util.Log.w("RateNameDao", "Could not adopt loose rate names", it) }
-    }
-
-    /**
-     * The master row for rate name [name] in [storeId] - found ignoring case, or
-     * created - for the product importer, which runs inside its own transaction on
-     * [db]. Returns the id and the master's own spelling of the name.
-     */
-    fun findOrCreate(
-        db: android.database.sqlite.SQLiteDatabase, name: String, storeId: Int?
-    ): Pair<Long, String>? {
-        val clean = name.trim()
-        if (clean.isEmpty()) return null
-        // A bound argument cannot be null, so an unknown store is matched as IS NULL.
-        val where = "rate_name = ? COLLATE NOCASE AND " +
-            if (storeId != null) "store_id = ?" else "store_id IS NULL"
-        val args = if (storeId != null) arrayOf(clean, storeId.toString()) else arrayOf(clean)
-        db.rawQuery(
-            "SELECT id, rate_name FROM $table WHERE $where ORDER BY is_active DESC, id ASC LIMIT 1",
-            args
-        ).use { c -> if (c.moveToFirst()) return c.getLong(0) to (c.getString(1) ?: clean) }
-        val id = db.insert(table, null, ContentValues().apply {
-            if (storeId != null) put("store_id", storeId) else putNull("store_id")
-            put("rate_name", clean)
-            put("is_active", 1)
-            put("created_at", now())
-            put("created_by", currentUser())
-        })
-        return if (id == -1L) null else id to clean
-    }
-
     private fun currentStoreId(): Long? {
         SessionManager.currentUser?.storeId?.takeIf { it != 0 }?.let { return it.toLong() }
         helper.readableDatabase.query(
@@ -165,4 +155,12 @@ class RateNameDao(context: Context) {
 
     private fun currentUser(): String? = SessionManager.auditUser
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+
+    companion object {
+        /** The rate names every store's list starts with - see [ensureDefaults]. */
+        val DEFAULTS = listOf("Rate 1", "Rate 2", "Rate 3", "Rate 4")
+
+        private const val PREFS = "rate_name_defaults"
+        private const val KEY_DEFAULTS_ADDED = "defaults_added_store_"
+    }
 }

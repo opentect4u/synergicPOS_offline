@@ -1019,19 +1019,9 @@ class ProductsFragment : DataTableFragment() {
     private fun loadRateNames(): List<Option> {
         val db = DatabaseHelper.getInstance(requireContext()).writableDatabase
         val store = storeId()
-        // Seed this store's defaults the first time it has none.
-        val count = db.rawQuery(
-            "SELECT COUNT(*) FROM ${DatabaseHelper.Tables.MD_RATE_NAME} WHERE store_id = ?",
-            arrayOf(store.toString())
-        ).use { if (it.moveToFirst()) it.getLong(0) else 0L }
-        if (count == 0L) {
-            listOf("Rate 1", "Rate 2", "Rate 3", "MRP", "Wholesale").forEach { name ->
-                db.execSQL(
-                    "INSERT INTO ${DatabaseHelper.Tables.MD_RATE_NAME} (store_id, rate_name, is_active) VALUES (?, ?, 1)",
-                    arrayOf<Any>(store, name)
-                )
-            }
-        }
+        // The store's default rate names - Rate 1 to Rate 4 - in one place, shared
+        // with the Rate Name master and the Section form. See RateNameDao.ensureDefaults.
+        com.example.synergic_pos_offline.database.RateNameDao(requireContext()).ensureDefaults()
         val options = mutableListOf<Option>()
         db.rawQuery(
             "SELECT id, rate_name FROM ${DatabaseHelper.Tables.MD_RATE_NAME} " +

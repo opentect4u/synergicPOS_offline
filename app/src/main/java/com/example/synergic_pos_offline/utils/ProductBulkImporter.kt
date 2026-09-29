@@ -419,10 +419,8 @@ object ProductBulkImporter {
         // one wrong code on 400 rows asks the database about it once.
         val categoryCodeIds = HashMap<String, Int?>()
         val rateNames = HashMap<Long, String?>()
-        // Rate names given as TEXT, by lower-cased name: the master row each was found
-        // or created as. A sheet of 500 rows names a handful of tiers, and this also
-        // stops 500 rows of "Regular" from creating 500 master rows.
-        val rateNameIds = HashMap<String, Pair<Long, String>?>()
+        // Slot n's master row ("Rate n"), found or made once for the whole sheet.
+        val slotRateNames = HashMap<Int, Pair<Long, String>?>()
         val rateNameDao = com.example.synergic_pos_offline.database.RateNameDao(context)
         var unknownCategoryCodes = 0
         var unknownCategoryIds = 0
@@ -589,22 +587,11 @@ object ProductBulkImporter {
                 // nothing. The older `rate_name` heading still works and is still
                 // taken as the name it says, with no id to link.
                 val rateNameCell = r[ProductCsvTemplate.RATE_NAME_ID_COLUMN]?.trim().orEmpty()
-                val byId = rateNameCell.toLongOrNull()
+                val rateNameId = rateNameCell.toLongOrNull()
                     ?.let { id -> rateNameFor(db, id, rateNames)?.let { id } }
-                // A NAME is added to the Rate Name master when it is not there yet, and
-                // the rate linked to it - the same rule categories follow. A rate named
-                // only as text used to be saved loose, in neither the Rate Name master
-                // nor the Section form's Price List dropdown, which both read that
-                // master. Resolved once per name per sheet - see [rateNameIds].
-                val rateNameCellText = cell(r, "rate_name", "rate name", "ratename")
-                val byName = if (byId == null && rateNameCellText != null)
-                    rateNameIds.getOrPut(rateNameCellText.trim().lowercase()) {
-                        rateNameDao.findOrCreate(db, rateNameCellText, storeId)
-                    }
-                else null
-                if (rateNameCell.isNotEmpty() && byId == null && byName == null) unknownRateNameIds++
-                val rateNameId = byId ?: byName?.first
-                val rateNameText = byId?.let { rateNames[it] } ?: byName?.second ?: rateNameCellText
+                if (rateNameCell.isNotEmpty() && rateNameId == null) unknownRateNameIds++
+                val rateNameText = rateNameId?.let { rateNames[it] }
+                    ?: r["rate_name"]?.ifBlank { null }
 
                 // The tax, discount and price figures are the PRODUCT's - one set of
                 // columns on the sheet - so every unit this product sells under
@@ -612,12 +599,26 @@ object ProductBulkImporter {
                 // is exactly the shape UNIT_1..4/RATE_1..4 describes.
                 for ((slot, line) in rateLinesOf(r).withIndex()) {
                     val unitId = line.unit?.let { unitIdForSlot(db, it, storeId, unitIds) }
+                    // EACH RATE COLUMN IS ITS OWN RATE NAME: RATE_1 is the store's
+                    // "Rate 1", RATE_2 its "Rate 2", and so on - linked to that Rate
+                    // Name master row by id, so the rate shows under it everywhere the
+                    // master is read (the product form, a Section's Price List). It
+                    // used to give every slot the one rate_name the row carried, or
+                    // none. The previous template's single `rate` column keeps the
+                    // row's own rate_name_id / rate_name, and is Rate 1 without one.
+                    val slotName = if (line.numbered || (rateNameId == null && rateNameText == null))
+                        slotRateNames.getOrPut(line.slot) {
+                            rateNameDao.forSlot(db, line.slot, storeId)
+                        }
+                    else null
+                    val lineNameId = if (slotName != null) slotName.first else rateNameId
+                    val lineNameText = if (slotName != null) slotName.second else rateNameText
                     val rate = ContentValues().apply {
                         if (storeId != null) put("store_id", storeId) else putNull("store_id")
                         if (outletId != null) put("outlet_id", outletId) else putNull("outlet_id")
                         put("product_id", productId)
-                        put("rate_name", rateNameText)
-                        if (rateNameId != null) put("rate_name_id", rateNameId) else putNull("rate_name_id")
+                        put("rate_name", lineNameText)
+                        if (lineNameId != null) put("rate_name_id", lineNameId) else putNull("rate_name_id")
                         put("rate", line.rate)
                         if (unitId != null) put("unit_id", unitId) else putNull("unit_id")
                         put("cgst_rate", cell(r, "product_cgst", "cgst")?.toDoubleOrNull() ?: 0.0)
@@ -1065,8 +1066,18 @@ object ProductBulkImporter {
     fun categoryNameOf(row: Map<String, String>): String? =
         cell(row, *CATEGORY_NAME_COLUMNS.toTypedArray())
 
-    /** One way this product is sold: at [rate], under [unit] where it names one. */
-    data class RateLine(val unit: String?, val rate: Double)
+    /**
+     * One way this product is sold: at [rate], under [unit] where it names one.
+     *
+     * [slot] is the number of the sheet column it came from - RATE_1 is 1, RATE_2 is
+     * 2 - and is kept because a blank RATE_1 beside a priced RATE_2 still makes the
+     * RATE_2 price the product's FIRST line, and it is the column, not the position,
+     * that names the rate (see the importer: slot n is the store's "Rate n").
+     * [numbered] is false for the previous template's single `rate` column.
+     */
+    data class RateLine(
+        val unit: String?, val rate: Double, val slot: Int = 1, val numbered: Boolean = false
+    )
 
     /**
      * The ways this row says its product is sold - one [RateLine] per priced slot.
@@ -1089,7 +1100,9 @@ object ProductBulkImporter {
     fun rateLinesOf(row: Map<String, String>): List<RateLine> {
         val slots = (1..ProductCsvTemplate.RATE_SLOTS).mapNotNull { slot ->
             val (unitKey, rateKey) = ProductCsvTemplate.slotColumns(slot)
-            cell(row, rateKey)?.toDoubleOrNull()?.let { RateLine(cell(row, unitKey), it) }
+            cell(row, rateKey)?.toDoubleOrNull()?.let {
+                RateLine(cell(row, unitKey), it, slot = slot, numbered = true)
+            }
         }
         if (slots.isNotEmpty()) return slots
         val (unitKey, rateKey) = ProductCsvTemplate.slotColumns(1)
