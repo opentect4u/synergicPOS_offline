@@ -1444,7 +1444,7 @@ class AboutAppFragment : Fragment(), TitledScreen {
      * registration.
      */
     private fun signOutIntoRestoredData() {
-        SessionManager.logout()
+        SessionManager.logout(requireContext())
         val fm = requireActivity().supportFragmentManager
         fm.popBackStack(null, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
         fm.beginTransaction().replace(R.id.fragment_container, LoginFragment()).commit()

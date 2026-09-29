@@ -149,6 +149,10 @@ class SearchSuggestions(
     private var query = ""
     private val adapter = SuggestionAdapter()
 
+    /** Which row the keyboard has moved to, or -1 while none has - see
+     *  [moveSelection]. Reset whenever the rows themselves change. */
+    private var selectedIndex = -1
+
     /** Holds the deferred open, so a scan can outrun it. See [update]. */
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var pendingShow: Runnable? = null
@@ -279,8 +283,47 @@ class SearchSuggestions(
         if (matches.isEmpty()) { dismiss(); return }
 
         rows.clear(); rows.addAll(matches)
+        // A fresh set of rows has nothing to do with whatever the keyboard had
+        // moved to in the last one - the row at that same index is a different
+        // product now, and highlighting it would be pointing at the wrong thing.
+        selectedIndex = -1
         adapter.notifyDataSetChanged()
         show()
+    }
+
+    /**
+     * Moves the keyboard highlight by [delta] rows (+1 down, -1 up), wrapping at
+     * either end so the keys always land on something rather than stopping dead at
+     * the top or bottom of a long list. Returns whether there was a list open to
+     * move it in, so an external keyboard's arrow keys can fall back to their
+     * ordinary cursor-movement job the rest of the time.
+     */
+    fun moveSelection(delta: Int): Boolean {
+        val p = popup?.takeIf { it.isShowing } ?: return false
+        if (rows.isEmpty()) return false
+        selectedIndex = if (selectedIndex < 0) {
+            if (delta > 0) 0 else rows.size - 1
+        } else {
+            (selectedIndex + delta + rows.size) % rows.size
+        }
+        adapter.notifyDataSetChanged()
+        p.listView?.setSelection(selectedIndex)
+        return true
+    }
+
+    /**
+     * Picks whichever row the keyboard is currently on, exactly as a tap on it
+     * would. Returns whether there was one - Enter with nothing highlighted (the
+     * ordinary case: nobody has touched an arrow key) falls through to whatever the
+     * caller does for a finished query instead.
+     */
+    fun confirmSelection(): Boolean {
+        popup?.takeIf { it.isShowing } ?: return false
+        val row = rows.getOrNull(selectedIndex) ?: return false
+        dismiss()
+        hideKeyboard()
+        onPick(row)
+        return true
     }
 
     private fun cancelPendingShow() {
@@ -369,6 +412,7 @@ class SearchSuggestions(
         // The pending open goes too, or a list dismissed at the very moment one was
         // queued would reopen a fraction of a second later on its own.
         cancelPendingShow()
+        selectedIndex = -1
         popup?.takeIf { it.isShowing }?.dismiss()
     }
 
@@ -407,6 +451,16 @@ class SearchSuggestions(
             val v = convertView ?: LayoutInflater.from(context)
                 .inflate(R.layout.item_search_suggestion, parent, false)
             val item = rows[position]
+
+            // The row the keyboard has moved to, tinted rather than swapping out the
+            // row's own selectableItemBackground - a foreground tint sits on top of
+            // it instead of replacing it, so a tap still ripples normally whichever
+            // row it lands on.
+            v.foreground = if (position == selectedIndex) {
+                android.graphics.drawable.ColorDrawable(
+                    androidx.core.graphics.ColorUtils.setAlphaComponent(accent, 40)
+                )
+            } else null
 
             v.findViewById<TextView>(R.id.tvSuggestName).text = highlight(item.name)
             v.findViewById<TextView>(R.id.tvSuggestMeta).apply {

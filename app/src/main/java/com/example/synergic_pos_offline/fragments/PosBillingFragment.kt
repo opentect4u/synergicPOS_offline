@@ -1663,7 +1663,19 @@ class PosBillingFragment : Fragment(), TitledScreen {
         val state = ScanState(etSearch, watcher, onQueryChanged, box)
         etSearch.setOnKeyListener { _, keyCode, event ->
             if (event.action != android.view.KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-            state.onKeyDown(keyCode, event)
+            // Up/down steers the dropdown instead of moving the cursor through
+            // empty air - a single-line box has nowhere else for them to go, and an
+            // external keyboard's arrow keys should reach the list exactly as a
+            // touch would. Enter picks whatever row that left highlighted first;
+            // only when nothing is highlighted does it fall through to the gun's
+            // own Enter handling below.
+            when (keyCode) {
+                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> box.moveSelection(1)
+                android.view.KeyEvent.KEYCODE_DPAD_UP -> box.moveSelection(-1)
+                android.view.KeyEvent.KEYCODE_ENTER, android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ->
+                    box.confirmSelection() || state.onKeyDown(keyCode, event)
+                else -> state.onKeyDown(keyCode, event)
+            }
         }
     }
 

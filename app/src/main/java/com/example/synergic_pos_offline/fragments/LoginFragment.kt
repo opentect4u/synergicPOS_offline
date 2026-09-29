@@ -682,6 +682,7 @@ class LoginFragment : Fragment() {
      */
     private fun signIn(user: User) {
         SessionManager.currentUser = user
+        SessionManager.persist(requireContext())
         signingIn = true
         btnLogin.isEnabled = false
         val ctx = requireContext().applicationContext

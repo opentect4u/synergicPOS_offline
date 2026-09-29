@@ -570,7 +570,7 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
      * reason.
      */
     private fun signOut() {
-        SessionManager.logout()
+        SessionManager.logout(requireContext())
         val fm = requireActivity().supportFragmentManager
         // The screen signed in on is the root of the stack, so there is nothing
         // underneath to pop back to - the login form is put up outright.
