@@ -419,6 +419,11 @@ object ProductBulkImporter {
         // one wrong code on 400 rows asks the database about it once.
         val categoryCodeIds = HashMap<String, Int?>()
         val rateNames = HashMap<Long, String?>()
+        // Rate names given as TEXT, by lower-cased name: the master row each was found
+        // or created as. A sheet of 500 rows names a handful of tiers, and this also
+        // stops 500 rows of "Regular" from creating 500 master rows.
+        val rateNameIds = HashMap<String, Pair<Long, String>?>()
+        val rateNameDao = com.example.synergic_pos_offline.database.RateNameDao(context)
         var unknownCategoryCodes = 0
         var unknownCategoryIds = 0
         var unknownRateNameIds = 0
@@ -584,11 +589,22 @@ object ProductBulkImporter {
                 // nothing. The older `rate_name` heading still works and is still
                 // taken as the name it says, with no id to link.
                 val rateNameCell = r[ProductCsvTemplate.RATE_NAME_ID_COLUMN]?.trim().orEmpty()
-                val rateNameId = rateNameCell.toLongOrNull()
+                val byId = rateNameCell.toLongOrNull()
                     ?.let { id -> rateNameFor(db, id, rateNames)?.let { id } }
-                if (rateNameCell.isNotEmpty() && rateNameId == null) unknownRateNameIds++
-                val rateNameText = rateNameId?.let { rateNames[it] }
-                    ?: r["rate_name"]?.ifBlank { null }
+                // A NAME is added to the Rate Name master when it is not there yet, and
+                // the rate linked to it - the same rule categories follow. A rate named
+                // only as text used to be saved loose, in neither the Rate Name master
+                // nor the Section form's Price List dropdown, which both read that
+                // master. Resolved once per name per sheet - see [rateNameIds].
+                val rateNameCellText = cell(r, "rate_name", "rate name", "ratename")
+                val byName = if (byId == null && rateNameCellText != null)
+                    rateNameIds.getOrPut(rateNameCellText.trim().lowercase()) {
+                        rateNameDao.findOrCreate(db, rateNameCellText, storeId)
+                    }
+                else null
+                if (rateNameCell.isNotEmpty() && byId == null && byName == null) unknownRateNameIds++
+                val rateNameId = byId ?: byName?.first
+                val rateNameText = byId?.let { rateNames[it] } ?: byName?.second ?: rateNameCellText
 
                 // The tax, discount and price figures are the PRODUCT's - one set of
                 // columns on the sheet - so every unit this product sells under

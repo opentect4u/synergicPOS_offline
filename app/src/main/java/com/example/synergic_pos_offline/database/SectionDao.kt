@@ -17,6 +17,7 @@ import java.util.Locale
 class SectionDao(context: Context) {
 
     private val helper = DatabaseHelper.getInstance(context)
+    private val rateNameDao = RateNameDao(context)
     private val table = DatabaseHelper.Tables.MD_SECTION
 
     data class Section(
@@ -68,8 +69,14 @@ class SectionDao(context: Context) {
         return 0.0
     }
 
-    /** Rate names from the master ([DatabaseHelper.Tables.MD_RATE_NAME]) for the current store. */
+    /**
+     * Rate names from the master ([DatabaseHelper.Tables.MD_RATE_NAME]) for the current
+     * store - including any that products were uploaded with, which are adopted into
+     * the master first (see [RateNameDao.adoptLooseRateNames]). A section can then be
+     * set to bill at a tier that exists only because a product sheet named it.
+     */
     fun priceLists(): List<PriceList> {
+        rateNameDao.adoptLooseRateNames()
         val list = mutableListOf<PriceList>()
         val store = currentStoreId()
         val where = if (store != null) "store_id = ? AND is_active = 1" else "is_active = 1"
