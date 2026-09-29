@@ -48,7 +48,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:text="Synergic POS"
+                    android:text="@string/app_name"
                     android:textSize="20sp"
                     android:textStyle="bold"
                     android:textColor="@color/text_main" />
@@ -429,7 +429,7 @@
                         android:layout_marginTop="12dp"
                         android:hint="Folder in the cloud account"
                         app:helperTextEnabled="true"
-                        app:helperText="For example: SynergicPOS/Backups"
+                        app:helperText="For example: BalajiSynergyPOS/Backups"
                         app:boxCornerRadiusTopStart="12dp"
                         app:boxCornerRadiusTopEnd="12dp"
                         app:boxCornerRadiusBottomStart="12dp"

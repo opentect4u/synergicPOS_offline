@@ -400,7 +400,7 @@ class MainActivity : AppCompatActivity() {
         is ItemwiseSearchFragment -> "Item Search"
         is HeaderFooterFragment -> "Header & Footer"
         is DatabaseSettingsFragment -> "Database Settings"
-        else -> "Synergic POS"
+        else -> "Balaji Synergy POS"
     }
 
     /**
@@ -443,7 +443,7 @@ class MainActivity : AppCompatActivity() {
         DialogUtils.showConfirm(
             context = this,
             title = "Logout",
-            message = "Are you sure you want to log out of Synergic POS?",
+            message = "Are you sure you want to log out of Balaji Synergy POS?",
             positiveText = "Logout",
             negativeText = "Cancel",
             iconRes = android.R.drawable.ic_lock_power_off,
