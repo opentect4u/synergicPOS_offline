@@ -605,8 +605,30 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
             negativeText = "Cancel",
             // A column of product names, not a sentence - see [DialogUtils.showConfirm].
             messageStart = true,
+            // The red warning has to be AGREED TO, not scrolled past: Confirm stays off
+            // until this is ticked. Only where there is a red warning to agree to.
+            acknowledgement = acknowledgementFor(ctx, counts),
             onConfirm = onConfirm
         )
+    }
+
+    /**
+     * The statement the operator ticks to unlock Confirm - worded for what the red
+     * warning actually lists (see [withReportWarning]): the reports, the stock, or
+     * both. Null where there is no red warning, and then no box.
+     */
+    private fun acknowledgementFor(
+        ctx: android.content.Context, counts: ProductBulkImporter.MergeCounts
+    ): String? {
+        if (counts.toUpdate == 0) return null
+        val reports = REPORT_EFFECTS.any { (title, _) -> ReportsFragment.isVisible(ctx, title) }
+        val stock = counts.stockChanges > 0
+        return when {
+            reports && stock -> "I understand the reports and stock listed above will be affected"
+            reports -> "I understand the reports listed above will be affected"
+            stock -> "I understand the stock listed above will be changed"
+            else -> null
+        }
     }
 
     /**
@@ -647,6 +669,8 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
             // Said, because it is what a shop with sales on the machine needs to know
             // before it agrees: the books do not move - named in this mode's terms.
             append("\n\n${words.keptBeforeUpload}")
+            // Said before the tap, so the operator knows there is a way back.
+            append("\n\nA full backup is taken first, into Downloads/backup.")
             append("\n\nTap Confirm to upload, or Cancel to change nothing.")
         }
     }
@@ -800,7 +824,34 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
         // belong where the screen is drawn. It never erases the bills or clears the
         // floor, so there is no whole-database backup to take first either -
         // transactions on the machine are left exactly as they are.
-        com.example.synergic_pos_offline.utils.BusyDialog.run(this, "Uploading…") {
+        // A BACKUP BEFORE AN OVERWRITE. Confirming an overwrite changes products that
+        // are already on the till - and, in Restaurant, clears the open table orders -
+        // so the till as it was a second before is written to disk first, the same
+        // safety net every other irreversible action here takes. A sheet that only
+        // adds new products changes nothing existing and needs none.
+        val needsBackup = ProductBulkImporter.mergeCounts(ctx, rows).toUpdate > 0 ||
+            openOrderCount(ctx) > 0
+        val busyText = if (needsBackup) "Taking a backup, then uploading…" else "Uploading…"
+        com.example.synergic_pos_offline.utils.BusyDialog.run(this, busyText) {
+            // A PRECONDITION, not a courtesy: if the copy cannot be written, nothing is
+            // uploaded - an overwrite whose safety net failed to deploy does not go ahead.
+            val backup = if (!needsBackup) null else try {
+                com.example.synergic_pos_offline.utils.AutoBackup.backupBefore(app, "upload products")
+            } catch (e: Exception) {
+                android.util.Log.e("BulkUpload", "Backup before upload failed", e)
+                com.example.synergic_pos_offline.utils.BusyDialog.onMain(this) {
+                    if (!isAdded) return@onMain
+                    DialogUtils.showSuccess(
+                        context = requireContext(),
+                        title = "Nothing was uploaded",
+                        message = "A backup is taken before an overwrite, and this one could " +
+                            "not be written: ${e.message ?: e.javaClass.simpleName}.\n\nSo " +
+                            "nothing was changed. Check there is room on the device and try again."
+                    )
+                }
+                return@run
+            }
+
             // One transaction inside - a sheet that fails part way changes nothing.
             val result = try {
                 ProductBulkImporter.import(app, rows, ProductBulkImporter.Mode.APPEND)
@@ -848,6 +899,8 @@ class BulkUploadProductFragment : Fragment(), TitledScreen {
                         result.languageWarning?.let { append("\n$it") }
                         result.referenceWarning?.let { append("\n$it") }
                         append("\n\n${words.keptAfterUpload}")
+                        // Where to go back to, if the overwrite was not what was meant.
+                        backup?.let { append("\n\nThe till as it was before this upload is saved to $it.") }
                     }
                 )
             }

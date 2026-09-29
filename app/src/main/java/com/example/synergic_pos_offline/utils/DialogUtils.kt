@@ -91,6 +91,16 @@ object DialogUtils {
          * so every existing dialog keeps the centring it was written for.
          */
         messageStart: Boolean = false,
+        /**
+         * A statement the operator must tick before Confirm will act - "I understand
+         * the reports and stock above will change". Null (every existing dialog) shows
+         * no box and leaves Confirm enabled as always.
+         *
+         * Placed between the message and the buttons, outside the message's scroll,
+         * so it is always on screen beside the button it unlocks however long the
+         * warning above it runs.
+         */
+        acknowledgement: CharSequence? = null,
         onCancel: () -> Unit = {},
         onConfirm: () -> Unit
     ) {
@@ -124,6 +134,28 @@ object DialogUtils {
         btnNegative.text = negativeText
 
         ThemeManager.styleDialogButtons(btnPositive, btnNegative, positiveColor)
+
+        // The acknowledgement box, when asked for: Confirm stays disabled (and faded)
+        // until it is ticked, and goes back to disabled if it is unticked again.
+        if (acknowledgement != null) {
+            val density = ctx.resources.displayMetrics.density
+            val box = android.widget.CheckBox(ctx).apply {
+                text = acknowledgement
+                textSize = 15f
+                setTextColor(positiveColor)
+                buttonTintList = ColorStateList.valueOf(positiveColor)
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                ).also { it.topMargin = (12 * density).toInt() }
+            }
+            val content = view.findViewById<android.widget.LinearLayout>(R.id.llDialogContent)
+            val buttonRow = btnPositive.parent as android.view.View
+            content.addView(box, content.indexOfChild(buttonRow).coerceAtLeast(0))
+            fun gate(on: Boolean) { btnPositive.isEnabled = on; btnPositive.alpha = if (on) 1f else 0.45f }
+            gate(false)
+            box.setOnCheckedChangeListener { _, checked -> gate(checked) }
+        }
 
         btnPositive.setOnClickListener {
             dialog.dismiss()
