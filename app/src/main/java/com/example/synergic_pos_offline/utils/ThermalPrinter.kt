@@ -234,7 +234,7 @@ object ThermalPrinter {
         // the connection were both fine and only this button was speaking the wrong
         // language.
         if (isLabelPurpose(purpose)) {
-            printRaw(context, TsplLabel.sample(), config, onResult)
+            printRaw(context, TsplLabel.sample(TsplLabel.shopNameOf(context)), config, onResult)
             return
         }
         print(context, buildTestPrintBitmap(purpose, config), config, onResult)

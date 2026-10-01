@@ -265,7 +265,9 @@ class BarcodeLabelsFragment : DataTableFragment() {
                 // STICKERS, not feeds. On two-up stock ten of these is five feeds, and
                 // an odd count leaves the last feed's right-hand cell blank rather than
                 // handing over a spare sticker - see TsplLabel.build.
-                copies = copies
+                copies = copies,
+                // The shop's name on every sticker, from the store registration.
+                shopName = TsplLabel.shopNameOf(requireContext())
             )
 
             toast(if (copies == 1) "Printing 1 label…" else "Printing $copies labels…")

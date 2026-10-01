@@ -1,5 +1,7 @@
 package com.example.synergic_pos_offline.utils
 
+import android.content.Context
+import com.example.synergic_pos_offline.database.DatabaseHelper
 import java.util.Locale
 
 /**
@@ -128,6 +130,8 @@ object TsplLabel {
      * @param mrp      the listed price, printed struck through beside [price]. Left off
      *                 entirely when it is absent or equal to [price] - striking through
      *                 a number to show the same number beside it says nothing
+     * @param shopName the shop's name, printed as the sticker's top row - see
+     *                 [shopNameOf]. Blank leaves the row off and the layout as it was
      */
     fun build(
         productName: String,
@@ -138,7 +142,8 @@ object TsplLabel {
         widthMm: Int = LABEL_WIDTH_MM,
         heightMm: Int = LABEL_HEIGHT_MM,
         gapMm: Int = LABEL_GAP_MM,
-        across: Int = STICKERS_ACROSS
+        across: Int = STICKERS_ACROSS,
+        shopName: String = ""
     ): ByteArray {
         // Guarded here rather than trusted from the caller: a zero width would divide
         // by zero working out the sticker, and a zero count would tell the printer to
@@ -154,7 +159,7 @@ object TsplLabel {
         val out = StringBuilder()
         if (fullRows > 0) {
             out.append(
-                block(rollWidth, rollHeight, gap, perRow, perRow, fullRows, productName, code, price, mrp)
+                block(rollWidth, rollHeight, gap, perRow, perRow, fullRows, productName, code, price, mrp, shopName)
             )
         }
         // The odd one out. Same physical label - the stock does not change - with only
@@ -162,7 +167,7 @@ object TsplLabel {
         // of one spare sticker per print that has to be peeled off and binned.
         if (remainder > 0) {
             out.append(
-                block(rollWidth, rollHeight, gap, perRow, remainder, 1, productName, code, price, mrp)
+                block(rollWidth, rollHeight, gap, perRow, remainder, 1, productName, code, price, mrp, shopName)
             )
         }
         // TSPL is a text protocol and the printer's parser is byte-oriented; anything
@@ -181,12 +186,26 @@ object TsplLabel {
      * A price of zero is passed deliberately, so the test exercises the price line too;
      * nothing is being priced, since nothing is being labelled.
      */
-    fun sample(): ByteArray = build(
+    fun sample(shopName: String = ""): ByteArray = build(
         productName = "TEST PRINT",
         code = "1234567890",
         price = 0.0,
-        copies = 1
+        copies = 1,
+        // The shop's name too, so a test sticker shows the layout a real one will have.
+        shopName = shopName
     )
+
+    /**
+     * The shop's name as a sticker prints it - the store registration's `store_name`,
+     * the same name the printed bills and ledger head themselves with - upper-cased,
+     * or "" when none is on file (the sticker then prints without the row).
+     */
+    fun shopNameOf(context: Context): String = runCatching {
+        DatabaseHelper.getInstance(context).readableDatabase.query(
+            DatabaseHelper.Tables.MD_REGISTRATION, arrayOf("store_name"),
+            null, null, null, null, "store_id ASC", "1"
+        ).use { c -> if (c.moveToFirst()) c.getString(0).orEmpty().trim().uppercase() else "" }
+    }.getOrDefault("")
 
     /**
      * One label definition and the instruction to print [rows] of it.
@@ -210,7 +229,8 @@ object TsplLabel {
         productName: String,
         code: String,
         price: Double?,
-        mrp: Double?
+        mrp: Double?,
+        shopName: String
     ): String {
         val stickerDots = widthMm * DOTS_PER_MM / across
         val heightDots = heightMm * DOTS_PER_MM
@@ -234,7 +254,7 @@ object TsplLabel {
 
         repeat(fill) { column ->
             out.append(
-                sticker(column * stickerDots, sx, sy, productName, code, price, mrp)
+                sticker(column * stickerDots, sx, sy, productName, code, price, mrp, shopName)
             )
         }
 
@@ -257,7 +277,8 @@ object TsplLabel {
         productName: String,
         code: String,
         price: Double?,
-        mrp: Double?
+        mrp: Double?,
+        shopName: String
     ): String {
         fun x(v: Int) = originX + (v * sx).toInt()
         fun y(v: Int) = (v * sy).toInt()
@@ -268,7 +289,14 @@ object TsplLabel {
         /** Where something [widthDots] wide starts if it is to sit in the middle. */
         fun centred(widthDots: Int) = left + ((safeWidth - widthDots) / 2).coerceAtLeast(0)
 
+        // THE SHOP'S NAME, ADDED WITHOUT MOVING ANYTHING. The sticker's own layout - the
+        // product name, bars, digits and prices - stays exactly where it always was; the
+        // name goes in the small font into the clear band ABOVE the product name, so not
+        // one coordinate below it changes. With no name on file nothing is printed there.
+        val shop = clip(shopName.uppercase(), safeWidth, FONT_SMALL_W)
+        val hasShop = shopName.isNotBlank()
         val nameY = REF_MARGIN_Y
+        val shopY = (nameY - FONT_SMALL_H - SHOP_ROW_GAP).coerceAtLeast(0)
         val priceY = REF_HEIGHT - REF_MARGIN_Y - FONT_MEDIUM_H
         val digitsY = priceY - REF_ROW_GAP - FONT_LARGE_H
         val barsY = nameY + FONT_MEDIUM_H + REF_ROW_GAP
@@ -278,6 +306,8 @@ object TsplLabel {
         val barsHeight = (digitsY - REF_ROW_GAP - barsY).coerceAtLeast(MIN_BAR_HEIGHT)
 
         val out = StringBuilder()
+        // Centred like every row - see the product name's note below.
+        if (hasShop) out.text(x(centred(shop.length * FONT_SMALL_W)), y(shopY), FONT_SMALL, shop)
         // Product name, clipped to the SAFE BOX rather than the sticker - the die-cut
         // channel beside it is not spare room, and TSPL would happily run text across it.
         //
@@ -308,35 +338,14 @@ object TsplLabel {
         // out on the right with a gap where the MRP would have been.
         val showBoth = price != null && mrp != null && kotlin.math.abs(mrp - price) > 0.001
         if (showBoth) {
-            val mrpText = "MRP:${money(mrp!!)}"
-            val mrpWidth = mrpText.length * FONT_MEDIUM_W
-            // The paid price is set against the RIGHT margin, not at a fixed dot 180.
-            // Its width is whatever the figure needs - a four-figure rate is two
-            // characters longer than a two-figure one - and anchored on the left it grew
-            // off the edge of the sticker. "OUR PRICE:" is dropped for the shorter label
-            // first, since losing a word beats losing a digit.
-            val priceText = "OUR PRICE:${money(price!!)}".let {
-                if (mrpWidth + REF_ROW_GAP + it.length * FONT_MEDIUM_W <= safeWidth) it
-                else "PRICE:${money(price)}"
-            }
-            val priceX = (right - priceText.length * FONT_MEDIUM_W).coerceAtLeast(left)
-            // Only when the MRP still has room of its own. A long pair would otherwise
-            // print one over the other, which reads as a third, wrong number.
-            if (priceX >= left + mrpWidth + REF_ROW_GAP) {
-                out.text(x(left), y(priceY), FONT_MEDIUM, mrpText)
-                // A filled bar two dots high, drawn across the MRP text. BAR is used
-                // rather than the reference's LINE: BAR is in every TSPL2 firmware, LINE
-                // is not universally implemented, and a command a printer does not know
-                // can take the whole label down with it. The two draw the same thing.
-                // Its width is scaled like every other measurement here - left in
-                // reference dots it would have struck through the wrong span on any
-                // stock but the 50mm one.
-                out.line(
-                    "BAR ${x(left)},${y(priceY + FONT_MEDIUM_H / 2)}," +
-                        "${(mrpWidth * sx).toInt().coerceAtLeast(1)},2"
-                )
-            }
-            out.text(x(priceX), y(priceY), FONT_MEDIUM, priceText)
+            // NO "OUR PRICE" - the shop does not want its selling price on the sticker.
+            // The MRP alone is printed, plain (not struck through: a crossed-out figure
+            // with nothing beside it reads as a mistake) and centred on the price line,
+            // the same way a single price is.
+            val mrpText = clip("MRP:${money(mrp!!)}", safeWidth, FONT_MEDIUM_W)
+            out.text(
+                x(centred(mrpText.length * FONT_MEDIUM_W)), y(priceY), FONT_MEDIUM, mrpText
+            )
         } else if (price != null) {
             // Centred, on the same middle line as the name, the bars and the digits.
             // Only the MRP pair above is spread left-and-right, and that is a two-column
@@ -438,6 +447,13 @@ object TsplLabel {
     private const val MIN_BAR_HEIGHT = 24
 
     // TSC's built-in bitmap fonts, with the cell size each one occupies in dots.
+    private const val FONT_SMALL = "1"
+    private const val FONT_SMALL_W = 8
+    private const val FONT_SMALL_H = 12
+
+    /** Space between the shop's name and the product name under it. */
+    private const val SHOP_ROW_GAP = 2
+
     private const val FONT_MEDIUM = "2"
     private const val FONT_MEDIUM_W = 12
     private const val FONT_MEDIUM_H = 20
