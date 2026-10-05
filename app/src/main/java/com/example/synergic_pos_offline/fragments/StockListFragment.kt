@@ -61,7 +61,7 @@ class StockListFragment : DataTableFragment() {
     // The table lists products so stock can be moved against them; it does not own
     // them. Adding, editing and deleting a product all belong to the product master,
     // and a row itself does nothing - the + button is the only way in.
-    override val showsEditAction = false
+    override val showsEditAction = true
     override val showsSelection = false
 
     private val dao by lazy { StockDao(requireContext()) }
@@ -83,6 +83,11 @@ class StockListFragment : DataTableFragment() {
 
     /** The + button opens the entry modal; there is no per-row Add. */
     override fun onAddRow() = showEntryDialog()
+
+    /** The pen on a row moves that one item's stock and nothing else. */
+    override fun onEditRow(row: DataRow) {
+        row.id.toIntOrNull()?.let { showEntryDialog(it) }
+    }
 
     // ---- Bulk stock in -------------------------------------------------------
 
@@ -280,12 +285,16 @@ class StockListFragment : DataTableFragment() {
         val productId: Int? get() = item.tag as? Int
     }
 
-    private fun showEntryDialog() {
+    private fun showEntryDialog(preselect: Int? = null) {
         val context = requireContext()
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_stock_entry, null)
         val dialog = AlertDialog.Builder(context).setView(view).create()
             .also { it.setCanceledOnTouchOutside(false) }
-        dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
+        // Wide, so the item, quantity and reason fields have room to breathe: 92% of the
+        // screen, but never wider than 900dp on a big tablet.
+        val dm = context.resources.displayMetrics
+        val dialogWidth = minOf((dm.widthPixels * 0.92f).toInt(), (900 * dm.density).toInt())
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val stockIn = mode == Mode.IN
         view.findViewById<TextView>(R.id.tvStockEntryTitle).text = mode.title
@@ -412,6 +421,22 @@ class StockListFragment : DataTableFragment() {
         }
 
         addRow()
+        // Opened from an item's own row: that item is already chosen, cursor on Qty.
+        // A single-item popup (from a row's pen): the item is fixed and there is no way
+        // to add or remove rows, so nothing but that item's stock can be touched.
+        items.firstOrNull { it.productId == preselect }?.let { picked ->
+            rows.first().apply {
+                item.setText(picked.name, false)
+                item.tag = picked.productId
+                item.setAdapter(null)
+                item.isEnabled = false
+                view.findViewById<View>(R.id.btnRemoveRow).visibility = View.GONE
+                quantity.requestFocus()
+            }
+            view.findViewById<View>(R.id.btnAddStockRow).visibility = View.GONE
+            view.findViewById<TextView>(R.id.tvStockEntrySub).text =
+                (if (stockIn) "Adds to" else "Deducts from") + " the stock of ${picked.name} (now ${StockDao.trim(picked.stock)})"
+        }
         view.findViewById<MaterialButton>(R.id.btnAddStockRow).setOnClickListener {
             // Nothing left to pick means nothing for another row to say. Adding one
             // anyway would open an empty drop-down, which reads as a broken list
@@ -430,6 +455,13 @@ class StockListFragment : DataTableFragment() {
         ThemeManager.applyTheme(view)
         styleButtons(view)
         dialog.show()
+        // Sized AFTER show(): the dialog installs its own window params when it is shown,
+        // and a width set earlier is replaced by wrap-content - which is what left the
+        // item box squeezed to a bare arrow.
+        dialog.window?.apply {
+            setLayout(dialogWidth, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(android.view.Gravity.CENTER)
+        }
     }
 
     /**

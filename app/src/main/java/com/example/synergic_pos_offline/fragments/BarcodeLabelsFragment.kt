@@ -28,10 +28,8 @@ import com.example.synergic_pos_offline.utils.TsplLabel
  *
  * - **Add.** There is no barcode record to create. A product is added in the product
  *   master, and it arrives here the moment it exists.
- * - **Edit.** Typing a code in by hand is the product form's job and it is already
- *   there. What this screen does to a code it does in bulk and by generating it - see
- *   [onBulkGenerate] - which is the one thing the product form cannot do, because it
- *   only ever has one product open.
+ * - **Edit.** The pen on a row sets that one product's barcode by hand - typed or
+ *   scanned - see [onEditRow]. Generating codes in bulk is still [onBulkGenerate].
  * - **Delete.** [showsDeleteAction] - the tick boxes here mean "give this a code", and
  *   a screen that selects rows in order to code them has no business removing them
  *   from the catalogue.
@@ -50,7 +48,7 @@ class BarcodeLabelsFragment : DataTableFragment() {
     override val columns = listOf("S.No", "Name", "Barcode")
 
     override val showsAddAction = false
-    override val showsEditAction = false
+    override val showsEditAction = true
     override val showsDeleteAction = false
     override val showsPrintAction = false
 
@@ -88,6 +86,73 @@ class BarcodeLabelsFragment : DataTableFragment() {
         }
         return rows
     }
+
+    // ---- Edit one barcode --------------------------------------------------
+
+    /** The pen on a row: change this product's barcode, and nothing else about it. */
+    override fun onEditRow(row: DataRow) {
+        val id = row.id.toIntOrNull() ?: return
+        val name = row.cells.getOrNull(1).orEmpty()
+        val current = row.cells.getOrNull(2).orEmpty().takeIf { it.any { c -> c.isLetterOrDigit() } }.orEmpty()
+        DialogUtils.showForm(
+            context = requireContext(),
+            title = "Edit barcode",
+            fields = listOf(
+                DialogUtils.FormField("Product", name, locked = true),
+                DialogUtils.FormField(
+                    label = "Barcode", value = current, maxLength = 48,
+                    // Generate, as on the product form: asks before replacing a code
+                    // that is already in the box, since it may have come off the packet.
+                    endIconRes = R.drawable.ic_barcode,
+                    onEndIcon = { typed, fill ->
+                        val generate = {
+                            val code = BarcodeGenerator.nextEan13 { barcodeExists(it) }
+                            fill(code)
+                            toast("Barcode $code generated")
+                        }
+                        if (typed.isEmpty()) generate()
+                        else DialogUtils.showConfirm(
+                            context = requireContext(),
+                            title = "Replace this barcode?",
+                            message = "This product already has the barcode $typed. If it was " +
+                                "scanned off the packet, replacing it will stop the scanner " +
+                                "finding this product.",
+                            positiveText = "Replace",
+                            destructive = true
+                        ) { generate() }
+                    }
+                )
+            ),
+            mandatoryFields = emptyList(),
+            positiveText = "Save",
+            negativeText = "Cancel"
+        ) { values ->
+            val code = values.getOrNull(1)?.trim().orEmpty()
+            // Another product already carrying this code would have the scanner ring up
+            // the wrong item, so it is refused outright. Blank clears the code.
+            if (code.isNotEmpty() && barcodeUsedElsewhere(code, id)) {
+                toast("Another product already has this barcode")
+                return@showForm
+            }
+            val cv = android.content.ContentValues().apply {
+                if (code.isEmpty()) putNull("bar_code") else put("bar_code", code)
+            }
+            val rows = DatabaseHelper.getInstance(requireContext()).writableDatabase.update(
+                DatabaseHelper.Tables.MD_PRODUCTS, cv, "id = ?", arrayOf(id.toString())
+            )
+            if (rows > 0) {
+                refreshRows()
+                toast("Barcode updated")
+            } else toast("Could not update the barcode")
+        }
+    }
+
+    private fun barcodeUsedElsewhere(code: String, productId: Int): Boolean = runCatching {
+        DatabaseHelper.getInstance(requireContext()).readableDatabase.rawQuery(
+            "SELECT 1 FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE bar_code = ? AND id <> ? LIMIT 1",
+            arrayOf(code, productId.toString())
+        ).use { it.moveToFirst() }
+    }.getOrDefault(false)
 
     // ---- Print one label ---------------------------------------------------
 

@@ -29,16 +29,16 @@ object StockBadge {
     fun apply(tv: TextView, state: String, quantity: Double) {
         val onHand = StockDao.trim(quantity)
         val (text, color) = when (state) {
-            LOW -> "Low: $onHand" to AMBER
-            OUT -> "Out of stock" to RED
-            OK -> "Stock: $onHand" to GREY
+            LOW -> "Low: $onHand" to Color.parseColor(ORANGE)
+            OUT -> "Out of stock" to Color.parseColor(RED)
+            OK -> "Stock: $onHand" to ThemeManager.getThemeColor(tv.context)
             else -> { tv.visibility = View.GONE; return }
         }
         tv.visibility = View.VISIBLE
         tv.text = text
         tv.background = GradientDrawable().apply {
             cornerRadius = 8 * tv.resources.displayMetrics.density
-            setColor(Color.parseColor(color))
+            setColor(color)
         }
         tv.setTextColor(Color.WHITE)
     }
@@ -51,7 +51,6 @@ object StockBadge {
         else -> OK
     }
 
-    private const val AMBER = "#F9AB00"
-    private const val RED = "#D93025"
-    private const val GREY = "#5F6368"
+    private const val ORANGE = "#FB8C00"
+    private const val RED = "#D32F2F"
 }

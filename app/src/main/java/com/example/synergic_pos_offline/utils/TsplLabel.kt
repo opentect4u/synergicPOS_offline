@@ -311,15 +311,12 @@ object TsplLabel {
         // Product name, clipped to the SAFE BOX rather than the sticker - the die-cut
         // channel beside it is not spare room, and TSPL would happily run text across it.
         //
-        // CENTRED, like every other row. It used to be anchored at the left margin while
-        // the bars and the digits below it were centred, and a sticker with its name and
-        // its price hard left under a centred barcode reads as two layouts printed on
-        // top of each other rather than one label. TSPL has no alignment argument in the
-        // form this uses - see the class note on old firmware - so centring is arithmetic
-        // here: a bitmap font is a fixed cell wide, so the text is exactly as wide as its
-        // own character count.
+        // LEFT-ALIGNED, the one row that is: the shop wants the product name flush with
+        // the left edge of the safe box. Every other row is centred (arithmetic, since
+        // TSPL has no alignment argument in the form this uses - see the class note on
+        // old firmware).
         val name = clip(productName, safeWidth, FONT_MEDIUM_W)
-        out.text(x(centred(name.length * FONT_MEDIUM_W)), y(nameY), FONT_MEDIUM, name)
+        out.text(x(left), y(nameY), FONT_MEDIUM, name)
 
         // The bars, with the printer's own human-readable line switched OFF (the 0
         // after the height). The digits go on as their own TEXT below instead, which is

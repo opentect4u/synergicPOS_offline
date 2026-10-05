@@ -399,7 +399,13 @@ object DialogUtils {
         val fieldType: String = "text", // "text", "dropdown", "toggle", "checkboxes"
         val options: List<String> = emptyList(), // For dropdown and checkboxes
         /** A "text" field shown but not editable - its [value] is fixed. */
-        val locked: Boolean = false
+        val locked: Boolean = false,
+        /**
+         * A button inside the end of a "text" field, e.g. a Generate icon. [onEndIcon]
+         * is handed what is in the box and a function that fills it in.
+         */
+        val endIconRes: Int = 0,
+        val onEndIcon: ((current: String, fill: (String) -> Unit) -> Unit)? = null
     )
 
     /** Shows a reusable form dialog for Adding or Editing records. */
@@ -683,6 +689,17 @@ object DialogUtils {
                     // Shown, not editable - the value is fixed (e.g. Parcel Charge's
                     // name), so there is nothing here for the operator to type into.
                     if (field.locked) et.isEnabled = false
+
+                    if (field.endIconRes != 0 && field.onEndIcon != null) {
+                        til.endIconMode = TextInputLayout.END_ICON_CUSTOM
+                        til.setEndIconDrawable(field.endIconRes)
+                        til.setEndIconOnClickListener {
+                            field.onEndIcon.invoke(et.text?.toString()?.trim().orEmpty()) { v ->
+                                et.setText(v)
+                                et.setSelection(v.length)
+                            }
+                        }
+                    }
 
                     grid.addView(til, params)
                     inputs.add(et)
