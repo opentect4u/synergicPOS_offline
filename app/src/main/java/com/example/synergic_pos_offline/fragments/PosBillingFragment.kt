@@ -211,7 +211,7 @@ class PosBillingFragment : Fragment(), TitledScreen {
             p.stock == "low" -> "Low"
             else -> ""
         },
-        badgeColor = if (p.stock == "out") 0xFFDC2626.toInt() else 0xFFF59E0B.toInt(),
+        badgeColor = if (p.stock == "out") 0xFFDC2626.toInt() else 0xFFFB8C00.toInt(),
         // Whatever the grid has already decoded, looked up as the row is drawn; a
         // product not yet scrolled past shows its initial rather than a database read
         // per keystroke.

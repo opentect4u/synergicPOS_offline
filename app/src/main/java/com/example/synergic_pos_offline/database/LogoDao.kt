@@ -15,6 +15,7 @@ import java.util.Locale
  */
 class LogoDao(context: Context) {
 
+    private val appContext = context.applicationContext
     private val helper = DatabaseHelper.getInstance(context)
     private val table = DatabaseHelper.Tables.MD_LOGOS
 
@@ -29,6 +30,34 @@ class LogoDao(context: Context) {
             fun fromStored(v: String?): LogoType? = values().firstOrNull { it.stored == v }
             fun fromLabel(v: String?): LogoType? = values().firstOrNull { it.label == v }
         }
+    }
+
+    /**
+     * How large a logo prints. [billFraction] and [kotFraction] are the share of the
+     * receipt's / KOT's printable width the logo is scaled to. A share of the WIDTH,
+     * not a height cap: a wide logo never reaches a height cap, so Medium and Large
+     * used to print identically.
+     */
+    enum class LogoSize(val label: String, val billFraction: Float, val kotFraction: Float) {
+        SMALL("Small", 0.35f, 0.35f),
+        MEDIUM("Medium", 0.65f, 0.65f),
+        LARGE("Large", 1.0f, 1.0f);
+
+        companion object {
+            fun fromLabel(v: String?): LogoSize? = values().firstOrNull { it.label == v }
+        }
+    }
+
+    /** The print size chosen for [type]'s slot; MEDIUM until one is picked. */
+    fun sizeOf(type: LogoType): LogoSize =
+        LogoSize.values().firstOrNull {
+            it.name == appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString("size_" + type.stored, null)
+        } ?: LogoSize.MEDIUM
+
+    fun setSize(type: LogoType, size: LogoSize) {
+        appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putString("size_" + type.stored, size.name).apply()
     }
 
     /** A single logo row. [image] holds the raw JPEG bytes, or null. */
@@ -131,6 +160,8 @@ class LogoDao(context: Context) {
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
     private companion object {
+        const val PREFS = "logo_print_sizes"
+
         /**
          * How large a logo is decoded for printing.
          *

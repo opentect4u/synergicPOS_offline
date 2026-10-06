@@ -68,6 +68,8 @@ object KotPrinter {
             headerLines = lines.enabled(BillHeaderFooterDao.Section.HEADER),
             footerLines = lines.enabled(BillHeaderFooterDao.Section.FOOTER),
             headerLogo = logos.newest(LogoDao.LogoType.KOT_HEADER),
+            headerLogoFraction = logos.sizeOf(LogoDao.LogoType.KOT_HEADER).kotFraction,
+            footerLogoFraction = logos.sizeOf(LogoDao.LogoType.KOT_FOOTER).kotFraction,
             footerLogo = logos.newest(LogoDao.LogoType.KOT_FOOTER)
         )
         ThermalPrinter.print(context, bitmap, config) { result ->
@@ -202,7 +204,10 @@ object KotPrinter {
         // The shop's own KOT logos, already decoded. Null for either is the ordinary
         // case - most kitchens want a plain ticket - and prints nothing in that slot.
         headerLogo: Bitmap? = null,
-        footerLogo: Bitmap? = null
+        footerLogo: Bitmap? = null,
+        // Share of the paper width each logo is scaled to (Small/Medium/Large).
+        headerLogoFraction: Float = 1f,
+        footerLogoFraction: Float = 1f
     ): Bitmap {
         // Set from [PrintType], so the ticket carries the same face and the same
         // sizes as the bill. These used to be fractions of the paper width, which
@@ -275,9 +280,10 @@ object KotPrinter {
          * scaling inside it would do the work twice and - worse - could measure one
          * size and draw another.
          */
-        fun logoLine(bmp: Bitmap): Line {
-            val max = (width - padX * 2).toInt().coerceAtLeast(1)
-            val scaled = if (bmp.width > max) {
+        fun logoLine(bmp: Bitmap, fraction: Float): Line {
+            val max = ((width - padX * 2) * fraction).toInt().coerceAtLeast(1)
+            // Scaled to the chosen size, up as well as down: the operator asked for it.
+            val scaled = if (bmp.width != max) {
                 val h = (bmp.height.toFloat() / bmp.width * max).toInt().coerceAtLeast(1)
                 Bitmap.createScaledBitmap(bmp, max, h, true)
             } else bmp
@@ -286,7 +292,7 @@ object KotPrinter {
 
         // The logo at the very top, above even the shop's own text lines - it is the
         // letterhead, and the lines under it are the address.
-        headerLogo?.let { lines += logoLine(it) }
+        headerLogo?.let { lines += logoLine(it, headerLogoFraction) }
 
         // The shop's own lines come FIRST, above the document's own title, exactly
         // where the bill puts them: they are the letterhead, and a letterhead under the
@@ -378,7 +384,7 @@ object KotPrinter {
         // ticket rather than as one more note to the kitchen.
         if (footerLines.isNotEmpty() || footerLogo != null) ruleBefore += lines.size
         footerLines.forEach { lines += fixed(it) }
-        footerLogo?.let { lines += logoLine(it) }
+        footerLogo?.let { lines += logoLine(it, footerLogoFraction) }
 
         // Measured and drawn by walking the same list twice, so the height reserved
         // is the height used - the rule is a line of text now, not a bar of known

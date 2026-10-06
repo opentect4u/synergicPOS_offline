@@ -399,7 +399,13 @@ object DialogUtils {
         val fieldType: String = "text", // "text", "dropdown", "toggle", "checkboxes"
         val options: List<String> = emptyList(), // For dropdown and checkboxes
         /** A "text" field shown but not editable - its [value] is fixed. */
-        val locked: Boolean = false
+        val locked: Boolean = false,
+        /**
+         * A button inside the end of a "text" field, e.g. a Generate icon. [onEndIcon]
+         * is handed what is in the box and a function that fills it in.
+         */
+        val endIconRes: Int = 0,
+        val onEndIcon: ((current: String, fill: (String) -> Unit) -> Unit)? = null
     )
 
     /** Shows a reusable form dialog for Adding or Editing records. */
@@ -434,6 +440,11 @@ object DialogUtils {
          */
         showClose: Boolean = false,
         onCancel: (() -> Unit)? = null,
+        /**
+         * A picture shown just under the fields and redrawn whenever one of them
+         * changes. Handed the fields' current values; null draws nothing.
+         */
+        preview: ((List<String>) -> android.graphics.Bitmap?)? = null,
         onSave: (List<String>) -> Unit
     ) {
         val ctx = FixedFontScale.wrap(context)
@@ -684,6 +695,17 @@ object DialogUtils {
                     // name), so there is nothing here for the operator to type into.
                     if (field.locked) et.isEnabled = false
 
+                    if (field.endIconRes != 0 && field.onEndIcon != null) {
+                        til.endIconMode = TextInputLayout.END_ICON_CUSTOM
+                        til.setEndIconDrawable(field.endIconRes)
+                        til.setEndIconOnClickListener {
+                            field.onEndIcon.invoke(et.text?.toString()?.trim().orEmpty()) { v ->
+                                et.setText(v)
+                                et.setSelection(v.length)
+                            }
+                        }
+                    }
+
                     grid.addView(til, params)
                     inputs.add(et)
                 }
@@ -695,6 +717,29 @@ object DialogUtils {
                 currentRow++
                 currentColumn = 0
             }
+        }
+
+        if (preview != null) {
+            val image = android.widget.ImageView(ctx).apply {
+                adjustViewBounds = true
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).also { it.setMargins(margin, 0, margin, margin) }
+                contentDescription = "Preview"
+            }
+            (grid.parent as ViewGroup).addView(image, (grid.parent as ViewGroup).indexOfChild(grid) + 1)
+            fun refresh() {
+                val now = inputs.map { it.text?.toString()?.trim().orEmpty() }
+                image.setImageBitmap(runCatching { preview(now) }.getOrNull())
+            }
+            val watcher = object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) = refresh()
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            }
+            inputs.forEach { it.addTextChangedListener(watcher) }
+            refresh()
         }
 
         ThemeManager.applyTheme(grid)

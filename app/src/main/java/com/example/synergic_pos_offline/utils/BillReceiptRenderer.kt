@@ -801,7 +801,7 @@ class BillReceiptRenderer(context: Context) {
                 DatabaseHelper.Tables.MD_HEADERS, "header_text", "header_number", "header_type",
                 headerStoreId
             )
-            renderLogos(view)
+            renderLogos(view, paperDots)
 
             // Bill header + totals.
             var billNumber = ""
@@ -2396,13 +2396,22 @@ class BillReceiptRenderer(context: Context) {
      * memory for pixels nobody sees. The most recently added logo of each type
      * wins, which is what an operator replacing an old one expects.
      */
-    private fun renderLogos(view: View) {
+    private fun renderLogos(view: View, paperDots: Int) {
         val dao = LogoDao(ctx)
+        val density = ctx.resources.displayMetrics.density
+        val contentPx = ((CARD_WIDTH_DP.toDouble() * paperDots / REFERENCE_PAPER_DOTS -
+            CARD_PADDING_DP * 2) * density).toInt().coerceAtLeast(1)
         listOf(
             LogoDao.LogoType.BILL_HEADER to R.id.ivBillHeaderLogo,
             LogoDao.LogoType.BILL_FOOTER to R.id.ivBillFooterLogo
         ).forEach { (type, viewId) ->
             val target = view.findViewById<android.widget.ImageView>(viewId)
+            // Sized by width (the layouts' fixed maxHeight is lifted), centred.
+            target.maxHeight = Int.MAX_VALUE
+            target.layoutParams = (target.layoutParams as LinearLayout.LayoutParams).apply {
+                width = (contentPx * dao.sizeOf(type).billFraction).toInt().coerceAtLeast(1)
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
             val bitmap = dao.getAll(listOf(type)).lastOrNull()?.image
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { ImageUtils.decodeThumb(it, LOGO_PX) }

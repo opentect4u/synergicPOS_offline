@@ -9,6 +9,7 @@ import com.example.synergic_pos_offline.utils.PrintLog
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.example.synergic_pos_offline.utils.TsplLabel
+import com.example.synergic_pos_offline.utils.TsplPreview
 
 /**
  * Master > Database Settings > Barcode: give the catalogue its barcodes.
@@ -28,10 +29,8 @@ import com.example.synergic_pos_offline.utils.TsplLabel
  *
  * - **Add.** There is no barcode record to create. A product is added in the product
  *   master, and it arrives here the moment it exists.
- * - **Edit.** Typing a code in by hand is the product form's job and it is already
- *   there. What this screen does to a code it does in bulk and by generating it - see
- *   [onBulkGenerate] - which is the one thing the product form cannot do, because it
- *   only ever has one product open.
+ * - **Edit.** The pen on a row sets that one product's barcode by hand - typed or
+ *   scanned - see [onEditRow]. Generating codes in bulk is still [onBulkGenerate].
  * - **Delete.** [showsDeleteAction] - the tick boxes here mean "give this a code", and
  *   a screen that selects rows in order to code them has no business removing them
  *   from the catalogue.
@@ -50,7 +49,7 @@ class BarcodeLabelsFragment : DataTableFragment() {
     override val columns = listOf("S.No", "Name", "Barcode")
 
     override val showsAddAction = false
-    override val showsEditAction = false
+    override val showsEditAction = true
     override val showsDeleteAction = false
     override val showsPrintAction = false
 
@@ -88,6 +87,73 @@ class BarcodeLabelsFragment : DataTableFragment() {
         }
         return rows
     }
+
+    // ---- Edit one barcode --------------------------------------------------
+
+    /** The pen on a row: change this product's barcode, and nothing else about it. */
+    override fun onEditRow(row: DataRow) {
+        val id = row.id.toIntOrNull() ?: return
+        val name = row.cells.getOrNull(1).orEmpty()
+        val current = row.cells.getOrNull(2).orEmpty().takeIf { it.any { c -> c.isLetterOrDigit() } }.orEmpty()
+        DialogUtils.showForm(
+            context = requireContext(),
+            title = "Edit barcode",
+            fields = listOf(
+                DialogUtils.FormField("Product", name, locked = true),
+                DialogUtils.FormField(
+                    label = "Barcode", value = current, maxLength = 48,
+                    // Generate, as on the product form: asks before replacing a code
+                    // that is already in the box, since it may have come off the packet.
+                    endIconRes = R.drawable.ic_barcode,
+                    onEndIcon = { typed, fill ->
+                        val generate = {
+                            val code = BarcodeGenerator.nextEan13 { barcodeExists(it) }
+                            fill(code)
+                            toast("Barcode $code generated")
+                        }
+                        if (typed.isEmpty()) generate()
+                        else DialogUtils.showConfirm(
+                            context = requireContext(),
+                            title = "Replace this barcode?",
+                            message = "This product already has the barcode $typed. If it was " +
+                                "scanned off the packet, replacing it will stop the scanner " +
+                                "finding this product.",
+                            positiveText = "Replace",
+                            destructive = true
+                        ) { generate() }
+                    }
+                )
+            ),
+            mandatoryFields = emptyList(),
+            positiveText = "Save",
+            negativeText = "Cancel"
+        ) { values ->
+            val code = values.getOrNull(1)?.trim().orEmpty()
+            // Another product already carrying this code would have the scanner ring up
+            // the wrong item, so it is refused outright. Blank clears the code.
+            if (code.isNotEmpty() && barcodeUsedElsewhere(code, id)) {
+                toast("Another product already has this barcode")
+                return@showForm
+            }
+            val cv = android.content.ContentValues().apply {
+                if (code.isEmpty()) putNull("bar_code") else put("bar_code", code)
+            }
+            val rows = DatabaseHelper.getInstance(requireContext()).writableDatabase.update(
+                DatabaseHelper.Tables.MD_PRODUCTS, cv, "id = ?", arrayOf(id.toString())
+            )
+            if (rows > 0) {
+                refreshRows()
+                toast("Barcode updated")
+            } else toast("Could not update the barcode")
+        }
+    }
+
+    private fun barcodeUsedElsewhere(code: String, productId: Int): Boolean = runCatching {
+        DatabaseHelper.getInstance(requireContext()).readableDatabase.rawQuery(
+            "SELECT 1 FROM ${DatabaseHelper.Tables.MD_PRODUCTS} WHERE bar_code = ? AND id <> ? LIMIT 1",
+            arrayOf(code, productId.toString())
+        ).use { it.moveToFirst() }
+    }.getOrDefault(false)
 
     // ---- Print one label ---------------------------------------------------
 
@@ -214,15 +280,37 @@ class BarcodeLabelsFragment : DataTableFragment() {
                     value = savedStock(KEY_ACROSS, TsplLabel.STICKERS_ACROSS),
                     inputType = "number", maxLength = 1
                 ),
+                // Two gaps, because they are two different measurements: sideways between
+                // the stickers across the roll, and down the roll between one label and
+                // the next. Both open on 2mm.
                 DialogUtils.FormField(
-                    label = "Gap between labels (mm)",
+                    label = "Horizontal gap (mm)",
+                    value = savedStock(KEY_HGAP, TsplLabel.LABEL_GAP_MM),
+                    inputType = "number", maxLength = 2
+                ),
+                DialogUtils.FormField(
+                    label = "Vertical gap (mm)",
                     value = savedStock(KEY_GAP, TsplLabel.LABEL_GAP_MM),
                     inputType = "number", maxLength = 2
                 )
             ),
             mandatoryFields = listOf(1, 2, 3, 4),
             positiveText = "Print",
-            negativeText = "Cancel"
+            negativeText = "Cancel",
+            // What the sticker will look like, redrawn as the size and gaps are typed.
+            // Built by the same TsplLabel.build the print uses, so it cannot drift.
+            preview = { v ->
+                fun n(i: Int) = v.getOrNull(i)?.toIntOrNull() ?: 0
+                val across = n(4).coerceAtLeast(1)
+                val job = TsplLabel.build(
+                    widthMm = n(2).coerceAtLeast(1), heightMm = n(3).coerceAtLeast(1),
+                    gapMm = n(6), hGapMm = n(5), across = across,
+                    productName = name, code = code,
+                    price = product.price, mrp = product.mrp,
+                    copies = across, shopName = TsplLabel.shopNameOf(requireContext())
+                )
+                TsplPreview.render(job, vGapMm = n(6), across = across, hGapMm = n(5))
+            }
         ) { values ->
             val asked = values.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
             if (asked <= 0) {
@@ -232,8 +320,10 @@ class BarcodeLabelsFragment : DataTableFragment() {
             val widthMm = values.getOrNull(2)?.trim()?.toIntOrNull() ?: 0
             val heightMm = values.getOrNull(3)?.trim()?.toIntOrNull() ?: 0
             val across = values.getOrNull(4)?.trim()?.toIntOrNull() ?: 0
-            // Blank gap means continuous stock, which is a real answer and means none.
-            val gapMm = (values.getOrNull(5)?.trim()?.toIntOrNull() ?: 0).coerceAtLeast(0)
+            // Blank gap means none, which is a real answer (continuous stock for the
+            // vertical one).
+            val hGapMm = (values.getOrNull(5)?.trim()?.toIntOrNull() ?: 0).coerceAtLeast(0)
+            val gapMm = (values.getOrNull(6)?.trim()?.toIntOrNull() ?: 0).coerceAtLeast(0)
 
             if (widthMm <= 0 || heightMm <= 0) {
                 PrintLog.d(requireContext(), LOG_TAG, "STOPPED: label size ${widthMm}x$heightMm is not usable")
@@ -249,14 +339,15 @@ class BarcodeLabelsFragment : DataTableFragment() {
             PrintLog.d(
                 requireContext(), LOG_TAG,
                 "operator asked for $asked label(s), printing $copies on " +
-                    "${widthMm}x${heightMm}mm, $across across, ${gapMm}mm gap"
+                    "${widthMm}x${heightMm}mm, $across across, ${hGapMm}mm horizontal gap, ${gapMm}mm vertical gap"
             )
-            rememberStock(widthMm, heightMm, across, gapMm)
+            rememberStock(widthMm, heightMm, across, gapMm, hGapMm)
 
             val job = TsplLabel.build(
                 widthMm = widthMm,
                 heightMm = heightMm,
                 gapMm = gapMm,
+                hGapMm = hGapMm,
                 across = across,
                 productName = name,
                 code = code,
@@ -552,13 +643,14 @@ class BarcodeLabelsFragment : DataTableFragment() {
             ?: fallback.toString()
 
     /** Keeps this print's stock as the next print's defaults. */
-    private fun rememberStock(widthMm: Int, heightMm: Int, across: Int, gapMm: Int) {
+    private fun rememberStock(widthMm: Int, heightMm: Int, across: Int, gapMm: Int, hGapMm: Int) {
         runCatching {
             AppSettingsDao(requireContext()).apply {
                 put(KEY_WIDTH, widthMm.toString())
                 put(KEY_HEIGHT, heightMm.toString())
                 put(KEY_ACROSS, across.toString())
                 put(KEY_GAP, gapMm.toString())
+                put(KEY_HGAP, hGapMm.toString())
             }
         }.onFailure {
             // Not worth failing a print over: the label still comes out, and the only
@@ -603,5 +695,6 @@ class BarcodeLabelsFragment : DataTableFragment() {
         private const val KEY_HEIGHT = "barcode_label_height_mm"
         private const val KEY_ACROSS = "barcode_label_across"
         private const val KEY_GAP = "barcode_label_gap_mm"
+        private const val KEY_HGAP = "barcode_label_hgap_mm"
     }
 }

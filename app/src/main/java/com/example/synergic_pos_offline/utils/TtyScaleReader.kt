@@ -73,16 +73,28 @@ object TtyScaleReader {
      * tells whoever is setting the till up that the port needs opening at the platform
      * level. Hiding it would look like the port does not exist.
      */
-    fun availablePorts(): List<String> = runCatching {
-        File("/dev").listFiles()
-            ?.map { it.name }
-            ?.filter { NODE_PATTERN.matches(it) }
-            ?.sortedWith(compareBy({ it.takeWhile { c -> !c.isDigit() } }, { nodeIndex(it) }))
-            ?.map { "/dev/$it" }
-            .orEmpty()
-    }.getOrElse {
-        Log.w(TAG, "Could not list /dev", it)
-        emptyList()
+    fun availablePorts(): List<String> {
+        val order = compareBy<String>({ it.takeWhile { c -> !c.isDigit() } }, { nodeIndex(it) })
+        val listed = runCatching {
+            File("/dev").listFiles()
+                ?.map { it.name }
+                ?.filter { NODE_PATTERN.matches(it) }
+                ?.sortedWith(order)
+                ?.map { "/dev/$it" }
+        }.getOrNull()
+        if (!listed.isNullOrEmpty()) return listed
+
+        // Listing /dev returns null on many Android builds (SELinux denies an ordinary
+        // app a directory read), which left the dropdown with nothing but USB. Fall back
+        // to the well-known node names: probe each for existence, and if even that is
+        // refused offer the usual candidates anyway - picking one that is absent reports
+        // "No serial port at ..." rather than the port silently not being offered.
+        Log.w(TAG, "Could not list /dev; probing known serial nodes")
+        val candidates = (0..15).map { "ttyS$it" } + (0..7).map { "ttyUSB$it" } +
+            (0..7).map { "ttyACM$it" }
+        val present = candidates.filter { runCatching { File("/dev/$it").exists() }.getOrDefault(false) }
+        val common = (0..9).map { "ttyS$it" } + (0..3).map { "ttyUSB$it" } + (0..3).map { "ttyACM$it" }
+        return (present.ifEmpty { common }).sortedWith(order).map { "/dev/$it" }
     }
 
     /** ttyS7 sorts after ttyS10 as text; this is what keeps the dropdown in order. */

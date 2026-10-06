@@ -51,7 +51,7 @@ class UdfWiseItemReportFragment : Fragment(), TitledScreen {
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
-    ): View = inflater.inflate(R.layout.fragment_customer_payment_report, container, false)
+    ): View = inflater.inflate(R.layout.fragment_udf_wise_item_report, container, false)
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)

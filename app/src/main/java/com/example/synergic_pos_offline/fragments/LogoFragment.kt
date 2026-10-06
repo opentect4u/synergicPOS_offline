@@ -153,6 +153,7 @@ abstract class LogoFragment : DataTableFragment() {
         val cardImage = view.findViewById<MaterialCardView>(R.id.cardImage)
         val ivImage = view.findViewById<ImageView>(R.id.ivLogoImage)
         val actvType = view.findViewById<MaterialAutoCompleteTextView>(R.id.actvLogoType)
+        val actvSize = view.findViewById<MaterialAutoCompleteTextView>(R.id.actvLogoSize)
         val btnSave = view.findViewById<MaterialButton>(R.id.btnFormPositive)
         val btnCancel = view.findViewById<MaterialButton>(R.id.btnFormNegative)
 
@@ -161,6 +162,9 @@ abstract class LogoFragment : DataTableFragment() {
         pendingImageBytes?.let { showPreview(ivImage, it) }
 
         actvType.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, myTypes.map { it.label }))
+        actvSize.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, LogoDao.LogoSize.values().map { it.label }))
+        val initialType = LogoType.fromLabel(existing?.cells?.getOrNull(COL_TYPE)) ?: myTypes.first()
+        actvSize.setText(dao.sizeOf(initialType).label, false)
         tvTitle.text = if (existing == null) "Add Logo" else "Edit Logo"
         actvType.setText(
             existing?.cells?.getOrNull(COL_TYPE) ?: myTypes.first().label, false
@@ -180,6 +184,7 @@ abstract class LogoFragment : DataTableFragment() {
         btnSave.setOnClickListener {
             val type = LogoType.fromLabel(actvType.text?.toString()) ?: myTypes.first()
             val image = pendingImageBytes
+            dao.setSize(type, LogoDao.LogoSize.fromLabel(actvSize.text?.toString()) ?: LogoDao.LogoSize.MEDIUM)
             if (image == null) {
                 toast("Please upload a logo image")
                 return@setOnClickListener
