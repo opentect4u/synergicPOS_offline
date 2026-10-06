@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Customer Payment Report: a date range in, every customer-payment collection of
-  that period out as a table with a collapsible summary. The print
-  matches the classic slip - see CustomerPaymentReportRenderer.
+  UDF Wise Item Report: a date range in, the matching rows out as stacked blocks,
+  with the total under them. Its own copy of the layout, so it is independent of
+  the Customer Payment Report screen.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -34,7 +34,6 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:gravity="center_vertical"
                     android:baselineAligned="false">
 
                     <com.google.android.material.textfield.TextInputLayout
@@ -78,12 +77,20 @@
                             android:inputType="none"
                             android:maxLines="1" />
                     </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:baselineAligned="false"
+                    android:layout_marginTop="14dp">
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnGenerate"
-                        android:layout_width="wrap_content"
+                        android:layout_width="0dp"
                         android:layout_height="52dp"
-                        android:layout_marginStart="12dp"
+                        android:layout_weight="1"
                         android:text="Generate"
                         android:textStyle="bold"
                         android:insetTop="0dp"
@@ -213,113 +220,18 @@
                 app:cardElevation="2dp"
                 app:cardBackgroundColor="@color/white">
 
-                <HorizontalScrollView
-                    android:id="@+id/hsvReportTable"
+                <ScrollView
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:scrollbars="none">
+                    android:scrollbars="vertical">
 
                     <LinearLayout
-                        android:layout_width="wrap_content"
-                        android:layout_height="match_parent"
-                        android:orientation="vertical">
-
-                        <!-- Filled by the fragment, so the header cannot drift from
-                             the rows it labels: both are built from one column list. -->
-                        <LinearLayout
-                            android:id="@+id/llReportHeader"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal" />
-
-                        <View
-                            android:layout_width="match_parent"
-                            android:layout_height="1dp"
-                            android:background="#D8DCE0" />
-
-                        <!-- Recycled, not a view per cell: a month of a busy till is
-                             thousands of bills, and nine TextViews apiece would be
-                             laid out before the report could appear. Its width is
-                             set in code to the columns' total, so it scrolls
-                             sideways with the header above it. -->
-                        <androidx.recyclerview.widget.RecyclerView
-                            android:id="@+id/rvReportRows"
-                            android:layout_width="wrap_content"
-                            android:layout_height="0dp"
-                            android:layout_weight="1"
-                            android:scrollbars="vertical" />
-                    </LinearLayout>
-                </HorizontalScrollView>
-            </com.google.android.material.card.MaterialCardView>
-
-            <!-- Period summary. Outside the sideways scroll on purpose. -->
-            <com.google.android.material.card.MaterialCardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                app:cardCornerRadius="16dp"
-                app:cardElevation="2dp"
-                app:cardBackgroundColor="@color/white">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="12dp">
-
-                    <!-- Folded shut by default - see ReportSummaryFold. The header
-                         carries the total while it is; tapping it (or the chevron)
-                         unfolds llReportSummary below to the full breakdown. -->
-                    <LinearLayout
-                        android:id="@+id/llReportSummaryHeader"
+                        android:id="@+id/llCpRows"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:background="?attr/selectableItemBackground"
-                        android:clickable="true"
-                        android:focusable="true">
-
-                        <TextView
-                            android:id="@+id/tvSummaryTitle"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="SUMMARY"
-                            android:textSize="11sp"
-                            android:textStyle="bold"
-                            android:textColor="@color/text_secondary" />
-
-                        <!-- Shown only while the detail below is folded shut. -->
-                        <TextView
-                            android:id="@+id/tvReportSummaryTotal"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginEnd="6dp"
-                            android:textSize="13sp"
-                            android:textStyle="bold"
-                            android:textColor="@color/text_main" />
-
-                        <ImageButton
-                            android:id="@+id/btnToggleReportSummary"
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:background="?attr/selectableItemBackgroundBorderless"
-                            android:src="@drawable/ic_expand_less"
-                            app:tint="@color/text_secondary"
-                            android:contentDescription="Expand summary" />
-                    </LinearLayout>
-
-                    <!-- One row per figure, built by the fragment from the same
-                         report object the rows and the printout come from. -->
-                    <LinearLayout
-                        android:id="@+id/llReportSummary"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
                         android:orientation="vertical"
-                        android:visibility="gone" />
-                </LinearLayout>
+                        android:padding="14dp" />
+                </ScrollView>
             </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
     </LinearLayout>
