@@ -13,6 +13,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.CustomerPaymentReportDao
 import com.example.synergic_pos_offline.utils.BusyDialog
@@ -20,6 +22,8 @@ import com.example.synergic_pos_offline.utils.CustomerPaymentReportRenderer
 import com.example.synergic_pos_offline.utils.PrinterSetup
 import com.example.synergic_pos_offline.utils.ReportDownloads
 import com.example.synergic_pos_offline.utils.ReportExport
+import com.example.synergic_pos_offline.utils.ReportSummaryFold
+import com.example.synergic_pos_offline.utils.ReportTable
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.google.android.material.button.MaterialButton
@@ -42,6 +46,9 @@ class CustomerPaymentReportFragment : Fragment(), TitledScreen {
     private var report: CustomerPaymentReportDao.Report? = null
 
     private lateinit var root: View
+
+    /** What each column is drawn at - the declared minimums until [ReportTable] stretches them. */
+    private var columnPx: IntArray = IntArray(0)
     private lateinit var etFrom: TextInputEditText
     private lateinit var etTo: TextInputEditText
     private lateinit var btnPrint: MaterialButton
@@ -82,6 +89,8 @@ class CustomerPaymentReportFragment : Fragment(), TitledScreen {
         downloads = ReportDownloads.wire(
             view, requireContext(), accent, { if (isAdded) toast(it) }
         ) { report?.let { sheetOf(it) } }
+
+        ReportSummaryFold.wire(view)
     }
 
     // ---- Generating ----------------------------------------------------------
@@ -118,18 +127,51 @@ class CustomerPaymentReportFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvReportPeriod).text =
             "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.entries.size} payment(s)"
 
-        val container = root.findViewById<LinearLayout>(R.id.llCpRows)
-        container.removeAllViews()
-        r.entries.forEachIndexed { i, e ->
-            if (i > 0) container.addView(divider())
-            container.addView(spread("C.ID : ${e.customerId}", "C.NAME: ${e.customerName.uppercase()}"))
-            container.addView(spread(dateTime(e.paymentDateTime), "B.NO:${e.billNo}"))
-            container.addView(kv("PAID AMT", money(e.paidAmount)))
-            container.addView(kv("BALANCE AMT", money(e.balanceAmount)))
+        // Fills the card where there is room to spare and scrolls sideways where there
+        // is not - the same table the other period reports draw.
+        columnPx = COLUMNS.map { dp(it.widthDp) }.toIntArray()
+        drawTable(r)
+        root.findViewById<View>(R.id.hsvReportTable).let { table ->
+            table.post {
+                if (!isAdded) return@post
+                val available = table.width - dp(ROW_PADDING_DP) * 2
+                val stretched = ReportTable.stretch(COLUMNS.map { dp(it.widthDp) }.toIntArray(), available)
+                if (!stretched.contentEquals(columnPx)) {
+                    columnPx = stretched
+                    drawTable(r)
+                }
+            }
         }
-        container.addView(divider())
-        container.addView(kv("TOTAL PAID", money(r.totalPaid), emphasised = true))
     }
+
+    private fun drawTable(r: CustomerPaymentReportDao.Report) {
+        val header = root.findViewById<LinearLayout>(R.id.llReportHeader)
+        header.removeAllViews()
+        header.addView(tableRow(COLUMNS.map { it.label }, index = -1))
+
+        val rows = root.findViewById<RecyclerView>(R.id.rvReportRows)
+        rows.layoutParams = rows.layoutParams.apply {
+            width = columnPx.sum() + dp(ROW_PADDING_DP) * 2
+        }
+        rows.layoutManager = LinearLayoutManager(requireContext())
+        rows.adapter = EntryAdapter(r.entries)
+
+        val summary = root.findViewById<LinearLayout>(R.id.llReportSummary)
+        summary.removeAllViews()
+        summary.addView(summaryRow("Total Payments", r.entries.size.toString()))
+        summary.addView(summaryRow("Total Paid", money(r.totalPaid), emphasised = true))
+        ReportSummaryFold.setTotal(root, money(r.totalPaid))
+        ReportSummaryFold.collapse(root)
+    }
+
+    private fun cellsOf(e: CustomerPaymentReportDao.Entry): List<String> = listOf(
+        e.customerId.toString(),
+        e.customerName.uppercase(),
+        dateTime(e.paymentDateTime),
+        e.billNo,
+        money(e.paidAmount),
+        money(e.balanceAmount)
+    )
 
     /**
      * The screen as a downloadable table - one row per payment, where the card stacks
@@ -140,16 +182,7 @@ class CustomerPaymentReportFragment : Fragment(), TitledScreen {
         subtitle = "${pretty(r.fromDate)}  to  ${pretty(r.toDate)}   •   ${r.entries.size} payment(s)",
         columns = listOf("CUST ID", "CUSTOMER", "DATE & TIME", "BILL NO", "PAID AMT", "BALANCE AMT"),
         alignEnd = listOf(false, false, false, false, true, true),
-        rows = r.entries.map {
-            listOf(
-                it.customerId.toString(),
-                it.customerName,
-                dateTime(it.paymentDateTime),
-                it.billNo,
-                money(it.paidAmount),
-                money(it.balanceAmount)
-            )
-        },
+        rows = r.entries.map { cellsOf(it) },
         summary = listOf(
             "Payments" to r.entries.size.toString(),
             "Total Paid" to money(r.totalPaid)
@@ -193,52 +226,87 @@ class CustomerPaymentReportFragment : Fragment(), TitledScreen {
         }
     }
 
-    // ---- On-screen block builders (mirror the printed slip) ------------------
+    // ---- Table ---------------------------------------------------------------
 
-    private fun spread(left: String, right: String): View =
-        LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(2), 0, dp(2))
-            addView(cell(left, Gravity.START))
-            addView(cell(right, Gravity.END))
+    private data class Column(val label: String, val widthDp: Int, val alignEnd: Boolean)
+
+    private inner class EntryAdapter(
+        private val entries: List<CustomerPaymentReportDao.Entry>
+    ) : RecyclerView.Adapter<EntryAdapter.Holder>() {
+
+        inner class Holder(val row: LinearLayout) : RecyclerView.ViewHolder(row)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder =
+            Holder(tableRow(COLUMNS.map { "" }, index = 0) as LinearLayout)
+
+        override fun onBindViewHolder(holder: Holder, position: Int) {
+            cellsOf(entries[position]).forEachIndexed { i, value ->
+                (holder.row.getChildAt(i) as? TextView)?.text = value
+            }
+            holder.row.setBackgroundColor(
+                if (position % 2 == 1) Color.parseColor("#FFFFFF") else Color.parseColor("#F7F8FA")
+            )
         }
 
-    private fun kv(label: String, value: String, emphasised: Boolean = false): View =
+        override fun getItemCount(): Int = entries.size
+    }
+
+    /** One row - the header when [index] is negative - built from the one column list. */
+    private fun tableRow(values: List<String>, index: Int): View {
+        val header = index < 0
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(ROW_PADDING_DP), dp(10), dp(ROW_PADDING_DP), dp(10))
+            setBackgroundColor(
+                when {
+                    header -> Color.parseColor("#ECEFF1")
+                    index % 2 == 1 -> Color.parseColor("#FFFFFF")
+                    else -> Color.parseColor("#F7F8FA")
+                }
+            )
+            COLUMNS.forEachIndexed { i, column ->
+                addView(TextView(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(columnPx[i], -2)
+                    text = values.getOrNull(i).orEmpty()
+                    textSize = 12f
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    gravity = if (column.alignEnd) Gravity.END else Gravity.START
+                    setPadding(dp(8), 0, dp(8), 0)
+                    setTypeface(Typeface.MONOSPACE, if (header) Typeface.BOLD else Typeface.NORMAL)
+                    setTextColor(
+                        resources.getColor(
+                            if (header) R.color.text_secondary else R.color.text_main, null
+                        )
+                    )
+                })
+            }
+        }
+    }
+
+    /** A "Label ........ value" line of the summary card. */
+    private fun summaryRow(label: String, value: String, emphasised: Boolean = false): View =
         LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(2), 0, dp(2))
-            addView(TextView(requireContext()).apply {
-                text = label.padEnd(LABEL_WIDTH) + " :"
-                textSize = if (emphasised) 14f else 13f
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(3), 0, dp(3))
+            addView(TextView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                text = label
+                textSize = if (emphasised) 13f else 11.5f
                 setTypeface(Typeface.MONOSPACE, if (emphasised) Typeface.BOLD else Typeface.NORMAL)
                 setTextColor(resources.getColor(R.color.text_secondary, null))
             })
-            addView(TextView(requireContext()).apply {
+            addView(TextView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(-2, -2)
                 text = value
-                textSize = if (emphasised) 15f else 13f
+                textSize = if (emphasised) 14f else 11.5f
                 gravity = Gravity.END
                 setTypeface(Typeface.MONOSPACE, if (emphasised) Typeface.BOLD else Typeface.NORMAL)
                 setTextColor(resources.getColor(R.color.text_main, null))
-                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
             })
         }
-
-    private fun cell(text: String, gravity: Int): View = TextView(requireContext()).apply {
-        this.text = text
-        textSize = 13f
-        this.gravity = gravity
-        maxLines = 1
-        setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
-        setTextColor(resources.getColor(R.color.text_main, null))
-        layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
-    }
-
-    private fun divider(): View = View(requireContext()).apply {
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, dp(1)
-        ).also { it.topMargin = dp(6); it.bottomMargin = dp(6) }
-        setBackgroundColor(Color.parseColor("#D8DCE0"))
-    }
 
     // ---- Small helpers -------------------------------------------------------
 
@@ -281,6 +349,16 @@ class CustomerPaymentReportFragment : Fragment(), TitledScreen {
         Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
 
     private companion object {
-        const val LABEL_WIDTH = 12
+        /** Side padding on every row, header included - and on the list holding them. */
+        const val ROW_PADDING_DP = 6
+
+        val COLUMNS = listOf(
+            Column("CUST ID", 90, alignEnd = false),
+            Column("CUSTOMER", 160, alignEnd = false),
+            Column("DATE & TIME", 150, alignEnd = false),
+            Column("BILL NO", 120, alignEnd = false),
+            Column("PAID AMT", 110, alignEnd = true),
+            Column("BALANCE AMT", 120, alignEnd = true)
+        )
     }
 }

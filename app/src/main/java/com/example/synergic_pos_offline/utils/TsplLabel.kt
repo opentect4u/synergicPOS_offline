@@ -123,7 +123,12 @@ object TsplLabel {
      *                 to be told the whole thing, and the sticker is this divided by
      *                 [across]
      * @param heightMm the label's height in mm
-     * @param gapMm    the gap between one label and the next, 0 on continuous stock
+     * @param gapMm    the VERTICAL gap: between one label and the next down the roll,
+     *                 0 on continuous stock. Goes to the printer as `GAP`
+     * @param hGapMm   the HORIZONTAL gap: the clear space between neighbouring stickers
+     *                 across the roll. Taken out of [widthMm], so each sticker is
+     *                 `(widthMm - hGapMm * (across - 1)) / across` wide and the columns
+     *                 sit that far apart. Irrelevant with one sticker across
      * @param across   how many stickers are printed side by side across [widthMm]
      * @param price    what the customer pays; printed as OUR PRICE when [mrp] is also
      *                 given, and as the only price line when it is not
@@ -143,7 +148,8 @@ object TsplLabel {
         heightMm: Int = LABEL_HEIGHT_MM,
         gapMm: Int = LABEL_GAP_MM,
         across: Int = STICKERS_ACROSS,
-        shopName: String = ""
+        shopName: String = "",
+        hGapMm: Int = 0
     ): ByteArray {
         // Guarded here rather than trusted from the caller: a zero width would divide
         // by zero working out the sticker, and a zero count would tell the printer to
@@ -151,6 +157,7 @@ object TsplLabel {
         val rollWidth = widthMm.coerceAtLeast(1)
         val rollHeight = heightMm.coerceAtLeast(1)
         val gap = gapMm.coerceAtLeast(0)
+        val hGap = hGapMm.coerceAtLeast(0)
         val perRow = across.coerceAtLeast(1)
         val wanted = copies.coerceAtLeast(1)
         val fullRows = wanted / perRow
@@ -159,7 +166,7 @@ object TsplLabel {
         val out = StringBuilder()
         if (fullRows > 0) {
             out.append(
-                block(rollWidth, rollHeight, gap, perRow, perRow, fullRows, productName, code, price, mrp, shopName)
+                block(rollWidth, rollHeight, gap, hGap, perRow, perRow, fullRows, productName, code, price, mrp, shopName)
             )
         }
         // The odd one out. Same physical label - the stock does not change - with only
@@ -167,7 +174,7 @@ object TsplLabel {
         // of one spare sticker per print that has to be peeled off and binned.
         if (remainder > 0) {
             out.append(
-                block(rollWidth, rollHeight, gap, perRow, remainder, 1, productName, code, price, mrp, shopName)
+                block(rollWidth, rollHeight, gap, hGap, perRow, remainder, 1, productName, code, price, mrp, shopName)
             )
         }
         // TSPL is a text protocol and the printer's parser is byte-oriented; anything
@@ -208,6 +215,23 @@ object TsplLabel {
     }.getOrDefault("")
 
     /**
+     * One sticker's width and the horizontal gap actually used, both in dots.
+     *
+     * The gap comes out of the roll's width, so the stickers and the gaps between them
+     * add back up to exactly the web the printer was told about. It is kept from
+     * squeezing a sticker below half its share on a gap typed too large. Shared with
+     * [TsplPreview] so the preview draws the stickers where they print.
+     */
+    internal fun stickerLayout(widthMm: Int, across: Int, hGapMm: Int): Pair<Int, Int> {
+        val perRow = across.coerceAtLeast(1)
+        val rollDots = widthMm.coerceAtLeast(1) * DOTS_PER_MM
+        val hGapDots = if (perRow > 1) {
+            (hGapMm.coerceAtLeast(0) * DOTS_PER_MM).coerceAtMost(rollDots / (perRow * 2))
+        } else 0
+        return (rollDots - hGapDots * (perRow - 1)) / perRow to hGapDots
+    }
+
+    /**
      * One label definition and the instruction to print [rows] of it.
      *
      * [across] is how many sticker cells the stock has; [fill] is how many of them this
@@ -223,6 +247,7 @@ object TsplLabel {
         widthMm: Int,
         heightMm: Int,
         gapMm: Int,
+        hGapMm: Int,
         across: Int,
         fill: Int,
         rows: Int,
@@ -232,7 +257,10 @@ object TsplLabel {
         mrp: Double?,
         shopName: String
     ): String {
-        val stickerDots = widthMm * DOTS_PER_MM / across
+        // The horizontal gap comes out of the roll's width, so the stickers and the gaps
+        // between them add back up to exactly the web the printer was told about. Kept
+        // from squeezing a sticker to nothing on a gap typed too large.
+        val (stickerDots, hGapDots) = stickerLayout(widthMm, across, hGapMm)
         val heightDots = heightMm * DOTS_PER_MM
         // Both are 1.0 on the usual stock - the sticker is exactly the 400 x 200 dots
         // the reference template was drawn for - so its proven coordinates go out
@@ -254,7 +282,7 @@ object TsplLabel {
 
         repeat(fill) { column ->
             out.append(
-                sticker(column * stickerDots, sx, sy, productName, code, price, mrp, shopName)
+                sticker(column * (stickerDots + hGapDots), sx, sy, productName, code, price, mrp, shopName)
             )
         }
 

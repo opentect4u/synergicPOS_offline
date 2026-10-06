@@ -9,6 +9,7 @@ import com.example.synergic_pos_offline.utils.PrintLog
 import com.example.synergic_pos_offline.utils.SessionManager
 import com.example.synergic_pos_offline.utils.ThermalPrinter
 import com.example.synergic_pos_offline.utils.TsplLabel
+import com.example.synergic_pos_offline.utils.TsplPreview
 
 /**
  * Master > Database Settings > Barcode: give the catalogue its barcodes.
@@ -279,15 +280,37 @@ class BarcodeLabelsFragment : DataTableFragment() {
                     value = savedStock(KEY_ACROSS, TsplLabel.STICKERS_ACROSS),
                     inputType = "number", maxLength = 1
                 ),
+                // Two gaps, because they are two different measurements: sideways between
+                // the stickers across the roll, and down the roll between one label and
+                // the next. Both open on 2mm.
                 DialogUtils.FormField(
-                    label = "Gap between labels (mm)",
+                    label = "Horizontal gap (mm)",
+                    value = savedStock(KEY_HGAP, TsplLabel.LABEL_GAP_MM),
+                    inputType = "number", maxLength = 2
+                ),
+                DialogUtils.FormField(
+                    label = "Vertical gap (mm)",
                     value = savedStock(KEY_GAP, TsplLabel.LABEL_GAP_MM),
                     inputType = "number", maxLength = 2
                 )
             ),
             mandatoryFields = listOf(1, 2, 3, 4),
             positiveText = "Print",
-            negativeText = "Cancel"
+            negativeText = "Cancel",
+            // What the sticker will look like, redrawn as the size and gaps are typed.
+            // Built by the same TsplLabel.build the print uses, so it cannot drift.
+            preview = { v ->
+                fun n(i: Int) = v.getOrNull(i)?.toIntOrNull() ?: 0
+                val across = n(4).coerceAtLeast(1)
+                val job = TsplLabel.build(
+                    widthMm = n(2).coerceAtLeast(1), heightMm = n(3).coerceAtLeast(1),
+                    gapMm = n(6), hGapMm = n(5), across = across,
+                    productName = name, code = code,
+                    price = product.price, mrp = product.mrp,
+                    copies = across, shopName = TsplLabel.shopNameOf(requireContext())
+                )
+                TsplPreview.render(job, vGapMm = n(6), across = across, hGapMm = n(5))
+            }
         ) { values ->
             val asked = values.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
             if (asked <= 0) {
@@ -297,8 +320,10 @@ class BarcodeLabelsFragment : DataTableFragment() {
             val widthMm = values.getOrNull(2)?.trim()?.toIntOrNull() ?: 0
             val heightMm = values.getOrNull(3)?.trim()?.toIntOrNull() ?: 0
             val across = values.getOrNull(4)?.trim()?.toIntOrNull() ?: 0
-            // Blank gap means continuous stock, which is a real answer and means none.
-            val gapMm = (values.getOrNull(5)?.trim()?.toIntOrNull() ?: 0).coerceAtLeast(0)
+            // Blank gap means none, which is a real answer (continuous stock for the
+            // vertical one).
+            val hGapMm = (values.getOrNull(5)?.trim()?.toIntOrNull() ?: 0).coerceAtLeast(0)
+            val gapMm = (values.getOrNull(6)?.trim()?.toIntOrNull() ?: 0).coerceAtLeast(0)
 
             if (widthMm <= 0 || heightMm <= 0) {
                 PrintLog.d(requireContext(), LOG_TAG, "STOPPED: label size ${widthMm}x$heightMm is not usable")
@@ -314,14 +339,15 @@ class BarcodeLabelsFragment : DataTableFragment() {
             PrintLog.d(
                 requireContext(), LOG_TAG,
                 "operator asked for $asked label(s), printing $copies on " +
-                    "${widthMm}x${heightMm}mm, $across across, ${gapMm}mm gap"
+                    "${widthMm}x${heightMm}mm, $across across, ${hGapMm}mm horizontal gap, ${gapMm}mm vertical gap"
             )
-            rememberStock(widthMm, heightMm, across, gapMm)
+            rememberStock(widthMm, heightMm, across, gapMm, hGapMm)
 
             val job = TsplLabel.build(
                 widthMm = widthMm,
                 heightMm = heightMm,
                 gapMm = gapMm,
+                hGapMm = hGapMm,
                 across = across,
                 productName = name,
                 code = code,
@@ -617,13 +643,14 @@ class BarcodeLabelsFragment : DataTableFragment() {
             ?: fallback.toString()
 
     /** Keeps this print's stock as the next print's defaults. */
-    private fun rememberStock(widthMm: Int, heightMm: Int, across: Int, gapMm: Int) {
+    private fun rememberStock(widthMm: Int, heightMm: Int, across: Int, gapMm: Int, hGapMm: Int) {
         runCatching {
             AppSettingsDao(requireContext()).apply {
                 put(KEY_WIDTH, widthMm.toString())
                 put(KEY_HEIGHT, heightMm.toString())
                 put(KEY_ACROSS, across.toString())
                 put(KEY_GAP, gapMm.toString())
+                put(KEY_HGAP, hGapMm.toString())
             }
         }.onFailure {
             // Not worth failing a print over: the label still comes out, and the only
@@ -668,5 +695,6 @@ class BarcodeLabelsFragment : DataTableFragment() {
         private const val KEY_HEIGHT = "barcode_label_height_mm"
         private const val KEY_ACROSS = "barcode_label_across"
         private const val KEY_GAP = "barcode_label_gap_mm"
+        private const val KEY_HGAP = "barcode_label_hgap_mm"
     }
 }

@@ -440,6 +440,11 @@ object DialogUtils {
          */
         showClose: Boolean = false,
         onCancel: (() -> Unit)? = null,
+        /**
+         * A picture shown just under the fields and redrawn whenever one of them
+         * changes. Handed the fields' current values; null draws nothing.
+         */
+        preview: ((List<String>) -> android.graphics.Bitmap?)? = null,
         onSave: (List<String>) -> Unit
     ) {
         val ctx = FixedFontScale.wrap(context)
@@ -712,6 +717,29 @@ object DialogUtils {
                 currentRow++
                 currentColumn = 0
             }
+        }
+
+        if (preview != null) {
+            val image = android.widget.ImageView(ctx).apply {
+                adjustViewBounds = true
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).also { it.setMargins(margin, 0, margin, margin) }
+                contentDescription = "Preview"
+            }
+            (grid.parent as ViewGroup).addView(image, (grid.parent as ViewGroup).indexOfChild(grid) + 1)
+            fun refresh() {
+                val now = inputs.map { it.text?.toString()?.trim().orEmpty() }
+                image.setImageBitmap(runCatching { preview(now) }.getOrNull())
+            }
+            val watcher = object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) = refresh()
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            }
+            inputs.forEach { it.addTextChangedListener(watcher) }
+            refresh()
         }
 
         ThemeManager.applyTheme(grid)
