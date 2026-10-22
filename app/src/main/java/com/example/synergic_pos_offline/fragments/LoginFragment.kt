@@ -320,9 +320,10 @@ class LoginFragment : Fragment() {
 
     /** Streams the file into the database, then makes the till this device. */
     private fun runRestore(uri: Uri, schemaVersion: Int?) =
-        BusyDialog.run(this, "Restoring…") {
+        BusyDialog.runWithProgress(this, "Restoring…") { progress ->
             val context = requireContext().applicationContext
-            val result = context.contentResolver.openInputStream(uri)?.use { stream ->
+            val result = com.example.synergic_pos_offline.utils.BackupFiles
+                .openWithProgress(context, uri, progress::percent)?.use { stream ->
                 stream.bufferedReader().useLines { lines ->
                     DatabaseBackup.restore(context, lines, schemaVersion)
                 }
@@ -331,6 +332,7 @@ class LoginFragment : Fragment() {
             // The registration that just landed names the device the backup came
             // from. Adopting it is what lets this tablet be logged into at all, so it
             // happens before the operator is told the restore worked.
+            if (result.ok) progress.status("Restored. Registering this device…")
             val adoption = if (result.ok) DeviceIdentity.adopt(context) else null
             // Then the server is told, on this same background thread. It is allowed
             // to fail: the till is already correct locally, and a shop setting up a

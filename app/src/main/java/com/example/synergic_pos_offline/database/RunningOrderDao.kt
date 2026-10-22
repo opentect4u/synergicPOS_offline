@@ -395,7 +395,7 @@ class RunningOrderDao(context: Context) {
         orderId: Long, productId: Long, name: String, qty: Double, rate: Double,
         cgstRate: Double = 0.0, sgstRate: Double = 0.0, vatRate: Double = 0.0,
         discValue: Double = 0.0, discType: String? = null, igstRate: Double = 0.0
-    ): Long {
+    ): Long = inTransaction {
         val db = helper.writableDatabase
         val lineId = db.query(
             items, arrayOf("id", "quantity"),
@@ -429,7 +429,7 @@ class RunningOrderDao(context: Context) {
         // Adding an item opens a KOT (if not already) and mirrors the new items as
         // PENDING under it — the "add item → td_kot OPEN, td_kot_item PENDING" step.
         syncPendingKot(orderId)
-        return lineId
+        lineId
     }
 
     fun itemsFor(orderId: Long): List<RunningItem> {
@@ -468,7 +468,7 @@ class RunningOrderDao(context: Context) {
      * kept, so reducing/removing a sent item leaves a pending cancellation to print.
      * A line only vanishes when nothing was ever sent (kot_qty = 0).
      */
-    fun setItemQty(itemId: Long, qty: Double) {
+    fun setItemQty(itemId: Long, qty: Double): Unit = inTransaction {
         val orderId = orderIdOfItem(itemId)
         val kotQty = kotQtyOf(itemId)
         if (qty <= 0 && kotQty <= 0.0) {
@@ -495,7 +495,7 @@ class RunningOrderDao(context: Context) {
      * nothing of it was ever sent to the kitchen, otherwise it stays at zero so the
      * cancellation can be printed.
      */
-    fun setItemLine(itemId: Long, qty: Double, rate: Double) {
+    fun setItemLine(itemId: Long, qty: Double, rate: Double): Unit = inTransaction {
         val orderId = orderIdOfItem(itemId)
         val kotQty = kotQtyOf(itemId)
         if (qty <= 0 && kotQty <= 0.0) {
@@ -509,7 +509,7 @@ class RunningOrderDao(context: Context) {
         orderId?.let { syncPendingKot(it) }
     }
 
-    fun removeItem(itemId: Long) {
+    fun removeItem(itemId: Long): Unit = inTransaction {
         val orderId = orderIdOfItem(itemId)
         if (kotQtyOf(itemId) > 0.0) {
             // Already sent — keep the row at qty 0 so the cancellation can be printed.
@@ -665,18 +665,36 @@ class RunningOrderDao(context: Context) {
      * clears the current PENDING set and re-inserts one row per pending line. Items
      * already sent (COMPLETE) are untouched, so incremental KOTs stay intact.
      */
-    private fun syncPendingKot(orderId: Long) {
+    // ONE TRANSACTION, not one per row. Each statement outside a transaction is its own
+    // commit and its own sync to storage, and this rewrites every pending line - so a
+    // twenty-line order cost twenty syncs on every tap, slower with each item added and
+    // worst on the slow storage of a low-end till.
+    private fun syncPendingKot(orderId: Long): Unit = inTransaction {
         val db = helper.writableDatabase
         val kotId = ensureOpenKot(orderId)
         db.delete(DatabaseHelper.Tables.TD_KOT_ITEMS, "kot_id = ? AND status = 'PENDING'", arrayOf(kotId.toString()))
+        val user = currentUser()
         itemsFor(orderId).filter { it.pending > 0.0 }.forEach { ri ->
             db.insert(DatabaseHelper.Tables.TD_KOT_ITEMS, null, ContentValues().apply {
                 put("kot_id", kotId)
                 put("product_id", ri.productId)
                 put("quantity", ri.pending)
                 put("status", "PENDING")
-                put("created_by", currentUser())
+                put("created_by", user)
             })
+        }
+    }
+
+    /** Runs [block] as one commit; nests inside a caller's own transaction. */
+    private inline fun <T> inTransaction(block: () -> T): T {
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            val result = block()
+            db.setTransactionSuccessful()
+            return result
+        } finally {
+            db.endTransaction()
         }
     }
 

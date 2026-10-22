@@ -1759,7 +1759,12 @@ class DatabaseHelper private constructor(context: Context) :
             "CREATE INDEX IF NOT EXISTS idx_td_bills_delete_date ON td_bills_delete(bill_date)",
             "CREATE INDEX IF NOT EXISTS idx_td_bill_items_delete_bill ON td_bill_items_delete(bill_id)",
             "CREATE INDEX IF NOT EXISTS idx_td_sale_returns_original ON td_sale_returns(original_bill_id)",
-            "CREATE INDEX IF NOT EXISTS idx_td_sale_returns_date_seq ON td_sale_returns(return_date, bill_seq_no)"
+            "CREATE INDEX IF NOT EXISTS idx_td_sale_returns_date_seq ON td_sale_returns(return_date, bill_seq_no)",
+            // Every item put on a table's order looks up that order's lines and its OPEN
+            // KOT. Unindexed, both were a scan of every KOT ever cut on each tap - the
+            // add got slower with every bill in the book.
+            "CREATE INDEX IF NOT EXISTS idx_td_running_order_items_order ON td_running_order_items(running_order_id)",
+            "CREATE INDEX IF NOT EXISTS idx_td_kot_running_order ON td_kot(running_order_id, status)"
         ).forEach { sql ->
             runCatching { db.execSQL(sql) }
                 .onFailure { android.util.Log.w("DBMigrate", "Index skipped: $sql", it) }
@@ -1770,27 +1775,71 @@ class DatabaseHelper private constructor(context: Context) :
      * Wipes the mode-specific business data when the app switches Grocery ↔ Restaurant:
      * the product/category masters, the units and rate names those products used,
      * restaurant masters (section/table/waiter), and all sales transactions (bills,
-     * KOTs, payments, returns, running orders). Registration, users, and settings are
-     * left intact. Children are cleared before parents.
+     * KOTs, payments, returns, running orders), and the stock, purchases and
+     * write-offs that belonged to those products. Registration, users, customers and
+     * settings are left intact. Children are cleared before parents.
+     *
+     * ## All or nothing
+     *
+     * Each delete used to be allowed to fail on its own, inside a transaction that was
+     * then committed anyway. With foreign keys on, a delete fails whenever anything
+     * still points at the rows - and several did: bills went before the KOTs that name
+     * them, and products before their stock batches, stock movements and purchases,
+     * none of which were cleared at all. So the switch "worked" while leaving the old
+     * mode's bills, waiters, categories and every product behind, with their rates,
+     * units and rate names gone from under them - a catalogue the new mode could not
+     * price, which is what took the sale screen down after the switch.
+     *
+     * Now the order is right, and the first failure throws and rolls the whole erase
+     * back: the till is either fully switched or exactly as it was.
+     *
+     * Slow on a long book - a year of bills is a lot of rows - so it is run off the
+     * main thread, and [onProgress] is told 0-100 as each table goes.
      */
-    fun eraseBusinessDataForModeChange() {
+    fun eraseBusinessDataForModeChange(onProgress: (Int) -> Unit = {}) {
         val db = writableDatabase
         val order = listOf(
-            Tables.TD_PAYMENTS, Tables.TD_RETURN_ITEMS, Tables.TD_SALE_RETURNS,
-            Tables.TD_BILL_PRINTS, Tables.TD_BILL_ITEMS, Tables.TD_BILLS,
-            Tables.TD_BILL_ITEMS_DELETE, Tables.TD_BILLS_DELETE,
+            // The sale and everything hanging off it.
+            Tables.TD_PAYMENTS, Tables.TD_BILL_PRINTS,
+            Tables.TD_RETURN_ITEMS, Tables.TD_SALE_RETURNS,
             Tables.TD_KOT_ITEMS, Tables.TD_KOT,
+            Tables.TD_BILL_ITEMS, Tables.TD_BILLS,
+            Tables.TD_BILL_ITEMS_DELETE, Tables.TD_BILLS_DELETE,
             Tables.TD_RUNNING_ORDER_ITEMS, Tables.TD_RUNNING_ORDER,
             Tables.TD_ASSIGN_WAITER,
-            Tables.MD_SUBTABLE, Tables.MD_TABLE_UNIT, Tables.MD_TABLE, Tables.MD_SECTION,
-            Tables.MD_WAITERS,
+            // The products' own stock trail, which goes with the products.
+            Tables.TD_STOCK_TRANSACTIONS, Tables.TD_WRITE_OFF,
+            Tables.TD_PURCHASE_RETURN, Tables.TD_PURCHASE,
+            Tables.MD_BATCH_STOCK, Tables.MD_PRODUCT_NAMES,
             // Product rates reference units and rate names, so those go after it.
             Tables.MD_PRODUCT_RATES, Tables.MD_PRODUCTS, Tables.MD_CATEGORY,
-            Tables.MD_UNITS, Tables.MD_RATE_NAME
+            Tables.MD_UNITS, Tables.MD_RATE_NAME,
+            // The floor: sub-tables and units before tables, tables before sections
+            // and the waiters they are assigned to.
+            Tables.MD_SUBTABLE, Tables.MD_TABLE_UNIT, Tables.MD_TABLE, Tables.MD_SECTION,
+            Tables.MD_WAITERS
         )
+        val present = HashSet<String>()
+        db.rawQuery("SELECT name FROM sqlite_master WHERE type='table'", null).use { c ->
+            while (c.moveToNext()) present.add(c.getString(0))
+        }
+        onProgress(0)
         db.beginTransaction()
         try {
-            order.forEach { runCatching { db.delete(it, null, null) } }
+            // A customer's ledger is the customer's, not the mode's: what they owe is
+            // still owed after a switch. Its entries are kept with their balances and
+            // only let go of the bills and payments being erased.
+            if (Tables.TD_CUSTOMER_LEDGER in present) {
+                db.execSQL(
+                    "UPDATE ${Tables.TD_CUSTOMER_LEDGER} SET bill_id = NULL, payment_id = NULL " +
+                        "WHERE bill_id IS NOT NULL OR payment_id IS NOT NULL"
+                )
+            }
+            order.forEachIndexed { i, table ->
+                // A table an older schema never had has nothing in it to erase.
+                if (table in present) db.delete(table, null, null)
+                onProgress(((i + 1) * 100) / order.size)
+            }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()

@@ -150,6 +150,51 @@ object BackupFiles {
         }
     }.getOrNull()
 
+    /** How big the picked file is, in bytes, or -1 when its provider does not say. */
+    fun sizeOf(context: Context, uri: Uri): Long = runCatching {
+        context.contentResolver.query(
+            uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null
+        )?.use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null }
+            ?: context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
+            ?: -1L
+    }.getOrDefault(-1L)
+
+    /**
+     * Opens [uri] for a restore, telling [onPercent] how far through the file the
+     * reader has got - 0 to 99 while it reads, 100 once the last line is in.
+     *
+     * Measured in bytes, not rows. A row of a bill and a row of a product with its
+     * photo are a hundred times apart in size and in time, so a count of rows would
+     * race to the end and then sit there; the bytes are the work. Called only when
+     * the figure moves, so the dialog is not redrawn for every line.
+     */
+    fun openWithProgress(context: Context, uri: Uri, onPercent: (Int) -> Unit): java.io.InputStream? {
+        val size = sizeOf(context, uri)
+        val stream = context.contentResolver.openInputStream(uri) ?: return null
+        if (size <= 0L) return stream
+        return object : java.io.FilterInputStream(stream) {
+            private var read = 0L
+            private var last = -1
+
+            private fun advance(n: Long) {
+                if (n < 0) { report(100); return }
+                read += n
+                report(((read * 100) / size).toInt().coerceIn(0, 99))
+            }
+
+            private fun report(percent: Int) {
+                if (percent != last) { last = percent; onPercent(percent) }
+            }
+
+            override fun read(): Int = super.read().also { advance(if (it < 0) -1 else 1) }
+
+            override fun read(b: ByteArray, off: Int, len: Int): Int =
+                super.read(b, off, len).also { advance(it.toLong()) }
+
+            override fun skip(n: Long): Long = super.skip(n).also { advance(it) }
+        }
+    }
+
     /**
      * Whether [head] looks like one of this app's backups.
      *

@@ -179,36 +179,16 @@
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
 
-            <!-- The row's spare width, so the customer button sits at the far edge
-                 and the two groups read as two. -->
+            <!-- The row's spare width, so Close sits at the far edge. (An Add Customer
+                 button used to sit here too; it was removed - a customer is added from
+                 the order panel's own Add Customer button once the order is open.) -->
             <View
                 android:layout_width="0dp"
                 android:layout_height="1dp"
                 android:layout_weight="1" />
 
-            <!-- The customer: its own button, apart from the modes, because it answers
-                 a different question and can be left unanswered - a walk-in has no
-                 name to take. Same metrics as the sales page's own action buttons. -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnChooseTableCustomer"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="38dp"
-                android:layout_marginStart="12dp"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:paddingHorizontal="12dp"
-                android:maxLines="1"
-                android:textSize="12.5sp"
-                android:letterSpacing="0"
-                android:text="Add Customer"
-                app:icon="@android:drawable/ic_menu_myplaces"
-                app:iconSize="16dp"
-                app:iconPadding="3dp"
-                app:cornerRadius="10dp" />
-
             <!-- Close, at the far end of the same row.
-                 It sits after Add Customer rather than in a band of its own: a row that
+                 It sits at the end of the row rather than in a band of its own: a row that
                  already spans the card has room at its end, and a whole line of height
                  for one 44dp button is height the floor plan should have. Kept visually
                  apart from the buttons beside it - borderless and greyed, so it reads

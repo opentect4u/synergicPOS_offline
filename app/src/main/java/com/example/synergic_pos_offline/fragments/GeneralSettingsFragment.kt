@@ -368,28 +368,14 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
                     context = requireContext(),
                     title = "Switch to ${modeVal.label}?",
                     message = "Changing the mode will erase all current data - products, categories, " +
-                        "sections, tables, waiters, bills, KOTs, payments, sale returns and running " +
-                        "orders. This cannot be undone.",
+                        "stock and purchases, sections, tables, waiters, bills, KOTs, payments, " +
+                        "sale returns and running orders. Customers, users and settings are kept. " +
+                        "This cannot be undone.",
                     positiveText = "Erase & Switch",
                     negativeText = "Cancel",
                     destructive = true,
                     onCancel = { actMode.setText(currentMode.label, false) },
-                    onConfirm = {
-                        DatabaseHelper.getInstance(requireContext()).eraseBusinessDataForModeChange()
-                        dao.save(settings)
-                        if (modeVal == Mode.RESTAURANT) enableRestaurantDefaults()
-                        // The menus and the landing screen read the cache, so it
-                        // has to know about the new mode before the next sign-in.
-                        SettingsCache.storeFromDb(requireContext())
-                        DialogUtils.showSuccess(
-                            context = requireContext(),
-                            title = "Mode changed",
-                            message = "Switched to ${modeVal.label}. All previous data was " +
-                                "erased. You will be signed out - sign back in and the till " +
-                                "opens in ${modeVal.label} mode.",
-                            buttonText = "Sign out"
-                        ) { signOut() }
-                    }
+                    onConfirm = { eraseAndSwitch(settings, currentMode) }
                 )
             }
         }
@@ -580,8 +566,59 @@ class GeneralSettingsFragment : Fragment(), TitledScreen {
             .commit()
     }
 
-    private fun enableRestaurantDefaults() {
-        val appDao = com.example.synergic_pos_offline.database.AppSettingsDao(requireContext())
+    /**
+     * Erases the old mode's data and switches, behind a progress bar.
+     *
+     * OFF THE MAIN THREAD. A year of bills is hundreds of thousands of rows, and
+     * erasing them on the main thread froze the screen for long enough that Android
+     * closed the app - the switch "crashed" with the data half gone. The erase is
+     * all-or-nothing now (see DatabaseHelper.eraseBusinessDataForModeChange), so if it
+     * fails the till is left exactly as it was, in its old mode, and says so.
+     */
+    private fun eraseAndSwitch(settings: GeneralSettings, previous: Mode) {
+        val app = requireContext().applicationContext
+        com.example.synergic_pos_offline.utils.BusyDialog.runWithProgress(this, "Erasing ${previous.label} data…") { progress ->
+            val failure = runCatching {
+                DatabaseHelper.getInstance(app).eraseBusinessDataForModeChange(progress::percent)
+                progress.status("Switching to ${settings.mode.label}…")
+                progress.percent(-1)
+                dao.save(settings)
+                if (settings.mode == Mode.RESTAURANT) enableRestaurantDefaults(app)
+                // The menus and the landing screen read the cache, so it has to know
+                // about the new mode before the next sign-in.
+                SettingsCache.storeFromDb(app)
+                // The sale screens hold the catalogue for the session; the products in
+                // it no longer exist.
+                com.example.synergic_pos_offline.utils.CatalogueSignature.newSession()
+            }.exceptionOrNull()
+
+            com.example.synergic_pos_offline.utils.BusyDialog.onMain(this) {
+                if (failure != null) {
+                    android.util.Log.e("ModeSwitch", "Erase failed", failure)
+                    actMode.setText(previous.label, false)
+                    DialogUtils.showSuccess(
+                        context = requireContext(),
+                        title = "Mode not changed",
+                        message = "The data could not be erased, so nothing was changed and " +
+                            "the till is still in ${previous.label} mode.\n\n" +
+                            (failure.message ?: failure.javaClass.simpleName)
+                    )
+                    return@onMain
+                }
+                DialogUtils.showSuccess(
+                    context = requireContext(),
+                    title = "Mode changed",
+                    message = "Switched to ${settings.mode.label}. All previous data was " +
+                        "erased. You will be signed out - sign back in and the till " +
+                        "opens in ${settings.mode.label} mode.",
+                    buttonText = "Sign out"
+                ) { signOut() }
+            }
+        }
+    }
+
+    private fun enableRestaurantDefaults(context: android.content.Context = requireContext()) {
+        val appDao = com.example.synergic_pos_offline.database.AppSettingsDao(context)
         val a = appDao.load()
         appDao.save(a.copy(couponMode = true, kot = true, tableMerge = true, tableShift = true))
     }

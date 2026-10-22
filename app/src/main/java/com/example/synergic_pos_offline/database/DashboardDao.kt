@@ -33,7 +33,7 @@ import java.util.Locale
  * carry both `bill_date_time` and `bill_date`; the first is used where the hour
  * matters and COALESCE covers the rows that only ever had the date.
  */
-class DashboardDao(context: Context) {
+class  DashboardDao(context: Context) {
 
     private val appContext = context.applicationContext
     private val helper = DatabaseHelper.getInstance(context)

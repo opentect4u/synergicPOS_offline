@@ -695,6 +695,11 @@ class PosBillingFragment : Fragment(), TitledScreen {
         // thing for the same reason - see its restyle() on resume.
         view?.post { view?.let { restyleActions(it, ThemeManager.getThemeColor(requireContext())) } }
 
+        // Bill Settings and the charge master live on their own screens; coming back
+        // from either lands here, so the next total reads them fresh.
+        roundOffMemo = null
+        chargesMemo = null
+
         // A sale just completed and the operator asked for another one.
         if (CheckoutSession.startFreshSale) {
             CheckoutSession.startFreshSale = false
@@ -2656,12 +2661,13 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * the one further deduction not yet reflected in either - a post-tax,
      * exclusive item-wise discount - and is zero (so a no-op) in every other case.
      */
-    private fun taxedTotal(): Double {
-        val extra = itemwiseDiscountSumOf(cart, discountAmt())
+    private fun taxedTotal(disc: Double = discountAmt()): Double {
+        val extra = itemwiseDiscountSumOf(cart, disc)
+        val tax = taxOf(cart, disc)
         val goods = if (discountPreTax) {
-            (taxableSumOf(cart, discountAmt()) + taxAmt() - extra).coerceAtLeast(0.0)
+            (taxableSumOf(cart, disc) + tax - extra).coerceAtLeast(0.0)
         } else {
-            (taxableSumOf(cart, discountAmt()) + taxAmt() - discountAmt() - extra).coerceAtLeast(0.0)
+            (taxableSumOf(cart, disc) + tax - disc - extra).coerceAtLeast(0.0)
         }
         // The extra charges join LAST, on top of the taxed goods. They are the shop's
         // own additions rather than part of what was sold, so nothing above them is
@@ -2690,30 +2696,42 @@ class PosBillingFragment : Fragment(), TitledScreen {
      * percentage of that same figure and never of a running total, so the order they
      * sit in the master cannot change the bill.
      */
-    private fun extraCharges(): List<com.example.synergic_pos_offline.database.ChargeDao.Applied> =
-        runCatching {
-            com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal())
-        }.getOrDefault(emptyList())
+    //
+    // Held against the subtotal it was worked out on, and dropped in onResume: the
+    // charge master is its own screen, and every tap used to read it from the database
+    // two or three times over.
+    private var chargesMemo: Pair<Double, List<com.example.synergic_pos_offline.database.ChargeDao.Applied>>? = null
+    private fun extraCharges(): List<com.example.synergic_pos_offline.database.ChargeDao.Applied> {
+        val sub = subtotal()
+        chargesMemo?.let { (on, applied) -> if (on == sub) return applied }
+        return runCatching {
+            com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(sub)
+        }.getOrDefault(emptyList()).also { chargesMemo = sub to it }
+    }
 
     /** What [extraCharges] adds to the bill. */
     private fun extraChargesTotal(): Double = BillRounding.toPaise(extraCharges().sumOf { it.amount })
 
-    /** Bill Settings' own switch - the one and only say in whether a bill rounds. */
-    private fun roundOffOn(): Boolean =
-        runCatching {
-            com.example.synergic_pos_offline.database.BillSettingsDao(requireContext()).load().roundOff
-        }.getOrDefault(false)
+    /**
+     * Bill Settings' own switch - the one and only say in whether a bill rounds.
+     * Read once per visit (dropped in onResume, which is how a trip to Bill Settings
+     * comes back) rather than from the database on every tap.
+     */
+    private var roundOffMemo: Boolean? = null
+    private fun roundOffOn(): Boolean = roundOffMemo ?: runCatching {
+        com.example.synergic_pos_offline.database.BillSettingsDao(requireContext()).load().roundOff
+    }.getOrDefault(false).also { roundOffMemo = it }
 
-    private fun roundOffAmt(): Double =
-        if (roundOffOn()) BillRounding.roundOff(taxedTotal()) else 0.0
+    private fun roundOffAmt(taxed: Double = taxedTotal()): Double =
+        if (roundOffOn()) BillRounding.roundOff(taxed) else 0.0
 
     /**
      * What checkout will charge: rounded to whole rupees whenever Bill Settings'
      * Round Off is on - a measured line (0.700 kg, 1.5 L) is not an exception, the
      * setting is the only thing that decides this.
      */
-    private fun computeTotal(): Double =
-        if (roundOffOn()) BillRounding.payable(taxedTotal()) else BillRounding.toPaise(taxedTotal())
+    private fun computeTotal(taxed: Double = taxedTotal()): Double =
+        if (roundOffOn()) BillRounding.payable(taxed) else BillRounding.toPaise(taxed)
 
     /**
      * A line's taxable value, tax and (for item-wise discount only) the further
@@ -2775,7 +2793,10 @@ class PosBillingFragment : Fragment(), TitledScreen {
      */
     private fun lineSalePrice(line: CartLine): Double {
         if (!itemwiseDiscountActive) return line.product.price * line.qty
-        val (taxable, tax, discount) = lineTax(line.product, line.product.price * line.qty, subtotal(), discountAmt())
+        // Item-wise discount prices each line from its own product's discount, so the
+        // whole-bill discount is always zero here (see [discountAmt]) - passed as such
+        // rather than worked out over the whole cart again for every row.
+        val (taxable, tax, discount) = lineTax(line.product, line.product.price * line.qty, subtotal(), 0.0)
         return taxable + tax - discount
     }
 
@@ -2913,17 +2934,24 @@ class PosBillingFragment : Fragment(), TitledScreen {
         tvItemCount.text = ("$productCount product${if (productCount != 1) "s" else ""}, " +
             "${qtyText(totalQty)} count${if (totalQty != 1.0) "s" else ""}").uppercase()
 
+        // Worked out ONCE per redraw and handed down. Each figure below used to ask for
+        // the discount, the taxed total and the payable total afresh - eight passes over
+        // the cart and several database reads per tap, growing with every line added.
+        val disc = discountAmt()
+        val taxed = taxedTotal(disc)
+        val payable = computeTotal(taxed)
+
         tvSubtotal.text = money(subtotal())
         // Item-wise discount has no single whole-bill figure to show here - each
         // line already prices its own discount in what it charges.
         view?.findViewById<View>(R.id.rowBillingDiscount)?.visibility =
             if (itemwiseDiscountActive) View.GONE else View.VISIBLE
         tvDiscountLabel.text = discountLabelText()
-        tvDiscountAmt.text = "- ${money(discountAmt())}"
+        tvDiscountAmt.text = "- ${money(disc)}"
         view?.findViewById<TextView>(R.id.tvTaxLabel)?.text = taxLabelText()
-        tvTax.text = money(taxAmt())
+        tvTax.text = money(taxOf(cart, disc))
 
-        val roundOff = roundOffAmt()
+        val roundOff = roundOffAmt(taxed)
         view?.findViewById<View>(R.id.rowBillingRoundOff)?.visibility =
             if (kotlin.math.abs(roundOff) > 0.001) {
                 view?.findViewById<TextView>(R.id.tvBillingRoundOff)?.text =
@@ -2950,18 +2978,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
             }
         }
 
-        tvTotal.text = money(computeTotal())
+        tvTotal.text = money(payable)
         // The same figure on the fold's handle, for while the fold is shut.
-        view?.findViewById<TextView>(R.id.tvBillingTotalBar)?.text = money(computeTotal())
+        view?.findViewById<TextView>(R.id.tvBillingTotalBar)?.text = money(payable)
         // The amount in brackets after the label, spaced off it - the way the
         // restaurant panel's Checkout carries its total. The label and the figure are
         // two different things to read, and running them together made a button that
         // said "Checkout ₹1240.00" as one word.
         val isRestaurant = SettingsCache.value(requireContext(), "G", "Mode") == "R"
         btnCharge.text = if (isRestaurant) {
-            "Bill & Print  ( ${money(computeTotal())} )"
+            "Bill & Print  ( ${money(payable)} )"
         } else {
-            "Checkout  ( ${money(computeTotal())} )"
+            "Checkout  ( ${money(payable)} )"
         }
     }
 

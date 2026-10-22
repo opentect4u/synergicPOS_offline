@@ -90,8 +90,40 @@ object ThumbnailCache {
     // less than two categories of a 5,000-product shelf - so switching to a category
     // and back decoded every one of its photos again. The app runs with largeHeap, so
     // a quarter of what it may allocate is comfortably more than this on the tills.
-    private fun maxBytes(): Int =
-        (Runtime.getRuntime().maxMemory() / 4).coerceIn(4L * 1024 * 1024, 96L * 1024 * 1024).toInt()
+    //
+    // EXCEPT ON A 3-4 GB TILL. There the device itself is short, not the app: holding
+    // 96 MB of photos left the system trimming everything else around the sale screen
+    // and the collector running on every tap, so the whole till slowed as the cart
+    // grew. An eighth, at most 32 MB, on a device with 4 GB of RAM or less.
+    private fun maxBytes(): Int {
+        val heap = Runtime.getRuntime().maxMemory()
+        val (share, ceiling) = if (lowRamDevice()) heap / 8 to 32L * 1024 * 1024
+        else heap / 4 to 96L * 1024 * 1024
+        return share.coerceIn(4L * 1024 * 1024, ceiling).toInt()
+    }
+
+    /** Whether this device has 4 GB of RAM or less, read from the kernel's own count. */
+    private fun lowRamDevice(): Boolean = runCatching {
+        java.io.File("/proc/meminfo").bufferedReader().use { r ->
+            val kb = r.readLine().orEmpty().filter { it.isDigit() }.toLongOrNull() ?: return@use false
+            // A "4 GB" device reports a little under 4 GB once the kernel's own share is out.
+            kb <= 4L * 1024 * 1024 + 256L * 1024
+        }
+    }.getOrDefault(false)
+
+    /**
+     * Gives memory back when the system asks for it - see MainActivity.onTrimMemory.
+     * Everything here can be decoded again from the BLOB it came from, so it is the
+     * first thing to go rather than the app being killed while a sale is open.
+     */
+    fun trim(level: Int) {
+        @Suppress("DEPRECATION")
+        when {
+            level >= android.content.ComponentCallbacks2.TRIM_MEMORY_MODERATE ||
+                level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> cache.evictAll()
+            level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> cache.trimToSize(cache.maxSize() / 2)
+        }
+    }
 
     /** A queue that hands out the most recently added task first - see the class notes. */
     private class LifoQueue : LinkedBlockingDeque<Runnable>() {

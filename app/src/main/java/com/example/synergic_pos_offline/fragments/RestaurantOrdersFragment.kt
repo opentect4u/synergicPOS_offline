@@ -487,9 +487,12 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Filtered by applicability against this order's own mode - see
         // ChargeDao.Applicability. A charge ticked for nothing never comes back here.
         val chargeOrderType = chargeModeOf(orderType)
-        val charges = runCatching {
-            com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal, chargeOrderType)
-        }.getOrDefault(emptyList())
+        if (chargeCache.size > 256) chargeCache.clear()
+        val charges = chargeCache.getOrPut(subtotal to chargeOrderType) {
+            runCatching {
+                com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal, chargeOrderType)
+            }.getOrDefault(emptyList())
+        }
         // THE WHOLE CALCULATION, in the one place that does it - see CartMath, which
         // is the grocery till's arithmetic restated so both modules bill alike.
         //
@@ -598,13 +601,22 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     /**
      * Bill Settings' Round Off switch - the one and only say in whether a restaurant
      * bill rounds. On, every payable total is rounded to the whole rupee regardless
-     * of what is in the order; off, the exact taxed total stands. Read live rather
-     * than cached, same as the grocery till, so a setting changed mid-shift takes
-     * effect on the next bill without a restart.
+     * of what is in the order; off, the exact taxed total stands. Read once per visit
+     * (cleared in onResume) rather than on every tap - Bill Settings is its own
+     * screen, so a setting changed mid-shift still takes effect on the next bill.
      */
-    private fun roundOffOn(): Boolean = runCatching {
+    private var roundOffCache: Boolean? = null
+    private fun roundOffOn(): Boolean = roundOffCache ?: runCatching {
         com.example.synergic_pos_offline.database.BillSettingsDao(requireContext()).load().roundOff
-    }.getOrDefault(false)
+    }.getOrDefault(false).also { roundOffCache = it }
+
+    /**
+     * The charges worked out per (items total, order mode) - the active-orders list
+     * prices every open table on each redraw, and the charge master does not change
+     * while this screen is up. Cleared in onResume.
+     */
+    private val chargeCache =
+        HashMap<Pair<Double, String>, List<com.example.synergic_pos_offline.database.ChargeDao.Applied>>()
 
     /** [total] as the customer actually pays - see [roundOffOn]. */
     private fun payableTotal(total: Double): Double =
@@ -1022,9 +1034,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     override fun onResume() {
         super.onResume()
+        // Bill Settings and the charge master are edited on their own screens, which
+        // come back through here - so a change still lands on the next tap.
+        roundOffCache = null
+        chargeCache.clear()
         // Re-read once here rather than on every tap: the only way this changes is a
         // trip to App Settings, which comes back through onResume.
-        directAddToCart = appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_DIRECT_ADD_TO_CART)
+        directAddToCart =appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_DIRECT_ADD_TO_CART)
         tableShiftOn = appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_TABLE_SHIFT)
         tableMergeOn = appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_TABLE_MERGE)
         tableSplitOn = appSettingOn(com.example.synergic_pos_offline.database.AppSettingsDao.KEY_TABLE_SPLIT)
@@ -4551,10 +4567,6 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val segMode = v.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(
             R.id.segPickerMode
         )
-        val btnCustomer = v.findViewById<com.google.android.material.button.MaterialButton>(
-            R.id.btnChooseTableCustomer
-        )
-
         // OPENS ON THE MODE ALREADY SELECTED, mirrored off the sales page's own
         // segment rather than always starting on Dine In.
         //
@@ -4602,16 +4614,10 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Dine In: stay on the floor plan and pick a table. Nothing to do but light up,
         // which the group has already done.
 
-        // ADD CUSTOMER STARTS A TAKE-AWAY, and asks straight after.
-        //
-        // It cannot simply open the customer prompt: [onAddCustomer] works on the
-        // order in hand, and standing in the picker there is not one yet. So it makes
-        // the order the customer is FOR and then asks - "a take-away for this person"
-        // in one tap, rather than Take Away, then find the button on the panel.
-        //
-        // Take-away and not whichever mode is checked, because a table order carries
-        // no customer - it is its table, which is the rule [onAddCustomer] enforces.
-        btnCustomer.setOnClickListener { startCounter(TYPE_TAKE_AWAY) { onAddCustomer() } }
+        // NO ADD CUSTOMER ON THE PICKER. It used to start a take-away and ask for the
+        // customer straight after; it was taken off the table list. A customer is added
+        // from the order panel's own Add Customer button once an order is open - see
+        // [onAddCustomer].
 
         v.findViewById<ImageButton>(R.id.btnCloseChooseTable).setOnClickListener { dialog.dismiss() }
 

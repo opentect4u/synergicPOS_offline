@@ -309,6 +309,13 @@ class MainActivity : AppCompatActivity() {
         autoBackupHandler.postDelayed(tick, AUTO_BACKUP_FIRST_CHECK_MS)
     }
 
+    // The photo cache is the one large thing this app holds that can be rebuilt, so it
+    // is what goes when a low-RAM till starts running short - see ThumbnailCache.trim.
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        com.example.synergic_pos_offline.utils.ThumbnailCache.trim(level)
+    }
+
     override fun onDestroy() {
         autoBackupHandler.removeCallbacksAndMessages(null)
         exitHandler.removeCallbacksAndMessages(null)
@@ -498,19 +505,22 @@ class MainActivity : AppCompatActivity() {
     private var afterClose: (() -> Unit)? = null
 
     /**
-     * Closes the drawer, then runs [action] - the page a menu row opens.
+     * Closes the drawer AT ONCE and runs [action] - the page a menu row opens - straight
+     * after, with no closing animation in between.
      *
-     * Opening the page on the same frame the drawer began to close meant building it
-     * (a grid, a table, its database reads) in the middle of the closing slide, which
-     * is what made that slide stutter. Waiting the quarter-second for it to settle is
-     * what the platform's own navigation drawers do.
+     * This waited for the drawer's close animation to settle first. Measured on the
+     * till, that wait was most of a menu tap: ~775ms from the tap to the page even
+     * starting to be built (the slide, plus the GPU layers the slide is drawn through),
+     * then ~170ms to build and draw the page. Closing without animation and opening the
+     * page in the same breath puts the page on screen in that last ~170ms. There is no
+     * slide left to stutter, which is the only reason the wait was there.
      */
     private fun afterDrawerCloses(action: () -> Unit) {
-        if (!drawerLayout.isDrawerOpen(GravityCompat.START) &&
-            !drawerLayout.isDrawerVisible(GravityCompat.START)
-        ) { action(); return }
-        afterClose = action
-        drawerLayout.closeDrawer(GravityCompat.START)
+        afterClose = null
+        if (drawerLayout.isDrawerOpen(GravityCompat.START) ||
+            drawerLayout.isDrawerVisible(GravityCompat.START)
+        ) drawerLayout.closeDrawer(GravityCompat.START, /* animate = */ false)
+        action()
     }
 
     private fun smoothDrawerSlide() {
@@ -675,6 +685,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun navigateTo(fragment: Fragment) {
         supportFragmentManager.beginTransaction()
+            // Lets the FragmentManager settle the swap in one pass rather than step by
+            // step - see goHome for what that saves.
+            .setReorderingAllowed(true)
             .replace(R.id.fragment_container, fragment)
             .addToBackStack(null)
             .commit()
@@ -696,6 +709,11 @@ class MainActivity : AppCompatActivity() {
         val fm = supportFragmentManager
         fm.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
         fm.beginTransaction()
+            // REORDERING ALLOWED: the back-stack pop above and this replace are settled
+            // together. Without it the pop first REBUILT the page at the bottom of the
+            // stack - a whole screen inflated and loaded - only for this replace to
+            // throw it away on the next step: two page builds for one tap on Home.
+            .setReorderingAllowed(true)
             .replace(R.id.fragment_container, home)
             .commit()
     }
@@ -724,6 +742,8 @@ class MainActivity : AppCompatActivity() {
         val fm = supportFragmentManager
         fm.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
         fm.beginTransaction()
+            // Pop and replace settled together - see goHome.
+            .setReorderingAllowed(true)
             .replace(R.id.fragment_container, sale)
             .commit()
     }

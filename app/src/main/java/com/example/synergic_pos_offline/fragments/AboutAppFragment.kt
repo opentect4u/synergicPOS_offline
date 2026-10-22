@@ -1143,10 +1143,11 @@ class AboutAppFragment : Fragment(), TitledScreen {
         }
     }
 
-    private fun runRestoreMasters(uri: Uri) = inBackground("Backing up, then restoring masters…") {
-        val backup = safetyBackup("restore master tables") ?: return@inBackground
+    private fun runRestoreMasters(uri: Uri) = BusyDialog.runWithProgress(this, "Backing up first…") { progress ->
+        val backup = safetyBackup("restore master tables") ?: return@runWithProgress
+        progress.status("Restoring masters…")
         val context = requireContext().applicationContext
-        val result = context.contentResolver.openInputStream(uri)?.use { stream ->
+        val result = BackupFiles.openWithProgress(context, uri, progress::percent)?.use { stream ->
             stream.bufferedReader().useLines { lines ->
                 MasterData.restore(context, lines, DatabaseBackup.schemaVersionOf(
                     BackupFiles.headOf(context, uri).orEmpty()
@@ -1390,8 +1391,8 @@ class AboutAppFragment : Fragment(), TitledScreen {
 
     /** Streams the file into the database, off the main thread. */
     private fun runRestore(uri: Uri, schemaVersion: Int?, keepsIdentity: Boolean) =
-        inBackground("Restoring…") {
-            val result = requireContext().contentResolver.openInputStream(uri)?.use { stream ->
+        BusyDialog.runWithProgress(this, "Restoring…") { progress ->
+            val result = BackupFiles.openWithProgress(requireContext(), uri, progress::percent)?.use { stream ->
                 stream.bufferedReader().useLines { lines ->
                     DatabaseBackup.restore(requireContext(), lines, schemaVersion)
                 }
