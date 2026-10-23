@@ -70,7 +70,14 @@ object ImageUtils {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
     }
 
+    // Shrunk on the way in and turned upright - see ProductImages.decodeUpright. A
+    // camera's full-size picture decoded whole is 32-200 MB, which a low-RAM till does
+    // not have; the logo crop screen never needs more than about 2048 px of it. The
+    // full decode below is kept only as the fallback for a source that one cannot read.
     private fun decodeBitmap(context: Context, uri: Uri): Bitmap =
+        ProductImages.decodeUpright(context, uri, 1024) ?: decodeWhole(context, uri)
+
+    private fun decodeWhole(context: Context, uri: Uri): Bitmap =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             ImageDecoder.decodeBitmap(
                 ImageDecoder.createSource(context.contentResolver, uri)

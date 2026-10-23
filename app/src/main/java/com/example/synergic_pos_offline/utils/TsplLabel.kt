@@ -323,8 +323,14 @@ object TsplLabel {
         // one coordinate below it changes. With no name on file nothing is printed there.
         val shop = clip(shopName.uppercase(), safeWidth, FONT_SMALL_W)
         val hasShop = shopName.isNotBlank()
-        val nameY = REF_MARGIN_Y
-        val shopY = (nameY - FONT_SMALL_H - SHOP_ROW_GAP).coerceAtLeast(0)
+        // INSIDE THE SAFE BOX, not in the margin above it. It was first put up in the
+        // top margin so nothing else would move - and on the roll it came out under
+        // 2mm from the edge, which the stock's own drift down the roll cuts straight
+        // through: the second row of stickers printed it half off the top. It now takes
+        // the top row of the safe box and the product name moves down under it; the
+        // bars give up the height, which they have to spare.
+        val shopY = REF_MARGIN_Y
+        val nameY = if (hasShop) shopY + FONT_SMALL_H + SHOP_ROW_GAP else REF_MARGIN_Y
         val priceY = REF_HEIGHT - REF_MARGIN_Y - FONT_MEDIUM_H
         val digitsY = priceY - REF_ROW_GAP - FONT_LARGE_H
         val barsY = nameY + FONT_MEDIUM_H + REF_ROW_GAP
@@ -343,7 +349,14 @@ object TsplLabel {
         // the left edge of the safe box. Every other row is centred (arithmetic, since
         // TSPL has no alignment argument in the form this uses - see the class note on
         // old firmware).
-        val name = clip(productName, safeWidth, FONT_MEDIUM_W)
+        //
+        // CLIPPED SHORTER THAN THE OTHER ROWS. Being flush left, a long name is the one
+        // row that reaches the right-hand edge, and on the real roll that edge is not
+        // where the arithmetic puts it: the sticker is narrower than its 50mm pitch and
+        // the printer lays the image down a millimetre or two to the right. A 29-letter
+        // name ended exactly on the cut and ran on into the next sticker's name. The
+        // centred rows are short and keep the full width.
+        val name = clip(productName, safeWidth - NAME_RIGHT_ALLOWANCE, FONT_MEDIUM_W)
         out.text(x(left), y(nameY), FONT_MEDIUM, name)
 
         // The bars, with the printer's own human-readable line switched OFF (the 0
@@ -435,7 +448,8 @@ object TsplLabel {
     private fun clip(text: String, widthDots: Int, charWidth: Int): String {
         val max = (widthDots / charWidth).coerceAtLeast(1)
         val clean = text.replace('"', '\'').trim()
-        return if (clean.length <= max) clean else clean.take((max - 1).coerceAtLeast(1)) + "."
+        // trimEnd so a cut that lands on a space reads "TANDOORI." rather than "TANDOORI .".
+        return if (clean.length <= max) clean else clean.take((max - 1).coerceAtLeast(1)).trimEnd() + "."
     }
 
     /** No currency symbol: "₹" is not in the printer's Latin-1 character set. */
@@ -478,6 +492,12 @@ object TsplLabel {
 
     /** Space between the shop's name and the product name under it. */
     private const val SHOP_ROW_GAP = 2
+
+    /**
+     * Extra room kept clear at the right of the product name, in dots - 4mm, two
+     * characters of the name's font. See the note where the name is clipped.
+     */
+    private const val NAME_RIGHT_ALLOWANCE = 32
 
     private const val FONT_MEDIUM = "2"
     private const val FONT_MEDIUM_W = 12

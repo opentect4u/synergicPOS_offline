@@ -619,7 +619,13 @@ object ThermalPrinter {
      */
     @Volatile private var portGeneration = 0L
 
-    private const val BT_IDLE_KEEP_MS = 12_000L
+    // Three minutes, up from twelve seconds. Twelve covered a bill's second copy and
+    // little else: on a counter the next sale is a minute or two away, so nearly every
+    // receipt paid the full Bluetooth connect again - the 1.5-3 seconds that made
+    // Bluetooth printing feel slow. A socket that has gone stale meanwhile (the
+    // printer switched off) fails the handshake before any of the bill is sent, and
+    // the retry opens a fresh one - see runJob.
+    private const val BT_IDLE_KEEP_MS = 180_000L
 
     private val idleCloser = Executors.newSingleThreadScheduledExecutor()
     private var pendingClose: java.util.concurrent.ScheduledFuture<*>? = null
@@ -637,6 +643,47 @@ object ThermalPrinter {
             BT_IDLE_KEEP_MS, java.util.concurrent.TimeUnit.MILLISECONDS
         )
     }
+
+    /**
+     * Connects to [purpose]'s printer ahead of time, if it is a Bluetooth one.
+     *
+     * Called as a sale or checkout screen opens. The Bluetooth connect - SDP lookup,
+     * then RFCOMM - is the slowest part of a Bluetooth receipt, and it used to start
+     * only once Print was pressed and the bill had been drawn. Done here, it happens
+     * while the operator is still ringing items up, and the receipt finds the port
+     * already open ([runJob] reuses it).
+     *
+     * Queued on the print worker like a job, so it can never cross a receipt. Does
+     * nothing for WiFi, LAN or USB, which connect quickly and - for the network ones -
+     * must not hold a printer other tills share. Gives up quietly if the printer is
+     * off or out of range, and does not try again for [WARM_UP_RETRY_MS], so a screen
+     * that is opened often does not keep the radio busy looking for it.
+     */
+    fun warmUp(context: Context, purpose: String = "BILL") {
+        val app = context.applicationContext
+        val config = runCatching { configForPurpose(app, purpose) }.getOrNull() ?: return
+        if (!config.isBluetooth) return
+        val key = "${config.connection}:${config.ip}"
+        if (openPort == key) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastWarmUpFailure < WARM_UP_RETRY_MS) return
+        worker.execute {
+            if (openPort == key) return@execute
+            runCatching { Print.PortClose() }
+            openPort = null
+            val opened = runCatching { Print.portOpenBT(app, config.ip) }.getOrDefault(-1)
+            PrintLog.d(app, TAG, "warm-up: Bluetooth port to ${config.ip} result=$opened (0 = connected)")
+            if (opened == 0) {
+                keepPortOpen(key)
+            } else {
+                runCatching { Print.PortClose() }
+                lastWarmUpFailure = android.os.SystemClock.elapsedRealtime()
+            }
+        }
+    }
+
+    @Volatile private var lastWarmUpFailure = 0L
+    private const val WARM_UP_RETRY_MS = 60_000L
 
     private fun closeIfStillIdle(generation: Long) {
         if (generation != portGeneration) return

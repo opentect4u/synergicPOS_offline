@@ -1034,6 +1034,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     override fun onResume() {
         super.onResume()
+        // Connect to a Bluetooth bill printer now, while items are rung up, rather than
+        // after Print is pressed - see ThermalPrinter.warmUp.
+        com.example.synergic_pos_offline.utils.ThermalPrinter.warmUp(requireContext())
         // Bill Settings and the charge master are edited on their own screens, which
         // come back through here - so a change still lands on the next tap.
         roundOffCache = null

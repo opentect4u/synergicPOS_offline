@@ -175,10 +175,24 @@
                     android:textStyle="bold"
                     android:textColor="@color/primary_blue" />
 
+                <!-- Everything between the table name and the order-type buttons, in
+                     one box that takes only the room left over. The buttons are
+                     measured first and always get their full width; on a narrow screen -
+                     a large Display size makes every tablet narrower in dp - it is the
+                     order time in here that gives way (ellipsised), not QSR being pushed
+                     off the end of the row. -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
                 <TextView
                     android:id="@+id/tvDetailCustomer"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:maxLines="1"
                     android:layout_marginStart="14dp"
                     android:paddingHorizontal="12dp"
                     android:paddingVertical="5dp"
@@ -218,24 +232,26 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="14dp"
+                    android:maxLines="1"
                     android:text="4  ·  Dine In"
                     android:textSize="13sp"
                     android:textColor="@color/text_secondary" />
 
-                <!-- Reads beside the order type rather than out at the far edge. -->
+                <!-- Reads beside the order type rather than out at the far edge. Takes
+                     what is left of the box, and is the first thing shortened when the
+                     row runs out of room. -->
                 <TextView
                     android:id="@+id/tvDetailOrderTime"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
                     android:layout_marginStart="14dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
                     android:text="Order Time: —"
                     android:textSize="13sp"
                     android:textColor="@color/text_secondary" />
-
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
+                </LinearLayout>
 
                 <!-- Dine In / Take Away / QSR, on the end of the line that already says
                      what the order IS - the same question, so it reads as one row. -->

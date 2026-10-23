@@ -972,28 +972,69 @@ class ProductsFragment : DataTableFragment() {
     // ---- Image capture -------------------------------------------------------
 
     private fun launchCamera() {
-        val file = File(requireContext().cacheDir, "product_capture.jpg")
+        // A fresh file each time, in the folder the provider shares: a camera app that
+        // finds the last capture still there may refuse to overwrite it, and one that
+        // half-writes and is cancelled must not leave that half for the next shot.
+        val dir = File(requireContext().cacheDir, "camera").apply { mkdirs() }
+        dir.listFiles { f -> f.name.startsWith("product_") }?.forEach { it.delete() }
+        val file = File(dir, "product_${System.currentTimeMillis()}.jpg")
         val uri = FileProvider.getUriForFile(
             requireContext(), "${requireContext().packageName}.fileprovider", file
         )
         cameraUri = uri
-        cameraLauncher.launch(uri)
+        try {
+            cameraLauncher.launch(uri)
+        } catch (_: android.content.ActivityNotFoundException) {
+            // No camera app on this device (a till without one, or with it disabled).
+            cameraUri = null
+            toast("No camera app found on this device")
+        }
     }
 
-    /** Decodes, downscales and compresses the picked image, then previews it. */
-    private fun applyPickedImage(uri: Uri) {
-        val bytes = try {
-            requireContext().contentResolver.openInputStream(uri).use { input ->
-                val original = BitmapFactory.decodeStream(input) ?: return
-                compress(original)
-            }
-        } catch (_: Exception) {
-            toast("Could not read that image")
-            return
+    // Kept across the app being closed while the camera is open - on a low-RAM till
+    // Android often does exactly that to make room for the camera - so the photo
+    // can still be found when the app comes back.
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        cameraUri?.let { outState.putParcelable(STATE_CAMERA_URI, it) }
+    }
+
+    override fun onViewStateRestored(savedInstanceState: Bundle?) {
+        super.onViewStateRestored(savedInstanceState)
+        if (cameraUri == null) {
+            @Suppress("DEPRECATION")
+            cameraUri = savedInstanceState?.getParcelable(STATE_CAMERA_URI)
         }
-        pendingImage = bytes
-        imageCleared = false
-        showImage(bytes)
+    }
+
+    /**
+     * Reads, shrinks and compresses the picked or captured image, then previews it.
+     *
+     * Off the main thread: even shrunk on the way in, a camera's picture takes a
+     * moment to decode on a low-end till, and the dialog should not freeze for it.
+     * Read through [ProductImages.fromUri], which never decodes a picture at the size
+     * the camera took it - doing that is what ran out of memory and closed the app.
+     */
+    private fun applyPickedImage(uri: Uri) {
+        val app = requireContext().applicationContext
+        Thread {
+            val bytes = com.example.synergic_pos_offline.utils.ProductImages.fromUri(app, uri)
+            activity?.runOnUiThread {
+                if (!isAdded) return@runOnUiThread
+                when {
+                    bytes == null -> toast("Could not read that image")
+                    // The product form was closed while the camera was open - Android
+                    // can close the whole app for room - so there is no form to put the
+                    // photo on. Said, rather than attached to whichever product opens next.
+                    dialogImageView == null -> toast("The product form was closed - open the product and take the photo again")
+                    else -> {
+                        pendingImage = bytes
+                        imageCleared = false
+                        showImage(bytes)
+                    }
+                }
+            }
+        }.start()
     }
 
     /**
@@ -1541,3 +1582,6 @@ class ProductsFragment : DataTableFragment() {
         if (parsed == null) values.putNull(key) else values.put(key, parsed)
     }
 }
+
+/** Where the pending camera capture is kept across the app being closed - see onSaveInstanceState. */
+private const val STATE_CAMERA_URI = "products.camera_uri"

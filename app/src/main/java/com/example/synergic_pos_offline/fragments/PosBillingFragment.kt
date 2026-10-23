@@ -684,6 +684,9 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     override fun onResume() {
         super.onResume()
+        // Connect to a Bluetooth bill printer now, while items are rung up, rather than
+        // after Print is pressed - see ThermalPrinter.warmUp.
+        com.example.synergic_pos_offline.utils.ThermalPrinter.warmUp(requireContext())
         // Re-assert this panel's own button styling, AFTER the activity's theme pass.
         //
         // MainActivity re-themes the whole live view tree from onFragmentResumed, which
