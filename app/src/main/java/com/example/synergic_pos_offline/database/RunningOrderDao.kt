@@ -26,6 +26,7 @@ class RunningOrderDao(context: Context) {
         val orderType: String, val phone: String, val cashier: String,
         val time: String, val total: Double, val note: String, val status: String,
         /**
+        
          * Tables folded into this bill by a merge, in the order they joined.
          *
          * Read with the order rather than looked up per card: the sale screen names

@@ -2194,9 +2194,18 @@ class PosBillingFragment : Fragment(), TitledScreen {
                     // Replace a trailing operator instead of stacking them.
                     expr = if (expr.last() in "+−×÷") expr.dropLast(1) + key else expr + key
                 }
-                "%" -> if (expr.isNotEmpty()) { expr += "%"; justEvaluated = false }
+                // Only straight after a number, and only once: "200+%" and "50%%" have
+                // no meaning, and accepting them only turned "=" into "Invalid".
+                "%" -> if (expr.isNotEmpty() && (expr.last().isDigit() || expr.last() == '.')) {
+                    expr += "%"; justEvaluated = false
+                }
                 else -> {   // digits, "00", "."
                     if (justEvaluated && key != ".") { expr = ""; justEvaluated = false }
+                    // A percent closes its number - "10%5" is not a number. An operator
+                    // has to come next.
+                    if (expr.endsWith("%")) return
+                    // One decimal point per number.
+                    if (key == "." && expr.takeLastWhile { it.isDigit() || it == '.' }.contains('.')) return
                     expr += key
                 }
             }
@@ -2263,61 +2272,14 @@ class PosBillingFragment : Fragment(), TitledScreen {
 
     /** Formats a result without a trailing ".0" for whole numbers. */
     private fun trimNumber(v: Double): String =
-        if (v % 1.0 == 0.0) v.toLong().toString() else String.format("%.4f", v).trimEnd('0').trimEnd('.')
+        // Locale.US: a device set to a comma-decimal language would otherwise write
+        // "0,5", which the calculator cannot read back on the next "=".
+        if (v % 1.0 == 0.0) v.toLong().toString()
+        else String.format(java.util.Locale.US, "%.4f", v).trimEnd('0').trimEnd('.')
 
-    /** Evaluates a flat +−×÷% expression (display symbols). Returns null if invalid. */
-    private fun evalExpression(raw: String): Double? {
-        if (raw.isBlank()) return null
-        val normalized = raw.replace('×', '*').replace('÷', '/').replace('−', '-')
-        // Tokenize into numbers and operators; '%' turns the preceding number into /100.
-        val tokens = mutableListOf<String>()
-        val num = StringBuilder()
-        for (c in normalized) {
-            when (c) {
-                in '0'..'9', '.' -> num.append(c)
-                '%' -> { if (num.isEmpty()) return null; num.append("*0.01_pct") }
-                '+', '-', '*', '/' -> {
-                    if (num.isEmpty()) {
-                        // allow a leading unary minus
-                        if (c == '-' && tokens.isEmpty()) { num.append('-'); continue }
-                        return null
-                    }
-                    tokens.add(resolvePct(num.toString()) ?: return null); num.clear()
-                    tokens.add(c.toString())
-                }
-                else -> return null
-            }
-        }
-        if (num.isEmpty()) return null
-        tokens.add(resolvePct(num.toString()) ?: return null)
-
-        // Two-pass: * and / first, then + and -.
-        val pass1 = mutableListOf<String>()
-        var i = 0
-        while (i < tokens.size) {
-            val t = tokens[i]
-            if (t == "*" || t == "/") {
-                val a = pass1.removeAt(pass1.size - 1).toDouble()
-                val b = tokens[i + 1].toDouble()
-                pass1.add((if (t == "*") a * b else if (b == 0.0) return null else a / b).toString())
-                i += 2
-            } else { pass1.add(t); i++ }
-        }
-        var acc = pass1[0].toDouble()
-        var j = 1
-        while (j < pass1.size) {
-            val op = pass1[j]; val b = pass1[j + 1].toDouble()
-            acc = if (op == "+") acc + b else acc - b
-            j += 2
-        }
-        return acc
-    }
-
-    private fun resolvePct(token: String): String? {
-        if (!token.contains("*0.01_pct")) return token.toDoubleOrNull()?.toString()
-        val base = token.replace("*0.01_pct", "").toDoubleOrNull() ?: return null
-        return (base * 0.01).toString()
-    }
+    /** See [com.example.synergic_pos_offline.utils.CalculatorExpression]. */
+    private fun evalExpression(raw: String): Double? =
+        com.example.synergic_pos_offline.utils.CalculatorExpression.evaluate(raw)
 
     private fun applyCoupon(code: String) {
         when {

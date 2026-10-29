@@ -70,8 +70,11 @@ class MainActivity : AppCompatActivity() {
         private const val NORMAL_ICON_DP = 44
         private const val COMPACT_ICON_DP = 34
         private const val NORMAL_BACK_DP = 40
-        private const val NORMAL_LOGO_DP = 36
-        private const val COMPACT_LOGO_DP = 28
+        // The header logo is a square tile with BALAJI SYNERGY lettered across it
+        // (drawable/header_logo_square), drawn a little larger than the bar's icons -
+        // any smaller and the name on it cannot be read.
+        private const val NORMAL_LOGO_DP = 48
+        private const val COMPACT_LOGO_DP = 42
         private const val NORMAL_VERTICAL_PADDING_DP = 10
         private const val COMPACT_VERTICAL_PADDING_DP = 4
 

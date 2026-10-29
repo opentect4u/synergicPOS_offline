@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The yellow of the Balaji Synergy POS artwork, sampled from it, so the icon's
-         background layer and the artwork's own yellow square read as one surface. -->
+    <!-- The brand yellow behind the Balaji Synergy POS mark. The mark itself - BALAJI /
+         SYNERGY in the app's dark teal, POS in white on a teal pill - is the foreground
+         layer, sized to sit inside the safe zone every launcher shape keeps. -->
     <color name="ic_launcher_brand_background">#FFCD04</color>
 </resources>

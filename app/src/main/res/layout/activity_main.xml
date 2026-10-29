@@ -93,16 +93,16 @@
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_sale"
                 app:tint="@color/primary_blue"
-                android:contentDescription="Sale" />
+                android:contentDescription="Sale / Billing" />
 
             <ImageView
                 android:id="@+id/ivHeaderLogo"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:layout_toEndOf="@id/btnBack"
                 android:layout_centerVertical="true"
                 android:layout_marginStart="4dp"
-                android:src="@drawable/header_logo_mark"
+                android:src="@drawable/header_logo_square"
                 android:scaleType="fitCenter"
                 android:contentDescription="Balaji Synergy POS" />
 
