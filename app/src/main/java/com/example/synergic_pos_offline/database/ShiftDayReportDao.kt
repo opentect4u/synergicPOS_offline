@@ -50,7 +50,13 @@ class ShiftDayReportDao(context: Context) {
      * sold, how it was paid, where it was served or who served it. Every view groups
      * within each business date's shift, so a shift's figures can be read off any of them.
      */
-    enum class View(val label: String) {
+    enum class View(val label: String, val title: String = label) {
+        /**
+         * No breakdown asked for: one row per business date's shift with its bills and
+         * takings - the shift-wise day list. What the dropdown opens on, under the prompt
+         * that invites a breakdown; headed by [title] wherever the report is named.
+         */
+        SHIFT("Please Select Type", "Shift Wise Day List"),
         BILL("Bill Wise"),
         ITEM("Item Wise"),
         PAYMENT("Payment Wise"),
@@ -275,9 +281,20 @@ class ShiftDayReportDao(context: Context) {
                     byReceipt[i.receiptNo]?.let { Part(it, i.slab, "", 0.0, i.amount, i) }
                 }
                 View.OPERATOR -> lines.map { Part(it, it.operator, "", 0.0, it.netAmount) }
+                View.SHIFT -> lines.map { Part(it, "", "", 0.0, it.netAmount) }
             }
             val shiftOrder = shifts.mapIndexed { i, s -> s.id to i }.toMap()
-            parts.groupBy { Triple(it.line.businessDate, it.line.shift?.id, it.name to it.detail) }
+            // The day list shows every shift of every date asked for, billed or not - a
+            // shift that took nothing is a line the cash-up wants, as in [byShift].
+            val idle = if (view != View.SHIFT) emptyList() else {
+                val billed = parts.map { it.line.businessDate to it.line.shift?.id }.toSet()
+                val shown = shiftFilter?.let { listOf(it) } ?: shifts
+                datesBetween(fromDate, toDate).flatMap { date ->
+                    shown.filter { (date to it.id) !in billed }
+                        .map { Group(date, it, "", "", 0, 0.0, 0.0) }
+                }
+            }
+            (idle + parts.groupBy { Triple(it.line.businessDate, it.line.shift?.id, it.name to it.detail) }
                 .map { (key, ps) ->
                     Group(
                         businessDate = key.first,
@@ -294,7 +311,7 @@ class ShiftDayReportDao(context: Context) {
                         vat = BillRounding.toPaise(ps.sumOf { it.item?.vat ?: 0.0 }),
                         rate = ps.first().item?.let { it.gstRate + it.vatRate } ?: 0.0
                     )
-                }
+                })
                 .sortedWith(
                     compareBy<Group>({ it.businessDate }, { it.shift?.let { s -> shiftOrder[s.id] } ?: Int.MAX_VALUE })
                         .then(
@@ -552,6 +569,15 @@ class ShiftDayReportDao(context: Context) {
             ShiftDao.minutesOf(dateTime.drop(11).take(5))
 
         private fun clock(minutes: Int): String = "%02d:%02d".format(minutes / 60, minutes % 60)
+
+        /** Every yyyy-MM-dd from [from] to [to] inclusive; empty if they are reversed. */
+        private fun datesBetween(from: String, to: String): List<String> = buildList {
+            var d = from
+            while (d <= to && size < MAX_DAYS) { add(d); d = plusDays(d, 1).takeIf { it != d } ?: break }
+        }
+
+        /** A guard on [datesBetween] - over ten years of days is no range anyone asked for. */
+        private const val MAX_DAYS = 3700
 
         private fun plusDays(date: String, days: Int): String = runCatching {
             val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)

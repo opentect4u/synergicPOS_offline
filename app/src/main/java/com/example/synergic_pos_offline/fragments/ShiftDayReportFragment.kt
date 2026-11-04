@@ -15,7 +15,9 @@ import com.example.synergic_pos_offline.utils.SettingsCache
  * midnight is counted on the night it started, not split across two dates. Every shift
  * of the day is shown at once by default, with its own total, or one shift alone.
  *
- * The Mode dropdown lays the same bills out seven ways - one row per bill, or totalled
+ * The Mode dropdown opens on "Please Select Type", which gives the plain shift-wise day
+ * list - a line per business day's shift. Picking a type lays the same bills out seven
+ * more ways - one row per bill, or totalled
  * by item, payment mode, table, waiter, tax slab or operator within each day's shift.
  * Table and waiter are offered in Restaurant mode only; a grocery till has neither.
  *
@@ -46,14 +48,17 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
         ReportView.values().filter { restaurant || (it != ReportView.TABLE && it != ReportView.WAITER) }
     }
 
-    /** Bill Wise first - one row per bill is what the report has always opened on. */
+    /**
+     * "Please Select Type" first: left there, the report is the plain shift-wise day
+     * list, and picking a type breaks each shift down by it.
+     */
     override val modeOptions: List<String> by lazy { views.map { it.label } }
 
     override fun load(fromDate: String, toDate: String): ShiftDayReportDao.Report =
         dao.between(
             fromDate, toDate,
             shifts.firstOrNull { it.label == filterChoice },
-            views.firstOrNull { it.label == modeChoice } ?: ReportView.BILL
+            views.firstOrNull { it.label == modeChoice } ?: ReportView.SHIFT
         )
 
     override fun isEmpty(report: ShiftDayReportDao.Report): Boolean = report.isEmpty
@@ -68,7 +73,7 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
 
     override fun headline(report: ShiftDayReportDao.Report): String =
         "${period(report)}  (${hours(report)})   •   " +
-            "${report.shiftFilter?.name ?: ALL_SHIFTS}   •   ${report.view.label}   •   " +
+            "${report.shiftFilter?.name ?: ALL_SHIFTS}   •   ${report.view.title}   •   " +
             "${report.billCount} bill(s)"
 
     /** "Night Shift · 22:00 - 06:00", or the label for bills outside every shift. */
@@ -82,6 +87,10 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
         add(Column("DAY", 110, alignEnd = false))
         add(Column("SHIFT", 200, alignEnd = false))
         when (report.view) {
+            ReportView.SHIFT -> {
+                add(Column("BILLS", 80, alignEnd = true))
+                add(Column("AMOUNT", 130, alignEnd = true))
+            }
             ReportView.BILL -> {
                 add(Column("BILL", 100, alignEnd = true))
                 add(Column("DATE & TIME", 160, alignEnd = false))
@@ -160,7 +169,8 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
             buildList {
                 add(pretty(g.businessDate))
                 add(shiftName(g.shift))
-                add(g.name)
+                // The day list's row IS the shift - there is nothing under it to name.
+                if (report.view != ReportView.SHIFT) add(g.name)
                 when (report.view) {
                     ReportView.ITEM -> add(quantity(g.quantity))
                     ReportView.TABLE -> add(g.detail.ifBlank { "-" })
@@ -215,7 +225,7 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
                     addCharges(report)
                     add("Bills Total" to money(report.totalAmount))
                 }
-                ReportView.TABLE, ReportView.WAITER, ReportView.OPERATOR -> Unit
+                ReportView.SHIFT, ReportView.TABLE, ReportView.WAITER, ReportView.OPERATOR -> Unit
             }
         }
 
@@ -250,8 +260,9 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
 
     /**
      * The printed slip: a band for each business day's shift and its rows under it - the
-     * bills, or the items, modes, tables or waiters they were totalled by - and every
-     * shift's total in the summary at the foot.
+     * bills, or the items, modes, tables, waiters, tax slabs or operators they were
+     * totalled by - and every shift's total in the summary at the foot. The day list
+     * bands by day alone, a line per shift under it.
      */
     override fun printContent(report: ShiftDayReportDao.Report): PeriodReportRenderer.Content {
         // (business date, shift) of every printed row, in order - what the bands are cut from.
@@ -267,6 +278,7 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
         } else {
             keys = report.groups.map { it.businessDate to it.shift }
             columns = when (report.view) {
+                ReportView.SHIFT -> listOf("SHIFT", "BILLS", "AMOUNT")
                 ReportView.ITEM -> listOf("ITEM", "QTY", "AMOUNT")
                 ReportView.PAYMENT -> listOf("MODE", "BILLS", "AMOUNT")
                 ReportView.TABLE -> listOf("TABLE", "BILLS", "AMOUNT")
@@ -277,6 +289,7 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
             rows = report.groups.map { g ->
                 when (report.view) {
                     ReportView.TAX -> listOf(g.name, money(g.taxable), money(g.tax), money(g.amount))
+                    ReportView.SHIFT -> listOf(shiftName(g.shift), g.bills.toString(), money(g.amount))
                     else -> listOf(
                         if (report.view == ReportView.TABLE) tableName(g) else g.name,
                         if (report.view == ReportView.ITEM) quantity(g.quantity) else g.bills.toString(),
@@ -287,7 +300,8 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
         }
         var lastBand: String? = null
         val bands = keys.map { (date, shift) ->
-            val band = "${pretty(date)}  ${shiftName(shift).uppercase()}"
+            val band = if (report.view == ReportView.SHIFT) "DAY : ${pretty(date)}"
+                else "${pretty(date)}  ${shiftName(shift).uppercase()}"
             if (band != lastBand) band.also { lastBand = it } else null
         }
         return PeriodReportRenderer.Content(
@@ -298,7 +312,7 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
             range = "F.DT:${shortDate(report.fromDate)}" to "TO.DT:${shortDate(report.toDate)}",
             heading = listOf(
                 "SHIFT" to (report.shiftFilter?.label ?: ALL_SHIFTS.uppercase()),
-                "MODE" to report.view.label.uppercase(),
+                "MODE" to report.view.title.uppercase(),
                 "HOURS" to hours(report)
             ),
             columns = columns,
