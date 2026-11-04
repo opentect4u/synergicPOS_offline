@@ -170,6 +170,25 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
     protected var filterChoice: String = ""
         private set
 
+    // ---- The optional mode ---------------------------------------------------
+
+    /**
+     * The label on a second dropdown beside the filter, or null for a report with only
+     * the one layout - every report but those that can be read several ways.
+     *
+     * Where the filter narrows which rows are read, the mode changes what a row is: one
+     * per bill, or totalled by item, by payment and so on. Like the filter it is read on
+     * Generate only, so a report already on screen is never relaid under the operator.
+     */
+    protected open val modeHint: String? = null
+
+    /** What the mode dropdown offers. The first entry is what the screen opens on. */
+    protected open val modeOptions: List<String> = emptyList()
+
+    /** What the mode dropdown currently reads - blank on a report without one. */
+    protected var modeChoice: String = ""
+        private set
+
     // ---- State ---------------------------------------------------------------
 
     /** The generated report, held so Print sends exactly what was generated. */
@@ -223,6 +242,12 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         etTo.setOnClickListener { pickPeriod(etTo) }
 
         setUpFilter(view)
+        setUpMode(view)
+        // The row holding the two dropdowns takes room only when one of them is shown.
+        view.findViewById<View>(R.id.llPeriodFilters).visibility =
+            if (view.findViewById<View>(R.id.tilPeriodFilter).visibility == View.VISIBLE ||
+                view.findViewById<View>(R.id.tilPeriodMode).visibility == View.VISIBLE
+            ) View.VISIBLE else View.GONE
 
         view.findViewById<MaterialButton>(R.id.btnPeriodGenerate).setOnClickListener { generate() }
         btnPrint.setOnClickListener {
@@ -349,6 +374,32 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
             // The adapter's own list once it has been filtered, not the full one -
             // position is an index into what is on screen.
             filterChoice = (dropdown.adapter.getItem(position) as? String) ?: filterChoice
+        }
+    }
+
+    /** Shows the mode dropdown and seeds it with its first option, on a report that has one. */
+    private fun setUpMode(view: View) {
+        val til = view.findViewById<TextInputLayout>(R.id.tilPeriodMode)
+        val hint = modeHint
+        if (hint == null || modeOptions.isEmpty()) {
+            til.visibility = View.GONE
+            return
+        }
+        til.visibility = View.VISIBLE
+        til.hint = hint
+        // A gap between the two dropdowns only when both are there to need one.
+        if (view.findViewById<View>(R.id.tilPeriodFilter).visibility == View.VISIBLE) {
+            (til.layoutParams as LinearLayout.LayoutParams).marginStart = dp(12)
+        }
+
+        val dropdown = view.findViewById<MaterialAutoCompleteTextView>(R.id.actPeriodMode)
+        dropdown.setAdapter(
+            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, modeOptions)
+        )
+        modeChoice = modeOptions.first()
+        dropdown.setText(modeChoice, false)
+        dropdown.setOnItemClickListener { _, _, position, _ ->
+            modeChoice = (dropdown.adapter.getItem(position) as? String) ?: modeChoice
         }
     }
 

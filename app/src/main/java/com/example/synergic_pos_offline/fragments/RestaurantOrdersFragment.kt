@@ -125,7 +125,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private data class OrderCard(
         // phone is a var: a take-away's customer is attached as the order is started,
         // and an empty token that gets reused takes the next customer's number.
-        val dbId: Long, var id: String, val type: String, val section: String, var phone: String,
+        // section is a var for the same reason id is: Transfer can move a table order
+        // to another section - see performSectionTransfer.
+        val dbId: Long, var id: String, val type: String, var section: String, var phone: String,
         val time: String, var amount: String, val cashier: String,
         var status: String, var selected: Boolean, var note: String = "",
         /**
@@ -1604,7 +1606,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         )
     }
 
-    /** Transfer: move this order to another available table in the same section. */
+    /** Transfer: move this order to another available table, in its own section or another. */
     private fun onTransfer() {
         if (!tableShiftOn) return toast("Table Shift is switched off in App Settings")
         val order = currentOrder() ?: return toast("Select a table order first")
@@ -2673,13 +2675,29 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val accent = ThemeManager.getThemeColor(ctx)
 
-        // Valid targets: available tables in the same section, minus any that already
-        // hold an active order in memory (defensive, in case a status drifted).
-        val activeCodes = orders.filter { it.section.equals(order.section, ignoreCase = true) }
-            .map { it.id.lowercase() }.toSet()
-        val targets = tableDao.availableTablesSameSection(order.section, order.id)
-            .filter { it.lowercase() !in activeCodes }
-        if (targets.isEmpty()) {
+        // Valid targets in [section]: its available tables, minus any that already hold
+        // an active order in memory (defensive, in case a status drifted). The order's
+        // own table is left out only in its own section - table codes restart in every
+        // section, so "1" elsewhere is a different table and a perfectly good target.
+        fun targetsIn(section: String): List<String> {
+            val own = section.equals(order.section, ignoreCase = true)
+            val activeCodes = orders.filter { it.section.equals(section, ignoreCase = true) }
+                .map { it.id.lowercase() }.toSet()
+            return tableDao.availableTablesSameSection(section, if (own) order.id else "")
+                .filter { it.lowercase() !in activeCodes }
+        }
+
+        // ANOTHER SECTION is offered only to a plain table order. A merged bill holds a
+        // list of its own room's tables, and a split part (101 A) belongs to its parent
+        // table - neither can leave the section without those links pointing at tables
+        // the order is no longer in. They keep the same-section transfer they had.
+        val crossSection = order.section.isNotBlank() && order.merged.isEmpty() && !order.id.contains(" ")
+        val otherSections = if (crossSection) {
+            tableDao.sections().map { it.name }.filter { it.isNotBlank() && !it.equals(order.section, ignoreCase = true) }
+        } else emptyList()
+
+        val ownTargets = targetsIn(order.section)
+        if (ownTargets.isEmpty() && otherSections.none { targetsIn(it).isNotEmpty() }) {
             toast("No available table in ${order.section.ifBlank { "this section" }}"); return
         }
 
@@ -2688,14 +2706,42 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val etFrom = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etFromTable)
-        val etSection = v.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etTransferSection)
+        val tilSection = v.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilTransferSection)
+        val actSection = v.findViewById<android.widget.AutoCompleteTextView>(R.id.actTransferSection)
+        val tilTo = v.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilToTable)
         val actTo = v.findViewById<android.widget.AutoCompleteTextView>(R.id.actToTable)
         val btnSave = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormPositive)
         val btnCancel = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFormNegative)
 
         etFrom.setText(order.id)
-        etSection.setText(order.section.ifBlank { "—" })
-        actTo.setAdapter(android.widget.ArrayAdapter(ctx, android.R.layout.simple_list_item_1, targets))
+
+        // The section the dialog is currently offering tables from, and those tables.
+        var toSection = order.section
+        var targets = ownTargets
+        fun showTargets() {
+            actTo.setText("", false)
+            actTo.error = null
+            actTo.setAdapter(android.widget.ArrayAdapter(ctx, android.R.layout.simple_list_item_1, targets))
+            tilTo.helperText = if (targets.isEmpty())
+                "No available table in ${toSection.ifBlank { "this section" }} - choose another section" else null
+        }
+
+        actSection.setText(order.section.ifBlank { "—" }, false)
+        if (otherSections.isEmpty()) {
+            // Same-section only, as the box always was: shown, not choosable.
+            actSection.isEnabled = false
+            tilSection.endIconMode = com.google.android.material.textfield.TextInputLayout.END_ICON_NONE
+        } else {
+            val choices = listOf(order.section) + otherSections
+            actSection.setAdapter(android.widget.ArrayAdapter(ctx, android.R.layout.simple_list_item_1, choices))
+            actSection.setOnClickListener { actSection.showDropDown() }
+            actSection.setOnItemClickListener { _, _, position, _ ->
+                toSection = choices[position]
+                targets = targetsIn(toSection)
+                showTargets()
+            }
+        }
+        showTargets()
         actTo.setOnClickListener { actTo.showDropDown() }
 
         ThemeManager.applyTheme(v)
@@ -2705,11 +2751,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         btnCancel.setOnClickListener { dialog.dismiss() }
         btnSave.setOnClickListener {
             val to = actTo.text?.toString()?.trim().orEmpty()
+            val sameSection = toSection.equals(order.section, ignoreCase = true)
             when {
                 to.isEmpty() -> actTo.error = "Select a table"
-                to.equals(order.id, ignoreCase = true) -> actTo.error = "Choose a different table"
+                sameSection && to.equals(order.id, ignoreCase = true) -> actTo.error = "Choose a different table"
                 !targets.contains(to) -> actTo.error = "Not an available table in this section"
-                else -> { dialog.dismiss(); performTransfer(order, to) }
+                sameSection -> { dialog.dismiss(); performTransfer(order, to) }
+                else -> { dialog.dismiss(); performSectionTransfer(order, to, toSection) }
             }
         }
         dialog.show()
@@ -2719,8 +2767,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun performTransfer(order: OrderCard, to: String) {
         val from = order.id
         roDao.transferTable(order.dbId, to)
-        // Both tables are in the order's own section — a transfer only ever offers
-        // same-section targets.
+        // Both tables are in the order's own section — this path is only taken for a
+        // same-section target; another section goes through performSectionTransfer.
         updateTableStatus(from, order.section, "Available")   // old table freed
         // The new table inherits what the old one WAS. An order transferred before its
         // KOT went out has taken nobody's table yet, and marking the target Occupied
@@ -2733,6 +2781,38 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         populateOrders(root, ThemeManager.getThemeColor(requireContext()))
         showOrderDetail(order)                         // refresh the detail header
         toast("Order moved from table $from to $to")
+    }
+
+    /**
+     * Applies a transfer to a table in ANOTHER section.
+     *
+     * [performTransfer] with the section changed as well: each table's status is set
+     * against its OWN section, because table codes restart in every section - freeing
+     * table 1 under the new section's name would free somebody else's table.
+     *
+     * Once the order carries its new section, everything worked out from the section
+     * follows by itself: showOrderDetail points the menu at the new section's price
+     * list (lines already on the order keep the price they went on at), and the bill
+     * takes the new section's service charge. The waiter is unchanged - see
+     * [com.example.synergic_pos_offline.database.RunningOrderDao.transferTableToSection].
+     */
+    private fun performSectionTransfer(order: OrderCard, to: String, toSection: String) {
+        val from = order.id
+        val fromSection = order.section
+        roDao.transferTableToSection(order.dbId, to, toSection)
+        updateTableStatus(from, fromSection, "Available")   // old table freed, in its own section
+        // The same rule as [performTransfer]: the new table inherits what the old one was.
+        val sentAlready = order.items.any { it.kotQty > 0.0 }
+        updateTableStatus(to, toSection, if (sentAlready) "Occupied" else "Available")
+        order.id = to
+        order.section = toSection
+        val root = view ?: return
+        populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+        showOrderDetail(order)                         // header and menu prices follow
+        // The service charge is the section's, so unlike a same-section move the total
+        // itself changes - redrawn now rather than on the next tap of the cart.
+        updateTotals()
+        toast("Order moved from table $from ($fromSection) to $to ($toSection)")
     }
 
     // ---- Table Merge -------------------------------------------------------
