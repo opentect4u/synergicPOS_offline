@@ -129,6 +129,7 @@ class RunningOrderDao(context: Context) {
             where, args, null, null, "id DESC"
         ).use { c ->
             while (c.moveToNext()) { 
+                
                 val id = c.getLong(0)
                 list.add(
                     RunningOrder(

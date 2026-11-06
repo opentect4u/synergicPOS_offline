@@ -656,6 +656,36 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
 
     // ---- Small helpers -------------------------------------------------------
 
+    /** The other end of the range from [field]: From may not pass To, nor To fall
+     *  before From. Blank when that end has not been picked. */
+    private fun otherEnd(field: TextInputEditText): String =
+        (if (field === etFrom) etTo else etFrom).text?.toString()?.trim().orEmpty()
+
+    /** Whether [value] may go into [field] without crossing the other end. Every
+     *  grain's value sorts in calendar order as text, as [generate] relies on too. */
+    private fun fitsRange(field: TextInputEditText, value: String): Boolean {
+        val other = otherEnd(field)
+        if (other.isEmpty()) return true
+        val ok = if (field === etFrom) value <= other else value >= other
+        if (!ok) toast(if (field === etFrom) "From cannot be after To" else "To cannot be before From")
+        return ok
+    }
+
+    /** Greys out the calendar days on the wrong side of the other end, so a
+     *  crossed range cannot be picked in the first place. */
+    private fun limitCalendar(dialog: DatePickerDialog, field: TextInputEditText) {
+        val other = otherEnd(field).take(10)
+        val millis = runCatching {
+            SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(other)!!.time
+        }.getOrNull() ?: return
+        if (field === etFrom) {
+            // The end of that day, so the To day itself stays pickable.
+            dialog.datePicker.maxDate = millis + 24L * 60 * 60 * 1000 - 1
+        } else {
+            dialog.datePicker.minDate = millis
+        }
+    }
+
     /** Opens whichever picker [grain] calls for, seeded with what [field] holds. */
     private fun pickPeriod(field: TextInputEditText) = when (grain) {
         CalendarGrain.MINUTE -> pickMoment(field)
@@ -687,12 +717,13 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
                 TimePickerDialog(
                     requireContext(),
                     { _, hour, minute ->
-                        field.setText(
-                            String.format(
-                                Locale.US, "%04d-%02d-%02d %02d:%02d",
-                                year, month + 1, day, hour, minute
-                            )
+                        val picked = String.format(
+                            Locale.US, "%04d-%02d-%02d %02d:%02d",
+                            year, month + 1, day, hour, minute
                         )
+                        // The calendar keeps the day in range; on the same day the
+                        // clock can still cross, so the minute is checked here.
+                        if (fitsRange(field, picked)) field.setText(picked)
                     },
                     calendar.get(Calendar.HOUR_OF_DAY),
                     calendar.get(Calendar.MINUTE),
@@ -704,7 +735,7 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
             calendar.get(Calendar.YEAR),
             calendar.get(Calendar.MONTH),
             calendar.get(Calendar.DAY_OF_MONTH)
-        ).show()
+        ).apply { limitCalendar(this, field) }.show()
     }
 
     /** Opens a calendar seeded with whatever [field] holds, and writes the pick back. */
@@ -719,12 +750,13 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         DatePickerDialog(
             requireContext(),
             { _, year, month, day ->
-                field.setText(String.format(Locale.US, "%04d-%02d-%02d", year, month + 1, day))
+                val picked = String.format(Locale.US, "%04d-%02d-%02d", year, month + 1, day)
+                if (fitsRange(field, picked)) field.setText(picked)
             },
             calendar.get(Calendar.YEAR),
             calendar.get(Calendar.MONTH),
             calendar.get(Calendar.DAY_OF_MONTH)
-        ).show()
+        ).apply { limitCalendar(this, field) }.show()
     }
 
     /**
@@ -748,7 +780,8 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
         val years = yearPicker(parts.getOrNull(0)?.toIntOrNull() ?: thisYear)
 
         showPicker("Pick a month", listOf(months, years)) {
-            field.setText(String.format(Locale.US, "%04d-%02d", years.value, months.value))
+            val picked = String.format(Locale.US, "%04d-%02d", years.value, months.value)
+            if (fitsRange(field, picked)) field.setText(picked)
         }
     }
 
@@ -756,8 +789,14 @@ abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
     private fun pickYear(field: TextInputEditText) {
         val thisYear = Calendar.getInstance().get(Calendar.YEAR)
         val years = yearPicker(field.text?.toString()?.trim()?.toIntOrNull() ?: thisYear)
+        // The wheel itself stops at the other end, so a crossed year is never offered.
+        otherEnd(field).toIntOrNull()?.let { other ->
+            if (field === etFrom) years.maxValue = other.coerceAtLeast(years.minValue)
+            else years.minValue = other.coerceAtMost(years.maxValue)
+        }
         showPicker("Pick a year", listOf(years)) {
-            field.setText(years.value.toString())
+            val picked = years.value.toString()
+            if (fitsRange(field, picked)) field.setText(picked)
         }
     }
 
