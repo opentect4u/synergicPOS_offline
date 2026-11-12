@@ -128,7 +128,8 @@ class RunningOrderDao(context: Context) {
             
             where, args, null, null, "id DESC"
         ).use { c ->
-            while (c.moveToNext()) {
+            while (c.moveToNext()) { 
+                
                 val id = c.getLong(0)
                 list.add(
                     RunningOrder(
@@ -174,6 +175,42 @@ class RunningOrderDao(context: Context) {
         try {
             db.update(orders, ContentValues().apply { put("table_code", newTableCode) },
                 "id = ?", arrayOf(orderId.toString()))
+            db.update(
+                DatabaseHelper.Tables.TD_KOT, ContentValues().apply { put("table_number", newTableCode) },
+                "running_order_id = ? AND status = 'OPEN'", arrayOf(orderId.toString())
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /**
+     * Moves a running order to a table in ANOTHER section: the same move as
+     * [transferTable], with the order's section changed alongside its table code.
+     *
+     * A separate function rather than a section argument on [transferTable], which
+     * is also how a reused take-away token and a table split re-code an order - those
+     * must never touch the section, and leaving that function as it was guarantees it.
+     *
+     * waiter_id is left alone on purpose: the waiter who has been serving the table
+     * is still the one who served it, and the bill credits them. The new section's
+     * service charge and price list follow on their own, because both are read from
+     * the order's section whenever the bill is worked out. Only the OPEN KOT is
+     * re-labelled - tickets already sent went to the kitchen under the old table.
+     */
+    fun transferTableToSection(orderId: Long, newTableCode: String, newSection: String) {
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            db.update(
+                orders,
+                ContentValues().apply {
+                    put("table_code", newTableCode)
+                    put("section", newSection.ifBlank { null })
+                },
+                "id = ?", arrayOf(orderId.toString())
+            )
             db.update(
                 DatabaseHelper.Tables.TD_KOT, ContentValues().apply { put("table_number", newTableCode) },
                 "running_order_id = ? AND status = 'OPEN'", arrayOf(orderId.toString())

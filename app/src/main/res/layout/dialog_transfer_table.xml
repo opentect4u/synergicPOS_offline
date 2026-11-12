@@ -31,7 +31,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Move this order to another available table in the same section."
+            android:text="Move this order to another available table, in this section or another one."
             android:textSize="13sp"
             android:textColor="@color/text_secondary" />
 
@@ -66,31 +66,34 @@
                     android:textSize="16sp" />
             </com.google.android.material.textfield.TextInputLayout>
 
+            <!-- To Section: starts on the order's own section, so a transfer that is
+                 left alone stays within it exactly as before. Picking another one
+                 lists that section's free tables below. Locked to the order's own
+                 section for a merged table or a split part - see showTransferDialog. -->
             <com.google.android.material.textfield.TextInputLayout
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:id="@+id/tilTransferSection"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:layout_marginStart="8dp"
-                android:hint="Section"
+                android:hint="To Section"
                 app:boxCornerRadiusTopStart="12dp"
                 app:boxCornerRadiusTopEnd="12dp"
                 app:boxCornerRadiusBottomStart="12dp"
                 app:boxCornerRadiusBottomEnd="12dp">
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etTransferSection"
+                <AutoCompleteTextView
+                    android:id="@+id/actTransferSection"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:focusable="false"
-                    android:cursorVisible="false"
-                    android:longClickable="false"
+                    android:inputType="none"
                     android:maxLines="1"
                     android:textColor="@color/text_main"
                     android:textSize="15sp" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
 
-        <!-- To Table (dropdown of available tables in the same section) -->
+        <!-- To Table (dropdown of available tables in the chosen section) -->
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/tilToTable"
             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"

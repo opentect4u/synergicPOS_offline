@@ -808,6 +808,7 @@ class MainActivity : AppCompatActivity() {
             "Stock Report" -> navigateTo(StockReportFragment())
             "Low Stock Report" -> navigateTo(LowStockReportFragment())
             "Shift Wise Report" -> navigateTo(ShiftWiseReportFragment())
+            ShiftDayReportFragment.TITLE -> navigateTo(ShiftDayReportFragment())
             "Waiter Wise Report" -> navigateTo(WaiterWiseReportFragment())
             "Sale" -> navigateTo(
                 if (SettingsCache.value(this, "G", "Mode") == "R")
@@ -894,7 +895,7 @@ class MainActivity : AppCompatActivity() {
             "Bill Wise Report", "Item Wise Report", "Operator Wise Report", "Void Bill Report",
             "Tax Report", "Duplicate Bill Report", "Stock Report", "Low Stock Report", "Item Bill Report",
             "Returned Bill Report", "UDF-Wise Report", "Payment-Wise Report", "Unsold Product Report",
-            "Opr Bill Report", "Shift Wise Report", "Category/Dept Wise Bill Report", "Payment & Receipt", "Customer Payment",
+            "Opr Bill Report", "Shift Wise Report", ShiftDayReportFragment.TITLE, "Category/Dept Wise Bill Report", "Payment & Receipt", "Customer Payment",
             "Customer Ledger", "Profit & Loss Report", "KOT Cancel Report", "Day-Wise Report",
             "Month Wise Report", "Year Wise Report", "UDF Wise Item Report", "Customer Item Wise RPT",
             "Time Wise Item Report", "Waiter Wise Report"

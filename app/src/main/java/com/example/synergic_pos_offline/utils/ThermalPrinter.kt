@@ -517,6 +517,17 @@ object ThermalPrinter {
                 )
             }
 
+            // Only the printer this software is sold with may print - see [ApprovedPrinter].
+            // Asked once per connection: a reused Bluetooth port was checked when it opened.
+            // Nothing of the bill has been sent yet, so a refused printer prints nothing.
+            if (ApprovedPrinter.ENABLED && !reusing) {
+                val identity = ApprovedPrinter.identify(context, config)
+                PrintLog.d(context, TAG, "printer identity: $identity")
+                if (!ApprovedPrinter.accepts(identity)) {
+                    return Attempt(Result.Failure(ApprovedPrinter.refusal(identity)), retryable = false)
+                }
+            }
+
             // Status is only ever asked for *after* the receipt is on the wire. Some
             // WiFi modules reset the connection when sent a query they do not
             // implement, so asking first can destroy a job that would have printed.
@@ -673,7 +684,11 @@ object ThermalPrinter {
             openPort = null
             val opened = runCatching { Print.portOpenBT(app, config.ip) }.getOrDefault(-1)
             PrintLog.d(app, TAG, "warm-up: Bluetooth port to ${config.ip} result=$opened (0 = connected)")
-            if (opened == 0) {
+            // A held port skips [runJob]'s printer check, so it is made here instead -
+            // an unapproved printer is let go, and the receipt's own open refuses it.
+            val approved = opened == 0 && (!ApprovedPrinter.ENABLED ||
+                ApprovedPrinter.accepts(ApprovedPrinter.identify(app, config)))
+            if (approved) {
                 keepPortOpen(key)
             } else {
                 runCatching { Print.PortClose() }

@@ -65,6 +65,7 @@ class ReportsFragment : Fragment() {
             LOW_STOCK_REPORT,
             "Opr Bill Report",
             SHIFT_WISE_REPORT,
+            ShiftDayReportFragment.TITLE,
             "Category/Dept Wise Bill Report",
             "Payment & Receipt",
             "Customer Payment",
@@ -112,6 +113,7 @@ class ReportsFragment : Fragment() {
                 STOCK_REPORT -> openFragment(StockReportFragment())
                 LOW_STOCK_REPORT -> openFragment(LowStockReportFragment())
                 SHIFT_WISE_REPORT -> openFragment(ShiftWiseReportFragment())
+                ShiftDayReportFragment.TITLE -> openFragment(ShiftDayReportFragment())
                 WAITER_WISE_REPORT -> openFragment(WaiterWiseReportFragment())
                 "UDF-Wise Report" -> openFragment(UdfWiseReportFragment())
                 "UDF Wise Item Report" -> openFragment(UdfWiseItemReportFragment())
@@ -180,7 +182,9 @@ class ReportsFragment : Fragment() {
             title in HIDDEN -> false
             title == STOCK_REPORT || title == LOW_STOCK_REPORT ->
                 GeneralSettingsDao.isStockEnabled(context)
-            title == SHIFT_WISE_REPORT ->
+            // The business-day report is built from the shift master's hours, so it is
+            // offered on the same condition as the report by operator's shift.
+            title == SHIFT_WISE_REPORT || title == ShiftDayReportFragment.TITLE ->
                 com.example.synergic_pos_offline.database.ShiftDao.isEnabled(context)
             title in RESTAURANT_ONLY -> SettingsCache.value(context, "G", "Mode") == "R"
             else -> true
