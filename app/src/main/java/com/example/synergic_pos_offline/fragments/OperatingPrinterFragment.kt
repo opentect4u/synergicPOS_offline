@@ -193,7 +193,8 @@ class OperatingPrinterFragment : DataTableFragment() {
         toast("Sending test print…")
         ThermalPrinter.testPrint(
             requireContext(),
-            entry.printFlag.ifBlank { entry.printerName },
+            entry.printerPurpose?.takeIf { it.isNotBlank() }
+                ?: entry.printFlag.ifBlank { entry.printerName },
             config
         ) { result ->
             activity?.runOnUiThread {
@@ -515,7 +516,7 @@ class OperatingPrinterFragment : DataTableFragment() {
             statusText.text =
                 when {
                     printers.isEmpty() && approvedOnly ->
-                        "No Balaji HOP-E801 printer (USB 0456:0808) found. Bills print only on that printer - plug it in, through an OTG adapter if the tablet has no full-size port, and give it a moment."
+                        "No supported USB device found."
                     printers.isEmpty() ->
                         "No USB device found. Plug the printer in - through an OTG adapter if the tablet has no full-size port - and give it a moment."
                     else -> "Tap the printer to use it."

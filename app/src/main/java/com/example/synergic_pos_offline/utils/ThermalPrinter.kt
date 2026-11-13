@@ -927,8 +927,11 @@ object ThermalPrinter {
         val address = printer.value?.takeIf { it.isNotBlank() } ?: return null
         return Config(
             ip = address, port = DEFAULT_PORT, paperMm = printer.paperMm, connection = type.uppercase(),
-            // The row's flag - B / K / O - so a KOT row's config is not held to the bill lock.
-            purpose = printer.printFlag.ifBlank { "BILL" }
+            // What the row's connection is for (KOT-LAN -> KOT), else its flag - B / K / O -
+            // so a KOT or barcode printer is never held to the bill-only lock, even on a
+            // row saved without a flag.
+            purpose = printer.printerPurpose?.takeIf { it.isNotBlank() }
+                ?: printer.printFlag.ifBlank { "BILL" }
         )
     }
 
