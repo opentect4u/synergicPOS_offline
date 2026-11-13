@@ -71,6 +71,9 @@ class OperatingPrinterFragment : DataTableFragment() {
         const val COL_VALUE = 2
         const val COL_PAPER = 3
         const val COL_DEFAULT = 4
+
+        /** The Printer Name dropdown's choices, and the md_printer purpose each one is. */
+        val PRINTER_NAMES = linkedMapOf("Bill" to "BILL", "KOT" to "KOT", "Barcode" to "BARCODE")
     }
 
     private val dao: OperatingPrinterDao by lazy { OperatingPrinterDao(requireContext()) }
@@ -213,7 +216,7 @@ class OperatingPrinterFragment : DataTableFragment() {
         dialog.window?.apply { setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setLayout(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT); setGravity(android.view.Gravity.CENTER) }
 
         val tvTitle = view.findViewById<TextView>(R.id.tvDialogTitle)
-        val etName = view.findViewById<TextInputEditText>(R.id.etPrinterName)
+        val etName = view.findViewById<MaterialAutoCompleteTextView>(R.id.etPrinterName)
         val actvCombo = view.findViewById<MaterialAutoCompleteTextView>(R.id.actvPrinterCombo)
         val tilIp = view.findViewById<TextInputLayout>(R.id.tilIpAddress)
         val etIp = view.findViewById<TextInputEditText>(R.id.etIpAddress)
@@ -231,13 +234,28 @@ class OperatingPrinterFragment : DataTableFragment() {
         val btnCancel = view.findViewById<MaterialButton>(R.id.btnFormNegative)
 
         val comboMap = loadCombos()
-        val comboOptions = comboMap.keys.toList()
-        actvCombo.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, comboOptions))
+        // The combos on offer, narrowed to the purpose the Printer Name dropdown names -
+        // a printer called "Bill" is set up as a BILL printer, not a KOT one.
+        var comboOptions = comboMap.keys.toList()
+        fun offerCombosFor(name: String?) {
+            // Case-blind: rows saved before the dropdown carry names typed by hand ("Kot").
+            val purpose = PRINTER_NAMES.entries.firstOrNull { it.key.equals(name?.trim(), true) }?.value
+            comboOptions = comboMap.filterValues { purpose == null || it.purpose.equals(purpose, true) }.keys.toList()
+            actvCombo.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, comboOptions))
+        }
+        offerCombosFor(existing?.printerName)
+
+        // The connection list depends on the name, so it stays shut until one is chosen.
+        val tilCombo = view.findViewById<TextInputLayout>(R.id.tilPrinterCombo)
+        tilCombo.isEnabled = !existing?.printerName.isNullOrBlank()
 
         // actvBt/actvUsb intentionally have no adapter of their own: tapping one opens
         // its device picker below instead of a plain dropdown list.
         actvBt.setOnClickListener { showBluetoothPickerDialog(actvBt) }
-        actvUsb.setOnClickListener { showUsbPickerDialog(actvUsb) }
+        actvUsb.setOnClickListener {
+            val isBill = etName.text?.toString()?.trim().equals("Bill", ignoreCase = true)
+            showUsbPickerDialog(actvUsb, approvedOnly = isBill)
+        }
 
         // Toggles which address field is shown for the chosen combo's connection type.
         fun showFieldsFor(type: String?) {
@@ -277,8 +295,41 @@ class OperatingPrinterFragment : DataTableFragment() {
             if (type == "USB") actvUsb.setText("", false)
         }
 
+        // The bill printer is the HOP-E801 on USB - the only one the printer lock lets a
+        // receipt reach (see ApprovedPrinter) - so a Bill printer is BILL-USB, fixed: the
+        // connection is filled in and its dropdown stays shut. Returns false when there
+        // is no BILL-USB row to fix it to, and the dropdown is left to the operator.
+        fun lockToBillUsb(): Boolean {
+            val usbCombo = comboOptions.firstOrNull {
+                comboMap[it]?.purpose.equals("BILL", true) && comboMap[it]?.type.equals("USB", true)
+            } ?: return false
+            if (actvCombo.text?.toString()?.trim() != usbCombo) {
+                actvCombo.setText(usbCombo, false)
+                actvUsb.setText("", false)
+            }
+            showFieldsFor("USB")
+            showPaperFor("BILL")
+            tilCombo.isEnabled = false
+            return true
+        }
+
+        etName.setAdapter(com.example.synergic_pos_offline.utils.Dropdowns.adapter(ctx, PRINTER_NAMES.keys.toList()))
+        etName.setOnItemClickListener { _, _, position, _ ->
+            val name = PRINTER_NAMES.keys.toList()[position]
+            etName.error = null
+            tilCombo.isEnabled = true
+            offerCombosFor(name)
+            if (PRINTER_NAMES[name] == "BILL" && lockToBillUsb()) return@setOnItemClickListener
+            // A combo already picked for another purpose no longer fits the name.
+            if (actvCombo.text?.toString()?.trim() !in comboOptions) {
+                actvCombo.setText("", false)
+                showFieldsFor(null)
+            }
+        }
+
         tvTitle.text = if (existing == null) "Add Operating Printer" else "Edit Operating Printer"
-        etName.setText(existing?.printerName.orEmpty())
+        // false: setting the text must not pop the list open or filter it to one entry.
+        etName.setText(existing?.printerName.orEmpty(), false)
         // The saved row only carries the md_printer sl_no; find the combo label
         // whose row matches it so the dropdown can preselect it.
         val initialCombo = existing?.let { e -> comboMap.entries.firstOrNull { it.value.slNo == e.printerSlNo }?.key }
@@ -289,6 +340,9 @@ class OperatingPrinterFragment : DataTableFragment() {
         if (initialType == "WIFI" || initialType == "LAN") etIp.setText(existing?.value.orEmpty())
         if (initialType == "BLUETOOTH") prefillBtField(actvBt, existing?.value)
         if (initialType == "USB") prefillUsbField(actvUsb, existing?.value)
+        // An existing Bill printer opens fixed to USB as well - one saved on WiFi/LAN
+        // before the lock could never print, so it is moved over and asks for the device.
+        if (existing?.printerName?.trim().equals("Bill", ignoreCase = true)) lockToBillUsb()
         if ((existing?.paperMm ?: OperatingPrinterDao.DEFAULT_PAPER_MM) == 58) rb58mm.isChecked = true else rb80mm.isChecked = true
         swDefault.isChecked = existing?.isDefault ?: false
         tvDefaultState.text = if (swDefault.isChecked) "Default" else "Not default"
@@ -310,7 +364,7 @@ class OperatingPrinterFragment : DataTableFragment() {
         btnSave.setOnClickListener {
             val name = etName.text?.toString()?.trim().orEmpty()
             if (name.isEmpty()) {
-                etName.error = "Printer name is required"
+                etName.error = "Choose Bill, KOT or Barcode"
                 return@setOnClickListener
             }
 
@@ -425,7 +479,12 @@ class OperatingPrinterFragment : DataTableFragment() {
      * refreshes as devices are plugged and unplugged, which is what an operator
      * fumbling with an OTG adapter needs to see.
      */
-    private fun showUsbPickerDialog(actvUsb: MaterialAutoCompleteTextView) {
+    private fun showUsbPickerDialog(
+        actvUsb: MaterialAutoCompleteTextView,
+        /** Bill printers: list only the HOP-E801 (USB 0456:0808) - the one printer a
+         *  bill can go to (see [com.example.synergic_pos_offline.utils.ApprovedPrinter]). */
+        approvedOnly: Boolean = false
+    ) {
         val ctx = com.example.synergic_pos_offline.utils.FixedFontScale.wrap(requireContext())
         val density = resources.displayMetrics.density
 
@@ -439,7 +498,11 @@ class OperatingPrinterFragment : DataTableFragment() {
 
         fun refresh() {
             printers.clear()
-            printers.addAll(UsbPrinters.list(ctx))
+            printers.addAll(UsbPrinters.list(ctx).filter {
+                !approvedOnly || com.example.synergic_pos_offline.utils.ApprovedPrinter.accepts(
+                    com.example.synergic_pos_offline.utils.ApprovedPrinter.Identity("USB", it.address, it.label)
+                )
+            })
             items.clear()
             printers.forEach { printer ->
                 items.add(
@@ -450,9 +513,13 @@ class OperatingPrinterFragment : DataTableFragment() {
             }
             listAdapter.notifyDataSetChanged()
             statusText.text =
-                if (printers.isEmpty())
-                    "No USB device found. Plug the printer in - through an OTG adapter if the tablet has no full-size port - and give it a moment."
-                else "Tap the printer to use it."
+                when {
+                    printers.isEmpty() && approvedOnly ->
+                        "No Balaji HOP-E801 printer (USB 0456:0808) found. Bills print only on that printer - plug it in, through an OTG adapter if the tablet has no full-size port, and give it a moment."
+                    printers.isEmpty() ->
+                        "No USB device found. Plug the printer in - through an OTG adapter if the tablet has no full-size port - and give it a moment."
+                    else -> "Tap the printer to use it."
+                }
         }
         refresh()
 

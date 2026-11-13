@@ -224,7 +224,7 @@ class BarcodeLabelsFragment : DataTableFragment() {
                 title = "No barcode printer set up",
                 message = "Add the TSC label printer under Print Settings › " +
                     "Connections, and pick one of the BARCODE options in the printer " +
-                    "dropdown — BARCODE-USB, BARCODE-LAN or BARCODE-BLUETOOTH, " +
+                    "dropdown — BARCODE-USB, BARCODE-LAN, BARCODE-WIFI or BARCODE-BLUETOOTH," +
                     "whichever matches how it is plugged in.\n\n" +
                     "Enter its address, tick Default, and save. BILL and KOT stay as " +
                     "they are for receipts and kitchen tickets.",
