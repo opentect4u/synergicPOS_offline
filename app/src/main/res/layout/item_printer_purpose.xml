@@ -67,6 +67,17 @@
                 android:minWidth="0dp"
                 android:minHeight="0dp"
                 android:text="Test Print" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSelfTest"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:text="Self Test" />
         </LinearLayout>
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

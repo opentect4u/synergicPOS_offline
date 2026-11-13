@@ -94,9 +94,26 @@ object ThermalPrinter {
         val ip: String,
         val port: Int,
         val paperMm: Int,
-        val connection: String = "WIFI"
+        val connection: String = "WIFI",
+        /** Send the printer's own self-test command instead of the bitmap - see [selfTest]. */
+        val selfTest: Boolean = false,
+        /**
+         * What the printer is for - BILL, KOT or BARCODE (or their B / K / O flags).
+         * Only a BILL printer is held to [ApprovedPrinter]; see [isLocked]. Defaults to
+         * BILL so a config built without saying stays locked rather than slipping out.
+         */
+        val purpose: String = "BILL"
     ) {
         val paperDots: Int get() = dotsForMm(paperMm)
+
+        /** Whether the printer lock applies: everything but a KOT or barcode printer. */
+        val isLocked: Boolean
+            get() = purpose.trim().uppercase() !in UNLOCKED_PURPOSES
+
+        private companion object {
+            /** KOT and barcode printers - any make, any connection. */
+            val UNLOCKED_PURPOSES = setOf("KOT", "K", "BARCODE", "OTHERS", "O")
+        }
         val isBluetooth: Boolean get() = connection.equals("BLUETOOTH", ignoreCase = true)
         val isUsb: Boolean get() = connection.equals("USB", ignoreCase = true)
 
@@ -138,6 +155,17 @@ object ThermalPrinter {
                 "port=${config.port} paperMm=${config.paperMm} paperDots=${config.paperDots} " +
                 "bitmap=${receipt.width}x${receipt.height} ===="
         )
+        // Only the HOP-E801 on USB may print a bill - see [ApprovedPrinter]. A bill
+        // printer not on USB is turned away here, without connecting to it at all. KOT
+        // and barcode printers are not locked.
+        if (ApprovedPrinter.ENABLED && config.isLocked && !config.isUsb) {
+            val refusal = ApprovedPrinter.refusal(ApprovedPrinter.Identity(config.connection.uppercase()))
+            PrintLog.d(context, TAG, "refused: $refusal")
+            copy.recycle()
+            onResult(Result.Failure(refusal))
+            return
+        }
+
         // A USB printer cannot be opened until the user has allowed this app to talk
         // to that device, and the prompt that asks is Android's own - it needs a live
         // main thread, so it is dealt with here rather than from the print worker. It
@@ -225,6 +253,10 @@ object ThermalPrinter {
      * Operating Printer's rows) so they all print the same thing.
      */
     fun testPrint(context: Context, purpose: String, config: Config, onResult: (Result) -> Unit) {
+        // Tested as the purpose it is for, so a KOT printer's test is not held to the
+        // bill-only printer lock - and a bill printer's is.
+        @Suppress("NAME_SHADOWING")
+        val config = config.copy(purpose = purpose.ifBlank { config.purpose })
         // A LABEL PRINTER GETS A LABEL, not a receipt raster.
         //
         // This used to send every printer the same ESC/POS bitmap. On a TSC that is not
@@ -237,7 +269,17 @@ object ThermalPrinter {
             printRaw(context, TsplLabel.sample(TsplLabel.shopNameOf(context)), config, onResult)
             return
         }
-        print(context, buildTestPrintBitmap(purpose, config), config, onResult)
+        // A receipt printer gets a sample BILL - the shop's real layout (header, logos,
+        // template, tax summary, footer) drawn off [SampleBill] by the same renderer a
+        // sale prints through - so a test shows what customers will actually be handed.
+        // The plain test card stays as the fallback should the bill fail to draw.
+        val sample = runCatching {
+            BillReceiptRenderer(context).renderDraftToBitmap(SampleBill.draft(), config.paperDots)
+        }.getOrNull()
+        print(context, sample ?: buildTestPrintBitmap(purpose, config), config) { result ->
+            sample?.recycle()
+            onResult(result)
+        }
     }
 
     /**
@@ -250,6 +292,27 @@ object ThermalPrinter {
     private fun isLabelPurpose(purpose: String): Boolean = purpose.trim().let {
         it.equals("BARCODE", true) || it.equals("OTHERS", true) || it.equals("O", true)
     }
+
+    /**
+     * Has the printer print its own self-test page - `GS ( A`, the SDK's printSelf(),
+     * the same page holding FEED at power-on gives. On a networked model that page
+     * carries the IP and the network MAC, which is how a MAC is read off a printer
+     * reachable only by USB.
+     *
+     * Goes through [print] like any job, so the printer lock still applies and a USB
+     * printer still gets its permission prompt. The bitmap is a 1x1 placeholder: with
+     * [Config.selfTest] set, [runJob] sends the command in its place.
+     */
+    fun selfTest(context: Context, config: Config, onResult: (Result) -> Unit) {
+        val placeholder = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        print(context, placeholder, config.copy(selfTest = true)) { result ->
+            placeholder.recycle()
+            onResult(result)
+        }
+    }
+
+    /** Long enough for a self-test page to come out before the port is closed under it. */
+    private const val SELF_TEST_DRAIN_MS = 4_000L
 
     private fun buildTestPrintBitmap(purpose: String, config: Config): Bitmap {
         val width = config.paperDots
@@ -520,12 +583,21 @@ object ThermalPrinter {
             // Only the printer this software is sold with may print - see [ApprovedPrinter].
             // Asked once per connection: a reused Bluetooth port was checked when it opened.
             // Nothing of the bill has been sent yet, so a refused printer prints nothing.
-            if (ApprovedPrinter.ENABLED && !reusing) {
+            if (ApprovedPrinter.ENABLED && config.isLocked && !reusing) {
                 val identity = ApprovedPrinter.identify(context, config)
                 PrintLog.d(context, TAG, "printer identity: $identity")
                 if (!ApprovedPrinter.accepts(identity)) {
                     return Attempt(Result.Failure(ApprovedPrinter.refusal(identity)), retryable = false)
                 }
+            }
+
+            if (config.selfTest) {
+                Print.printSelf()
+                PrintLog.d(context, TAG, "self-test command sent")
+                // The page is printed from the printer's own memory, with nothing to
+                // acknowledge it - wait it out rather than close the port mid-page.
+                Thread.sleep(SELF_TEST_DRAIN_MS)
+                return Attempt(Result.Sent, retryable = false)
             }
 
             // Status is only ever asked for *after* the receipt is on the wire. Some
@@ -674,6 +746,10 @@ object ThermalPrinter {
         val app = context.applicationContext
         val config = runCatching { configForPurpose(app, purpose) }.getOrNull() ?: return
         if (!config.isBluetooth) return
+        // Under the printer lock a Bluetooth BILL printer is never printed to - see
+        // [ApprovedPrinter] - so there is no connection worth making ahead of time.
+        // A KOT one is not locked and is warmed up as before.
+        if (ApprovedPrinter.ENABLED && config.isLocked) return
         val key = "${config.connection}:${config.ip}"
         if (openPort == key) return
         val now = android.os.SystemClock.elapsedRealtime()
@@ -684,11 +760,7 @@ object ThermalPrinter {
             openPort = null
             val opened = runCatching { Print.portOpenBT(app, config.ip) }.getOrDefault(-1)
             PrintLog.d(app, TAG, "warm-up: Bluetooth port to ${config.ip} result=$opened (0 = connected)")
-            // A held port skips [runJob]'s printer check, so it is made here instead -
-            // an unapproved printer is let go, and the receipt's own open refuses it.
-            val approved = opened == 0 && (!ApprovedPrinter.ENABLED ||
-                ApprovedPrinter.accepts(ApprovedPrinter.identify(app, config)))
-            if (approved) {
+            if (opened == 0) {
                 keepPortOpen(key)
             } else {
                 runCatching { Print.PortClose() }
@@ -844,7 +916,8 @@ object ThermalPrinter {
             ip = address,
             port = DEFAULT_PORT,
             paperMm = printer.paperMm ?: DEFAULT_PAPER_MM,
-            connection = printer.type.uppercase()
+            connection = printer.type.uppercase(),
+            purpose = purpose
         )
     }
 
@@ -853,7 +926,9 @@ object ThermalPrinter {
         val type = printer.printerType?.takeIf { it.isNotBlank() } ?: return null
         val address = printer.value?.takeIf { it.isNotBlank() } ?: return null
         return Config(
-            ip = address, port = DEFAULT_PORT, paperMm = printer.paperMm, connection = type.uppercase()
+            ip = address, port = DEFAULT_PORT, paperMm = printer.paperMm, connection = type.uppercase(),
+            // The row's flag - B / K / O - so a KOT row's config is not held to the bill lock.
+            purpose = printer.printFlag.ifBlank { "BILL" }
         )
     }
 
@@ -871,7 +946,8 @@ object ThermalPrinter {
             ip = address,
             port = DEFAULT_PORT,
             paperMm = printer.paperMm,
-            connection = type.uppercase()
+            connection = type.uppercase(),
+            purpose = purpose
         )
     }
 

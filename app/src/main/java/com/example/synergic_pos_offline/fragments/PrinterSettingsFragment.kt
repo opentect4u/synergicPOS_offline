@@ -161,6 +161,13 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
             dao.getSelected(purpose)?.let { testPrint(it) }
         }
 
+        // The printer's own self-test page - its settings, and on a networked model the
+        // IP and MAC. ESC/POS only: the label printer speaks TSPL and has no such command.
+        card.findViewById<MaterialButton>(R.id.btnSelfTest).apply {
+            visibility = if (purpose.equals("BARCODE", true)) View.GONE else View.VISIBLE
+            setOnClickListener { dao.getSelected(purpose)?.let { selfTest(it) } }
+        }
+
         llPurposes.addView(card)
     }
 
@@ -180,6 +187,28 @@ class PrinterSettingsFragment : Fragment(), TitledScreen {
                 connection = printer.type.uppercase()
             )
         )
+    }
+
+    /** Has [printer] print its own self-test page - see [ThermalPrinter.selfTest]. */
+    private fun selfTest(printer: PrinterDao.Printer) {
+        val address = printer.ip?.takeIf { it.isNotBlank() }
+        if (address == null) {
+            toast("Tap the card to set up ${printer.purpose}'s connection first")
+            return
+        }
+        val config = ThermalPrinter.Config(
+            ip = address,
+            port = ThermalPrinter.defaultPort(),
+            paperMm = printer.paperMm ?: ThermalPrinter.defaultPaperMm(),
+            connection = printer.type.uppercase(),
+            purpose = printer.purpose
+        )
+        toast("Asking ${config.description} to print its self-test page…")
+        ThermalPrinter.selfTest(requireContext(), config) { result ->
+            if (!isAdded) return@selfTest
+            if (result is ThermalPrinter.Result.Failure) toast("Self test failed: ${result.message}")
+            else toast("Self-test page sent - check the printer")
+        }
     }
 
     /** Sends a test print to [config] - see [ThermalPrinter.testPrint]. */

@@ -926,6 +926,7 @@ class DatabaseHelper private constructor(context: Context) :
         seedDefaultPrinters(db)
         db.execSQL("UPDATE ${Tables.MD_PRINTER} SET is_selected = 1")
         addExtraPrinterTypes(db)
+        addWifiForKotAndBarcode(db)
         db.execSQL(SQL_CREATE_MD_OPERATING_PRINTER)
         db.execSQL(SQL_CREATE_MD_SECTION)
         db.execSQL(SQL_CREATE_MD_TABLE)
@@ -996,6 +997,7 @@ class DatabaseHelper private constructor(context: Context) :
         if (oldVersion < 21) migrateV21AllowSplitBillType(db)
         if (oldVersion < 22) migrateV22RenameOthersPrinterToBarcode(db)
         if (oldVersion < 23) migrateV23ExtractBillSettings(db)
+        if (oldVersion < 24) addWifiForKotAndBarcode(db)
         // gst_rate is dropped in onOpen via a portable table rebuild (see
         // dropProductGstRateIfPresent), which works on every SQLite version.
     }
@@ -1151,6 +1153,21 @@ class DatabaseHelper private constructor(context: Context) :
     }
 
     /**
+     * v24: KOT and BARCODE printers can also be connected over WIFI (unselected).
+     * BILL already has WIFI; it is left alone. Idempotent - it adds only missing rows.
+     */
+    private fun addWifiForKotAndBarcode(db: SQLiteDatabase) {
+        for (purpose in listOf("KOT", "BARCODE")) {
+            db.execSQL(
+                "INSERT INTO ${Tables.MD_PRINTER} (printer_purpose, printer_type, is_selected) " +
+                    "SELECT ?, 'WIFI', 0 WHERE NOT EXISTS (" +
+                    "SELECT 1 FROM ${Tables.MD_PRINTER} WHERE printer_purpose = ? AND printer_type = 'WIFI')",
+                arrayOf(purpose, purpose)
+            )
+        }
+    }
+
+    /**
      * Empties [Tables.MD_APP_SETTINGS] - every setting on the till, for every store.
      *
      * Only ever called on the way to writing the defaults back
@@ -1185,6 +1202,7 @@ class DatabaseHelper private constructor(context: Context) :
             seedDefaultPrinters(db)
             db.execSQL("UPDATE ${Tables.MD_PRINTER} SET is_selected = 1")
             addExtraPrinterTypes(db)
+            addWifiForKotAndBarcode(db)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -1912,7 +1930,7 @@ class DatabaseHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "synergic_pos.db"
-        private const val DATABASE_VERSION = 23
+        private const val DATABASE_VERSION = 24
 
         private const val MAINTENANCE_PREFS = "db_maintenance"
         private const val KEY_BILL_VAT_REPAIRED = "bill_vat_repaired"
