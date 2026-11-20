@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The POS serves reports over plain HTTP on the shop's own network (there is no
+     certificate for a local IP), so cleartext must be allowed. Reports are protected
+     by the POS's PIN, and the traffic never leaves the shop network. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
