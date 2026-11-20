@@ -1,0 +1,17 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+/.idea
+.DS_Store
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+
+# Release signing - the key and its passwords never leave this machine
+keystore.properties
+*.jks
+config.bat
+node_modules
