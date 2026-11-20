@@ -23,7 +23,7 @@ abstract class ItemSaleReportFragment : PeriodReportFragment<ItemWiseReportDao.R
 
     override val rowNoun = "items"
 
-    private val dao: ItemWiseReportDao by lazy { ItemWiseReportDao(requireContext()) }
+    private val dao: ItemWiseReportDao by lazy { ItemWiseReportDao(ctx) }
 
     override fun load(fromDate: String, toDate: String): ItemWiseReportDao.Report =
         dao.between(fromDate, toDate, grain)

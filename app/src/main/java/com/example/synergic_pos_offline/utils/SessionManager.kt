@@ -80,7 +80,18 @@ object SessionManager {
         // The sale screens' kept catalogues belong to this login - see CatalogueSignature.
         CatalogueSignature.newSession()
         prefs(context).edit().remove(KEY_USER_ID).apply()
+        // Phones on Mobile Reports are connected on this login's behalf: they are told
+        // and disconnected now, and refused until somebody signs in again - see
+        // EventSocketServer.announceLogout and ReportServer.
+        runCatching { com.example.synergic_pos_offline.lanreport.EventSocketServer.announceLogout() }
     }
+
+    /**
+     * Whether anybody is signed in to this till - remembered across a process restart
+     * the same way [restore] does it, so the Mobile Reports service (which can outlive
+     * the screens) answers phones for a till that is still logged in.
+     */
+    fun isSignedIn(context: Context): Boolean = runCatching { restore(context) != null }.getOrDefault(false)
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

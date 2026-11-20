@@ -34,7 +34,7 @@ class PaymentWiseReportFragment : PeriodReportFragment<PaymentWiseReportDao.Repo
     override val filterOptions: List<String> =
         listOf(ALL_LABEL) + PaymentWiseReportDao.MODES.map { it.titleCase() }
 
-    private val dao: PaymentWiseReportDao by lazy { PaymentWiseReportDao(requireContext()) }
+    private val dao: PaymentWiseReportDao by lazy { PaymentWiseReportDao(ctx) }
 
     override fun load(fromDate: String, toDate: String): PaymentWiseReportDao.Report =
         dao.between(fromDate, toDate, selectedMode())

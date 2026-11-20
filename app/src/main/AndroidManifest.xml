@@ -25,6 +25,16 @@
          UsbPrinters. Not required, so a tablet with no host port still installs. -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
+    <!-- Mobile Reports (lanreport/): a read-only report server for phones on the shop
+         network. A foreground service keeps it running; the Wi-Fi and wake locks keep
+         it answering with the screen off; multicast lets phones find the till. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application
         android:name=".SynergicPosApplication"
         android:allowBackup="true"
@@ -62,6 +72,12 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Mobile Reports server - see lanreport/LanReportService. -->
+        <service
+            android:name=".lanreport.LanReportService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 
 </manifest>

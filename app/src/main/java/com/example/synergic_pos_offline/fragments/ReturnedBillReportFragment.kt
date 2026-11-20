@@ -24,7 +24,7 @@ class ReturnedBillReportFragment : PeriodReportFragment<ReturnedBillReportDao.Re
 
     override val rowNoun = "returns"
 
-    private val dao: ReturnedBillReportDao by lazy { ReturnedBillReportDao(requireContext()) }
+    private val dao: ReturnedBillReportDao by lazy { ReturnedBillReportDao(ctx) }
 
     override fun load(fromDate: String, toDate: String): ReturnedBillReportDao.Report =
         dao.between(fromDate, toDate)
@@ -147,7 +147,7 @@ class ReturnedBillReportFragment : PeriodReportFragment<ReturnedBillReportDao.Re
         toDate: String
     ): Pair<String, String> {
         val period = "between ${pretty(fromDate)} and ${pretty(toDate)}"
-        val settings = GeneralSettingsDao(requireContext()).load()
+        val settings = GeneralSettingsDao(ctx).load()
 
         return when {
             report.itemWiseCount > 0 -> "No bill-wise returns in this period" to

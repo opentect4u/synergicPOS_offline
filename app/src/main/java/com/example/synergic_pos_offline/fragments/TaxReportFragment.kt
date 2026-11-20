@@ -19,7 +19,7 @@ class TaxReportFragment : PeriodReportFragment<TaxReportDao.Report>() {
 
     override val rowNoun = "slabs"
 
-    private val dao: TaxReportDao by lazy { TaxReportDao(requireContext()) }
+    private val dao: TaxReportDao by lazy { TaxReportDao(ctx) }
 
     override fun load(fromDate: String, toDate: String): TaxReportDao.Report =
         dao.between(fromDate, toDate)

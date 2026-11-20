@@ -201,8 +201,21 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
 
     // Running orders — loaded from / persisted to the database (survive restarts).
     private val orders = mutableListOf<OrderCard>()
-    private val roDao by lazy { com.example.synergic_pos_offline.database.RunningOrderDao(requireContext()) }
-    private val stockDao by lazy { com.example.synergic_pos_offline.database.StockDao(requireContext()) }
+
+    /**
+     * Set only while the Mobile Reports server uses this screen off-screen - see
+     * [headlessBilledTables] and [headlessSettle]. Null on the till's own screen.
+     */
+    private var headlessContext: Context? = null
+
+    /**
+     * The context the settlement path reads the database through: the screen's own,
+     * or the server's when run off-screen, where requireContext() would throw.
+     */
+    private val dataContext: Context get() = headlessContext ?: requireContext()
+
+    private val roDao by lazy { com.example.synergic_pos_offline.database.RunningOrderDao(dataContext) }
+    private val stockDao by lazy { com.example.synergic_pos_offline.database.StockDao(dataContext) }
 
     /** Whether stock is tracked, as of the last catalogue read. Gates the ceiling below. */
     private var stockTrackingOn = false
@@ -243,8 +256,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private var catalogueSignatureRead: String? = null
 
-    private val tableDao by lazy { com.example.synergic_pos_offline.database.TableDao(requireContext()) }
-    private val subTableDao by lazy { com.example.synergic_pos_offline.database.SubTableDao(requireContext()) }
+    private val tableDao by lazy { com.example.synergic_pos_offline.database.TableDao(dataContext) }
+    private val subTableDao by lazy { com.example.synergic_pos_offline.database.SubTableDao(dataContext) }
     private var suppressNoteWatcher = false   // guards programmatic note-field updates
 
     /**
@@ -366,7 +379,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
     }
 
-    private val sectionDao by lazy { com.example.synergic_pos_offline.database.SectionDao(requireContext()) }
+    private val sectionDao by lazy { com.example.synergic_pos_offline.database.SectionDao(dataContext) }
 
     /** A bill breakdown computed from per-product GST plus the section's service charge. */
     private data class BillBreakdown(
@@ -492,7 +505,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (chargeCache.size > 256) chargeCache.clear()
         val charges = chargeCache.getOrPut(subtotal to chargeOrderType) {
             runCatching {
-                com.example.synergic_pos_offline.database.ChargeDao(requireContext()).amountsOn(subtotal, chargeOrderType)
+                com.example.synergic_pos_offline.database.ChargeDao(dataContext).amountsOn(subtotal, chargeOrderType)
             }.getOrDefault(emptyList())
         }
         // THE WHOLE CALCULATION, in the one place that does it - see CartMath, which
@@ -609,7 +622,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      */
     private var roundOffCache: Boolean? = null
     private fun roundOffOn(): Boolean = roundOffCache ?: runCatching {
-        com.example.synergic_pos_offline.database.BillSettingsDao(requireContext()).load().roundOff
+        com.example.synergic_pos_offline.database.BillSettingsDao(dataContext).load().roundOff
     }.getOrDefault(false).also { roundOffCache = it }
 
     /**
@@ -629,7 +642,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (roundOffOn()) BillRounding.roundOff(total) else 0.0
 
     // Tax configuration, resolved the same way the grocery billing screen does.
-    private val taxSettings by lazy { TaxSettingsDao(requireContext()).load() }
+    private val taxSettings by lazy { TaxSettingsDao(dataContext).load() }
     private val discountPreTax by lazy { taxSettings.discountPosition == TaxSettingsDao.DiscountPosition.PRE_TAX }
     private val itemwiseDiscountActive by lazy {
         taxSettings.discountEnabled && taxSettings.discountType == TaxSettingsDao.DiscountType.ITEM_WISE
@@ -1032,6 +1045,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (savedInstanceState == null) {
             view.post { if (isAdded) showChooseTableDialog() }
         }
+
+        // A table paid from the mobile app comes off this screen as it happens.
+        com.example.synergic_pos_offline.lanreport.TableEvents.addListener(remoteTableListener)
     }
 
     override fun onResume() {
@@ -1085,6 +1101,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         SettingsCache.value(requireContext(), "A", key) == "1"
 
     override fun onDestroyView() {
+        com.example.synergic_pos_offline.lanreport.TableEvents.removeListener(remoteTableListener)
+        livePickerRefresh = null
         // A ListPopupWindow is a window, not a child of this view: left showing, it
         // would float over whatever replaces this screen.
         suggestions?.release()
@@ -4472,7 +4490,8 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rvTables)
         val emptyNote = v.findViewById<TextView>(R.id.tvNoTables)
 
-        val tables = loadTables()
+        // A var: re-read when a table changes from the mobile app - see livePickerRefresh.
+        var tables = loadTables()
         // The floor as it stands, beside the plan itself - see [fillActiveSummary].
         fillActiveSummary(v, accent)
         // The floor in three numbers, beside the choice of order kind - see the
@@ -4608,6 +4627,15 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
             adapter.submit(shown, showSection = false)
             emptyNote.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
             rv.visibility = if (shown.isEmpty()) View.GONE else View.VISIBLE
+        }
+
+        // While this plan is up, a table settled from the mobile app redraws it: the
+        // statuses, the counts and the active-orders summary, read fresh.
+        livePickerRefresh = {
+            tables = loadTables()
+            fillActiveSummary(v, accent)
+            fillTableStatusCounts(v, tables)
+            refresh()
         }
 
         // Sections read as chips across the top - the categories of this grid. A store
@@ -4757,6 +4785,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // [bandHandled]. Tapping QSR is an answer, so the fallback for "no answer
         // given" must not fire on top of it.
         dialog.setOnDismissListener {
+            livePickerRefresh = null
             // Handed back before anything else: the listeners hold this dialog, and a
             // header that outlives it would go on trying to close one already gone.
             headerControls.forEach { it.setOnTouchListener(null) }
@@ -6406,7 +6435,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun customerFor(phone: String): com.example.synergic_pos_offline.database.CustomerDao.Customer? {
         if (phone.isBlank()) return null
         return runCatching {
-            com.example.synergic_pos_offline.database.CustomerDao(requireContext()).findByPhone(phone)
+            com.example.synergic_pos_offline.database.CustomerDao(dataContext).findByPhone(phone)
         }.getOrNull()
     }
 
@@ -6418,13 +6447,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         if (phone.isBlank() || phone == order.phone) return
         order.phone = phone
         roDao.setPhone(order.dbId, phone)
-        if (currentOrder() === order) showOrderDetail(order)
+        if (headlessContext == null && currentOrder() === order) showOrderDetail(order)
     }
 
     private fun customerOutstanding(phone: String): Double? {
         if (phone.isBlank()) return null
         val db = com.example.synergic_pos_offline.database.DatabaseHelper
-            .getInstance(requireContext()).readableDatabase
+            .getInstance(dataContext).readableDatabase
         return db.query(
             "md_customers", arrayOf("balance_amount"), "phone_number = ?",
             arrayOf(phone), null, null, null, "1"
@@ -6509,7 +6538,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
                 // date - the same sum grocery's preview prints.
                 outstanding = if (payment.equals(CREDIT_LABEL, ignoreCase = true)) {
                     com.example.synergic_pos_offline.utils.CreditSale.outstandingAfter(
-                        requireContext(), order.phone, payableTotal(b.total), tendered
+                        dataContext, order.phone, payableTotal(b.total), tendered
                     )
                 } else customerOutstanding(order.phone)
             ),
@@ -6589,7 +6618,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         // Deducted ONCE. The bill written at payment carries stockAlreadyMoved, so
         // BillDao does not take the same items off again.
         deductStockForOrder(order)
-        completeTable(order)   // billed → locked (stays until paid)
+        completeTable(order)   // billed → locked (stays until paid); tells the phones too
 
         // BACK TO THE FLOOR PLAN. The bill is on the table and the order is locked, so
         // there is nothing further to do to it here - it is waiting on the guests, not
@@ -6640,7 +6669,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         order: OrderCard, payMethod: String, tendered: Double = 0.0,
         splitParts: List<Pair<String, Double>> = emptyList()
     ): com.example.synergic_pos_offline.database.BillDao.Result? {
-        val billDao = com.example.synergic_pos_offline.database.BillDao(requireContext())
+        val billDao = com.example.synergic_pos_offline.database.BillDao(dataContext)
         val b = computeBill(order)
 
         // The parts this table was settled in, empty on an ordinary one-mode payment.
@@ -6842,6 +6871,7 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         }
         val mergedTables = roDao.mergedTablesOf(order.dbId)
         roDao.close(order.dbId)                          // delete order + items, close KOT
+        publishTableEvent(com.example.synergic_pos_offline.lanreport.TableEvents.CLEARED, order)
         if (!order.counter)
             updateTableStatus(order.id, order.section, "Available")   // free the dine-in table
         // Merged tables are same-section by construction, so they free with it.
@@ -6868,32 +6898,34 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     private fun settlePaidOrder(
         order: OrderCard, payMethod: String, tendered: Double = 0.0,
         splitParts: List<Pair<String, Double>> = emptyList()
-    ) {
+    ) = synchronized(SETTLE_LOCK) {
+        // ALREADY SETTLED FROM THE MOBILE APP? Its Table Settlement page settles a
+        // billed table through [headlessSettle], which this screen only learns of when
+        // it next reloads - so the table can still be on screen here, Settlement and
+        // all. Settling it again would book the sale twice. The running order is the
+        // truth: gone means paid.
+        if (roDao.allRunning().none { it.id == order.dbId }) {
+            toast("This table was already settled from the mobile app")
+            loadRunningOrders()
+            view?.let { root ->
+                populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+                clearDetail(root)
+            }
+            return@synchronized
+        }
         // save to td_bills / td_bill_items / td_payments - a payment row per split part
         val saved = persistBill(order, payMethod, tendered, splitParts)
-        val mergedTables = roDao.mergedTablesOf(order.dbId)
-        roDao.close(order.dbId)                          // payment done → remove from temp table
-        updateTableStatus(order.id, order.section, "Available")  // table freed for the next guest
-        // merged tables freed too (same section as the kept one)
-        mergedTables.forEach { updateMergedTableStatus(it, order.section, "Available") }
-        orders.removeAll { it.dbId == order.dbId }
-        // free the parent once all parts are done
-        freeParentIfSplitDone(order.id, order.section)
-        // AND THE PARENT OF ANY SPLIT PART THAT WAS MERGED INTO THIS ORDER.
-        //
-        // Merge 5 A into table 10 and the split lives on inside 10's bill: 5 A has no
-        // order of its own any more, so settling 10 is the moment it is finished with.
-        // Only its status was being restored, which left table 5 split for good - a
-        // parent holding parts that nothing owned, unable to be seated as one table
-        // again. Run after the removal above, so the list this reads no longer counts
-        // the order just settled.
-        mergedTables.forEach { freeParentIfSplitDone(it, order.section) }
-        view?.let { root ->
-            populateOrders(root, ThemeManager.getThemeColor(requireContext()))
-            clearDetail(root)
-        }
+        releaseSettledOrder(order)
+        // Phones on Mobile Reports drop the table from their Table Settlement page.
+        publishTableEvent(
+            com.example.synergic_pos_offline.lanreport.TableEvents.SETTLED, order, saved?.billNumber.orEmpty(),
+            mode = when {
+                splitParts.count { it.second > 0.001 } > 1 -> "Split"
+                else -> payMethod.ifBlank { "Cash" }
+            }
+        )
         val billNo = saved?.billNumber
-            ?: com.example.synergic_pos_offline.database.BillDao(requireContext()).lastBillNumber().orEmpty()
+            ?: com.example.synergic_pos_offline.database.BillDao(dataContext).lastBillNumber().orEmpty()
         // Confirm Payment settles and saves; it does not print.
         //
         // In a restaurant the bill is printed BEFORE it is paid - it goes to the table,
@@ -6918,12 +6950,361 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
     }
 
     /**
+     * The second half of a settlement, once the bill is saved: closes the running
+     * order, frees its table (and any merged into it, and a split parent whose parts
+     * are all done) and repaints the screen if there is one.
+     *
+     * Shared by the till's own Confirm Payment ([settlePaidOrder]) and the mobile
+     * app's Table Settlement ([headlessSettle]), so a table is freed one way only.
+     */
+    private fun releaseSettledOrder(order: OrderCard) {
+        val mergedTables = roDao.mergedTablesOf(order.dbId)
+        roDao.close(order.dbId)                          // payment done → remove from temp table
+        updateTableStatus(order.id, order.section, "Available")  // table freed for the next guest
+        // merged tables freed too (same section as the kept one)
+        mergedTables.forEach { updateMergedTableStatus(it, order.section, "Available") }
+        orders.removeAll { it.dbId == order.dbId }
+        // free the parent once all parts are done
+        freeParentIfSplitDone(order.id, order.section)
+        // AND THE PARENT OF ANY SPLIT PART THAT WAS MERGED INTO THIS ORDER.
+        //
+        // Merge 5 A into table 10 and the split lives on inside 10's bill: 5 A has no
+        // order of its own any more, so settling 10 is the moment it is finished with.
+        // Only its status was being restored, which left table 5 split for good - a
+        // parent holding parts that nothing owned, unable to be seated as one table
+        // again. Run after the removal above, so the list this reads no longer counts
+        // the order just settled.
+        mergedTables.forEach { freeParentIfSplitDone(it, order.section) }
+        view?.let { root ->
+            populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+            clearDetail(root)
+        }
+    }
+
+    // ---- Live table events (Mobile Reports) -----------------------------------
+
+    /** Tells the phones on Mobile Reports that [order] changed on this till. */
+    private fun publishTableEvent(type: String, order: OrderCard, billNumber: String = "", mode: String = "") {
+        runCatching {
+            com.example.synergic_pos_offline.lanreport.TableEvents.publish(
+                dataContext,
+                com.example.synergic_pos_offline.lanreport.TableEvents.Event(
+                    type = type, orderId = order.dbId, table = tableDisplayName(order), section = order.section,
+                    source = com.example.synergic_pos_offline.lanreport.TableEvents.FROM_POS,
+                    billNumber = billNumber, amount = runCatching { payableTotal(computeBill(order).total) }.getOrDefault(0.0),
+                    mode = mode
+                )
+            )
+        }
+    }
+
+    /**
+     * Redraws the open floor plan, if one is up - set while [showChooseTableDialog]'s
+     * picker is showing, so a table paid from a phone turns Available on it at once.
+     */
+    private var livePickerRefresh: (() -> Unit)? = null
+
+    /**
+     * A table settled from the mobile app, heard while this screen is up. Registered in
+     * onViewCreated and removed in onDestroyView; called on the server's thread, so it
+     * hops to this screen's own.
+     */
+    private val remoteTableListener: (com.example.synergic_pos_offline.lanreport.TableEvents.Event) -> Unit = { e ->
+        if (e.source == com.example.synergic_pos_offline.lanreport.TableEvents.FROM_MOBILE) {
+            view?.post { if (isAdded && view != null) onRemoteSettle(e) }
+        }
+    }
+
+    /**
+     * The order is gone from the database already - the phone's settlement closed it
+     * and freed its tables through [releaseSettledOrder] - so this screen only has to
+     * stop showing it: off the active orders, out of the detail panel if it was open,
+     * and the floor plan redrawn with the table Available again.
+     */
+    private fun onRemoteSettle(e: com.example.synergic_pos_offline.lanreport.TableEvents.Event) {
+        val root = view ?: return
+        val wasOpen = currentOrder()?.dbId == e.orderId
+        orders.removeAll { it.dbId == e.orderId }
+        populateOrders(root, ThemeManager.getThemeColor(requireContext()))
+        if (wasOpen) clearDetail(root)
+        livePickerRefresh?.invoke()
+        toast(
+            "${e.tableLabel} paid from mobile" +
+                (if (e.billNumber.isNotBlank()) " — Bill ${e.billNumber}" else "") +
+                (if (e.mode.isNotBlank()) ", ${e.mode}" else "") + ". Table is free.",
+            long = true
+        )
+    }
+
+    // ---- The mobile app's Table Settlement (off-screen) ----------------------
+
+    /** A dine-in table whose bill has been printed and is waiting to be paid. */
+    data class BilledTable(
+        val orderId: Long,
+        /** "5", or "1 + 3 A" for a bill tables were merged into. */
+        val table: String,
+        val section: String,
+        /** What the guest owes - the payable figure the printed bill carries. */
+        val amount: Double,
+        val time: String,
+        val itemCount: Int,
+        val billNumber: String
+    )
+
+    /**
+     * Every dine-in table billed and awaiting payment, for the mobile app.
+     *
+     * Read on a fresh, unattached instance of this screen (see
+     * MobileReports.instantiate) so the amounts come from the very same
+     * [computeBill]/[payableTotal] the till priced the printed bill with. Counter
+     * orders (Take Away, QSR) are left out - they settle at the counter.
+     */
+    fun headlessBilledTables(context: Context): List<BilledTable> {
+        headlessContext = context.applicationContext
+        loadRunningOrders()
+        val billDao = com.example.synergic_pos_offline.database.BillDao(dataContext)
+        return orders.filter { it.completed && !it.counter }.map { o ->
+            BilledTable(
+                orderId = o.dbId,
+                table = tableDisplayName(o),
+                section = o.section,
+                amount = payableTotal(computeBill(o).total),
+                time = o.time,
+                itemCount = o.items.size,
+                billNumber = roDao.billSeqOf(o.dbId)?.let { runCatching { billDao.formatNumber(it) }.getOrNull() }.orEmpty()
+            )
+        }
+    }
+
+    /**
+     * Confirms payment for a billed dine-in table from the mobile app and frees it.
+     *
+     * Exactly the till's own Confirm Payment: [persistBill] writes the bill, its items
+     * and its payment under the number the slip was printed with, then
+     * [releaseSettledOrder] closes the order and frees the table. Refuses - and changes
+     * nothing - when the table is no longer billed and waiting (settled meanwhile, on
+     * the till or another phone), when [expectedAmount] no longer matches what is
+     * owed, or when the bill cannot be saved.
+     *
+     * Returns the bill number it was saved under.
+     */
+    fun headlessSettle(
+        context: Context, orderId: Long, payment: HeadlessPayment, expectedAmount: Double,
+        /** The phone settling it, as it identifies itself - carried on the table event. */
+        clientId: String = ""
+    ): String {
+        headlessContext = context.applicationContext
+        synchronized(SETTLE_LOCK) {
+            val order = billedOrder(orderId)
+            val payable = payableTotal(computeBill(order).total)
+            if (kotlin.math.abs(payable - expectedAmount) > 0.005) {
+                throw IllegalStateException("The amount due has changed - refresh and try again")
+            }
+            checkPayment(order, payable, payment)
+            // Credit goes on the account it was checked against - put on the order
+            // first, as the till's checkout does, so the bill is written to it.
+            if (payment.credit) attachCustomer(order, payment.creditPhone ?: order.phone)
+            val saved = persistBill(order, payment.mode, payment.tenderedForBill(), payment.splitParts())
+                ?: throw IllegalStateException("The bill could not be saved - nothing was changed")
+            releaseSettledOrder(order)
+            // The till's screens refresh, the cashier is notified, other phones update.
+            val parts = payment.splitParts()
+            com.example.synergic_pos_offline.lanreport.TableEvents.publish(
+                dataContext,
+                com.example.synergic_pos_offline.lanreport.TableEvents.Event(
+                    type = com.example.synergic_pos_offline.lanreport.TableEvents.SETTLED,
+                    orderId = order.dbId, table = tableDisplayName(order), section = order.section,
+                    source = com.example.synergic_pos_offline.lanreport.TableEvents.FROM_MOBILE,
+                    billNumber = saved.billNumber,
+                    mode = when {
+                        parts.size > 1 -> "Split"
+                        parts.size == 1 -> parts.first().first.lowercase().replaceFirstChar { it.uppercase() }
+                        else -> payment.mode
+                    },
+                    amount = payable,
+                    clientId = clientId
+                )
+            )
+            return saved.billNumber
+        }
+    }
+
+    /**
+     * How the mobile app says a table was paid - the same choices the till's dine-in
+     * checkout (RestaurantCheckoutFragment) offers.
+     *
+     * [mode] is a tile: Cash, Card, Online or Credit. [tendered] is the cash handed
+     * over (Cash) or the amount paid now against the account (Credit). [split] is a
+     * part payment, by SplitPayment.Part mode - CASH, ONLINE, CARD - empty for none.
+     * [creditPhone] is the account a Credit settlement goes on, null for the table's
+     * own customer.
+     */
+    data class HeadlessPayment(
+        val mode: String,
+        val tendered: Double = 0.0,
+        val split: Map<String, Double> = emptyMap(),
+        val creditPhone: String? = null
+    ) {
+        val credit: Boolean get() = mode.equals(CREDIT_LABEL, ignoreCase = true)
+
+        /** The parts that took something, in the panel's order - never on credit. */
+        fun splitParts(): List<Pair<String, Double>> =
+            if (credit) emptyList()
+            else listOf("CASH", "ONLINE", "CARD").mapNotNull { m -> split[m]?.takeIf { it > 0.001 }?.let { m to it } }
+
+        /**
+         * The single "tendered" figure the settlement reads - the checkout's own rule:
+         * on a split, the cash part alone; otherwise what was typed.
+         */
+        fun tenderedForBill(): Double =
+            if (!credit && splitParts().isNotEmpty()) split["CASH"] ?: 0.0 else tendered
+    }
+
+    /** The payment tiles this till's dine-in checkout shows - see RestaurantCheckoutFragment. */
+    fun headlessModes(context: Context): List<String> =
+        if (com.example.synergic_pos_offline.utils.PaymentModeSetting.asked(context))
+            listOf("Cash", "Card", "Online", CREDIT_LABEL)
+        else listOf(com.example.synergic_pos_offline.utils.PaymentModeSetting.CASH_LABEL)
+
+    /** The billed dine-in order [orderId], freshly read - or why it cannot be paid. */
+    private fun billedOrder(orderId: Long): OrderCard {
+        loadRunningOrders()
+        val order = orders.firstOrNull { it.dbId == orderId }
+            ?: throw IllegalStateException("This table has already been settled")
+        if (order.counter || !order.completed) {
+            throw IllegalStateException("This table's bill has not been printed yet")
+        }
+        return order
+    }
+
+    /**
+     * The checkout's own rules, applied to a payment from the phone - refused with the
+     * till's own words where the till would refuse it.
+     */
+    private fun checkPayment(order: OrderCard, payable: Double, p: HeadlessPayment) {
+        if (headlessModes(dataContext).none { it.equals(p.mode, ignoreCase = true) }) {
+            throw IllegalStateException("This POS does not take ${p.mode} payments")
+        }
+        if (p.credit) {
+            val phone = p.creditPhone ?: order.phone
+            when (val v = com.example.synergic_pos_offline.utils.CreditSale.verdict(dataContext, phone, payable)) {
+                is com.example.synergic_pos_offline.utils.CreditSale.Verdict.Ok -> Unit
+                is com.example.synergic_pos_offline.utils.CreditSale.Verdict.NeedsDetails -> throw IllegalStateException(
+                    "Pick a customer with a name and phone on file to bill this sale to their account."
+                )
+                is com.example.synergic_pos_offline.utils.CreditSale.Verdict.CreditOff -> throw IllegalStateException(
+                    "Credit is switched off for ${v.customer.name.ifBlank { v.customer.phone }}. Turn Credit on " +
+                        "in the customer's details before billing this sale to their account."
+                )
+                is com.example.synergic_pos_offline.utils.CreditSale.Verdict.LimitTooLow -> throw IllegalStateException(
+                    "This sale comes to ₹ ${money(payable)}, but only ₹ ${money(v.customer.creditLimit)} of credit " +
+                        "is left on the account. Raise the credit limit to at least ₹ ${money(payable)} " +
+                        "to bill it to their account."
+                )
+            }
+            return
+        }
+        val parts = p.splitParts()
+        if (parts.isNotEmpty()) {
+            // SplitPayment's own arithmetic: the parts must cover the bill, and only
+            // cash can be over it - UPI and card are taken to the penny.
+            val entered = BillRounding.toPaise(parts.sumOf { it.second })
+            val remaining = BillRounding.toPaise((payable - entered).coerceAtLeast(0.0))
+            val excess = BillRounding.toPaise((entered - payable).coerceAtLeast(0.0))
+            val overpaid = BillRounding.toPaise((excess - (p.split["CASH"] ?: 0.0)).coerceAtLeast(0.0))
+            if (remaining > 0.001) throw IllegalStateException("₹ ${money(remaining)} still to collect.")
+            if (overpaid > 0.001) throw IllegalStateException(
+                "UPI and card are ₹ ${money(overpaid)} over the bill - only cash can be handed back."
+            )
+        }
+    }
+
+    /**
+     * Everything the phone's checkout shows for a billed table, as the till's own
+     * checkout screen shows it: the lines, the breakdown (the same [computeBill]
+     * figures the slip was printed from), the payment tiles this till offers, the
+     * table's customer, the UPI ID for the scan-to-pay code, and the customers a
+     * credit sale can be put on.
+     */
+    fun headlessCheckout(context: Context, orderId: Long): org.json.JSONObject {
+        headlessContext = context.applicationContext
+        val order = billedOrder(orderId)
+        val b = computeBill(order)
+        val payable = payableTotal(b.total)
+        val who = customerFor(order.phone)
+        fun customerJson(c: com.example.synergic_pos_offline.database.CustomerDao.Customer) = org.json.JSONObject()
+            .put("name", c.name).put("phone", c.phone).put("creditEnabled", c.creditEnabled)
+            .put("creditLimit", c.creditLimit).put("balance", c.balance)
+        val upi = runCatching { com.example.synergic_pos_offline.database.BillSettingsDao(dataContext).load() }.getOrNull()
+        return org.json.JSONObject()
+            .put("orderId", order.dbId)
+            .put("table", tableDisplayName(order)).put("section", order.section)
+            .put("billNumber", roDao.billSeqOf(order.dbId)?.let {
+                runCatching { com.example.synergic_pos_offline.database.BillDao(dataContext).formatNumber(it) }.getOrNull()
+            }.orEmpty())
+            .put("customerPhone", order.phone)
+            .put("customer", who?.let { customerJson(it) })
+            .put("items", org.json.JSONArray().also { a ->
+                order.items.forEach { a.put(org.json.JSONObject().put("name", it.name).put("qty", it.qty).put("rate", it.rate).put("amount", it.qty * it.rate)) }
+            })
+            .put("subtotal", b.subtotal).put("discount", b.discountDisplay).put("service", b.service)
+            .put("cgst", b.cgst).put("sgst", b.sgst).put("igst", b.igst).put("vat", b.vat)
+            .put("charges", org.json.JSONArray().also { a ->
+                b.charges.forEach { c ->
+                    val label = if (c.type.name.equals("PERCENTAGE", ignoreCase = true) && c.value > 0.0)
+                        "${c.name} (${qtyText(c.value)}%)" else c.name
+                    a.put(org.json.JSONObject().put("label", label).put("amount", c.amount))
+                }
+            })
+            .put("roundOff", roundOffAmount(b.total))
+            .put("total", payable)
+            .put("modes", org.json.JSONArray(headlessModes(dataContext)))
+            .put("upiId", upi?.upiId?.takeIf { com.example.synergic_pos_offline.utils.UpiQr.isValidVpa(it) })
+            .put("upiPayee", upi?.upiPayeeName.orEmpty())
+            .put("customers", org.json.JSONArray().also { a ->
+                runCatching { com.example.synergic_pos_offline.database.CustomerDao(dataContext).getAll() }
+                    .getOrDefault(emptyList())
+                    .filter { it.phone.isNotBlank() }
+                    .forEach { a.put(customerJson(it)) }
+            })
+    }
+
+    /**
+     * The checkout's Receipt Preview for a billed table, paid as [payment] - the slip
+     * [buildBillDraft] makes, the same one Print Bill and the checkout preview draw.
+     * Nothing is written. Returns the rendered slip, or null if it could not be drawn.
+     */
+    fun headlessPreview(context: Context, orderId: Long, payment: HeadlessPayment): android.graphics.Bitmap? {
+        headlessContext = context.applicationContext
+        val order = billedOrder(orderId)
+        // The account a credit preview is for - in memory only, nothing is saved.
+        if (payment.credit) payment.creditPhone?.takeIf { it.isNotBlank() }?.let { order.phone = it }
+        val billNumber = roDao.billSeqOf(order.dbId)
+            ?.let { com.example.synergic_pos_offline.database.BillDao(dataContext).formatNumber(it) }
+            ?: com.example.synergic_pos_offline.database.BillDao(dataContext).nextBillNumber()
+        val draft = buildBillDraft(order, billNumber, payment.mode, payment.tenderedForBill(), payment.splitParts())
+        val paperDots = com.example.synergic_pos_offline.database.OperatingPrinterDao(dataContext).getAll()
+            .firstOrNull { it.printFlag.equals("B", ignoreCase = true) }
+            ?.let { com.example.synergic_pos_offline.utils.ThermalPrinter.configFor(it)?.paperDots } ?: 576
+        return com.example.synergic_pos_offline.utils.BillReceiptRenderer(dataContext).renderDraftToBitmap(draft, paperDots)
+    }
+
+    /**
      * Bill & Print result: mark the table COMPLETED (billed). It stays in the
      * temporary running table (so it can still be paid), but is locked — no more
      * items / qty / KOT changes. It's only removed after payment (Bill & Pay).
      */
     private fun completeTable(order: OrderCard) {
         roDao.markCompleted(order.dbId)
+        // A dine-in bill just completed: every phone on Mobile Reports shows the table on
+        // its Table Settlement page straight away, over the event socket - here, where a
+        // table becomes billed, so no way of completing a bill can leave the phones out.
+        if (!order.counter) {
+            val billNo = roDao.billSeqOf(order.dbId)?.let {
+                runCatching { com.example.synergic_pos_offline.database.BillDao(dataContext).formatNumber(it) }.getOrNull()
+            }.orEmpty()
+            publishTableEvent(com.example.synergic_pos_offline.lanreport.TableEvents.BILLED, order, billNo)
+        }
         // Only an order that HAS a table colours one. A counter order's id is a token,
         // not a table code, so this went looking for a table called "TA-3" and quietly
         // matched nothing - harmless, but it is a floor update for an order that is not
@@ -7260,6 +7641,13 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
         /** The payment mode that puts the sale on the customer's account - see [CreditSale]. */
         const val CREDIT_LABEL = "Credit"
 
+        /**
+         * Held while a table is settled, by the till's screen and the mobile app alike,
+         * so the two can never both settle one table: whichever comes second finds the
+         * running order gone and stops.
+         */
+        val SETTLE_LOCK = Any()
+
         /** Chili icons a tile can show - "hot". See [bindSpice]. */
         const val MAX_CHILIES = 3
 
@@ -7337,6 +7725,9 @@ class RestaurantOrdersFragment : Fragment(), TitledScreen {
      * better than a long one still on screen over the next tap.
      */
     private fun toast(msg: String, long: Boolean = false) {
+        // Off-screen for the mobile app there is no one at this screen to tell - the
+        // outcome goes back to the phone instead.
+        if (headlessContext != null) return
         liveToast?.cancel()
         liveToast = android.widget.Toast
             .makeText(

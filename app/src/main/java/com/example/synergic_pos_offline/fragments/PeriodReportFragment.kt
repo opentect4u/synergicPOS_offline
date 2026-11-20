@@ -2,6 +2,7 @@ package com.example.synergic_pos_offline.fragments
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -22,6 +23,7 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
+import com.example.synergic_pos_offline.lanreport.HeadlessReport
 import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.CalendarGrain
 import com.example.synergic_pos_offline.utils.PeriodReportPrinter
@@ -58,10 +60,72 @@ import java.util.Locale
  * sale landing between the two would otherwise put a figure on the paper that was
  * never on the screen.
  */
-abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen {
+abstract class PeriodReportFragment<T : Any> : Fragment(), TitledScreen, HeadlessReport {
 
     /** One column of the on-screen table: what it is called and how wide it sits. */
     protected data class Column(val label: String, val widthDp: Int, val alignEnd: Boolean)
+
+    // ---- Run off-screen, for the Mobile Reports server -----------------------
+
+    /** Set only while the Mobile Reports server runs this report - see [runHeadless]. */
+    private var headlessContext: Context? = null
+
+    /**
+     * The context a report reads its database through: the screen's own, or the
+     * server's when it is run off-screen. Subclasses use this rather than
+     * requireContext(), which only works while the screen is attached.
+     */
+    protected val ctx: Context get() = headlessContext ?: requireContext()
+
+    override fun headlessSpec(context: Context): HeadlessReport.Spec {
+        headlessContext = context
+        val hasFilter = filterHint != null && filterOptions.isNotEmpty()
+        val hasMode = modeHint != null && modeOptions.isNotEmpty()
+        return HeadlessReport.Spec(
+            grain = grain,
+            filterHint = filterHint.takeIf { hasFilter },
+            filterOptions = if (hasFilter) filterOptions else emptyList(),
+            filterSearchable = filterSearchable,
+            modeHint = modeHint.takeIf { hasMode },
+            modeOptions = if (hasMode) modeOptions else emptyList()
+        )
+    }
+
+    /**
+     * The same steps Generate takes, without the screen: the same [load], and the same
+     * columns, rows and totals [sheetOf] would write to a file. A filter or mode that is
+     * not one of the options falls back to what the screen opens on.
+     */
+    override fun runHeadless(
+        context: Context, from: String, to: String, filter: String?, mode: String?
+    ): HeadlessReport.Result {
+        headlessContext = context
+        if (filterHint != null && filterOptions.isNotEmpty()) {
+            filterChoice = filter?.takeIf { it in filterOptions }
+                ?: if (filterSearchable) "" else filterOptions.first()
+        }
+        if (modeHint != null && modeOptions.isNotEmpty()) {
+            modeChoice = mode?.takeIf { it in modeOptions } ?: modeOptions.first()
+        }
+        val r = load(from, to)
+        if (isEmpty(r)) {
+            val (title, hint) = emptyMessage(r, from, to)
+            return HeadlessReport.Result.empty(screenTitle, title, hint, filterChoice, modeChoice)
+        }
+        val cols = columnsFor(r)
+        return HeadlessReport.Result(
+            ReportExport.Sheet(
+                title = screenTitle,
+                subtitle = headline(r),
+                columns = cols.map { it.label },
+                alignEnd = cols.map { it.alignEnd },
+                rows = rowsOf(r),
+                summary = summaryOf(r) + listOf(totalOf(r))
+            ),
+            filterValue = filterChoice,
+            modeValue = modeChoice
+        )
+    }
 
     // ---- What a report has to say for itself ---------------------------------
 

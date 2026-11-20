@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.fragments
 
 import android.app.DatePickerDialog
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Bundle
@@ -14,9 +15,12 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.CustomerDao
+import com.example.synergic_pos_offline.database.CustomerItemWiseReportDao
 import com.example.synergic_pos_offline.database.CustomerLedgerDao
+import com.example.synergic_pos_offline.lanreport.HeadlessReport
 import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.CustomerLedgerView
+import com.example.synergic_pos_offline.utils.ReportExport
 import com.example.synergic_pos_offline.utils.ThemeManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -40,7 +44,7 @@ import java.util.Locale
  * a credit sale. The whole statement comes from [CustomerLedgerDao], which is also
  * what the printed copy renders from, so paper and screen cannot disagree.
  */
-class CustomerLedgerFragment : Fragment(), TitledScreen {
+class CustomerLedgerFragment : Fragment(), TitledScreen, HeadlessReport {
 
     override val screenTitle = "Customer Ledger"
 
@@ -153,6 +157,58 @@ class CustomerLedgerFragment : Fragment(), TitledScreen {
         root.findViewById<TextView>(R.id.tvLedgerEmptyTitle).text = title
         root.findViewById<TextView>(R.id.tvLedgerEmptyHint).text = hint
         btnPrint.isEnabled = false
+    }
+
+    // ---- Run off-screen, for the Mobile Reports server -----------------------
+
+    /** "Name - phone": the ledger is looked up by phone, so only customers with one. */
+    private fun headlessCustomers(context: Context): List<Pair<String, String>> =
+        CustomerItemWiseReportDao(context).customers()
+            .filter { it.phone.isNotBlank() }
+            .map { "${it.name} - ${it.phone}" to it.phone }
+
+    override fun headlessSpec(context: Context) = HeadlessReport.Spec(
+        filterHint = "Customer",
+        filterOptions = headlessCustomers(context).map { it.first },
+        filterSearchable = true
+    )
+
+    /** The statement as a table: one row per movement, then opening to closing. */
+    override fun runHeadless(
+        context: Context, from: String, to: String, filter: String?, mode: String?
+    ): HeadlessReport.Result {
+        val (label, phone) = headlessCustomers(context).firstOrNull { it.first == filter }
+            ?: return HeadlessReport.Result.empty(
+                screenTitle, "Pick a customer", "Choose whose statement to show, then generate."
+            )
+        val led = CustomerLedgerDao(context).forPhone(phone, from, to)
+            ?: return HeadlessReport.Result.empty(
+                screenTitle, "No customer on $phone",
+                "Check the number, or add them under Master → Customers.", filter = label
+            )
+        val money = { v: Double -> String.format(Locale.US, "%.2f", v) }
+        val sheet = ReportExport.Sheet(
+            title = screenTitle,
+            subtitle = "${led.customer.name.trim().ifEmpty { "Unnamed customer" }}  ·  " +
+                "${CustomerLedgerView.pretty(led.fromDate)} to ${CustomerLedgerView.pretty(led.toDate)}",
+            columns = listOf("DATE", "PARTICULARS", "REFERENCE", "IN", "OUT", "BALANCE"),
+            alignEnd = listOf(false, false, false, true, true, true),
+            rows = led.entries.map { e ->
+                listOf(
+                    CustomerLedgerView.pretty(e.date), e.particulars, e.reference,
+                    if (e.`in` > 0.0) money(e.`in`) else "-",
+                    if (e.out > 0.0) money(e.out) else "-",
+                    money(e.balance)
+                )
+            },
+            summary = listOf(
+                "Opening Balance" to money(led.opening),
+                "Total In" to money(led.totalIn),
+                "Total Out" to money(led.totalOut),
+                "Closing Balance" to money(led.closing)
+            )
+        )
+        return HeadlessReport.Result(sheet, filterValue = label)
     }
 
     // ---- Phone type-ahead --------------------------------------------------

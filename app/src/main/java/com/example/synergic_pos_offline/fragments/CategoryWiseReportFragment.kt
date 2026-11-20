@@ -20,7 +20,7 @@ class CategoryWiseReportFragment : PeriodReportFragment<CategoryWiseReportDao.Re
 
     override val rowNoun = "departments"
 
-    private val dao: CategoryWiseReportDao by lazy { CategoryWiseReportDao(requireContext()) }
+    private val dao: CategoryWiseReportDao by lazy { CategoryWiseReportDao(ctx) }
 
     override fun load(fromDate: String, toDate: String): CategoryWiseReportDao.Report =
         dao.between(fromDate, toDate)

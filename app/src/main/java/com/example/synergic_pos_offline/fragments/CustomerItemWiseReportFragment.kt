@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.fragments
 
 import android.app.DatePickerDialog
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -17,6 +18,7 @@ import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.CustomerItemWiseReportDao
+import com.example.synergic_pos_offline.lanreport.HeadlessReport
 import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.CustomerItemWiseReportRenderer
 import com.example.synergic_pos_offline.utils.PrinterSetup
@@ -38,7 +40,7 @@ import java.util.Locale
  * with quantity, amount and tax, and the period totals. Screen and print come from
  * one generated report.
  */
-class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
+class CustomerItemWiseReportFragment : Fragment(), TitledScreen, HeadlessReport {
 
     override val screenTitle = "Customer Item Wise RPT"
 
@@ -174,6 +176,36 @@ class CustomerItemWiseReportFragment : Fragment(), TitledScreen {
         if (r.totalOtherCharges > 0.005) container.addView(total("EXTRA CHGS:", money(r.totalOtherCharges)))
         if (r.totalParcelCharge > 0.005) container.addView(total("PARCEL CHG:", money(r.totalParcelCharge)))
         container.addView(total("TOTAL AMT :", money(r.totalAmount)))
+    }
+
+    // ---- Run off-screen, for the Mobile Reports server -----------------------
+
+    /** The same label the screen's customer picker shows. */
+    private fun customerLabel(c: CustomerItemWiseReportDao.Customer) =
+        if (c.phone.isNotBlank()) "${c.name} - ${c.phone}" else c.name
+
+    override fun headlessSpec(context: Context) = HeadlessReport.Spec(
+        filterHint = "Customer",
+        filterOptions = CustomerItemWiseReportDao(context).customers().map { customerLabel(it) },
+        filterSearchable = true
+    )
+
+    override fun runHeadless(
+        context: Context, from: String, to: String, filter: String?, mode: String?
+    ): HeadlessReport.Result {
+        val dao = CustomerItemWiseReportDao(context)
+        val customer = dao.customers().firstOrNull { customerLabel(it) == filter }
+            ?: return HeadlessReport.Result.empty(
+                screenTitle, "Pick a customer", "Choose which customer to report on, then generate."
+            )
+        val label = customerLabel(customer)
+        val r = dao.between(customer.id, from, to)
+        if (r.isEmpty) return HeadlessReport.Result.empty(
+            screenTitle, "No items in this period",
+            "${r.customerName.ifBlank { "This customer" }} bought nothing between ${pretty(from)} and ${pretty(to)}.",
+            filter = label
+        )
+        return HeadlessReport.Result(sheetOf(r), filterValue = label)
     }
 
     /**

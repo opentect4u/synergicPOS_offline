@@ -20,7 +20,7 @@ class DuplicateReportFragment : PeriodReportFragment<DuplicateReportDao.Report>(
 
     override val rowNoun = "bills"
 
-    private val dao: DuplicateReportDao by lazy { DuplicateReportDao(requireContext()) }
+    private val dao: DuplicateReportDao by lazy { DuplicateReportDao(ctx) }
 
     override fun load(fromDate: String, toDate: String): DuplicateReportDao.Report =
         dao.between(fromDate, toDate)

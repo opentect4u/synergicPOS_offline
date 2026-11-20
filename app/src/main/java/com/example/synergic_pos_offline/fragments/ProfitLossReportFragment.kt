@@ -20,7 +20,7 @@ class ProfitLossReportFragment : PeriodReportFragment<ProfitLossReportDao.Report
 
     override val rowNoun = "items"
 
-    private val dao: ProfitLossReportDao by lazy { ProfitLossReportDao(requireContext()) }
+    private val dao: ProfitLossReportDao by lazy { ProfitLossReportDao(ctx) }
 
     override fun load(fromDate: String, toDate: String): ProfitLossReportDao.Report =
         dao.between(fromDate, toDate)

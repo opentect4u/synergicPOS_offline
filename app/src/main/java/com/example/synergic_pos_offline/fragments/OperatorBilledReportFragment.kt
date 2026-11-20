@@ -29,7 +29,7 @@ class OperatorBilledReportFragment : PeriodReportFragment<OperatorBilledReportDa
      */
     override val filterSearchable = true
 
-    private val dao: OperatorBilledReportDao by lazy { OperatorBilledReportDao(requireContext()) }
+    private val dao: OperatorBilledReportDao by lazy { OperatorBilledReportDao(ctx) }
 
     /** Read once: the user master does not change while a report is being run. */
     private val operators: List<OperatorBilledReportDao.Operator> by lazy { dao.operators() }

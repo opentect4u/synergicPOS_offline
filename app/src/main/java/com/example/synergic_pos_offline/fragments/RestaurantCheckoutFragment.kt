@@ -311,6 +311,33 @@ class RestaurantCheckoutFragment : Fragment(), TitledScreen {
 
         // Re-apply our accents after MainActivity's global theme pass.
         view.post { if (isAdded) restyle(view) }
+
+        // Paid from the mobile app while this screen is open: there is nothing left to
+        // take payment for, so say so and go back to the orders screen.
+        com.example.synergic_pos_offline.lanreport.TableEvents.addListener(remotePaidListener)
+    }
+
+    private val remotePaidListener: (com.example.synergic_pos_offline.lanreport.TableEvents.Event) -> Unit = { e ->
+        if (e.orderId == orderId &&
+            e.source == com.example.synergic_pos_offline.lanreport.TableEvents.FROM_MOBILE &&
+            e.type == com.example.synergic_pos_offline.lanreport.TableEvents.SETTLED
+        ) {
+            view?.post {
+                if (!isAdded) return@post
+                android.widget.Toast.makeText(
+                    requireContext(),
+                    "${e.tableLabel} was just paid from the mobile app" +
+                        (if (e.billNumber.isNotBlank()) " — Bill ${e.billNumber}" else ""),
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+                parentFragmentManager.popBackStack()
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        com.example.synergic_pos_offline.lanreport.TableEvents.removeListener(remotePaidListener)
+        super.onDestroyView()
     }
 
     /** Credit is the chosen mode. */

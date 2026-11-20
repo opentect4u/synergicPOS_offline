@@ -195,8 +195,12 @@ class SettingsFragment : Fragment() {
             SettingsItem("About App", android.R.drawable.ic_menu_info_details, R.color.menu_inventory, R.color.menu_inventory_icon),
             // Beside About App: it is about how the till prints rather than about a
             // part of the sale, which is what the four tiles above it are each for.
-            SettingsItem("Language", android.R.drawable.ic_menu_sort_alphabetically, R.color.menu_sale, R.color.menu_sale_icon)
+            SettingsItem("Language", android.R.drawable.ic_menu_sort_alphabetically, R.color.menu_sale, R.color.menu_sale_icon),
+            // Read-only reports for phones on the shop network - admin only.
+            SettingsItem("Mobile Reports", android.R.drawable.ic_menu_share, R.color.menu_report, R.color.menu_report_icon)
         ).filter {
+            it.key != "Mobile Reports" || com.example.synergic_pos_offline.utils.SessionManager.isAdmin()
+        }.filter {
             // About App is granted separately in General Settings ▸ Access Control: an
             // admin always sees it, a general user only when it has been switched on.
             it.key != "About App" || com.example.synergic_pos_offline.database.GeneralSettingsDao
@@ -226,6 +230,10 @@ class SettingsFragment : Fragment() {
                     ).show()
                 "Printer Settings" -> openFragment(PrinterSettingsFragment())
                 "Operating Printer" -> openFragment(PrintSettingsFragment())
+                "Mobile Reports" ->
+                    if (com.example.synergic_pos_offline.utils.SessionManager.isAdmin())
+                        com.example.synergic_pos_offline.lanreport.LanReportDialog.show(requireActivity())
+                    else Toast.makeText(requireContext(), "Mobile Reports is for admin only", Toast.LENGTH_SHORT).show()
                 else -> Toast.makeText(requireContext(), "Opening ${item.title}...", Toast.LENGTH_SHORT).show()
             }
         }

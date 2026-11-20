@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.fragments
 
 import android.app.DatePickerDialog
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -15,6 +16,7 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.UdfWiseItemReportDao
+import com.example.synergic_pos_offline.lanreport.HeadlessReport
 import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.PrinterSetup
 import com.example.synergic_pos_offline.utils.ReportDownloads
@@ -34,7 +36,7 @@ import java.util.Locale
  * each product with its quantity and amount, a subtotal per UDF and a grand total.
  * Restaurant-only. Screen and print come from one generated report.
  */
-class UdfWiseItemReportFragment : Fragment(), TitledScreen {
+class UdfWiseItemReportFragment : Fragment(), TitledScreen, HeadlessReport {
 
     override val screenTitle = "UDF Wise Item Report"
 
@@ -131,6 +133,21 @@ class UdfWiseItemReportFragment : Fragment(), TitledScreen {
             )
         }
         container.addView(spread("TOTAL QTY : ${qtyFmt(r.totalQty)}", "TOTAL AMT : ${money(r.totalAmount)}", bold = true))
+    }
+
+    // ---- Run off-screen, for the Mobile Reports server -----------------------
+
+    override fun headlessSpec(context: Context) = HeadlessReport.Spec()
+
+    override fun runHeadless(
+        context: Context, from: String, to: String, filter: String?, mode: String?
+    ): HeadlessReport.Result {
+        val r = UdfWiseItemReportDao(context).between(from, to)
+        if (r.isEmpty) return HeadlessReport.Result.empty(
+            screenTitle, "No items in this period",
+            "No restaurant item was billed between ${pretty(from)} and ${pretty(to)}."
+        )
+        return HeadlessReport.Result(sheetOf(r))
     }
 
     /**

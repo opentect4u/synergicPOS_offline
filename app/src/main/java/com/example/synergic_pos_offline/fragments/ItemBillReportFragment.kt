@@ -29,7 +29,7 @@ class ItemBillReportFragment : PeriodReportFragment<ItemBillReportDao.Report>() 
      */
     override val filterSearchable = true
 
-    private val dao: ItemBillReportDao by lazy { ItemBillReportDao(requireContext()) }
+    private val dao: ItemBillReportDao by lazy { ItemBillReportDao(ctx) }
 
     /** Read once: the product master does not change while a report is being run. */
     private val items: List<ItemBillReportDao.Item> by lazy { dao.items() }
