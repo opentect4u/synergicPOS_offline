@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.fragments
 
 import android.app.DatePickerDialog
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -17,6 +18,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.BillWiseReportDao
+import com.example.synergic_pos_offline.lanreport.HeadlessReport
 import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.PeriodReportPrinter
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
@@ -46,7 +48,7 @@ import java.util.Locale
  * between the two would otherwise put a figure on the paper that was never on the
  * screen.
  */
-class BillWiseReportFragment : Fragment(), TitledScreen {
+class BillWiseReportFragment : Fragment(), TitledScreen, HeadlessReport {
 
     override val screenTitle = "Bill Wise Report"
 
@@ -245,6 +247,22 @@ class BillWiseReportFragment : Fragment(), TitledScreen {
         add("Service Charge" to money(r.totalServiceCharge))
         add("Extra Charges" to money(r.totalOtherCharges))
         add("Parcel Charge" to money(r.totalParcelCharge))
+    }
+
+    // ---- Run off-screen, for the Mobile Reports server -----------------------
+
+    override fun headlessSpec(context: Context) = HeadlessReport.Spec()
+
+    override fun runHeadless(
+        context: Context, from: String, to: String, filter: String?, mode: String?
+    ): HeadlessReport.Result {
+        val r = BillWiseReportDao(context).between(from, to)
+        if (r.isEmpty) return HeadlessReport.Result.empty(
+            screenTitle, "No bills in this period",
+            "Nothing was billed between ${pretty(from)} and ${pretty(to)}."
+        )
+        columns = columnsFor(r)
+        return HeadlessReport.Result(sheetOf(r))
     }
 
     /** The screen as a downloadable table: the columns and rows it is drawing. */

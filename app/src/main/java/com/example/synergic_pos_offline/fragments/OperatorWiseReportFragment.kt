@@ -20,7 +20,7 @@ class OperatorWiseReportFragment : PeriodReportFragment<OperatorWiseReportDao.Re
 
     override val rowNoun = "operators"
 
-    private val dao: OperatorWiseReportDao by lazy { OperatorWiseReportDao(requireContext()) }
+    private val dao: OperatorWiseReportDao by lazy { OperatorWiseReportDao(ctx) }
 
     override fun load(fromDate: String, toDate: String): OperatorWiseReportDao.Report =
         dao.between(fromDate, toDate)

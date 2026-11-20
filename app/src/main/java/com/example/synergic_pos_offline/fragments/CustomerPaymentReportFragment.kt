@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.fragments
 
 import android.app.DatePickerDialog
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -17,6 +18,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.CustomerPaymentReportDao
+import com.example.synergic_pos_offline.lanreport.HeadlessReport
 import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.CustomerPaymentReportRenderer
 import com.example.synergic_pos_offline.utils.PrinterSetup
@@ -38,7 +40,7 @@ import java.util.Locale
  * the total collected. What is on screen and what prints come from one generated
  * [CustomerPaymentReportDao.Report], so Print sends exactly what was reviewed.
  */
-class CustomerPaymentReportFragment : Fragment(), TitledScreen {
+class CustomerPaymentReportFragment : Fragment(), TitledScreen, HeadlessReport {
 
     override val screenTitle = "Customer Payment Report"
 
@@ -172,6 +174,21 @@ class CustomerPaymentReportFragment : Fragment(), TitledScreen {
         money(e.paidAmount),
         money(e.balanceAmount)
     )
+
+    // ---- Run off-screen, for the Mobile Reports server -----------------------
+
+    override fun headlessSpec(context: Context) = HeadlessReport.Spec()
+
+    override fun runHeadless(
+        context: Context, from: String, to: String, filter: String?, mode: String?
+    ): HeadlessReport.Result {
+        val r = CustomerPaymentReportDao(context).between(from, to)
+        if (r.isEmpty) return HeadlessReport.Result.empty(
+            screenTitle, "No payments in this period",
+            "No customer payment was collected between ${pretty(from)} and ${pretty(to)}."
+        )
+        return HeadlessReport.Result(sheetOf(r))
+    }
 
     /**
      * The screen as a downloadable table - one row per payment, where the card stacks

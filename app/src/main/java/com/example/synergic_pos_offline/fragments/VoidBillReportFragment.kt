@@ -19,7 +19,7 @@ class VoidBillReportFragment : PeriodReportFragment<VoidBillReportDao.Report>() 
 
     override val rowNoun = "bills"
 
-    private val dao: VoidBillReportDao by lazy { VoidBillReportDao(requireContext()) }
+    private val dao: VoidBillReportDao by lazy { VoidBillReportDao(ctx) }
 
     override fun load(fromDate: String, toDate: String): VoidBillReportDao.Report =
         dao.between(fromDate, toDate)

@@ -21,7 +21,7 @@ abstract class CalendarReportFragment : PeriodReportFragment<CalendarReportDao.R
     /** What one row is - "Day", "Month", "Year". Heads the first column. */
     protected abstract val periodLabel: String
 
-    private val dao: CalendarReportDao by lazy { CalendarReportDao(requireContext()) }
+    private val dao: CalendarReportDao by lazy { CalendarReportDao(ctx) }
 
     override val rowNoun: String get() = periodLabel.lowercase() + "s"
 

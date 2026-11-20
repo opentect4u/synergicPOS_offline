@@ -29,7 +29,7 @@ class ShiftWiseReportFragment : PeriodReportFragment<ShiftWiseReportDao.Report>(
 
     override val filterHint = "Shift"
 
-    private val dao: ShiftWiseReportDao by lazy { ShiftWiseReportDao(requireContext()) }
+    private val dao: ShiftWiseReportDao by lazy { ShiftWiseReportDao(ctx) }
 
     /** Read once: the shift master does not change while a report is being run. */
     private val shifts: List<ShiftDao.Shift> by lazy { dao.shifts() }

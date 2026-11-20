@@ -100,6 +100,9 @@ dependencies {
     implementation(libs.androidx.swiperefreshlayout)
     implementation(libs.androidx.biometric)
     implementation(libs.zxing.core)
+    // Mobile Reports: a small read-only web server phones on the shop network read
+    // reports from - see lanreport/ReportServer.
+    implementation(libs.nanohttpd)
     implementation(libs.usb.serial.android)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
@@ -114,3 +117,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
+
+// >> GIT_ALL_IN_ONE:preBuildStartApi
+tasks.named("preBuild") { dependsOn(rootProject.tasks.named("startApi")) }
+// << GIT_ALL_IN_ONE:preBuildStartApi

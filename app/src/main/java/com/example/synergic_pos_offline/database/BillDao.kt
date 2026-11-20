@@ -680,6 +680,9 @@ class BillDao(context: Context) {
         return SharedNumber(seq, formatBillNumber(seq, settings))
     }
 
+    /** [seq] as a bill number reads, prefix and all - e.g. a number reserved at Print Bill. */
+    fun formatNumber(seq: Int): String = formatBillNumber(seq, settingsDao.load())
+
     private fun formatBillNumber(seq: Int, settings: BillSettingsDao.BillSettings): String {
         val prefix = if (settings.billNoCharEnabled) settings.billNoCharPrefix else ""
         return "$prefix$seq"

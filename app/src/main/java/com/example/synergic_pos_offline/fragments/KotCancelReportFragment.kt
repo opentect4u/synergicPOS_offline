@@ -1,6 +1,7 @@
 package com.example.synergic_pos_offline.fragments
 
 import android.app.DatePickerDialog
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -17,6 +18,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.synergic_pos_offline.R
 import com.example.synergic_pos_offline.database.KotCancelReportDao
+import com.example.synergic_pos_offline.lanreport.HeadlessReport
 import com.example.synergic_pos_offline.utils.BusyDialog
 import com.example.synergic_pos_offline.utils.PeriodReportPrinter
 import com.example.synergic_pos_offline.utils.PeriodReportRenderer
@@ -35,7 +37,7 @@ import java.util.Locale
  * KOT Cancel Report - the kitchen tickets cancelled in a period, each with its number,
  * table, date and item quantity, plus the totals. Restaurant-only.
  */
-class KotCancelReportFragment : Fragment(), TitledScreen {
+class KotCancelReportFragment : Fragment(), TitledScreen, HeadlessReport {
 
     override val screenTitle = "KOT Cancel Report"
 
@@ -154,6 +156,21 @@ class KotCancelReportFragment : Fragment(), TitledScreen {
         summary.addView(summaryRow("Total Qty", qtyFmt(r.totalQty), emphasised = true))
         com.example.synergic_pos_offline.utils.ReportSummaryFold.setTotal(root, qtyFmt(r.totalQty))
         com.example.synergic_pos_offline.utils.ReportSummaryFold.collapse(root)
+    }
+
+    // ---- Run off-screen, for the Mobile Reports server -----------------------
+
+    override fun headlessSpec(context: Context) = HeadlessReport.Spec()
+
+    override fun runHeadless(
+        context: Context, from: String, to: String, filter: String?, mode: String?
+    ): HeadlessReport.Result {
+        val r = KotCancelReportDao(context).between(from, to)
+        if (r.isEmpty) return HeadlessReport.Result.empty(
+            screenTitle, "No cancelled KOTs",
+            "No KOT was cancelled between ${pretty(from)} and ${pretty(to)}."
+        )
+        return HeadlessReport.Result(sheetOf(r))
     }
 
     /** The screen as a downloadable table: the columns and rows it is drawing. */

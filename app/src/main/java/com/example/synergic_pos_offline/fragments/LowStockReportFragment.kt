@@ -30,7 +30,7 @@ class LowStockReportFragment : PeriodReportFragment<StockReportDao.Report>() {
 
     override val rowNoun = "items"
 
-    private val dao: StockReportDao by lazy { StockReportDao(requireContext()) }
+    private val dao: StockReportDao by lazy { StockReportDao(ctx) }
 
     /**
      * What counts as low here - 0 when Stock Alert is off, which leaves only the
@@ -40,7 +40,7 @@ class LowStockReportFragment : PeriodReportFragment<StockReportDao.Report>() {
      * the report, and the second should answer the question as it stands.
      */
     private fun alertQty(): Double {
-        val settings = GeneralSettingsDao(requireContext()).load()
+        val settings = GeneralSettingsDao(ctx).load()
         return if (settings.stockFlag && settings.stockAlert) settings.stockAlertQty.toDouble() else 0.0
     }
 

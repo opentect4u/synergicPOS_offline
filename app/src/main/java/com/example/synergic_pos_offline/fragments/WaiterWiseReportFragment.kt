@@ -31,7 +31,7 @@ class WaiterWiseReportFragment : PeriodReportFragment<WaiterWiseReportDao.Report
 
     override val filterHint = "Waiter"
 
-    private val dao: WaiterWiseReportDao by lazy { WaiterWiseReportDao(requireContext()) }
+    private val dao: WaiterWiseReportDao by lazy { WaiterWiseReportDao(ctx) }
 
     /** Read once: the waiter master does not change while a report is being run. */
     private val waiters: List<WaiterDao.Waiter> by lazy { dao.waiters() }

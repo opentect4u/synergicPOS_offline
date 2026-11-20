@@ -34,7 +34,7 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
 
     override val modeHint = "Mode"
 
-    private val dao: ShiftDayReportDao by lazy { ShiftDayReportDao(requireContext()) }
+    private val dao: ShiftDayReportDao by lazy { ShiftDayReportDao(ctx) }
 
     /** Read once: the shift master does not change while a report is being run. */
     private val shifts: List<ShiftDao.Shift> by lazy { dao.shifts() }
@@ -44,7 +44,7 @@ class ShiftDayReportFragment : PeriodReportFragment<ShiftDayReportDao.Report>() 
 
     /** The views this till can use - tables and waiters only exist in Restaurant mode. */
     private val views: List<ReportView> by lazy {
-        val restaurant = SettingsCache.value(requireContext(), "G", "Mode") == "R"
+        val restaurant = SettingsCache.value(ctx, "G", "Mode") == "R"
         ReportView.values().filter { restaurant || (it != ReportView.TABLE && it != ReportView.WAITER) }
     }
 

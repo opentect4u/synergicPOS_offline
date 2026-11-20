@@ -127,6 +127,9 @@ class MainActivity : AppCompatActivity() {
         // after - see [AutoBackup] for what that does and does not cover.
         startAutoBackupWatch()
 
+        // Mobile Reports: back on if it was left switched on - see lanreport/.
+        com.example.synergic_pos_offline.lanreport.LanReportService.startIfEnabled(this)
+
         drawerLayout = findViewById(R.id.drawerLayout)
         rvSidebar = findViewById(R.id.rvSidebar)
         tvSidebarUser = findViewById(R.id.tvSidebarUser)
@@ -774,6 +777,12 @@ class MainActivity : AppCompatActivity() {
             // Opens on Connections; the Print Template tab is the other half of it.
             "Printer Settings" -> navigateTo(PrintSettingsFragment())
             "Language" -> navigateTo(PrintLanguageFragment())
+            "Mobile Reports" ->
+                if (com.example.synergic_pos_offline.utils.SessionManager.isAdmin())
+                    com.example.synergic_pos_offline.lanreport.LanReportDialog.show(this)
+                else android.widget.Toast.makeText(
+                    this, "Mobile Reports is for admin only", android.widget.Toast.LENGTH_SHORT
+                ).show()
             CALCULATOR -> navigateTo(CalculatorFragment())
             CHANGE_MODE -> chooseMode()
             "Stock & Inventory" -> navigateTo(InventoryFragment())
@@ -974,6 +983,8 @@ class MainActivity : AppCompatActivity() {
                 add(TreeNode("Language"))
                 // About App is granted on its own - it carries the irreversible actions.
                 if (canAboutApp) add(TreeNode("About App"))
+                // Read-only reports for phones on the shop network - admin only.
+                if (com.example.synergic_pos_offline.utils.SessionManager.isAdmin()) add(TreeNode("Mobile Reports"))
             }))
             addAll(stockNodes)
             add(TreeNode("Sale"))
